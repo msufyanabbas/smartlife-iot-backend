@@ -83,7 +83,7 @@ async function bootstrap() {
   app.useGlobalInterceptors(
     new LoggingInterceptor(),
     new TransformInterceptor(),
-    new TimeoutInterceptor(configService),
+    // new TimeoutInterceptor(configService),
   );
 
   // Swagger documentation
