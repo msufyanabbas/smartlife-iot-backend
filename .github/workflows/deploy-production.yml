@@ -59,6 +59,7 @@ jobs:
 
       - name: Create deployment package
         run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }} \
           mkdir -p /var/www/smartlife-iot/deploy
           cp smartlife-app.tar.gz /var/www/smartlife-iot/deploy/
           cp docker-compose.prod.yml /var/www/smartlife-iot/deploy/
