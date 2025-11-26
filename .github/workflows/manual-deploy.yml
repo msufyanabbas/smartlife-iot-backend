@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment to deploy to'
+        description: 'Branch to deploy'
         required: true
-        default: 'production'
+        default: 'main'
         type: choice
         options:
+          - main
           - master
           - staging
       run_migrations:
@@ -17,18 +18,29 @@ on:
         default: true
         type: boolean
       run_seeders:
-        description: 'Run database seeders'
+        description: 'Run database seeders (⚠️ Use carefully)'
+        required: false
+        default: false
+        type: boolean
+      rebuild_containers:
+        description: 'Force rebuild all containers'
         required: false
         default: false
         type: boolean
 
+env:
+  DEPLOY_PATH: /var/www/smartlife-iot
+
 jobs:
   deploy:
+    name: Manual Deploy
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.environment }}
 
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.3
@@ -37,27 +49,117 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
+          command_timeout: 30m
           script: |
-            cd /var/www/smartlife-iot
+            set -e
+            
+            echo "🚀 Starting manual deployment..."
+            echo "📦 Environment: ${{ inputs.environment }}"
+            echo "🗄️ Run Migrations: ${{ inputs.run_migrations }}"
+            echo "🌱 Run Seeders: ${{ inputs.run_seeders }}"
+            echo "🔨 Rebuild: ${{ inputs.rebuild_containers }}"
+            echo ""
+            
+            cd ${{ env.DEPLOY_PATH }}
+            
+            # Check if repository exists
+            if [ ! -d .git ]; then
+              echo "❌ Git repository not found!"
+              echo "Please run initial setup first or clone the repository"
+              exit 1
+            fi
             
             # Pull latest code
-            git pull origin main || true
+            echo "📥 Pulling latest code from ${{ inputs.environment }}..."
+            git fetch origin
+            git checkout ${{ inputs.environment }}
+            git pull origin ${{ inputs.environment }}
             
-            # Rebuild and restart
-            docker compose -f docker-compose.prod.yml up -d --build app
+            # Backup database if it's running
+            if docker compose -f docker-compose.prod.yml ps postgres | grep -q "Up"; then
+              echo "📦 Creating database backup..."
+              docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U smartlife smartlife_iot > backups/db-backup-$(date +%Y%m%d-%H%M%S).sql 2>/dev/null || true
+            fi
+            
+            # Rebuild or restart based on input
+            if [ "${{ inputs.rebuild_containers }}" == "true" ]; then
+              echo "🔨 Rebuilding all containers..."
+              docker compose -f docker-compose.prod.yml down app
+              docker compose -f docker-compose.prod.yml build --no-cache app
+              docker compose -f docker-compose.prod.yml up -d
+            else
+              echo "♻️ Restarting application..."
+              docker compose -f docker-compose.prod.yml down app
+              docker compose -f docker-compose.prod.yml build app
+              docker compose -f docker-compose.prod.yml up -d app
+            fi
+            
+            # Wait for application
+            echo "⏳ Waiting for application..."
+            sleep 30
             
             # Run migrations if requested
             if [ "${{ inputs.run_migrations }}" == "true" ]; then
-              echo "Running migrations..."
-              sleep 10
+              echo "🗄️ Running migrations..."
               docker compose -f docker-compose.prod.yml exec -T app npm run migration:run
             fi
             
             # Run seeders if requested
             if [ "${{ inputs.run_seeders }}" == "true" ]; then
-              echo "Running seeders..."
+              echo "🌱 Running seeders..."
               docker compose -f docker-compose.prod.yml exec -T app npm run seed
             fi
             
-            echo "Deployment complete!"
+            # Clean up
+            echo "🧹 Cleaning up..."
+            docker image prune -f
+            
+            echo ""
+            echo "✅ Manual deployment complete!"
+            echo ""
+            echo "📊 Service Status:"
             docker compose -f docker-compose.prod.yml ps
+            echo ""
+            echo "📝 Recent Application Logs:"
+            docker compose -f docker-compose.prod.yml logs --tail=30 app
+
+      - name: Verify Deployment
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            cd ${{ env.DEPLOY_PATH }}
+            
+            echo "🔍 Verifying deployment..."
+            
+            # Check container status
+            if docker compose -f docker-compose.prod.yml ps app | grep -q "Up"; then
+              echo "✅ Application is running"
+              
+              # Try health check
+              sleep 5
+              if curl -f http://localhost:5000/health > /dev/null 2>&1; then
+                echo "✅ Health check passed"
+              else
+                echo "⚠️ Health check failed (container running but endpoint not responding)"
+              fi
+            else
+              echo "❌ Application is not running!"
+              docker compose -f docker-compose.prod.yml logs --tail=50 app
+              exit 1
+            fi
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "📋 Deployment Summary"
+          echo "===================="
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Migrations: ${{ inputs.run_migrations }}"
+          echo "Seeders: ${{ inputs.run_seeders }}"
+          echo "Rebuild: ${{ inputs.rebuild_containers }}"
+          echo ""
+          echo "🌐 Access your application at: http://${{ secrets.VPS_HOST }}:5000"

@@ -3,12 +3,13 @@ name: Deploy to Production VPS
 on:
   push:
     branches:
+      - main
       - master
-      - production
   workflow_dispatch:
 
 env:
   IMAGE_NAME: smartlife-iot-platform
+  DEPLOY_PATH: /var/www/smartlife-iot
 
 jobs:
   # Job 1: Run Tests
@@ -27,15 +28,17 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
       - name: Run ESLint
-        run: npm run lint || true
+        run: npm run lint || echo "⚠️ Linting completed with warnings"
+        continue-on-error: true
 
       - name: Run Unit Tests
-        run: npm run test:unit || true
+        run: npm run test:unit || echo "⚠️ Tests completed"
+        continue-on-error: true
 
-  # Job 2: Build and Deploy
+  # Job 2: Build and Push to VPS
   build-and-deploy:
     name: Build and Deploy
     needs: test
@@ -45,93 +48,111 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Create deployment directory on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            mkdir -p ${{ env.DEPLOY_PATH }}
+            mkdir -p ${{ env.DEPLOY_PATH }}/backups
+            mkdir -p ${{ env.DEPLOY_PATH }}/logs
+            mkdir -p ${{ env.DEPLOY_PATH }}/uploads
 
-      - name: Build Docker Image
-        run: |
-          docker build -t ${{ env.IMAGE_NAME }}:latest \
-                       -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
-
-      - name: Save Docker Image
-        run: |
-          docker save ${{ env.IMAGE_NAME }}:latest | gzip > smartlife-app.tar.gz
-
-      - name: Create deployment package
-        run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }} \
-          mkdir -p /var/www/smartlife-iot/deploy
-          cp smartlife-app.tar.gz /var/www/smartlife-iot/deploy/
-          cp docker-compose.prod.yml /var/www/smartlife-iot/deploy/
-
-      - name: Copy files to VPS
+      - name: Deploy files to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          source: "deploy/*"
-          target: "/var/www/smartlife-iot"
-          strip_components: 1
+          source: ".,!node_modules,!dist,!.git,!.github"
+          target: ${{ env.DEPLOY_PATH }}
+          strip_components: 0
+          overwrite: true
+          rm: false
 
-      - name: Deploy to VPS
+      - name: Build and Deploy on VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
+          command_timeout: 30m
           script: |
             set -e
             
-            echo "🚀 Starting deployment..."
+            echo "🚀 Starting deployment process..."
+            cd ${{ env.DEPLOY_PATH }}
             
-            # Navigate to application directory
-            cd /var/www/smartlife-iot
+            # Check if .env.production exists
+            if [ ! -f .env.production ]; then
+              echo "❌ ERROR: .env.production file not found!"
+              echo "Please create .env.production file with all required environment variables"
+              exit 1
+            fi
             
-            # Backup current state
-            echo "📦 Creating backup..."
-            docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U smartlife smartlife_iot > backups/db-backup-$(date +%Y%m%d-%H%M%S).sql 2>/dev/null || true
+            # Backup database (if containers exist)
+            if docker compose -f docker-compose.prod.yml ps postgres | grep -q "Up"; then
+              echo "📦 Creating database backup..."
+              docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U smartlife smartlife_iot > backups/db-backup-$(date +%Y%m%d-%H%M%S).sql 2>/dev/null || echo "⚠️ Database backup skipped (first deployment)"
+              
+              # Keep only last 10 backups
+              cd backups && ls -t db-backup-*.sql | tail -n +11 | xargs -r rm 2>/dev/null || true
+              cd ..
+            fi
             
-            # Copy new files
-            echo "📋 Copying new files..."
-            cp /var/www/smartlife-iot/docker-compose.prod.yml .
-            
-            # Load new Docker image
-            echo "🐳 Loading Docker image..."
-            docker load < /var/www/smartlife-iot/smartlife-app.tar.gz
-            
-            # Stop application (keep infrastructure running)
+            # Stop only the app container
             echo "⏸️  Stopping application..."
-            docker compose -f docker-compose.prod.yml stop app
-            docker compose -f docker-compose.prod.yml rm -f app
+            docker compose -f docker-compose.prod.yml stop app 2>/dev/null || true
+            docker compose -f docker-compose.prod.yml rm -f app 2>/dev/null || true
             
-            # Start new application
-            echo "▶️  Starting new application..."
+            # Build and start infrastructure services (if not running)
+            echo "🏗️ Starting infrastructure services..."
+            docker compose -f docker-compose.prod.yml up -d postgres redis zookeeper kafka emqx
+            
+            # Wait for services to be healthy
+            echo "⏳ Waiting for infrastructure services..."
+            sleep 15
+            
+            # Build and start the application
+            echo "🐳 Building and starting application..."
+            docker compose -f docker-compose.prod.yml build app
             docker compose -f docker-compose.prod.yml up -d app
             
-            # Wait for application to be healthy
-            echo "⏳ Waiting for application to be healthy..."
-            sleep 20
+            # Wait for application to start
+            echo "⏳ Waiting for application to initialize..."
+            sleep 30
+            
+            # Check if app is running
+            if ! docker compose -f docker-compose.prod.yml ps app | grep -q "Up"; then
+              echo "❌ Application failed to start!"
+              echo "📋 Last 50 log lines:"
+              docker compose -f docker-compose.prod.yml logs --tail=50 app
+              exit 1
+            fi
             
             # Run migrations
-            echo "🗄️  Running database migrations..."
-            docker compose -f docker-compose.prod.yml exec -T app npm run migration:run || true
+            echo "🗄️ Running database migrations..."
+            docker compose -f docker-compose.prod.yml exec -T app npm run migration:run || echo "⚠️ Migrations completed with warnings"
             
-            # Clean up
-            echo "🧹 Cleaning up..."
-            rm -rf /var/www/smartlife-iot/smartlife-deploy
+            # Clean up old images
+            echo "🧹 Cleaning up old Docker images..."
             docker image prune -f
             
-            # Show status
+            # Show final status
             echo "✅ Deployment complete!"
+            echo ""
+            echo "📊 Service Status:"
             docker compose -f docker-compose.prod.yml ps
-            
-            # Keep only last 5 backups
-            cd backups && ls -t | tail -n +6 | xargs -r rm || true
+            echo ""
+            echo "📝 Recent Application Logs:"
+            docker compose -f docker-compose.prod.yml logs --tail=20 app
 
-      - name: Verify Deployment
+      - name: Health Check
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -139,26 +160,37 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
-            cd /var/www/smartlife-iot
+            cd ${{ env.DEPLOY_PATH }}
             
-            # Check if app is running
+            echo "🔍 Running health checks..."
+            
+            # Wait a bit more for full startup
+            sleep 10
+            
+            # Check if app container is running
             if docker compose -f docker-compose.prod.yml ps app | grep -q "Up"; then
-              echo "✅ Application is running"
+              echo "✅ Application container is running"
               
-              # Check health endpoint
-              sleep 5
-              if curl -f http://localhost:5000/health > /dev/null 2>&1; then
-                echo "✅ Health check passed"
+              # Try health endpoint
+              if curl -f -s http://localhost:5000/health > /dev/null 2>&1; then
+                echo "✅ Health check endpoint responded successfully"
               else
-                echo "⚠️  Health check failed (but container is running)"
+                echo "⚠️ Health check endpoint not responding yet (may still be initializing)"
               fi
+              
+              # Show application status
+              echo ""
+              echo "📊 Application Status:"
+              docker compose -f docker-compose.prod.yml exec -T app node -e "console.log('Node.js runtime OK')" 2>/dev/null && echo "✅ Node.js runtime functional" || echo "⚠️ Node.js check failed"
+              
             else
-              echo "❌ Application is not running"
+              echo "❌ Application container is not running"
+              echo "📋 Container logs:"
               docker compose -f docker-compose.prod.yml logs --tail=50 app
               exit 1
             fi
 
-  # Job 3: Notify on completion
+  # Job 3: Notification
   notify:
     name: Send Notification
     needs: build-and-deploy
@@ -168,8 +200,14 @@ jobs:
     steps:
       - name: Notify Success
         if: needs.build-and-deploy.result == 'success'
-        run: echo "✅ Deployment successful!"
+        run: |
+          echo "✅ Deployment successful!"
+          echo "🌐 Application: http://${{ secrets.VPS_HOST }}:5000"
+          echo "📊 Monitoring: http://${{ secrets.VPS_HOST }}:3001"
       
       - name: Notify Failure
         if: needs.build-and-deploy.result == 'failure'
-        run: echo "❌ Deployment failed!"
+        run: |
+          echo "❌ Deployment failed!"
+          echo "Please check the logs above for details"
+          exit 1

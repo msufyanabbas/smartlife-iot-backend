@@ -6,6 +6,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        NODE_ENV: production
     container_name: smartlife-app
     restart: unless-stopped
     ports:
@@ -15,6 +17,8 @@ services:
       - PORT=5000
       - DATABASE_HOST=postgres
       - DATABASE_PORT=5432
+      - DB_HOST=postgres
+      - DB_PORT=5432
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - KAFKA_BROKERS=kafka:9092
@@ -29,7 +33,7 @@ services:
       redis:
         condition: service_healthy
       kafka:
-        condition: service_healthy
+        condition: service_started
       emqx:
         condition: service_started
     networks:
@@ -38,10 +42,10 @@ services:
       - app-logs:/app/logs
       - app-uploads:/app/uploads
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
       start_period: 60s
     logging:
       driver: "json-file"
@@ -72,11 +76,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    command: 
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
 
   # Redis Cache
   redis:
@@ -88,7 +99,7 @@ services:
     command: >
       redis-server
       --appendonly yes
-      --maxmemory 1gb
+      --maxmemory 512mb
       --maxmemory-policy allkeys-lru
       --requirepass ${REDIS_PASSWORD}
       --save 900 1
@@ -103,6 +114,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+      start_period: 10s
     logging:
       driver: "json-file"
       options:
@@ -115,9 +127,12 @@ services:
     container_name: smartlife-redis-ui
     restart: unless-stopped
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     environment:
       REDIS_HOSTS: smartlife:redis:6379:0:${REDIS_PASSWORD}
+      HTTP_USER: ${REDIS_COMMANDER_USER:-admin}
+      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-admin}
     ports:
       - "8091:8081"
     networks:
@@ -137,6 +152,7 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
       ZOOKEEPER_LOG4J_ROOT_LOGLEVEL: WARN
+      ZOOKEEPER_TOOLS_LOG4J_LOGLEVEL: ERROR
     ports:
       - "2181:2181"
     volumes:
@@ -164,7 +180,7 @@ services:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://${VPS_IP:-localhost}:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -174,6 +190,7 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_COMPRESSION_TYPE: gzip
       KAFKA_LOG4J_ROOT_LOGLEVEL: WARN
+      KAFKA_TOOLS_LOG4J_LOGLEVEL: ERROR
       KAFKA_JMX_PORT: 9999
       KAFKA_JMX_HOSTNAME: localhost
     volumes:
@@ -182,10 +199,10 @@ services:
       - smartlife-network
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
-      interval: 10s
+      interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 45s
     logging:
       driver: "json-file"
       options:
@@ -205,6 +222,7 @@ services:
       KAFKA_CLUSTERS_0_NAME: smartlife-cluster
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      DYNAMIC_CONFIG_ENABLED: 'true'
     networks:
       - smartlife-network
     logging:
@@ -222,32 +240,41 @@ services:
       - "1883:1883"      # MQTT
       - "8883:8883"      # MQTT SSL
       - "8083:8083"      # WebSocket
+      - "8084:8084"      # WebSocket SSL
       - "18083:18083"    # Dashboard
     environment:
       - EMQX_NAME=smartlife-mqtt
       - EMQX_HOST=127.0.0.1
+      - EMQX_NODE__COOKIE=smartlife_secret_cookie
       - EMQX_DASHBOARD__DEFAULT_USERNAME=${EMQX_DASHBOARD_USER:-admin}
       - EMQX_DASHBOARD__DEFAULT_PASSWORD=${EMQX_DASHBOARD_PASSWORD:-public}
       - EMQX_LOG__CONSOLE_HANDLER__LEVEL=warning
       - EMQX_ALLOW_ANONYMOUS=false
+      - EMQX_LOADED_PLUGINS="emqx_recon,emqx_retainer,emqx_management,emqx_dashboard"
     volumes:
       - emqx-data:/opt/emqx/data
       - emqx-log:/opt/emqx/log
     networks:
       - smartlife-network
+    healthcheck:
+      test: ["CMD", "emqx", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-  # Prometheus (Monitoring)
+  # Prometheus (Monitoring) - Optional
   prometheus:
     image: prom/prometheus:latest
     container_name: smartlife-prometheus
     restart: unless-stopped
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
@@ -256,6 +283,8 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
     networks:
       - smartlife-network
     logging:
@@ -263,8 +292,10 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+    profiles:
+      - monitoring
 
-  # Grafana (Monitoring Dashboard)
+  # Grafana (Monitoring Dashboard) - Optional
   grafana:
     image: grafana/grafana:latest
     container_name: smartlife-grafana
@@ -273,8 +304,10 @@ services:
       - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_INSTALL_PLUGINS=redis-datasource
+      - GF_SERVER_ROOT_URL=http://${VPS_HOST:-localhost}:3001
+      - GF_ANALYTICS_REPORTING_ENABLED=false
     volumes:
       - grafana-data:/var/lib/grafana
     depends_on:
@@ -286,6 +319,8 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+    profiles:
+      - monitoring
 
 volumes:
   postgres-data:

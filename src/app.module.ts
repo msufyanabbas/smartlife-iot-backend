@@ -15,6 +15,7 @@ import { configModules } from './config';
 import { CustomThrottlerGuard } from '@common/guards/throttle.guard';
 import { APP_GUARD } from '@nestjs/core';
 import { AppDataSource } from './database/data-source';
+import { AppController } from './app.controller';
 
 @Module({
   imports: [
@@ -74,7 +75,7 @@ import { AppDataSource } from './database/data-source';
     // Feature Modules
     ...featureModules,
   ],
-  controllers: [],
+  controllers: [AppController],
   providers: [
     {
       provide: APP_GUARD,

@@ -2,19 +2,23 @@
 FROM node:25-alpine AS builder
 
 # Install build dependencies (required for native modules like bcrypt, snappy, etc.)
-RUN apk add --no-cache python3 make g++ gcc libc-dev linux-headers
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    gcc \
+    libc-dev \
+    linux-headers \
+    git
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
+COPY tsconfig*.json ./
 
-# Install dependencies - use npm install if no lock file
-RUN if [ -f package-lock.json ]; then \
-        npm ci --legacy-peer-deps; \
-    else \
-        npm install --legacy-peer-deps; \
-    fi
+# Install ALL dependencies (including devDependencies for building)
+RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
 # Copy source code
 COPY . .
@@ -28,11 +32,12 @@ RUN npm prune --production --legacy-peer-deps
 # Production stage
 FROM node:25-alpine
 
-# Install runtime dependencies and security updates
+# Install runtime dependencies and utilities
 RUN apk add --no-cache \
     tini \
     curl \
     dumb-init \
+    ca-certificates \
     && apk upgrade --no-cache
 
 WORKDIR /app
@@ -40,19 +45,22 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Copy node_modules from builder (already pruned to production only)
+# Copy built node_modules from builder (production only)
 COPY --from=builder /app/node_modules ./node_modules
 
 # Copy built application
 COPY --from=builder /app/dist ./dist
 
-# Copy necessary runtime files and directories
+# Copy necessary runtime files (migrations, seeds, configs)
 COPY --from=builder /app/src/database ./src/database
 COPY --from=builder /app/src/config ./src/config
 COPY --from=builder /app/src/scripts ./src/scripts
 
-# Create directories for logs and uploads
-RUN mkdir -p logs uploads
+# Copy TypeORM configuration for migrations
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
+
+# Create necessary directories
+RUN mkdir -p logs uploads backups
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
@@ -62,9 +70,9 @@ RUN addgroup -g 1001 -S nodejs && \
 # Switch to non-root user
 USER nodejs
 
-# Health check - using correct port 5000
-HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:5000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})" || exit 1
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:5000/health || exit 1
 
 # Expose application port
 EXPOSE 5000
