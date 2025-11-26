@@ -22,7 +22,7 @@ export default registerAs(
       logging: process.env.DB_LOGGING === 'true',
 
       // SSL connection options
-      ssl: sslEnabled ? { rejectUnauthorized: false } : false,
+      ssl: false,
 
       // Retry strategy for DB connection
       retryAttempts: parseInt(process.env.DB_RETRY_ATTEMPTS || '10', 10),
