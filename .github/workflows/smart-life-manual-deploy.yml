@@ -1,0 +1,59 @@
+name: Manual Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+      run_migrations:
+        description: 'Run database migrations'
+        required: true
+        default: true
+        type: boolean
+      run_seeders:
+        description: 'Run database seeders'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            cd /var/www/smartlife-iot
+            
+            # Rebuild and restart
+            docker-compose -f docker-compose.prod.yml up -d --build app
+            
+            # Run migrations if requested
+            if [ "${{ inputs.run_migrations }}" == "true" ]; then
+              echo "Running migrations..."
+              docker-compose -f docker-compose.prod.yml exec -T app npm run migration:run
+            fi
+            
+            # Run seeders if requested
+            if [ "${{ inputs.run_seeders }}" == "true" ]; then
+              echo "Running seeders..."
+              docker-compose -f docker-compose.prod.yml exec -T app npm run seed
+            fi
+            
+            echo "Deployment complete!"
+            docker-compose -f docker-compose.prod.yml ps
