@@ -40,20 +40,24 @@ jobs:
           script: |
             cd /var/www/smartlife-iot
             
+            # Pull latest code
+            git pull origin main || true
+            
             # Rebuild and restart
-            docker-compose -f docker-compose.prod.yml up -d --build app
+            docker compose -f docker-compose.prod.yml up -d --build app
             
             # Run migrations if requested
             if [ "${{ inputs.run_migrations }}" == "true" ]; then
               echo "Running migrations..."
-              docker-compose -f docker-compose.prod.yml exec -T app npm run migration:run
+              sleep 10
+              docker compose -f docker-compose.prod.yml exec -T app npm run migration:run
             fi
             
             # Run seeders if requested
             if [ "${{ inputs.run_seeders }}" == "true" ]; then
               echo "Running seeders..."
-              docker-compose -f docker-compose.prod.yml exec -T app npm run seed
+              docker compose -f docker-compose.prod.yml exec -T app npm run seed
             fi
             
             echo "Deployment complete!"
-            docker-compose -f docker-compose.prod.yml ps
+            docker compose -f docker-compose.prod.yml ps
