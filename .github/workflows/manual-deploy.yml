@@ -9,7 +9,7 @@ on:
         default: 'production'
         type: choice
         options:
-          - production
+          - master
           - staging
       run_migrations:
         description: 'Run database migrations'
