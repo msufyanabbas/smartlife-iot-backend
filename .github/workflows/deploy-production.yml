@@ -59,9 +59,9 @@ jobs:
 
       - name: Create deployment package
         run: |
-          mkdir -p deploy
-          cp smartlife-app.tar.gz deploy/
-          cp docker-compose.prod.yml deploy/
+          mkdir -p /var/www/smartlife-iot/deploy
+          cp smartlife-app.tar.gz /var/www/smartlife-iot/deploy/
+          cp docker-compose.prod.yml /var/www/smartlife-iot/deploy/
 
       - name: Copy files to VPS
         uses: appleboy/scp-action@v0.1.7
@@ -95,11 +95,11 @@ jobs:
             
             # Copy new files
             echo "📋 Copying new files..."
-            cp /tmp/smartlife-deploy/docker-compose.prod.yml .
+            cp /var/www/smartlife-iot/docker-compose.prod.yml .
             
             # Load new Docker image
             echo "🐳 Loading Docker image..."
-            docker load < /tmp/smartlife-deploy/smartlife-app.tar.gz
+            docker load < /var/www/smartlife-iot/smartlife-app.tar.gz
             
             # Stop application (keep infrastructure running)
             echo "⏸️  Stopping application..."
@@ -120,7 +120,7 @@ jobs:
             
             # Clean up
             echo "🧹 Cleaning up..."
-            rm -rf /tmp/smartlife-deploy
+            rm -rf /var/www/smartlife-iot/smartlife-deploy
             docker image prune -f
             
             # Show status
