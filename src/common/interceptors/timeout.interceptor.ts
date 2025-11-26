@@ -16,8 +16,8 @@ export class TimeoutInterceptor implements NestInterceptor {
   private readonly timeoutDuration: number;
 
   constructor(private configService: ConfigService) {
-    this.timeoutDuration =
-      this.configService.get<number>('REQUEST_TIMEOUT') || 30000; // Default 30 seconds
+    this.timeoutDuration = Number(this.configService.get('REQUEST_TIMEOUT')) || 30000;
+
   }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
