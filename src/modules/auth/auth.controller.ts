@@ -44,6 +44,7 @@ import {
 } from '@guards/oauth/oauth.guards';
 import { OAuthProviderEnum } from './entities/oauth-account.entity';
 import { randomBytes } from 'crypto';
+import { ExchangeCodeDto } from './dto/exchange-code.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -187,11 +188,35 @@ export class AuthController {
   }
 
   @Post('exchange-code')
+  @ApiOperation({ 
+    summary: 'Exchange session code for access tokens',
+    description: 'Exchanges a one-time session code received from OAuth callback for access and refresh tokens'
+  })
+  @ApiBody({ type: ExchangeCodeDto })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Returns access token, refresh token, and user information',
+    schema: {
+      example: {
+        accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        user: 'user-id-here',
+        profile: {
+          id: 'user-id',
+          email: 'user@example.com',
+          name: 'John Doe'
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 401, description: 'Invalid or expired code' })
   async exchangeCode(
-    @Body('code') code: string,
+    @Body() exchangeCodeDto: ExchangeCodeDto,
     @Ip() ipAddress: string,
     @Headers('user-agent') userAgent: string,
   ) {
+    const { code } = exchangeCodeDto;
+
     if (!code) {
       throw new UnauthorizedException('Code is required');
     }
@@ -225,7 +250,7 @@ export class AuthController {
       accessToken: sessionData.accessToken,
       refreshToken: sessionData.refreshToken,
       user: sessionData.userId,
-      profile: sessionData.profile
+      profile: sessionData.profile,
     };
   }
 
