@@ -4,20 +4,34 @@ global:
   external_labels:
     monitor: 'smartlife-iot'
 
+# Load alerting rules
+rule_files:
+  - '/etc/prometheus/alerts.yml'
+
+# Alert manager configuration (optional)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
 scrape_configs:
+  # Prometheus itself
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
 
+  # Your NestJS app (you need to implement /metrics endpoint)
   - job_name: 'nestjs-app'
     static_configs:
       - targets: ['app:5000']
     metrics_path: '/metrics'
-
-  - job_name: 'redis'
+    
+  # Docker containers metrics (requires cAdvisor)
+  - job_name: 'docker'
     static_configs:
-      - targets: ['redis:6379']
+      - targets: ['cadvisor:8080']
 
-  - job_name: 'postgres'
+  # Node exporter (system metrics)
+  - job_name: 'node'
     static_configs:
-      - targets: ['postgres:5432']
+      - targets: ['node-exporter:9100']

@@ -1,13 +1,9 @@
 version: '3.8'
 
 services:
-  # Main NestJS Application
+  # Main NestJS Application (using pre-built image)
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        NODE_ENV: production
+    image: ${SMARTLIFE_IMAGE:-msufyanabbas10/smartlife-iot-platform:latest}
     container_name: smartlife-app
     restart: unless-stopped
     ports:
@@ -209,7 +205,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Kafka UI (for monitoring Kafka)
+  # Kafka UI
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: smartlife-kafka-ui
@@ -275,6 +271,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
@@ -292,6 +289,44 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+    profiles:
+      - monitoring
+
+  # Add these services for real monitoring
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: smartlife-cadvisor
+    restart: unless-stopped
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - smartlife-network
+    profiles:
+      - monitoring
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: smartlife-node-exporter
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - "9100:9100"
+    networks:
+      - smartlife-network
     profiles:
       - monitoring
 

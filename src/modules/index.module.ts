@@ -11,6 +11,8 @@ export { ScheduleModule } from '@nestjs/schedule';
 export { ThrottlerModule } from '@nestjs/throttler';
 export { SeederModule } from '../database/seeds/seeder.module';
 export {AppModule} from '../app.module';
+export { HealthModule } from './health/health.module';
+export { MetricsModule } from './metrics/metrics.module';
 
 // ============================================
 // FEATURE MODULES (application modules)
@@ -93,6 +95,8 @@ import { SharingModule } from './sharing/sharing.module';
 import { ProtocolsModule } from './protocols/protocols.module';
 import { DeviceCommandsModule } from './device-commands/device-commands.module';
 import { AppModule } from '@/app.module';
+import { HealthModule } from './health/health.module';
+import { MetricsModule } from './metrics/metrics.module';
 
 // ============================================
 // FEATURE MODULES ARRAY (for spreading in app.module.ts)
@@ -104,6 +108,9 @@ export const featureModules = [
   ProfilesModule,
   TenantsModule,
   SeederModule,
+  MetricsModule,
+  HealthModule,
+  AppModule,
 
   // Device & IoT
   DevicesModule,

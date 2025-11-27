@@ -24,17 +24,19 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
 
   // ✅ CORS - Parse comma-separated origins
-  const corsOrigin = configService.get('CORS_ORIGIN');
-  const allowedOrigins = corsOrigin
-    ? corsOrigin.split(',').map((origin: string) => origin.trim())
-    : '*';
+  // const corsOrigin = configService.get('CORS_ORIGIN');
+  // const allowedOrigins = corsOrigin
+  //   ? corsOrigin.split(',').map((origin: string) => origin.trim())
+  //   : '*';
 
-  app.enableCors({
-    origin: allowedOrigins,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  });
+  // app.enableCors({
+  //   origin: allowedOrigins,
+  //   credentials: true,
+  //   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  //   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  // });
+
+  app.enableCors({origin: "*"})
 
   // Security - Disable helmet in development or configure it properly for Swagger
   const isDevelopment = configService.get('NODE_ENV') !== 'production';

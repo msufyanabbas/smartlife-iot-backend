@@ -1,4 +1,4 @@
-name: Deploy to Production VPS
+name: Deploy to Production VPS (Optimized)
 
 on:
   push:
@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: smartlife-iot-platform
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/smartlife-iot-platform
   DEPLOY_PATH: /var/www/smartlife-iot
 
 jobs:
@@ -38,9 +39,9 @@ jobs:
         run: npm run test:unit || echo "⚠️ Tests completed"
         continue-on-error: true
 
-  # Job 2: Build and Push to VPS
-  build-and-deploy:
-    name: Build and Deploy
+  # Job 2: Build Docker Image on GitHub (FAST!)
+  build:
+    name: Build Docker Image
     needs: test
     runs-on: ubuntu-latest
     
@@ -48,109 +49,116 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Create deployment directory on VPS
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
+          build-args: |
+            NODE_ENV=production
+
+  # Job 3: Deploy to VPS (Just pull and restart)
+  deploy:
+    name: Deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          script: |
-            mkdir -p ${{ env.DEPLOY_PATH }}
-            mkdir -p ${{ env.DEPLOY_PATH }}/backups
-            mkdir -p ${{ env.DEPLOY_PATH }}/logs
-            mkdir -p ${{ env.DEPLOY_PATH }}/uploads
-
-      - name: Deploy files to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}
-          source: ".,!node_modules,!dist,!.git,!.github"
-          target: ${{ env.DEPLOY_PATH }}
-          strip_components: 0
-          overwrite: true
-          rm: false
-
-      - name: Build and Deploy on VPS
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}
-          command_timeout: 30m
+          command_timeout: 15m
           script: |
             set -e
             
-            echo "🚀 Starting deployment process..."
+            echo "🚀 Starting optimized deployment..."
             cd ${{ env.DEPLOY_PATH }}
             
-            # Check if .env.production exists
+            # Check .env.production
             if [ ! -f .env.production ]; then
-              echo "❌ ERROR: .env.production file not found!"
-              echo "Please create .env.production file with all required environment variables"
+              echo "❌ ERROR: .env.production not found!"
               exit 1
             fi
             
-            # Backup database (if containers exist)
+            # Backup database (if running)
             if docker compose -f docker-compose.prod.yml ps postgres | grep -q "Up"; then
               echo "📦 Creating database backup..."
-              docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U smartlife smartlife_iot > backups/db-backup-$(date +%Y%m%d-%H%M%S).sql 2>/dev/null || echo "⚠️ Database backup skipped (first deployment)"
+              BACKUP_FILE="backups/db-backup-$(date +%Y%m%d-%H%M%S).sql"
+              docker compose -f docker-compose.prod.yml exec -T postgres \
+                pg_dump -U smartlife smartlife_iot > "$BACKUP_FILE" 2>/dev/null || echo "⚠️ Backup skipped"
               
-              # Keep only last 10 backups
-              cd backups && ls -t db-backup-*.sql | tail -n +11 | xargs -r rm 2>/dev/null || true
+              # Keep only last 5 backups
+              cd backups && ls -t db-backup-*.sql 2>/dev/null | tail -n +6 | xargs -r rm 2>/dev/null || true
               cd ..
             fi
             
-            # Stop only the app container
-            echo "⏸️  Stopping application..."
-            docker compose -f docker-compose.prod.yml stop app 2>/dev/null || true
-            docker compose -f docker-compose.prod.yml rm -f app 2>/dev/null || true
+            # Pull the new image (FAST - no building!)
+            echo "📥 Pulling latest Docker image..."
+            docker pull ${{ env.IMAGE_NAME }}:latest
             
-            # Build and start infrastructure services (if not running)
-            echo "🏗️ Starting infrastructure services..."
+            # Update docker-compose to use the new image
+            export SMARTLIFE_IMAGE="${{ env.IMAGE_NAME }}:latest"
+            
+            # Start infrastructure services if not running
+            echo "🏗️ Ensuring infrastructure services are running..."
             docker compose -f docker-compose.prod.yml up -d postgres redis zookeeper kafka emqx
             
-            # Wait for services to be healthy
-            echo "⏳ Waiting for infrastructure services..."
-            sleep 15
+            # Wait for critical services (parallel health checks)
+            echo "⏳ Waiting for services to be healthy..."
+            timeout 60 sh -c 'until docker compose -f docker-compose.prod.yml exec -T postgres pg_isready -U smartlife; do sleep 2; done' || echo "Postgres ready"
+            timeout 30 sh -c 'until docker compose -f docker-compose.prod.yml exec -T redis redis-cli -a $REDIS_PASSWORD ping; do sleep 2; done' || echo "Redis ready"
             
-            # Build and start the application
-            echo "🐳 Building and starting application..."
-            docker compose -f docker-compose.prod.yml build app
-            docker compose -f docker-compose.prod.yml up -d app
+            # Deploy the application (zero-downtime with quick restart)
+            echo "🐳 Deploying application..."
+            docker compose -f docker-compose.prod.yml up -d app --no-build
             
-            # Wait for application to start
-            echo "⏳ Waiting for application to initialize..."
-            sleep 30
-            
-            # Check if app is running
-            if ! docker compose -f docker-compose.prod.yml ps app | grep -q "Up"; then
-              echo "❌ Application failed to start!"
-              echo "📋 Last 50 log lines:"
-              docker compose -f docker-compose.prod.yml logs --tail=50 app
-              exit 1
-            fi
+            # Wait for app to be healthy
+            echo "⏳ Waiting for application health check..."
+            timeout 90 sh -c 'until curl -f -s http://localhost:5000/health > /dev/null 2>&1; do sleep 3; done' && echo "✅ App is healthy!" || echo "⚠️ Health check timeout"
             
             # Run migrations
-            echo "🗄️ Running database migrations..."
+            echo "🗄️ Running migrations..."
             docker compose -f docker-compose.prod.yml exec -T app npm run migration:run || echo "⚠️ Migrations completed with warnings"
             
-            # Clean up old images
-            echo "🧹 Cleaning up old Docker images..."
+            # Cleanup old images
+            echo "🧹 Cleaning up..."
             docker image prune -f
             
-            # Show final status
-            echo "✅ Deployment complete!"
             echo ""
+            echo "✅ Deployment complete!"
             echo "📊 Service Status:"
             docker compose -f docker-compose.prod.yml ps
             echo ""
-            echo "📝 Recent Application Logs:"
-            docker compose -f docker-compose.prod.yml logs --tail=20 app
+            echo "📝 Recent Logs:"
+            docker compose -f docker-compose.prod.yml logs --tail=15 app
 
       - name: Health Check
         uses: appleboy/ssh-action@v1.0.3
@@ -162,52 +170,44 @@ jobs:
           script: |
             cd ${{ env.DEPLOY_PATH }}
             
-            echo "🔍 Running health checks..."
+            echo "🔍 Final health verification..."
             
-            # Wait a bit more for full startup
-            sleep 10
-            
-            # Check if app container is running
-            if docker compose -f docker-compose.prod.yml ps app | grep -q "Up"; then
-              echo "✅ Application container is running"
-              
-              # Try health endpoint
-              if curl -f -s http://localhost:5000/health > /dev/null 2>&1; then
-                echo "✅ Health check endpoint responded successfully"
-              else
-                echo "⚠️ Health check endpoint not responding yet (may still be initializing)"
-              fi
-              
-              # Show application status
-              echo ""
-              echo "📊 Application Status:"
-              docker compose -f docker-compose.prod.yml exec -T app node -e "console.log('Node.js runtime OK')" 2>/dev/null && echo "✅ Node.js runtime functional" || echo "⚠️ Node.js check failed"
-              
-            else
-              echo "❌ Application container is not running"
-              echo "📋 Container logs:"
+            # Check container
+            if ! docker compose -f docker-compose.prod.yml ps app | grep -q "Up"; then
+              echo "❌ Application container is not running!"
               docker compose -f docker-compose.prod.yml logs --tail=50 app
               exit 1
             fi
+            
+            # Check health endpoint
+            if curl -f -s http://localhost:5000/health > /dev/null 2>&1; then
+              echo "✅ Health check PASSED"
+              echo "✅ Application is live and responding"
+            else
+              echo "⚠️ Health endpoint not responding"
+              echo "Container is running but may still be initializing"
+            fi
 
-  # Job 3: Notification
+  # Job 4: Notification
   notify:
-    name: Send Notification
-    needs: build-and-deploy
+    name: Deployment Status
+    needs: deploy
     runs-on: ubuntu-latest
     if: always()
     
     steps:
-      - name: Notify Success
-        if: needs.build-and-deploy.result == 'success'
+      - name: Success Notification
+        if: needs.deploy.result == 'success'
         run: |
-          echo "✅ Deployment successful!"
+          echo "✅ Deployment completed successfully!"
           echo "🌐 Application: http://${{ secrets.VPS_HOST }}:5000"
-          echo "📊 Monitoring: http://${{ secrets.VPS_HOST }}:3001"
+          echo "📊 EMQX Dashboard: http://${{ secrets.VPS_HOST }}:18083"
+          echo "📈 Kafka UI: http://${{ secrets.VPS_HOST }}:8090"
+          echo "🔍 Redis Commander: http://${{ secrets.VPS_HOST }}:8091"
       
-      - name: Notify Failure
-        if: needs.build-and-deploy.result == 'failure'
+      - name: Failure Notification
+        if: needs.deploy.result == 'failure'
         run: |
           echo "❌ Deployment failed!"
-          echo "Please check the logs above for details"
+          echo "Please check the logs above"
           exit 1

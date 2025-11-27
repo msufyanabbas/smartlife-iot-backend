@@ -1,0 +1,165 @@
+# monitoring/alerts.yml
+# Prometheus Alerting Rules for Smart Life IoT Platform
+
+groups:
+  - name: smartlife_critical_alerts
+    interval: 30s
+    rules:
+      # Application Health
+      - alert: ApplicationDown
+        expr: up{job="nestjs-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Smart Life application is down"
+          description: "The application has been down for more than 1 minute"
+
+      # Database Alerts
+      - alert: DatabaseDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL database is down"
+          description: "Database connection failed for more than 1 minute"
+
+      - alert: DatabaseConnectionsHigh
+        expr: smartlife_database_connections > 150
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connections are high"
+          description: "Current connections: {{ $value }}. Max is 200."
+
+      # Redis Alerts
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis cache is down"
+          description: "Redis has been unreachable for more than 1 minute"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage is high"
+          description: "Redis is using {{ $value | humanizePercentage }} of available memory"
+
+      # HTTP Performance
+      - alert: HighErrorRate
+        expr: rate(smartlife_http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High HTTP error rate detected"
+          description: "Error rate is {{ $value }} errors/sec on {{ $labels.path }}"
+
+      - alert: SlowResponseTime
+        expr: histogram_quantile(0.95, rate(smartlife_http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow API response times"
+          description: "95th percentile response time is {{ $value }}s"
+
+      # MQTT Alerts
+      - alert: MQTTMessageBacklog
+        expr: rate(smartlife_mqtt_messages_total[5m]) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High MQTT message rate"
+          description: "MQTT is processing {{ $value }} messages/sec"
+
+      # Kafka Alerts
+      - alert: KafkaConsumerLag
+        expr: kafka_consumer_lag > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka consumer lag is high"
+          description: "Consumer lag: {{ $value }} messages"
+
+      # Memory Alerts
+      - alert: HighMemoryUsage
+        expr: (nodejs_heap_size_used_bytes / nodejs_heap_size_total_bytes) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage detected"
+          description: "Heap usage is at {{ $value | humanizePercentage }}"
+
+      - alert: MemoryLeak
+        expr: rate(nodejs_heap_size_used_bytes[30m]) > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Potential memory leak detected"
+          description: "Memory usage has been steadily increasing"
+
+      # Device Alerts
+      - alert: DeviceConnectionsDrop
+        expr: rate(smartlife_device_connections[5m]) < -10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rapid device disconnections"
+          description: "{{ $value }} devices disconnecting per second"
+
+      # Disk Space
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space is critically low"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining"
+
+      # CPU Alerts
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}%"
+
+  - name: smartlife_business_alerts
+    interval: 1m
+    rules:
+      # Authentication
+      - alert: HighAuthFailureRate
+        expr: rate(smartlife_auth_attempts_total{status="failed"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High authentication failure rate"
+          description: "{{ $value }} failed auth attempts per second"
+
+      # Telemetry Processing
+      - alert: TelemetryProcessingSlow
+        expr: histogram_quantile(0.95, rate(smartlife_telemetry_processing_duration_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow telemetry processing"
+          description: "95th percentile processing time: {{ $value }}s"

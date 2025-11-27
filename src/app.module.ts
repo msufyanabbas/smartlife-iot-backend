@@ -13,12 +13,15 @@ import { ConfigService } from '@modules/index.service';
 import * as redisStore from 'cache-manager-redis-store';
 import { configModules } from './config';
 import { CustomThrottlerGuard } from '@common/guards/throttle.guard';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppDataSource } from './database/data-source';
 import { AppController } from './app.controller';
+import { MetricsInterceptor } from './common/interceptors';
+import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 
 @Module({
   imports: [
+    PrometheusModule.register(),
     ThrottlerModule.forRoot([
       {
         ttl: 60000, // Time window in milliseconds (1 minute)
@@ -81,6 +84,10 @@ import { AppController } from './app.controller';
       provide: APP_GUARD,
       useClass: CustomThrottlerGuard,
     },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: MetricsInterceptor
+    }
   ],
 })
 export class AppModule {}
