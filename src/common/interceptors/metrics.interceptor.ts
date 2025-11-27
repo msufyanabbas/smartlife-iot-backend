@@ -1,4 +1,3 @@
-// src/common/interceptors/metrics.interceptor.ts
 import {
   Injectable,
   NestInterceptor,
@@ -15,13 +14,19 @@ export class MetricsInterceptor implements NestInterceptor {
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest();
-    const response = context.switchToHttp().getResponse();
     const startTime = Date.now();
 
     return next.handle().pipe(
       tap({
         next: () => {
-          const duration = (Date.now() - startTime) / 1000; // Convert to seconds
+          const response = context.switchToHttp().getResponse();
+          const duration = (Date.now() - startTime) / 1000;
+          
+          // Don't track metrics for the /metrics endpoint itself
+          if (request.path === '/metrics') {
+            return;
+          }
+
           this.metricsService.trackHttpRequest(
             request.method,
             request.route?.path || request.path,
@@ -30,11 +35,18 @@ export class MetricsInterceptor implements NestInterceptor {
           );
         },
         error: (error) => {
+          const response = context.switchToHttp().getResponse();
           const duration = (Date.now() - startTime) / 1000;
+          
+          // Don't track metrics for the /metrics endpoint itself
+          if (request.path === '/metrics') {
+            return;
+          }
+
           this.metricsService.trackHttpRequest(
             request.method,
             request.route?.path || request.path,
-            error.status || 500,
+            error.status || response.statusCode || 500,
             duration,
           );
         },

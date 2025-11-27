@@ -17,6 +17,7 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppDataSource } from './database/data-source';
 import { AppController } from './app.controller';
 import { MetricsInterceptor } from './common/interceptors';
+import { MetricsModule } from './modules/metrics/metrics.module'; // ← ADD THIS
 
 @Module({
   imports: [
@@ -72,6 +73,9 @@ import { MetricsInterceptor } from './common/interceptors';
 
     // Scheduler
     ScheduleModule.forRoot(),
+
+    // Metrics Module ← ADD THIS
+    MetricsModule,
 
     // Feature Modules
     ...featureModules,
