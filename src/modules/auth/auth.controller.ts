@@ -249,8 +249,8 @@ export class AuthController {
     return {
       accessToken: sessionData.accessToken,
       refreshToken: sessionData.refreshToken,
-      user: sessionData.userId,
-      profile: sessionData.profile,
+      userId: sessionData.userId,
+      user: sessionData.profile,
     };
   }
 
