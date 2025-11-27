@@ -13,6 +13,8 @@ import {
   Res,
   Delete,
   Param,
+  Inject,
+  UnauthorizedException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -33,17 +35,21 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
+import type { redisService } from '@/lib/redis/redis.service';
+import { Logger } from '@nestjs/common';
 import {
   GoogleAuthGuard,
   GitHubAuthGuard,
   AppleAuthGuard,
 } from '@guards/oauth/oauth.guards';
 import { OAuthProviderEnum } from './entities/oauth-account.entity';
+import { randomBytes } from 'crypto';
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  private readonly logger = new Logger(AuthController.name);
+  constructor(private readonly authService: AuthService, @Inject('REDIS_SERVICE') private readonly redis: typeof redisService) {}
 
   @SkipThrottle()
   @Post('register')
@@ -158,12 +164,69 @@ export class AuthController {
       userAgent,
     );
 
-    // Redirect to frontend with tokens
-    // const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    const frontendUrl = 'http://localhost:3000';
-    const redirectUrl = `${frontendUrl}/overview?token=${authResponse.accessToken}&refreshToken=${authResponse.refreshToken}`;
+     // Generate a secure one-time session code
+    const sessionCode = randomBytes(32).toString('hex');
 
-    return res.redirect(frontendUrl);
+     const sessionData = {
+        accessToken: authResponse.accessToken,
+        refreshToken: authResponse.refreshToken,
+        profile,
+        userId: authResponse.user.id,
+        expiresAt: Date.now() + 60000,
+      };
+
+      await this.redis.set(
+        `oauth:session:${sessionCode}`,
+        JSON.stringify(sessionData),
+        60, // 60 seconds TTL
+      );
+
+    // Redirect to frontend with tokens
+    const frontendUrl = process.env.FRONTEND_URL;
+    return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
+  }
+
+  @Post('exchange-code')
+  async exchangeCode(
+    @Body('code') code: string,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    if (!code) {
+      throw new UnauthorizedException('Code is required');
+    }
+
+    // Get tokens from Redis
+    const sessionKey = `oauth:session:${code}`;
+    const data = await this.redis.get(sessionKey);
+
+    if (!data) {
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+
+    const sessionData = JSON.parse(data);
+
+    // Verify not expired (extra safety check)
+    if (Date.now() > sessionData.expiresAt) {
+      await this.redis.del(sessionKey);
+      throw new UnauthorizedException('Code has expired');
+    }
+
+    // Delete the code immediately (one-time use)
+    await this.redis.del(sessionKey);
+
+    // Log the token exchange for security audit
+    this.logger.log(
+      `Token exchange for user ${sessionData.userId} from ${ipAddress}`,
+    );
+
+    // Return tokens to client
+    return {
+      accessToken: sessionData.accessToken,
+      refreshToken: sessionData.refreshToken,
+      user: sessionData.userId,
+      profile: sessionData.profile
+    };
   }
 
   @Get('github')
@@ -196,7 +259,7 @@ export class AuthController {
     );
 
     // Redirect to frontend with tokens
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = process.env.FRONTEND_URL;
     const redirectUrl = `${frontendUrl}/auth/callback?token=${authResponse.accessToken}&refreshToken=${authResponse.refreshToken}`;
 
     return res.redirect(redirectUrl);
@@ -232,7 +295,7 @@ export class AuthController {
     );
 
     // Redirect to frontend with tokens
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = process.env.FRONTEND_URL;
     const redirectUrl = `${frontendUrl}/auth/callback?token=${authResponse.accessToken}&refreshToken=${authResponse.refreshToken}`;
 
     return res.redirect(redirectUrl);

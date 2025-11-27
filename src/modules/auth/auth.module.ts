@@ -16,6 +16,7 @@ import { GoogleStrategy } from './strategies/oauth/google.strategy';
 import { GitHubStrategy } from './strategies/oauth/github.strategy';
 import { AppleStrategy } from './strategies/oauth/apple.strategy';
 import { TokenBlacklist } from '../index.entities';
+import { redisService } from '@/lib/redis/redis.service';
 
 @Module({
   imports: [
@@ -49,6 +50,10 @@ import { TokenBlacklist } from '../index.entities';
     GoogleStrategy,
     GitHubStrategy,
     AppleStrategy,
+    {
+      provide: 'REDIS_SERVICE',
+      useValue: redisService 
+    }
   ],
   exports: [AuthService, JwtModule, PassportModule],
 })
