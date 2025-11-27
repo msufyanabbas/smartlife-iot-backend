@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
-import { CustomMetricsService } from '@modules/metrics/custom-metrics.service';
+import { CustomMetricsService } from '../../modules/metrics/custom-metrics.service';
 
 @Injectable()
 export class MetricsInterceptor implements NestInterceptor {

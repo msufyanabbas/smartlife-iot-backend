@@ -17,11 +17,9 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppDataSource } from './database/data-source';
 import { AppController } from './app.controller';
 import { MetricsInterceptor } from './common/interceptors';
-import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 
 @Module({
   imports: [
-    PrometheusModule.register(),
     ThrottlerModule.forRoot([
       {
         ttl: 60000, // Time window in milliseconds (1 minute)

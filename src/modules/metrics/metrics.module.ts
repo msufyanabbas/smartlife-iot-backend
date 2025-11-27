@@ -1,7 +1,8 @@
 // src/metrics/metrics.module.ts
 import { Module } from '@nestjs/common';
 import { PrometheusModule } from '@willsoto/nestjs-prometheus';
-import { MetricsController } from './metrics.controller';
+import { CustomMetricsService } from './custom-metrics.service';
+import { metricsProviders } from './metrics.provider';
 
 @Module({
   imports: [
@@ -15,6 +16,8 @@ import { MetricsController } from './metrics.controller';
       },
     }),
   ],
-  controllers: [MetricsController],
+  // No controllers needed!
+  providers: [CustomMetricsService, ...metricsProviders],
+  exports: [CustomMetricsService],
 })
 export class MetricsModule {}
