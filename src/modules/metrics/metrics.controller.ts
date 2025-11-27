@@ -1,16 +1,18 @@
 import { Controller, Get, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { PrometheusController } from '@willsoto/nestjs-prometheus';
+import { register } from 'prom-client';
 
 @ApiTags('Metrics')
 @Controller()
-export class MetricsController extends PrometheusController {
+export class MetricsController {
   @Get('metrics')
-  @ApiExcludeEndpoint() // Optional: exclude from Swagger docs since it's not JSON
+  @ApiExcludeEndpoint()
   @ApiOperation({ summary: 'Get Prometheus metrics' })
   @ApiResponse({ status: 200, description: 'Returns metrics in Prometheus format' })
-  async index(@Res() response: Response) {
-    return super.index(response);
+  async getMetrics(@Res() res: Response) {
+    res.setHeader('Content-Type', register.contentType);
+    const metrics = await register.metrics();
+    res.send(metrics);
   }
 }
