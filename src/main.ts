@@ -16,41 +16,49 @@ import {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
+    cors: true, // Enable CORS at creation time
   });
 
   const telemetryConsumer = app.get(TelemetryConsumer);
   await telemetryConsumer.start();
 
   const configService = app.get(ConfigService);
-
-  // ✅ CORS - Parse comma-separated origins
-  // const corsOrigin = configService.get('CORS_ORIGIN');
-  // const allowedOrigins = corsOrigin
-  //   ? corsOrigin.split(',').map((origin: string) => origin.trim())
-  //   : '*';
-
-  // app.enableCors({
-  //   origin: allowedOrigins,
-  //   credentials: true,
-  //   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  //   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  // });
-
-  app.enableCors({origin: "*"})
-
-  // Security - Disable helmet in development or configure it properly for Swagger
   const isDevelopment = configService.get('NODE_ENV') !== 'production';
 
+  // ✅ CORS Configuration - MUST come before helmet
+  app.enableCors({
+    origin: true, // This allows all origins
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'Accept',
+      'Origin',
+      'Access-Control-Request-Method',
+      'Access-Control-Request-Headers',
+    ],
+    exposedHeaders: [
+      'Content-Length',
+      'Content-Type',
+      'X-Total-Count',
+    ],
+    maxAge: 86400, // 24 hours
+  });
+
+  // Security - Configure helmet AFTER CORS
   if (isDevelopment) {
     // In development, use minimal helmet configuration
     app.use(
       helmet({
         contentSecurityPolicy: false,
         crossOriginEmbedderPolicy: false,
+        crossOriginResourcePolicy: false,
       }),
     );
   } else {
-    // In production, use stricter helmet configuration
+    // In production, configure helmet to work with CORS
     app.use(
       helmet({
         contentSecurityPolicy: {
@@ -59,7 +67,7 @@ async function bootstrap() {
             styleSrc: [`'self'`, `'unsafe-inline'`, 'https:'],
             scriptSrc: [`'self'`, `'unsafe-inline'`, `'unsafe-eval'`, 'https:'],
             imgSrc: [`'self'`, 'data:', 'https:', 'validator.swagger.io'],
-            connectSrc: [`'self'`, 'https:'],
+            connectSrc: [`'self'`, 'https:', 'wss:', 'ws:'],
             fontSrc: [`'self'`, 'https:', 'data:'],
             objectSrc: [`'none'`],
             mediaSrc: [`'self'`],
@@ -67,6 +75,7 @@ async function bootstrap() {
           },
         },
         crossOriginEmbedderPolicy: false,
+        crossOriginResourcePolicy: { policy: 'cross-origin' },
       }),
     );
   }
@@ -101,6 +110,7 @@ async function bootstrap() {
     .setDescription('Enterprise IoT Management Platform API Documentation')
     .setVersion('1.0')
     .addBearerAuth()
+    .addServer(configService.get('BACKEND_URL') || 'http://localhost:5000', 'API Server')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
@@ -116,8 +126,11 @@ async function bootstrap() {
   const port = configService.get('PORT', 5000);
   await app.listen(port, '0.0.0.0');
 
-  console.log(`🚀 Application is running on: ${process.env.BACKEND_URL}`);
-  console.log(`📚 API Documentation: ${process.env.BACKEND_URL}/docs`);
+  const backendUrl = configService.get('BACKEND_URL') || `http://localhost:${port}`;
+  console.log(`🚀 Application is running on: ${backendUrl}`);
+  console.log(`📚 API Documentation: ${backendUrl}/docs`);
+  console.log(`🌍 CORS: Enabled for all origins`);
+  console.log(`🔒 Environment: ${isDevelopment ? 'Development' : 'Production'}`);
 }
 
 bootstrap();
