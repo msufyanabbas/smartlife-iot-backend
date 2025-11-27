@@ -10,7 +10,6 @@ export { EventEmitterModule } from '@nestjs/event-emitter';
 export { ScheduleModule } from '@nestjs/schedule';
 export { ThrottlerModule } from '@nestjs/throttler';
 export { SeederModule } from '../database/seeds/seeder.module';
-export {AppModule} from '../app.module';
 export { HealthModule } from './health/health.module';
 export { MetricsModule } from './metrics/metrics.module';
 
@@ -94,7 +93,6 @@ import { SolutionTemplatesModule } from './solution-templates/solution-templates
 import { SharingModule } from './sharing/sharing.module';
 import { ProtocolsModule } from './protocols/protocols.module';
 import { DeviceCommandsModule } from './device-commands/device-commands.module';
-import { AppModule } from '@/app.module';
 import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
 
@@ -110,7 +108,6 @@ export const featureModules = [
   SeederModule,
   MetricsModule,
   HealthModule,
-  AppModule,
 
   // Device & IoT
   DevicesModule,
