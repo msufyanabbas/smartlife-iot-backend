@@ -8,6 +8,16 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 
+interface ErrorResponse {
+  success: boolean;
+  statusCode: number;
+  message: string | string[];
+  error: string;
+  timestamp: string;
+  path: string;
+  stack?: string;
+}
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
@@ -26,10 +36,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const exceptionResponse = exception.getResponse();
 
       if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
-        message = (exceptionResponse as any).message || message;
-        error = (exceptionResponse as any).error || error;
+        const responseObj = exceptionResponse as Record<string, any>;
+        message = responseObj.message || message;
+        error = responseObj.error || error;
       } else {
-        message = exceptionResponse;
+        message = String(exceptionResponse);
       }
     } else if (exception instanceof Error) {
       message = exception.message;
@@ -42,14 +53,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
       exception instanceof Error ? exception.stack : '',
     );
 
-    // Send response
-    response.status(status).json({
+    // Build error response
+    const errorResponse: ErrorResponse = {
       success: false,
       statusCode: status,
       message,
       error,
       timestamp: new Date().toISOString(),
       path: request.url,
-    });
+    };
+
+    // Include stack trace in development mode
+    if (process.env.NODE_ENV === 'development' && exception instanceof Error) {
+      errorResponse.stack = exception.stack;
+    }
+
+    // Send response
+    response.status(status).json(errorResponse);
   }
 }
