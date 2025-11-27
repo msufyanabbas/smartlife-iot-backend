@@ -1,33 +1,42 @@
-// src/health/indicators/redis.health.ts
+// src/modules/health/indicators/redis.health.ts
 import { Injectable } from '@nestjs/common';
 import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
-import { InjectRedis } from '@nestjs-modules/ioredis';
+import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
 @Injectable()
 export class RedisHealthIndicator extends HealthIndicator {
-  constructor(@InjectRedis() private readonly redis: Redis) {
+  private redis: Redis;
+
+  constructor(private configService: ConfigService) {
     super();
+    
+    // Create dedicated Redis connection for health checks
+    this.redis = new Redis({
+      host: this.configService.get('REDIS_HOST'),
+      port: this.configService.get('REDIS_PORT'),
+      password: this.configService.get('REDIS_PASSWORD'),
+      db: this.configService.get('REDIS_DB', 0),
+      lazyConnect: true,
+      retryStrategy: () => null, // Don't retry for health checks
+    });
   }
 
   async isHealthy(key: string): Promise<HealthIndicatorResult> {
     try {
+      // Ensure connection
+      if (this.redis.status !== 'ready') {
+        await this.redis.connect();
+      }
+
       const startTime = Date.now();
       const pong = await this.redis.ping();
       const responseTime = Date.now() - startTime;
 
       if (pong === 'PONG') {
-        // Get Redis info
-        const info = await this.redis.info('server');
-        const memory = await this.redis.info('memory');
-        
-        const uptime = this.extractValue(info, 'uptime_in_seconds');
-        const usedMemory = this.extractValue(memory, 'used_memory_human');
-
         return this.getStatus(key, true, {
           responseTime: `${responseTime}ms`,
-          uptime: `${uptime}s`,
-          memory: usedMemory,
+          status: 'connected',
         });
       }
 
@@ -41,8 +50,11 @@ export class RedisHealthIndicator extends HealthIndicator {
     }
   }
 
-  private extractValue(info: string, key: string): string {
-    const match = info.match(new RegExp(`${key}:(.+)`));
-    return match ? match[1].trim() : 'unknown';
+  async onModuleDestroy() {
+    try {
+      await this.redis.quit();
+    } catch (error) {
+      // Ignore errors on cleanup
+    }
   }
 }
