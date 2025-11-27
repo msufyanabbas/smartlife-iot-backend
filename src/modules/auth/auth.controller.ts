@@ -50,7 +50,10 @@ import { ExchangeCodeDto } from './dto/exchange-code.dto';
 @Controller('auth')
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
-  constructor(private readonly authService: AuthService, @Inject('REDIS_SERVICE') private readonly redis: typeof redisService) {}
+  constructor(
+    private readonly authService: AuthService,
+    @Inject('REDIS_SERVICE') private readonly redis: typeof redisService,
+  ) {}
 
   @SkipThrottle()
   @Post('register')
@@ -148,9 +151,8 @@ export class AuthController {
   @UseGuards(GoogleAuthGuard)
   @ApiOperation({ summary: 'Google OAuth callback' })
   @ApiResponse({
-    status: 200,
-    description: 'Successfully authenticated with Google',
-    type: AuthResponseDto,
+    status: 302,
+    description: 'Redirects to frontend with session code',
   })
   async googleAuthCallback(
     @Req() req: Request,
@@ -158,17 +160,18 @@ export class AuthController {
     @Headers('user-agent') userAgent: string,
     @Res() res: Response,
   ) {
-    const profile = req.user as any;
-    const authResponse = await this.authService.googleLogin(
-      profile,
-      ipAddress,
-      userAgent,
-    );
+    try {
+      const profile = req.user as any;
+      const authResponse = await this.authService.googleLogin(
+        profile,
+        ipAddress,
+        userAgent,
+      );
 
-     // Generate a secure one-time session code
-    const sessionCode = randomBytes(32).toString('hex');
+      // Generate a secure one-time session code
+      const sessionCode = randomBytes(32).toString('hex');
 
-     const sessionData = {
+      const sessionData = {
         accessToken: authResponse.accessToken,
         refreshToken: authResponse.refreshToken,
         profile,
@@ -182,32 +185,150 @@ export class AuthController {
         60, // 60 seconds TTL
       );
 
-    // Redirect to frontend with tokens
-    const frontendUrl = process.env.FRONTEND_URL;
-    return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
+      // Redirect to frontend with session code
+      const frontendUrl = process.env.FRONTEND_URL;
+      return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
+    } catch (error) {
+      this.logger.error('Google auth callback error:', error);
+      const frontendUrl = process.env.FRONTEND_URL;
+      return res.redirect(`${frontendUrl}/login?error=auth_failed`);
+    }
+  }
+
+  @Get('github')
+  @UseGuards(GitHubAuthGuard)
+  @ApiOperation({ summary: 'Initiate GitHub OAuth login' })
+  @ApiResponse({ status: 302, description: 'Redirects to GitHub OAuth' })
+  async githubAuth() {
+    // Guard redirects to GitHub
+  }
+
+  @Get('github/callback')
+  @UseGuards(GitHubAuthGuard)
+  @ApiOperation({ summary: 'GitHub OAuth callback' })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirects to frontend with session code',
+  })
+  async githubAuthCallback(
+    @Req() req: Request,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+    @Res() res: Response,
+  ) {
+    try {
+      const profile = req.user as any;
+      const authResponse = await this.authService.githubLogin(
+        profile,
+        ipAddress,
+        userAgent,
+      );
+
+      // Generate a secure one-time session code
+      const sessionCode = randomBytes(32).toString('hex');
+
+      const sessionData = {
+        accessToken: authResponse.accessToken,
+        refreshToken: authResponse.refreshToken,
+        profile,
+        userId: authResponse.user.id,
+        expiresAt: Date.now() + 60000,
+      };
+
+      await this.redis.set(
+        `oauth:session:${sessionCode}`,
+        JSON.stringify(sessionData),
+        60, // 60 seconds TTL
+      );
+
+      // Redirect to frontend with session code
+      const frontendUrl = process.env.FRONTEND_URL;
+      return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
+    } catch (error) {
+      this.logger.error('GitHub auth callback error:', error);
+      const frontendUrl = process.env.FRONTEND_URL;
+      return res.redirect(`${frontendUrl}/login?error=auth_failed`);
+    }
+  }
+
+  @Get('apple')
+  @UseGuards(AppleAuthGuard)
+  @ApiOperation({ summary: 'Initiate Apple OAuth login' })
+  @ApiResponse({ status: 302, description: 'Redirects to Apple OAuth' })
+  async appleAuth() {
+    // Guard redirects to Apple
+  }
+
+  @Post('apple/callback')
+  @UseGuards(AppleAuthGuard)
+  @ApiOperation({ summary: 'Apple OAuth callback' })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirects to frontend with session code',
+  })
+  async appleAuthCallback(
+    @Req() req: Request,
+    @Ip() ipAddress: string,
+    @Headers('user-agent') userAgent: string,
+    @Res() res: Response,
+  ) {
+    try {
+      const profile = req.user as any;
+      const authResponse = await this.authService.appleLogin(
+        profile,
+        ipAddress,
+        userAgent,
+      );
+
+      // Generate a secure one-time session code
+      const sessionCode = randomBytes(32).toString('hex');
+
+      const sessionData = {
+        accessToken: authResponse.accessToken,
+        refreshToken: authResponse.refreshToken,
+        profile,
+        userId: authResponse.user.id,
+        expiresAt: Date.now() + 60000,
+      };
+
+      await this.redis.set(
+        `oauth:session:${sessionCode}`,
+        JSON.stringify(sessionData),
+        60, // 60 seconds TTL
+      );
+
+      // Redirect to frontend with session code
+      const frontendUrl = process.env.FRONTEND_URL;
+      return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
+    } catch (error) {
+      this.logger.error('Apple auth callback error:', error);
+      const frontendUrl = process.env.FRONTEND_URL;
+      return res.redirect(`${frontendUrl}/login?error=auth_failed`);
+    }
   }
 
   @Post('exchange-code')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Exchange session code for access tokens',
-    description: 'Exchanges a one-time session code received from OAuth callback for access and refresh tokens'
+    description:
+      'Exchanges a one-time session code received from OAuth callback for access and refresh tokens',
   })
   @ApiBody({ type: ExchangeCodeDto })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Returns access token, refresh token, and user information',
     schema: {
       example: {
         accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
         refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-        user: 'user-id-here',
-        profile: {
+        userId: 'user-id-here',
+        user: {
           id: 'user-id',
           email: 'user@example.com',
-          name: 'John Doe'
-        }
-      }
-    }
+          name: 'John Doe',
+        },
+      },
+    },
   })
   @ApiResponse({ status: 401, description: 'Invalid or expired code' })
   async exchangeCode(
@@ -252,78 +373,6 @@ export class AuthController {
       userId: sessionData.userId,
       user: sessionData.profile,
     };
-  }
-
-  @Get('github')
-  @UseGuards(GitHubAuthGuard)
-  @ApiOperation({ summary: 'Initiate GitHub OAuth login' })
-  @ApiResponse({ status: 302, description: 'Redirects to GitHub OAuth' })
-  async githubAuth() {
-    // Guard redirects to GitHub
-  }
-
-  @Get('github/callback')
-  @UseGuards(GitHubAuthGuard)
-  @ApiOperation({ summary: 'GitHub OAuth callback' })
-  @ApiResponse({
-    status: 200,
-    description: 'Successfully authenticated with GitHub',
-    type: AuthResponseDto,
-  })
-  async githubAuthCallback(
-    @Req() req: Request,
-    @Ip() ipAddress: string,
-    @Headers('user-agent') userAgent: string,
-    @Res() res: Response,
-  ) {
-    const profile = req.user as any;
-    const authResponse = await this.authService.githubLogin(
-      profile,
-      ipAddress,
-      userAgent,
-    );
-
-    // Redirect to frontend with tokens
-    const frontendUrl = process.env.FRONTEND_URL;
-    const redirectUrl = `${frontendUrl}/auth/callback?token=${authResponse.accessToken}&refreshToken=${authResponse.refreshToken}`;
-
-    return res.redirect(redirectUrl);
-  }
-
-  @Get('apple')
-  @UseGuards(AppleAuthGuard)
-  @ApiOperation({ summary: 'Initiate Apple OAuth login' })
-  @ApiResponse({ status: 302, description: 'Redirects to Apple OAuth' })
-  async appleAuth() {
-    // Guard redirects to Apple
-  }
-
-  @Post('apple/callback')
-  @UseGuards(AppleAuthGuard)
-  @ApiOperation({ summary: 'Apple OAuth callback' })
-  @ApiResponse({
-    status: 200,
-    description: 'Successfully authenticated with Apple',
-    type: AuthResponseDto,
-  })
-  async appleAuthCallback(
-    @Req() req: Request,
-    @Ip() ipAddress: string,
-    @Headers('user-agent') userAgent: string,
-    @Res() res: Response,
-  ) {
-    const profile = req.user as any;
-    const authResponse = await this.authService.appleLogin(
-      profile,
-      ipAddress,
-      userAgent,
-    );
-
-    // Redirect to frontend with tokens
-    const frontendUrl = process.env.FRONTEND_URL;
-    const redirectUrl = `${frontendUrl}/auth/callback?token=${authResponse.accessToken}&refreshToken=${authResponse.refreshToken}`;
-
-    return res.redirect(redirectUrl);
   }
 
   // ============ OAuth Account Management ============
