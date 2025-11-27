@@ -10,4 +10,11 @@ export class AppController {
       uptime: process.uptime(),
     };
   }
+  @Get('ping')
+  ping() {
+    return {
+      status: 'pong',
+      timestamp: new Date().toISOString(),
+    };
+  }
 }
