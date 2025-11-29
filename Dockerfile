@@ -42,8 +42,9 @@ COPY src ./src
 # Build the application
 RUN npm run build
 
-# Remove dev dependencies
-RUN npm prune --production --legacy-peer-deps
+# Remove dev dependencies but keep ts-node and tsconfig-paths for seeds
+RUN npm prune --production --legacy-peer-deps && \
+    npm install --legacy-peer-deps ts-node tsconfig-paths
 
 # ===========================
 # Production Stage
@@ -63,7 +64,7 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Copy production node_modules from builder
+# Copy production node_modules from builder (includes ts-node & tsconfig-paths)
 COPY --from=builder /app/node_modules ./node_modules
 
 # Copy built application
