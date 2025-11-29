@@ -27,6 +27,8 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import { FindAllTemplatesDto } from './dto/find-all-templates.dto';
+import { filter } from 'compression';
 
 @ApiTags('solution-templates')
 @Controller('solution-templates')
@@ -51,19 +53,9 @@ export class SolutionTemplatesController {
   @ApiOperation({ summary: 'Get all solution templates' })
   @ApiResponse({ status: 200, description: 'List of templates' })
   findAll(
-    @Query('category') category?: string,
-    @Query('search') search?: string,
-    @Query('isPremium') isPremium?: boolean,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+   @Query() filters: FindAllTemplatesDto
   ) {
-    return this.solutionTemplatesService.findAll({
-      category,
-      search,
-      isPremium,
-      page,
-      limit,
-    });
+    return this.solutionTemplatesService.findAll(filters);
   }
 
   @Get('categories')

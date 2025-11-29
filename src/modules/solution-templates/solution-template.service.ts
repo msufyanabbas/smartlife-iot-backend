@@ -15,6 +15,7 @@ import {
 } from './dto/create-solution-template.dto';
 import { UpdateSolutionTemplateDto } from './dto/update-solution-template.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { FindAllTemplatesDto } from './dto/find-all-templates.dto';
 
 @Injectable()
 export class SolutionTemplatesService {
@@ -39,13 +40,7 @@ export class SolutionTemplatesService {
     return await this.templateRepository.save(template);
   }
 
-  async findAll(filters?: {
-    category?: string;
-    search?: string;
-    isPremium?: boolean;
-    page?: number;
-    limit?: number;
-  }) {
+  async findAll(filters?: FindAllTemplatesDto) {
     const { page = 1, limit = 12, search, category, isPremium } = filters || {};
     const skip = (page - 1) * limit;
 
