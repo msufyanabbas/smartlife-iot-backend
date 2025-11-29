@@ -70,10 +70,8 @@ COPY --from=builder /app/node_modules ./node_modules
 # Copy built application
 COPY --from=builder /app/dist ./dist
 
-# Copy runtime files (migrations, seeds, configs)
-COPY src/database ./src/database
-COPY src/config ./src/config
-COPY src/scripts ./src/scripts
+# Copy ALL source files for ts-node scripts
+COPY src ./src
 COPY tsconfig.json ./tsconfig.json
 
 # Create necessary directories
