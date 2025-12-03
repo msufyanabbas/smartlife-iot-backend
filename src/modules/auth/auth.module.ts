@@ -18,6 +18,7 @@ import { AppleStrategy } from './strategies/oauth/apple.strategy';
 import { TokenBlacklist } from '../index.entities';
 import { redisService } from '@/lib/redis/redis.service';
 import { SubscriptionsModule } from '../index.module';
+import { SessionService } from './session/session.service';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { SubscriptionsModule } from '../index.module';
   controllers: [AuthController],
   providers: [
     AuthService,
+    SessionService,
     JwtStrategy,
     JwtRefreshStrategy,
     LocalStrategy,

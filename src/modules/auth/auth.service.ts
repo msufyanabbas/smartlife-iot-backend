@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
+import { v4 as uuidv4 } from 'uuid'; // 🆕 Import for generating session IDs
 import { User } from '../users/entities/user.entity';
 import { RefreshToken } from './entities/refresh-token.entity';
 import {
@@ -27,12 +28,16 @@ import { GitHubProfile } from './strategies/oauth/github.strategy';
 import { AppleProfile } from './strategies/oauth/apple.strategy';
 import { TokenBlacklist } from './entities/token-blacklist.entity';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { SubscriptionPlan } from '../subscriptions/entities/subscription.entity';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { SessionService } from './session/session.service'; // 🆕 Import session service
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
   constructor(
+    private readonly subscriptionsService: SubscriptionsService,
     @InjectRepository(User)
     private userRepository: Repository<User>,
     @InjectRepository(RefreshToken)
@@ -44,6 +49,7 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private mailService: MailService,
+    private sessionService: SessionService, // 🆕 Inject session service
   ) {}
 
   /**
@@ -90,6 +96,18 @@ export class AuthService {
     });
 
     await this.userRepository.save(user);
+
+    try {
+      await this.subscriptionsService.create(user.id, {
+        plan: SubscriptionPlan.FREE,
+      });
+      this.logger.log(`FREE subscription created for user: ${email}`);
+    } catch (error) {
+      this.logger.error(
+        `Failed to create subscription for ${email}:`,
+        error,
+      );
+    }
 
     this.logger.log(`New user registered: ${email}`);
 
@@ -198,7 +216,8 @@ export class AuthService {
   }
 
   /**
-   * Login user
+   * Login user (LOCAL AUTH)
+   * 🆕 Now includes session management
    */
   async login(
     loginDto: LoginDto,
@@ -227,8 +246,8 @@ export class AuthService {
 
     this.logger.log(`User logged in: ${email}`);
 
-    // Generate tokens with device info
-    return this.generateAuthResponse(user, ipAddress, userAgent);
+    // 🆕 Generate tokens with session management
+    return this.generateAuthResponse(user, ipAddress, userAgent, 'local');
   }
 
   /**
@@ -258,6 +277,7 @@ export class AuthService {
 
   /**
    * OAuth Login - Google
+   * 🆕 Now includes session management
    */
   async googleLogin(
     profile: GoogleProfile,
@@ -281,6 +301,7 @@ export class AuthService {
 
   /**
    * OAuth Login - GitHub
+   * 🆕 Now includes session management
    */
   async githubLogin(
     profile: GitHubProfile,
@@ -304,6 +325,7 @@ export class AuthService {
 
   /**
    * OAuth Login - Apple
+   * 🆕 Now includes session management
    */
   async appleLogin(
     profile: AppleProfile,
@@ -327,6 +349,7 @@ export class AuthService {
 
   /**
    * Handle OAuth login/registration
+   * 🆕 Updated to pass login method for session tracking
    */
   private async handleOAuthLogin(
     provider: OAuthProviderEnum,
@@ -398,6 +421,19 @@ export class AuthService {
         });
         await this.userRepository.save(user);
 
+        // 🆕 CREATE FREE SUBSCRIPTION FOR NEW OAUTH USER
+        try {
+          await this.subscriptionsService.create(user.id, {
+            plan: SubscriptionPlan.FREE,
+          });
+          this.logger.log(`FREE subscription created for OAuth user: ${email}`);
+        } catch (error) {
+          this.logger.error(
+            `Failed to create subscription for OAuth user ${email}:`,
+            error,
+          );
+        }
+
         // Create OAuth account
         oauthAccount = this.oauthAccountRepository.create({
           userId: user.id,
@@ -435,8 +471,8 @@ export class AuthService {
 
     this.logger.log(`User logged in via OAuth: ${email} (${provider})`);
 
-    // Generate tokens
-    return this.generateAuthResponse(user, ipAddress, userAgent);
+    // 🆕 Generate tokens with session management
+    return this.generateAuthResponse(user, ipAddress, userAgent, provider.toLowerCase() as any);
   }
 
   /**
@@ -537,6 +573,7 @@ export class AuthService {
 
   /**
    * Refresh access token
+   * 🆕 Now extends session expiry
    */
   async refreshTokens(
     refreshTokenString: string,
@@ -567,14 +604,22 @@ export class AuthService {
     refreshToken.isRevoked = true;
     await this.refreshTokenRepository.save(refreshToken);
 
+    // 🆕 Extend existing session instead of creating new one
+    await this.sessionService.extendSession(user.id);
+
     this.logger.log(`Tokens refreshed for user: ${user.email}`);
 
-    // Generate new tokens
-    return this.generateAuthResponse(user, ipAddress, userAgent);
+    // Get existing session to maintain sessionId
+    const existingSession = await this.sessionService.getSession(user.id);
+    const sessionId = existingSession?.sessionId || uuidv4(); // Fallback to new if somehow missing
+
+    // Generate new tokens with SAME session ID
+    return this.generateAuthResponseWithSessionId(user, sessionId, ipAddress, userAgent);
   }
 
   /**
    * Logout user (revoke refresh token)
+   * 🆕 Now also deletes session
    */
   async logout(refreshTokenString: string, accessToken: string): Promise<void> {
     const refreshToken = await this.refreshTokenRepository.findOne({
@@ -590,12 +635,16 @@ export class AuthService {
         await this.blacklistToken(accessToken, refreshToken.userId);
       }
 
-      this.logger.log(`User logged out, token revoked`);
+      // 🆕 Delete session from Redis
+      await this.sessionService.deleteSession(refreshToken.userId);
+
+      this.logger.log(`User logged out, token revoked, session deleted`);
     }
   }
 
   /**
    * Logout from all devices (revoke all refresh tokens)
+   * 🆕 Now also deletes session
    */
   async logoutAll(userId: string, accessToken: string): Promise<void> {
     await this.refreshTokenRepository.update(
@@ -607,6 +656,9 @@ export class AuthService {
     if (accessToken) {
       await this.blacklistToken(accessToken, userId);
     }
+
+    // 🆕 Delete session from Redis
+    await this.sessionService.deleteSession(userId);
 
     this.logger.log(`User logged out from all devices: ${userId}`);
   }
@@ -719,7 +771,7 @@ export class AuthService {
     user.passwordResetExpires = undefined;
     await this.userRepository.save(user);
 
-    // Revoke all refresh tokens
+    // Revoke all refresh tokens and delete session
     await this.logoutAll(user.id, token);
 
     this.logger.log(`Password reset for user: ${user.email}`);
@@ -755,17 +807,41 @@ export class AuthService {
     user.password = newPassword; // Will be hashed by @BeforeUpdate hook
     await this.userRepository.save(user);
 
-    // Revoke all refresh tokens to force re-login
+    // Revoke all refresh tokens to force re-login and delete session
     await this.logoutAll(userId, '');
 
     this.logger.log(`Password changed for user: ${user.email}`);
   }
 
   /**
-   * Generate authentication response with tokens
+   * 🆕 Generate authentication response with NEW session
    */
   private async generateAuthResponse(
     user: User,
+    ipAddress?: string,
+    userAgent?: string,
+    loginMethod?: 'local' | 'google' | 'github' | 'apple',
+  ): Promise<AuthResponseDto> {
+    // Generate NEW session ID
+    const sessionId = uuidv4();
+
+    // Create session in Redis (this will overwrite any existing session)
+    await this.sessionService.createSession(user.id, sessionId, {
+      ipAddress,
+      userAgent,
+      loginMethod,
+    });
+
+    return this.generateAuthResponseWithSessionId(user, sessionId, ipAddress, userAgent);
+  }
+
+  /**
+   * 🆕 Generate authentication response with SPECIFIC session ID
+   * (Used for refresh token flow to maintain session)
+   */
+  private async generateAuthResponseWithSessionId(
+    user: User,
+    sessionId: string,
     ipAddress?: string,
     userAgent?: string,
   ): Promise<AuthResponseDto> {
@@ -773,6 +849,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      sessionId, // 🆕 Include session ID in JWT
     };
 
     // Generate access token
@@ -892,6 +969,13 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  /**
+   * 🆕 Get current session info
+   */
+  async getSessionInfo(userId: string): Promise<any> {
+    return this.sessionService.getSession(userId);
   }
 
   // Cleanup cron - runs every hour

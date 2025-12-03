@@ -588,4 +588,36 @@ export class AuthController {
       },
     };
   }
+
+  /**
+   * Get current session information
+   */
+  @Get('session/info')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current session information' })
+  @ApiResponse({
+    status: 200,
+    description: 'Current session information',
+    schema: {
+      example: {
+        sessionId: 'abc123...',
+        userId: 'user-id',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        ipAddress: '192.168.1.1',
+        userAgent: 'Mozilla/5.0...',
+        loginMethod: 'google',
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async getSessionInfo(@CurrentUser() user: User) {
+    const session = await this.authService.getSessionInfo(user.id);
+    
+    if (!session) {
+      throw new UnauthorizedException('No active session found');
+    }
+
+    return session;
+  }
 }
