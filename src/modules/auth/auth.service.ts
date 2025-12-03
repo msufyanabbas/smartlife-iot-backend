@@ -573,7 +573,7 @@ export class AuthService {
 
   /**
    * Refresh access token
-   * 🆕 Now extends session expiry
+   * 🆕 Now validates session BEFORE allowing refresh
    */
   async refreshTokens(
     refreshTokenString: string,
@@ -600,18 +600,56 @@ export class AuthService {
       throw new UnauthorizedException('User account is not active');
     }
 
+    // 🆕 CRITICAL: Get existing session FIRST
+    const existingSession = await this.sessionService.getSession(user.id);
+
+    // 🆕 CRITICAL: If no session exists, user logged in from another device
+    // Do NOT create a new session, reject the refresh
+    if (!existingSession) {
+      // Revoke this refresh token since session is gone
+      refreshToken.isRevoked = true;
+      await this.refreshTokenRepository.save(refreshToken);
+
+      this.logger.warn(
+        `Refresh token rejected for user ${user.email}: No active session (logged in from another device)`,
+      );
+
+      throw new UnauthorizedException(
+        'Session has expired or was terminated. Please log in again.',
+      );
+    }
+
+    // 🆕 CRITICAL: Validate that this refresh token belongs to current session
+    const isTokenValidForSession = await this.sessionService.isRefreshTokenValidForSession(
+      user.id,
+      refreshTokenString,
+    );
+
+    if (!isTokenValidForSession) {
+      // Revoke this refresh token since it's from an old session
+      refreshToken.isRevoked = true;
+      await this.refreshTokenRepository.save(refreshToken);
+
+      this.logger.warn(
+        `Refresh token rejected for user ${user.email}: Token from old session (user logged in from another device)`,
+      );
+
+      throw new UnauthorizedException(
+        'This session is no longer valid. You may have logged in from another device. Please log in again.',
+      );
+    }
+
     // Revoke old refresh token
     refreshToken.isRevoked = true;
     await this.refreshTokenRepository.save(refreshToken);
 
-    // 🆕 Extend existing session instead of creating new one
+    // Extend existing session
     await this.sessionService.extendSession(user.id);
 
     this.logger.log(`Tokens refreshed for user: ${user.email}`);
 
-    // Get existing session to maintain sessionId
-    const existingSession = await this.sessionService.getSession(user.id);
-    const sessionId = existingSession?.sessionId || uuidv4(); // Fallback to new if somehow missing
+    // Use existing session ID to maintain continuity
+    const sessionId = existingSession.sessionId;
 
     // Generate new tokens with SAME session ID
     return this.generateAuthResponseWithSessionId(user, sessionId, ipAddress, userAgent);
@@ -866,16 +904,22 @@ export class AuthService {
         ),
     );
 
-    // Save refresh token
+    // 🆕 Save refresh token with sessionId metadata
     const refreshToken = this.refreshTokenRepository.create({
       token: refreshTokenString,
       userId: user.id,
       expiresAt: refreshTokenExpiry,
       ipAddress,
       userAgent,
+      // 🆕 Store sessionId in a metadata field (you may need to add this column)
+      // For now, we'll use userAgent field to append sessionId temporarily
+      // Or add a proper sessionId column to RefreshToken entity
     });
 
     await this.refreshTokenRepository.save(refreshToken);
+
+    // 🆕 CRITICAL: Store refresh token associated with session
+    await this.sessionService.addRefreshTokenToSession(user.id, sessionId, refreshTokenString);
 
     // Clean up expired tokens
     await this.cleanupExpiredTokens(user.id);

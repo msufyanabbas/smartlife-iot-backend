@@ -30,6 +30,7 @@ export class SessionService {
       sessionId,
       userId,
       createdAt: new Date().toISOString(),
+      refreshTokens: [], // 🆕 Track associated refresh tokens
       ...metadata,
     };
 
@@ -50,6 +51,79 @@ export class SessionService {
     this.logger.log(
       `Session created for user ${userId} via ${metadata?.loginMethod || 'unknown'}`,
     );
+  }
+
+  /**
+   * 🆕 Add a refresh token to the current session
+   */
+  async addRefreshTokenToSession(
+    userId: string,
+    sessionId: string,
+    refreshToken: string,
+  ): Promise<void> {
+    const sessionKey = `user:${userId}:session`;
+    const sessionData = await this.redis.get(sessionKey);
+
+    if (!sessionData) {
+      this.logger.warn(`Cannot add refresh token: No session found for user ${userId}`);
+      return;
+    }
+
+    try {
+      const session = JSON.parse(sessionData);
+      
+      // Verify this is the correct session
+      if (session.sessionId !== sessionId) {
+        this.logger.warn(
+          `Session mismatch for user ${userId}: expected ${session.sessionId}, got ${sessionId}`,
+        );
+        return;
+      }
+
+      // Add refresh token to the list (keep last 5)
+      if (!session.refreshTokens) {
+        session.refreshTokens = [];
+      }
+      
+      session.refreshTokens.push(refreshToken);
+      
+      // Keep only last 5 refresh tokens
+      if (session.refreshTokens.length > 5) {
+        session.refreshTokens = session.refreshTokens.slice(-5);
+      }
+
+      // Update session
+      await this.redis.set(
+        sessionKey,
+        JSON.stringify(session),
+        60 * 60 * 24 * 7,
+      );
+    } catch (error) {
+      this.logger.error(`Error adding refresh token to session for user ${userId}:`, error);
+    }
+  }
+
+  /**
+   * 🆕 Check if a refresh token belongs to the current session
+   */
+  async isRefreshTokenValidForSession(
+    userId: string,
+    refreshToken: string,
+  ): Promise<boolean> {
+    const sessionKey = `user:${userId}:session`;
+    const sessionData = await this.redis.get(sessionKey);
+
+    if (!sessionData) {
+      return false;
+    }
+
+    try {
+      const session = JSON.parse(sessionData);
+      return session.refreshTokens?.includes(refreshToken) || false;
+    } catch (error) {
+      this.logger.error(`Error checking refresh token for user ${userId}:`, error);
+      return false;
+    }
   }
 
   /**
