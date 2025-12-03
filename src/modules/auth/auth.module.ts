@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -17,6 +17,7 @@ import { GitHubStrategy } from './strategies/oauth/github.strategy';
 import { AppleStrategy } from './strategies/oauth/apple.strategy';
 import { TokenBlacklist } from '../index.entities';
 import { redisService } from '@/lib/redis/redis.service';
+import { SubscriptionsModule } from '../index.module';
 
 @Module({
   imports: [
@@ -35,11 +36,12 @@ import { redisService } from '@/lib/redis/redis.service';
           configService.get<string>('JWT_SECRET') ||
           'your-super-secret-jwt-key-change-this-in-production',
         signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRATION', '15m') as any, // 👈 cast
+          expiresIn: configService.get<string>('JWT_EXPIRATION', '7d') as any, // 👈 cast
         },
       }),
     }),
     MailModule,
+    forwardRef(() => SubscriptionsModule)
   ],
   controllers: [AuthController],
   providers: [

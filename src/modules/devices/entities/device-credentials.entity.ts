@@ -1,5 +1,5 @@
 // src/modules/devices/entities/device-credentials.entity.ts
-// Device Credentials - Like ThingsBoard's credentials system
+// Device Credentials 
 
 import {
   Entity,

@@ -31,6 +31,18 @@
     "prod:migrate": "docker-compose -f docker-compose.prod.yml exec app npm run migration:run",
     "prod:seed": "docker-compose -f docker-compose.prod.yml exec app npm run seed",
     "prod:shell": "docker-compose -f docker-compose.prod.yml exec app sh",
+    "docker:local": "docker-compose -f docker-compose.local.yml up",
+    "docker:local:build": "docker-compose -f docker-compose.local.yml up --build",
+    "docker:local:down": "docker-compose -f docker-compose.local.yml down",
+    "docker:local:down:volumes": "docker-compose -f docker-compose.local.yml down -v",
+    "docker:local:logs": "docker-compose -f docker-compose.local.yml logs -f",
+    "docker:local:logs:app": "docker-compose -f docker-compose.local.yml logs -f app",
+    "docker:local:restart": "docker-compose -f docker-compose.local.yml restart app",
+    "docker:local:ps": "docker-compose -f docker-compose.local.yml ps",
+    "docker:local:shell": "docker-compose -f docker-compose.local.yml exec app sh",
+    "local:migrate": "docker-compose -f docker-compose.local.yml exec app npm run migration:run",
+    "local:seed": "docker-compose -f docker-compose.local.yml exec app npm run seed",
+    "local:db:reset": "docker-compose -f docker-compose.local.yml exec app npm run db:reset",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
@@ -136,6 +148,8 @@
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.20.0"
+    "typescript-eslint": "^8.20.0",
+    "webpack": "^5.103.0",
+    "webpack-cli": "^6.0.1"
   }
 }
