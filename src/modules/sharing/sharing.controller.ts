@@ -10,6 +10,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -25,6 +26,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import { TrackUsage, UsageTrackingInterceptor } from '@/common/interceptors/usage-tracking.interceptor';
 
 @ApiTags('sharing')
 @Controller('sharing')
@@ -35,6 +37,8 @@ export class SharingController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new share' })
+  @UseInterceptors(UsageTrackingInterceptor)
+  @TrackUsage({ resource: 'users', incrementBy: 1 })
   @ApiResponse({ status: 201, description: 'Share created successfully' })
   create(@CurrentUser() user: User, @Body() createShareDto: CreateShareDto) {
     return this.sharingService.create(user.id, createShareDto);

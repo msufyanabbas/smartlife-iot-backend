@@ -22,19 +22,30 @@ import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { User } from '../users/entities/user.entity';
+import { User, UserRole } from '../users/entities/user.entity';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { DeviceStatus } from './entities/device.entity';
+import { Roles } from '@/common/decorators/roles.decorator';
+import { RequireSubscription } from '@/common/decorators/subscription.decorator';
+import { SubscriptionPlan } from '../subscriptions/entities/subscription.entity';
+import { RolesGuard } from '@/common/guards';
+import { SubscriptionGuard } from '@/common/guards/subscription.guard';
+import { FeatureLimitGuard } from '@/common/guards/feature-limit.guard';
+import { AccessControl } from '@/common/decorators/access-control.decorator';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
 @ApiTags('devices')
 @Controller('devices')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class DevicesController {
-  constructor(private readonly devicesService: DevicesService) {}
+  constructor(private readonly devicesService: DevicesService, private readonly subscriptionsService: SubscriptionsService) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionGuard, FeatureLimitGuard)
+  @Roles(UserRole.USER, UserRole.TENANT_ADMIN)
+  @RequireSubscription(SubscriptionPlan.STARTER, SubscriptionPlan.PROFESSIONAL, SubscriptionPlan.ENTERPRISE)
   @ApiOperation({ summary: 'Create a new device' })
   @ApiResponse({ status: 201, description: 'Device created successfully' })
   @ApiResponse({ status: 409, description: 'Device already exists' })
@@ -43,6 +54,7 @@ export class DevicesController {
   }
 
   @Get()
+  @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Get all devices with pagination' })
   @ApiResponse({ status: 200, description: 'List of devices' })
   findAll(@CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
@@ -124,11 +136,17 @@ export class DevicesController {
   @ApiOperation({ summary: 'Delete device' })
   @ApiResponse({ status: 204, description: 'Device deleted' })
   @ApiResponse({ status: 404, description: 'Device not found' })
-  remove(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.devicesService.remove(id, user.id);
+  async remove(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
+    const result = await this.devicesService.remove(id, user.id);
+     await this.subscriptionsService.decrementUsage(user.id, 'devices', 1);
+     return result;
   }
 
   @Post('bulk/status')
+  @AccessControl(
+    [UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN],
+    [SubscriptionPlan.PROFESSIONAL, SubscriptionPlan.ENTERPRISE]
+  )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Bulk update device status' })
   @ApiResponse({ status: 200, description: 'Devices updated' })

@@ -45,6 +45,7 @@ import {
 import { OAuthProviderEnum } from './entities/oauth-account.entity';
 import { randomBytes } from 'crypto';
 import { ExchangeCodeDto } from './dto/exchange-code.dto';
+import { TwoFactorChallengeDto } from '../two-factor/dto/two-factor-challenge.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -133,7 +134,7 @@ export class AuthController {
     @Body() loginDto: LoginDto,
     @Ip() ipAddress: string,
     @Headers('user-agent') userAgent: string,
-  ): Promise<AuthResponseDto> {
+  ): Promise<AuthResponseDto | TwoFactorChallengeDto> {
     return this.authService.login(loginDto, ipAddress, userAgent);
   }
 
@@ -167,6 +168,15 @@ export class AuthController {
         ipAddress,
         userAgent,
       );
+
+      // Type guard: Check if 2FA is required (shouldn't happen in OAuth flow)
+      if ('requires2FA' in authResponse) {
+        this.logger.error(
+          'Unexpected 2FA challenge in OAuth flow for Google login',
+        );
+        const frontendUrl = process.env.FRONTEND_URL;
+        return res.redirect(`${frontendUrl}/login?error=auth_failed`);
+      }
 
       // Generate a secure one-time session code
       const sessionCode = randomBytes(32).toString('hex');
@@ -224,6 +234,15 @@ export class AuthController {
         userAgent,
       );
 
+      // Type guard: Check if 2FA is required (shouldn't happen in OAuth flow)
+      if ('requires2FA' in authResponse) {
+        this.logger.error(
+          'Unexpected 2FA challenge in OAuth flow for GitHub login',
+        );
+        const frontendUrl = process.env.FRONTEND_URL;
+        return res.redirect(`${frontendUrl}/login?error=auth_failed`);
+      }
+
       // Generate a secure one-time session code
       const sessionCode = randomBytes(32).toString('hex');
 
@@ -279,6 +298,15 @@ export class AuthController {
         ipAddress,
         userAgent,
       );
+
+      // Type guard: Check if 2FA is required (shouldn't happen in OAuth flow)
+      if ('requires2FA' in authResponse) {
+        this.logger.error(
+          'Unexpected 2FA challenge in OAuth flow for Apple login',
+        );
+        const frontendUrl = process.env.FRONTEND_URL;
+        return res.redirect(`${frontendUrl}/login?error=auth_failed`);
+      }
 
       // Generate a secure one-time session code
       const sessionCode = randomBytes(32).toString('hex');

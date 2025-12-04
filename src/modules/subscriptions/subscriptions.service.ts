@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -18,6 +19,8 @@ import {
 
 @Injectable()
 export class SubscriptionsService {
+  private readonly logger = new Logger(SubscriptionsService.name);
+  
   // Plan pricing configuration
   private readonly planPricing = {
     [SubscriptionPlan.FREE]: { monthly: 0, yearly: 0 },
@@ -216,6 +219,53 @@ export class SubscriptionsService {
     return await this.subscriptionRepository.save(subscription);
   }
 
+  /**
+   * Renew subscription - extend the billing period for the same plan
+   * Called when a user pays for their current plan again
+   */
+  async renew(
+    userId: string,
+    billingPeriod: BillingPeriod,
+  ): Promise<Subscription> {
+    const subscription = await this.findCurrent(userId);
+
+    // Calculate the new next billing date
+    const currentNextBilling = subscription.nextBillingDate || new Date();
+    const today = new Date();
+    
+    // If next billing date is in the past, start from today
+    const baseDate = currentNextBilling > today ? currentNextBilling : today;
+    
+    let newNextBillingDate: Date;
+    
+    if (billingPeriod === BillingPeriod.MONTHLY) {
+      newNextBillingDate = new Date(baseDate);
+      newNextBillingDate.setMonth(newNextBillingDate.getMonth() + 1);
+    } else if (billingPeriod === BillingPeriod.YEARLY) {
+      newNextBillingDate = new Date(baseDate);
+      newNextBillingDate.setFullYear(newNextBillingDate.getFullYear() + 1);
+    } else {
+      // Fallback to monthly if unknown billing period
+      newNextBillingDate = new Date(baseDate);
+      newNextBillingDate.setMonth(newNextBillingDate.getMonth() + 1);
+    }
+
+    // Update subscription
+    subscription.nextBillingDate = newNextBillingDate;
+    subscription.billingPeriod = billingPeriod;
+    subscription.status = SubscriptionStatus.ACTIVE;
+    subscription.cancelledAt = undefined; // Clear any cancellation
+    subscription.updatedBy = userId;
+
+    await this.subscriptionRepository.save(subscription);
+
+    this.logger.log(
+      `Subscription renewed for user ${userId}. Next billing: ${newNextBillingDate.toISOString()}`
+    );
+
+    return subscription;
+  }
+
   async cancel(userId: string): Promise<Subscription> {
     const subscription = await this.findCurrent(userId);
 
@@ -286,5 +336,67 @@ export class SubscriptionsService {
   private calculateTrialEnd(): Date {
     const now = new Date();
     return new Date(now.setDate(now.getDate() + 14)); // 14-day trial
+  }
+
+  /**
+   * Increment usage for a specific resource
+   */
+  async incrementUsage(
+    userId: string,
+    resource: 'devices' | 'users' | 'apiCalls' | 'storage',
+    amount: number = 1,
+  ): Promise<void> {
+    const subscription = await this.findCurrent(userId);
+
+    subscription.usage[resource] = (subscription.usage[resource] || 0) + amount;
+
+    await this.subscriptionRepository.save(subscription);
+  }
+
+  /**
+   * Decrement usage for a specific resource
+   */
+  async decrementUsage(
+    userId: string,
+    resource: 'devices' | 'users' | 'apiCalls' | 'storage',
+    amount: number = 1,
+  ): Promise<void> {
+    const subscription = await this.findCurrent(userId);
+
+    subscription.usage[resource] = Math.max(
+      0,
+      (subscription.usage[resource] || 0) - amount,
+    );
+
+    await this.subscriptionRepository.save(subscription);
+  }
+
+  /**
+   * Check if user can perform action based on limits
+   */
+  async canPerformAction(
+    userId: string,
+    resource: 'devices' | 'users' | 'apiCalls' | 'storage',
+  ): Promise<boolean> {
+    const subscription = await this.findCurrent(userId);
+
+    const currentUsage = subscription.usage[resource] || 0;
+    const limit = subscription.limits[resource];
+
+    // -1 means unlimited
+    if (limit === -1) {
+      return true;
+    }
+
+    return currentUsage < limit;
+  }
+
+  /**
+   * Check if feature is available for user
+   */
+  async hasFeature(userId: string, feature: string): Promise<boolean> {
+    const subscription = await this.findCurrent(userId);
+
+    return subscription.features?.[feature] === true;
   }
 }

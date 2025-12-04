@@ -52,3 +52,5 @@ export { DeviceCredentials } from './devices/entities/device-credentials.entity'
 export { DeviceCommand } from './device-commands/entities/device-commands.entity';
 export { OAuthAccount } from './auth/entities/oauth-account.entity';
 export { TokenBlacklist } from './auth/entities/token-blacklist.entity';
+export { Payment } from './payments/entities/payment.entity';
+export { TwoFactorAuth } from './two-factor/entities/two-factor-auth.entity' 

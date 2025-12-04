@@ -11,7 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
-import { v4 as uuidv4 } from 'uuid'; // 🆕 Import for generating session IDs
+import { v4 as uuidv4 } from 'uuid';
 import { User } from '../users/entities/user.entity';
 import { RefreshToken } from './entities/refresh-token.entity';
 import {
@@ -21,16 +21,18 @@ import {
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
+import { TwoFactorChallengeDto } from '../two-factor/dto/two-factor-challenge.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 import { MailService } from '../mail/mail.service';
 import { GoogleProfile } from './strategies/oauth/google.strategy';
 import { GitHubProfile } from './strategies/oauth/github.strategy';
 import { AppleProfile } from './strategies/oauth/apple.strategy';
 import { TokenBlacklist } from './entities/token-blacklist.entity';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { SubscriptionPlan } from '../subscriptions/entities/subscription.entity';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
-import { SessionService } from './session/session.service'; // 🆕 Import session service
+import { SessionService } from './session/session.service';
+import { TwoFactorAuthService } from '../two-factor/two-factor-auth.service';
 
 @Injectable()
 export class AuthService {
@@ -49,7 +51,8 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private mailService: MailService,
-    private sessionService: SessionService, // 🆕 Inject session service
+    private sessionService: SessionService,
+    private twoFactorAuthService: TwoFactorAuthService,
   ) {}
 
   /**
@@ -60,7 +63,6 @@ export class AuthService {
   ): Promise<{ message: string; email: string }> {
     const { email, password, name, phone } = registerDto;
 
-    // Check if user already exists
     const existingUser = await this.userRepository.findOne({
       where: { email },
     });
@@ -69,7 +71,6 @@ export class AuthService {
       throw new ConflictException('User with this email already exists');
     }
 
-    // Check if phone number already exists (if provided)
     if (phone) {
       const existingUserByPhone = await this.userRepository.findOne({
         where: { phone },
@@ -82,13 +83,11 @@ export class AuthService {
       }
     }
 
-    // Generate email verification token
     const verificationToken = this.generateVerificationToken();
 
-    // Create new user
     const user = this.userRepository.create({
       email,
-      password, // Will be hashed by @BeforeInsert hook
+      password,
       name,
       phone,
       emailVerified: false,
@@ -103,15 +102,11 @@ export class AuthService {
       });
       this.logger.log(`FREE subscription created for user: ${email}`);
     } catch (error) {
-      this.logger.error(
-        `Failed to create subscription for ${email}:`,
-        error,
-      );
+      this.logger.error(`Failed to create subscription for ${email}:`, error);
     }
 
     this.logger.log(`New user registered: ${email}`);
 
-    // Send verification email
     try {
       await this.mailService.sendVerificationEmail(
         email,
@@ -124,7 +119,6 @@ export class AuthService {
         `Failed to send verification email to ${email}:`,
         error,
       );
-      // Don't fail registration if email fails
     }
 
     return {
@@ -150,14 +144,12 @@ export class AuthService {
       throw new BadRequestException('Email already verified');
     }
 
-    // Update user
     user.emailVerified = true;
     user.emailVerificationToken = undefined;
     await this.userRepository.save(user);
 
     this.logger.log(`Email verified for user: ${user.email}`);
 
-    // Send welcome email
     try {
       await this.mailService.sendWelcomeEmail(user.email, user.name);
       this.logger.log(`Welcome email sent to: ${user.email}`);
@@ -189,12 +181,10 @@ export class AuthService {
       throw new BadRequestException('Email already verified');
     }
 
-    // Generate new token
     const verificationToken = this.generateVerificationToken();
     user.emailVerificationToken = verificationToken;
     await this.userRepository.save(user);
 
-    // Send verification email
     try {
       await this.mailService.sendVerificationEmail(
         email,
@@ -217,36 +207,66 @@ export class AuthService {
 
   /**
    * Login user (LOCAL AUTH)
-   * 🆕 Now includes session management
+   * ✅ Includes session management and 2FA
    */
   async login(
     loginDto: LoginDto,
     ipAddress?: string,
     userAgent?: string,
-  ): Promise<AuthResponseDto> {
-    const { email, password } = loginDto;
+  ): Promise<AuthResponseDto | TwoFactorChallengeDto> {
+    const { email, password, twoFactorCode } = loginDto;
 
-    // Validate user credentials
     const user = await this.validateUser(email, password);
 
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Check if email is verified
     if (!user.emailVerified) {
       throw new UnauthorizedException(
         'Please verify your email before logging in. Check your inbox for the verification link.',
       );
     }
 
-    // Update last login
+    // ✅ Check if 2FA is enabled
+    const has2FA = await this.twoFactorAuthService.isEnabled(user.id);
+
+    if (has2FA) {
+      if (!twoFactorCode) {
+        const twoFASettings =
+          await this.twoFactorAuthService.getSettings(user.id);
+
+        // Send code automatically for SMS/Email
+        if (twoFASettings.method === 'sms') {
+          await this.twoFactorAuthService.sendSMSCode(user.id);
+        } else if (twoFASettings.method === 'email') {
+          await this.twoFactorAuthService.sendEmailCode(user.id);
+        }
+
+        // Return 2FA challenge
+        return {
+          requires2FA: true,
+          userId: user.id,
+          method: twoFASettings.method || 'authenticator',
+        };
+      }
+
+      // Verify 2FA code
+      const isValid = await this.twoFactorAuthService.verifyCode(
+        user.id,
+        twoFactorCode,
+      );
+
+      if (!isValid) {
+        throw new UnauthorizedException('Invalid 2FA code');
+      }
+    }
+
     user.updateLastLogin();
     await this.userRepository.save(user);
 
     this.logger.log(`User logged in: ${email}`);
 
-    // 🆕 Generate tokens with session management
     return this.generateAuthResponse(user, ipAddress, userAgent, 'local');
   }
 
@@ -277,13 +297,13 @@ export class AuthService {
 
   /**
    * OAuth Login - Google
-   * 🆕 Now includes session management
+   * ✅ Includes session management and 2FA
    */
   async googleLogin(
     profile: GoogleProfile,
     ipAddress?: string,
     userAgent?: string,
-  ): Promise<AuthResponseDto> {
+  ): Promise<AuthResponseDto | TwoFactorChallengeDto> {
     return this.handleOAuthLogin(
       OAuthProviderEnum.GOOGLE,
       profile.id,
@@ -301,19 +321,19 @@ export class AuthService {
 
   /**
    * OAuth Login - GitHub
-   * 🆕 Now includes session management
+   * ✅ Includes session management and 2FA
    */
   async githubLogin(
     profile: GitHubProfile,
     ipAddress?: string,
     userAgent?: string,
-  ): Promise<AuthResponseDto> {
+  ): Promise<AuthResponseDto | TwoFactorChallengeDto> {
     return this.handleOAuthLogin(
       OAuthProviderEnum.GITHUB,
       profile.id,
       profile.email,
       profile.name,
-      true, // GitHub emails are verified
+      true,
       profile.avatar,
       profile,
       profile.accessToken,
@@ -325,13 +345,13 @@ export class AuthService {
 
   /**
    * OAuth Login - Apple
-   * 🆕 Now includes session management
+   * ✅ Includes session management and 2FA
    */
   async appleLogin(
     profile: AppleProfile,
     ipAddress?: string,
     userAgent?: string,
-  ): Promise<AuthResponseDto> {
+  ): Promise<AuthResponseDto | TwoFactorChallengeDto> {
     return this.handleOAuthLogin(
       OAuthProviderEnum.APPLE,
       profile.id,
@@ -349,7 +369,7 @@ export class AuthService {
 
   /**
    * Handle OAuth login/registration
-   * 🆕 Updated to pass login method for session tracking
+   * ✅ Includes 2FA check for OAuth users
    */
   private async handleOAuthLogin(
     provider: OAuthProviderEnum,
@@ -363,8 +383,7 @@ export class AuthService {
     refreshToken?: string,
     ipAddress?: string,
     userAgent?: string,
-  ): Promise<AuthResponseDto> {
-    // Check if OAuth account exists
+  ): Promise<AuthResponseDto | TwoFactorChallengeDto> {
     let oauthAccount = await this.oauthAccountRepository.findOne({
       where: { provider, providerId },
       relations: ['user'],
@@ -373,26 +392,22 @@ export class AuthService {
     let user: User | null = null;
 
     if (oauthAccount) {
-      // Existing OAuth account - use linked user
       user = oauthAccount.user;
 
-      // Update OAuth account profile
       oauthAccount.providerEmail = email;
       oauthAccount.profile = profile;
       oauthAccount.accessToken = accessToken;
       oauthAccount.refreshToken = refreshToken;
       oauthAccount.tokenExpiresAt = accessToken
         ? new Date(Date.now() + 3600 * 1000)
-        : undefined; // Example expiry
+        : undefined;
       await this.oauthAccountRepository.save(oauthAccount);
     } else {
-      // Check if user exists with this email
       user = await this.userRepository.findOne({
         where: { email },
       });
 
       if (user) {
-        // Link OAuth account to existing user
         oauthAccount = this.oauthAccountRepository.create({
           userId: user.id,
           provider,
@@ -403,7 +418,7 @@ export class AuthService {
           refreshToken,
           tokenExpiresAt: accessToken
             ? new Date(Date.now() + 3600 * 1000)
-            : undefined, // Example expiry
+            : undefined,
         });
         await this.oauthAccountRepository.save(oauthAccount);
 
@@ -411,17 +426,15 @@ export class AuthService {
           `OAuth account linked to existing user: ${email} (${provider})`,
         );
       } else {
-        // Create new user
         user = this.userRepository.create({
           email,
           name,
           emailVerified,
           avatar,
-          password: this.generateRandomPassword(), // Generate random password for OAuth users
+          password: this.generateRandomPassword(),
         });
         await this.userRepository.save(user);
 
-        // 🆕 CREATE FREE SUBSCRIPTION FOR NEW OAUTH USER
         try {
           await this.subscriptionsService.create(user.id, {
             plan: SubscriptionPlan.FREE,
@@ -434,7 +447,6 @@ export class AuthService {
           );
         }
 
-        // Create OAuth account
         oauthAccount = this.oauthAccountRepository.create({
           userId: user.id,
           provider,
@@ -445,13 +457,12 @@ export class AuthService {
           refreshToken,
           tokenExpiresAt: accessToken
             ? new Date(Date.now() + 3600 * 1000)
-            : undefined, // Example expiry
+            : undefined,
         });
         await this.oauthAccountRepository.save(oauthAccount);
 
         this.logger.log(`New user created via OAuth: ${email} (${provider})`);
 
-        // Send welcome email
         try {
           await this.mailService.sendWelcomeEmail(email, name);
         } catch (error) {
@@ -460,19 +471,82 @@ export class AuthService {
       }
     }
 
-    // Check if user is active
     if (!user.isActive()) {
       throw new UnauthorizedException('User account is not active');
     }
 
-    // Update last login
+    // ✅ Check if 2FA is enabled for OAuth users
+    const has2FA = await this.twoFactorAuthService.isEnabled(user.id);
+
+    if (has2FA) {
+      const twoFASettings = await this.twoFactorAuthService.getSettings(user.id);
+
+      // Send code automatically for SMS/Email
+      if (twoFASettings.method === 'sms') {
+        await this.twoFactorAuthService.sendSMSCode(user.id);
+      } else if (twoFASettings.method === 'email') {
+        await this.twoFactorAuthService.sendEmailCode(user.id);
+      }
+
+      // Return 2FA challenge for OAuth flow
+      return {
+        requires2FA: true,
+        userId: user.id,
+        method: twoFASettings.method || 'authenticator',
+      };
+    }
+
     user.updateLastLogin();
     await this.userRepository.save(user);
 
     this.logger.log(`User logged in via OAuth: ${email} (${provider})`);
 
-    // 🆕 Generate tokens with session management
-    return this.generateAuthResponse(user, ipAddress, userAgent, provider.toLowerCase() as any);
+    return this.generateAuthResponse(
+      user,
+      ipAddress,
+      userAgent,
+      provider.toLowerCase() as any,
+    );
+  }
+
+  /**
+   * ✅ NEW: Verify OAuth 2FA and complete login
+   */
+  async verifyOAuth2FA(
+    userId: string,
+    twoFactorCode: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<AuthResponseDto> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!user.isActive()) {
+      throw new UnauthorizedException('User account is not active');
+    }
+
+    // Verify 2FA code
+    const isValid = await this.twoFactorAuthService.verifyCode(
+      userId,
+      twoFactorCode,
+    );
+
+    if (!isValid) {
+      throw new UnauthorizedException('Invalid 2FA code');
+    }
+
+    user.updateLastLogin();
+    await this.userRepository.save(user);
+
+    this.logger.log(`OAuth 2FA verified for user: ${user.email}`);
+
+    // Pass undefined since we don't track which OAuth provider initiated 2FA
+    return this.generateAuthResponse(user, ipAddress, userAgent, undefined);
   }
 
   /**
@@ -485,7 +559,6 @@ export class AuthService {
     email: string,
     profile?: any,
   ): Promise<{ message: string }> {
-    // Check if OAuth account already linked to another user
     const existingOAuth = await this.oauthAccountRepository.findOne({
       where: { provider, providerId },
     });
@@ -501,7 +574,6 @@ export class AuthService {
       );
     }
 
-    // Create OAuth link
     const oauthAccount = this.oauthAccountRepository.create({
       userId,
       provider,
@@ -534,13 +606,11 @@ export class AuthService {
       throw new NotFoundException(`No ${provider} account linked`);
     }
 
-    // Check if user has a password set (to prevent lockout)
     const user: any = await this.userRepository.findOne({
       where: { id: userId },
     });
 
     if (!user.password || user.password.startsWith('oauth_')) {
-      // Check if user has other OAuth accounts
       const otherOAuthAccounts = await this.oauthAccountRepository.count({
         where: { userId },
       });
@@ -573,14 +643,13 @@ export class AuthService {
 
   /**
    * Refresh access token
-   * 🆕 Now validates session BEFORE allowing refresh
+   * ✅ Validates session BEFORE allowing refresh
    */
   async refreshTokens(
     refreshTokenString: string,
     ipAddress?: string,
     userAgent?: string,
   ): Promise<AuthResponseDto> {
-    // Find refresh token
     const refreshToken = await this.refreshTokenRepository.findOne({
       where: { token: refreshTokenString },
       relations: ['user'],
@@ -600,18 +669,14 @@ export class AuthService {
       throw new UnauthorizedException('User account is not active');
     }
 
-    // 🆕 CRITICAL: Get existing session FIRST
     const existingSession = await this.sessionService.getSession(user.id);
 
-    // 🆕 CRITICAL: If no session exists, user logged in from another device
-    // Do NOT create a new session, reject the refresh
     if (!existingSession) {
-      // Revoke this refresh token since session is gone
       refreshToken.isRevoked = true;
       await this.refreshTokenRepository.save(refreshToken);
 
       this.logger.warn(
-        `Refresh token rejected for user ${user.email}: No active session (logged in from another device)`,
+        `Refresh token rejected for user ${user.email}: No active session`,
       );
 
       throw new UnauthorizedException(
@@ -619,19 +684,18 @@ export class AuthService {
       );
     }
 
-    // 🆕 CRITICAL: Validate that this refresh token belongs to current session
-    const isTokenValidForSession = await this.sessionService.isRefreshTokenValidForSession(
-      user.id,
-      refreshTokenString,
-    );
+    const isTokenValidForSession =
+      await this.sessionService.isRefreshTokenValidForSession(
+        user.id,
+        refreshTokenString,
+      );
 
     if (!isTokenValidForSession) {
-      // Revoke this refresh token since it's from an old session
       refreshToken.isRevoked = true;
       await this.refreshTokenRepository.save(refreshToken);
 
       this.logger.warn(
-        `Refresh token rejected for user ${user.email}: Token from old session (user logged in from another device)`,
+        `Refresh token rejected for user ${user.email}: Token from old session`,
       );
 
       throw new UnauthorizedException(
@@ -639,25 +703,26 @@ export class AuthService {
       );
     }
 
-    // Revoke old refresh token
     refreshToken.isRevoked = true;
     await this.refreshTokenRepository.save(refreshToken);
 
-    // Extend existing session
     await this.sessionService.extendSession(user.id);
 
     this.logger.log(`Tokens refreshed for user: ${user.email}`);
 
-    // Use existing session ID to maintain continuity
     const sessionId = existingSession.sessionId;
 
-    // Generate new tokens with SAME session ID
-    return this.generateAuthResponseWithSessionId(user, sessionId, ipAddress, userAgent);
+    return this.generateAuthResponseWithSessionId(
+      user,
+      sessionId,
+      ipAddress,
+      userAgent,
+    );
   }
 
   /**
-   * Logout user (revoke refresh token)
-   * 🆕 Now also deletes session
+   * Logout user
+   * ✅ Deletes session
    */
   async logout(refreshTokenString: string, accessToken: string): Promise<void> {
     const refreshToken = await this.refreshTokenRepository.findOne({
@@ -668,12 +733,10 @@ export class AuthService {
       refreshToken.isRevoked = true;
       await this.refreshTokenRepository.save(refreshToken);
 
-      // Blacklist access token
       if (accessToken) {
         await this.blacklistToken(accessToken, refreshToken.userId);
       }
 
-      // 🆕 Delete session from Redis
       await this.sessionService.deleteSession(refreshToken.userId);
 
       this.logger.log(`User logged out, token revoked, session deleted`);
@@ -681,8 +744,8 @@ export class AuthService {
   }
 
   /**
-   * Logout from all devices (revoke all refresh tokens)
-   * 🆕 Now also deletes session
+   * Logout from all devices
+   * ✅ Deletes session
    */
   async logoutAll(userId: string, accessToken: string): Promise<void> {
     await this.refreshTokenRepository.update(
@@ -690,12 +753,10 @@ export class AuthService {
       { isRevoked: true },
     );
 
-    // Blacklist current access token
     if (accessToken) {
       await this.blacklistToken(accessToken, userId);
     }
 
-    // 🆕 Delete session from Redis
     await this.sessionService.deleteSession(userId);
 
     this.logger.log(`User logged out from all devices: ${userId}`);
@@ -741,29 +802,25 @@ export class AuthService {
     });
 
     if (!user) {
-      // Don't reveal if user exists
       return {
         message: 'If the email exists, a password reset link has been sent.',
       };
     }
 
-    // Check if email is verified
     if (!user.emailVerified) {
       throw new BadRequestException(
         'Please verify your email first. Check your inbox for the verification link.',
       );
     }
 
-    // Generate reset token
     const resetToken = this.generateVerificationToken();
     const resetExpiry = new Date();
-    resetExpiry.setHours(resetExpiry.getHours() + 1); // 1 hour expiry
+    resetExpiry.setHours(resetExpiry.getHours() + 1);
 
     user.passwordResetToken = resetToken;
     user.passwordResetExpires = resetExpiry;
     await this.userRepository.save(user);
 
-    // Send reset email
     try {
       await this.mailService.sendPasswordResetEmail(
         email,
@@ -798,18 +855,15 @@ export class AuthService {
       throw new BadRequestException('Invalid or expired reset token');
     }
 
-    // Check if token expired
     if (new Date() > user.passwordResetExpires) {
       throw new BadRequestException('Reset token has expired');
     }
 
-    // Update password
-    user.password = newPassword; // Will be hashed by @BeforeUpdate hook
+    user.password = newPassword;
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
     await this.userRepository.save(user);
 
-    // Revoke all refresh tokens and delete session
     await this.logoutAll(user.id, token);
 
     this.logger.log(`Password reset for user: ${user.email}`);
@@ -842,17 +896,16 @@ export class AuthService {
       throw new BadRequestException('Current password is incorrect');
     }
 
-    user.password = newPassword; // Will be hashed by @BeforeUpdate hook
+    user.password = newPassword;
     await this.userRepository.save(user);
 
-    // Revoke all refresh tokens to force re-login and delete session
     await this.logoutAll(userId, '');
 
     this.logger.log(`Password changed for user: ${user.email}`);
   }
 
   /**
-   * 🆕 Generate authentication response with NEW session
+   * Generate authentication response with NEW session
    */
   private async generateAuthResponse(
     user: User,
@@ -860,22 +913,24 @@ export class AuthService {
     userAgent?: string,
     loginMethod?: 'local' | 'google' | 'github' | 'apple',
   ): Promise<AuthResponseDto> {
-    // Generate NEW session ID
     const sessionId = uuidv4();
 
-    // Create session in Redis (this will overwrite any existing session)
     await this.sessionService.createSession(user.id, sessionId, {
       ipAddress,
       userAgent,
       loginMethod,
     });
 
-    return this.generateAuthResponseWithSessionId(user, sessionId, ipAddress, userAgent);
+    return this.generateAuthResponseWithSessionId(
+      user,
+      sessionId,
+      ipAddress,
+      userAgent,
+    );
   }
 
   /**
-   * 🆕 Generate authentication response with SPECIFIC session ID
-   * (Used for refresh token flow to maintain session)
+   * Generate authentication response with SPECIFIC session ID
    */
   private async generateAuthResponseWithSessionId(
     user: User,
@@ -887,13 +942,11 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
-      sessionId, // 🆕 Include session ID in JWT
+      sessionId,
     };
 
-    // Generate access token
     const accessToken = this.jwtService.sign(payload);
 
-    // Generate refresh token
     const refreshTokenString = this.generateRefreshToken();
     const refreshTokenExpiry = new Date();
     refreshTokenExpiry.setDate(
@@ -904,30 +957,28 @@ export class AuthService {
         ),
     );
 
-    // 🆕 Save refresh token with sessionId metadata
     const refreshToken = this.refreshTokenRepository.create({
       token: refreshTokenString,
       userId: user.id,
       expiresAt: refreshTokenExpiry,
       ipAddress,
       userAgent,
-      // 🆕 Store sessionId in a metadata field (you may need to add this column)
-      // For now, we'll use userAgent field to append sessionId temporarily
-      // Or add a proper sessionId column to RefreshToken entity
     });
 
     await this.refreshTokenRepository.save(refreshToken);
 
-    // 🆕 CRITICAL: Store refresh token associated with session
-    await this.sessionService.addRefreshTokenToSession(user.id, sessionId, refreshTokenString);
+    await this.sessionService.addRefreshTokenToSession(
+      user.id,
+      sessionId,
+      refreshTokenString,
+    );
 
-    // Clean up expired tokens
     await this.cleanupExpiredTokens(user.id);
 
     return {
       accessToken,
       refreshToken: refreshTokenString,
-      expiresIn: 900, // 15 minutes in seconds
+      expiresIn: 900,
       tokenType: 'Bearer',
       user: {
         id: user.id,
@@ -965,7 +1016,6 @@ export class AuthService {
   private async cleanupExpiredTokens(userId: string): Promise<void> {
     const now = new Date();
 
-    // Delete expired tokens
     await this.refreshTokenRepository
       .createQueryBuilder()
       .delete()
@@ -973,7 +1023,6 @@ export class AuthService {
       .andWhere('expiresAt < :now', { now })
       .execute();
 
-    // Keep only last 5 valid tokens per user
     const validTokens = await this.refreshTokenRepository.find({
       where: { userId, isRevoked: false },
       order: { createdAt: 'DESC' },
@@ -1016,14 +1065,16 @@ export class AuthService {
   }
 
   /**
-   * 🆕 Get current session info
+   * Get current session info
    */
   async getSessionInfo(userId: string): Promise<any> {
     return this.sessionService.getSession(userId);
   }
 
-  // Cleanup cron - runs every hour
-  @Cron('0 * * * *') // Runs at the top of every hour (e.g., 1:00, 2:00, 3:00)
+  /**
+   * Cleanup cron - runs every hour
+   */
+  @Cron('0 * * * *')
   async cleanupExpiredBlacklistedTokens(): Promise<void> {
     this.logger.log('🧹 Starting blacklist cleanup...');
 

@@ -349,6 +349,8 @@ export class MailService {
     `;
   }
 
+  
+
   /**
    * Welcome email template (fallback)
    */
@@ -473,4 +475,109 @@ export class MailService {
 </html>
     `;
   }
+
+  /**
+ * Send two-factor authentication code email using database template
+ */
+async sendTwoFactorCode(
+  email: string,
+  name: string,
+  code: string,
+): Promise<boolean> {
+  const appName = this.configService.get<string>('APP_NAME', 'IoT Platform');
+
+  try {
+    const { subject, html, text } =
+      await this.emailTemplatesService.getRenderedEmail(
+        EmailTemplateType.TWO_FACTOR_CODE,
+        {
+          name,
+          appName,
+          code,
+          year: new Date().getFullYear().toString(),
+        },
+      );
+
+    return this.sendEmail({
+      to: email,
+      subject,
+      html,
+      text,
+    });
+  } catch (error) {
+    this.logger.error(
+      `Failed to get 2FA code template: ${error.message}. Using fallback.`,
+    );
+
+    // Fallback to inline template if database template not found
+    const html = this.getTwoFactorCodeEmailTemplate(name, code);
+    const text = `Hi ${name},\n\nYour two-factor authentication code is: ${code}\n\nThis code will expire in 10 minutes.\n\nIf you didn't request this code, please ignore this email or contact support.`;
+
+    return this.sendEmail({
+      to: email,
+      subject: `Your Two-Factor Authentication Code - ${appName}`,
+      html,
+      text,
+    });
+  }
+}
+
+/**
+ * Two-factor authentication code email template (fallback)
+ */
+private getTwoFactorCodeEmailTemplate(name: string, code: string): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Two-Factor Authentication Code</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f4f4f4; }
+    .container { max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; padding: 40px 20px; text-align: center; }
+    .header h1 { margin: 0; font-size: 28px; }
+    .content { padding: 40px 30px; text-align: center; }
+    .code-box { background: #f8f9fa; border: 2px dashed #667eea; border-radius: 8px; padding: 30px; margin: 30px 0; }
+    .code { font-size: 36px; font-weight: bold; color: #667eea; letter-spacing: 8px; font-family: 'Courier New', monospace; }
+    .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; text-align: left; }
+    .note { background: #f8f9fa; border-left: 4px solid #667eea; padding: 15px; margin: 20px 0; font-size: 14px; text-align: left; }
+    .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🔐 Two-Factor Authentication</h1>
+    </div>
+    <div class="content">
+      <h2 style="color: #667eea; margin-top: 0;">Hi ${name}! 👋</h2>
+      <p>You requested a two-factor authentication code. Here it is:</p>
+      
+      <div class="code-box">
+        <div class="code">${code}</div>
+      </div>
+      
+      <div class="note">
+        <strong>⏰ Important:</strong> This code will expire in <strong>10 minutes</strong>.
+      </div>
+      
+      <div class="warning">
+        <strong>🔒 Security Notice:</strong> If you didn't request this code, please ignore this email or contact our support team immediately.
+      </div>
+      
+      <p style="margin-top: 30px; font-size: 14px; color: #6c757d;">
+        Never share this code with anyone. IoT Platform staff will never ask you for this code.
+      </p>
+    </div>
+    <div class="footer">
+      <p>&copy; ${new Date().getFullYear()} IoT Platform. All rights reserved.</p>
+      <p>Need help? <a href="mailto:support@iotplatform.com" style="color: #667eea; text-decoration: none;">Contact Support</a></p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}
 }

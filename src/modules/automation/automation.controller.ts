@@ -25,6 +25,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import { CheckFeatureLimit } from '@/common/guards/feature-limit.guard';
 
 @ApiTags('automation')
 @Controller('automation')
@@ -34,6 +35,7 @@ export class AutomationController {
   constructor(private readonly automationService: AutomationService) {}
 
   @Post()
+  @CheckFeatureLimit('automation')
   @ApiOperation({ summary: 'Create a new automation rule' })
   @ApiResponse({ status: 201, description: 'Automation created successfully' })
   @ApiResponse({ status: 409, description: 'Automation already exists' })

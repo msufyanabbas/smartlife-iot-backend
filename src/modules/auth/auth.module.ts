@@ -19,6 +19,7 @@ import { TokenBlacklist } from '../index.entities';
 import { redisService } from '@/lib/redis/redis.service';
 import { SubscriptionsModule } from '../index.module';
 import { SessionService } from './session/session.service';
+import { TwoFactorAuthModule } from '../two-factor/two-factor-auth.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { SessionService } from './session/session.service';
       }),
     }),
     MailModule,
+    TwoFactorAuthModule,
     forwardRef(() => SubscriptionsModule)
   ],
   controllers: [AuthController],

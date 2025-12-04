@@ -17,6 +17,66 @@ export class EmailTemplateSeeder implements ISeeder {
   async seed(): Promise<void> {
     const emailTemplates = [
       {
+        type: EmailTemplateType.TWO_FACTOR_CODE,
+        name: 'Two-Factor Authentication Code',
+        subject: 'Your Verification Code - {{appName}}',
+        description: 'Sent when user needs 2FA code for login',
+        htmlTemplate: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Verification Code</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f4f4f4;">
+  <div style="max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; padding: 40px 20px; text-align: center;">
+      <h1 style="margin: 0; font-size: 28px;">🔐 Verification Code</h1>
+    </div>
+    <div style="padding: 40px 30px;">
+      <h2>Hi {{name}},</h2>
+      <p>You're attempting to sign in to your {{appName}} account. Please use the verification code below:</p>
+      
+      <div style="background: #f8f9fa; border: 2px dashed #667eea; border-radius: 8px; padding: 20px; text-align: center; margin: 30px 0;">
+        <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #667eea; font-family: 'Courier New', monospace;">{{code}}</div>
+      </div>
+      
+      <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
+        <strong>⏰ Important:</strong> This code will expire in 10 minutes.
+      </div>
+      
+      <div style="background: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0;">
+        <strong>⚠️ Security Warning:</strong> If you didn't request this code, please ignore this email and ensure your account is secure.
+      </div>
+      
+      <p style="margin-top: 30px; font-size: 14px; color: #6c757d;">This is an automated security email. Please do not reply to this message.</p>
+    </div>
+    <div style="background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 14px;">
+      <p>&copy; {{year}} {{appName}}. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>`,
+        textTemplate: `Hi {{name}},
+
+You're attempting to sign in to your {{appName}} account.
+
+Your verification code is: {{code}}
+
+This code will expire in 10 minutes.
+
+⚠️ If you didn't request this code, please ignore this email and ensure your account is secure.
+
+© {{year}} {{appName}}. All rights reserved.`,
+        variables: {
+          name: 'User name',
+          code: 'Verification code',
+          appName: 'Application name',
+          year: 'Current year',
+        },
+        isActive: true,
+      },
+      {
         type: EmailTemplateType.VERIFICATION,
         name: 'Email Verification',
         subject: 'Verify Your Email Address',

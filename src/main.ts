@@ -12,11 +12,26 @@ import {
   LoggingInterceptor,
   TransformInterceptor,
 } from './common/interceptors/index';
+import { SubscriptionsService } from './modules/subscriptions/subscriptions.service';
+import { ApiUsageInterceptor } from './common/interceptors/api-usage.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
+    rawBody: true,
   });
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true
+    })
+  );
+
+  
+  // const subscriptionService = app.get(SubscriptionsService);
+  // app.useGlobalInterceptors(new ApiUsageInterceptor(subscriptionService));
 
   const telemetryConsumer = app.get(TelemetryConsumer);
   await telemetryConsumer.start();

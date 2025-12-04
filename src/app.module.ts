@@ -17,7 +17,7 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppDataSource } from './database/data-source';
 import { AppController } from './app.controller';
 import { MetricsInterceptor } from './common/interceptors';
-import { MetricsModule } from './modules/metrics/metrics.module'; // ← ADD THIS
+import { MetricsModule } from './modules/metrics/metrics.module'; 
 
 @Module({
   imports: [

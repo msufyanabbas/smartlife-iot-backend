@@ -95,11 +95,15 @@ import { ProtocolsModule } from './protocols/protocols.module';
 import { DeviceCommandsModule } from './device-commands/device-commands.module';
 import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { PaymentsModule } from './payments/payments.module';
+import { TwoFactorAuthModule } from './two-factor/two-factor-auth.module';
 
 // ============================================
 // FEATURE MODULES ARRAY (for spreading in app.module.ts)
 // ============================================
 export const featureModules = [
+  PaymentsModule,
+  TwoFactorAuthModule,
   // Core
   AuthModule,
   UsersModule,
