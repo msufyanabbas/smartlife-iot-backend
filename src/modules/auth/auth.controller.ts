@@ -175,7 +175,7 @@ export class AuthController {
           'Unexpected 2FA challenge in OAuth flow for Google login',
         );
         const frontendUrl = process.env.FRONTEND_URL;
-        return res.redirect(`${frontendUrl}/login?error=auth_failed`);
+        return res.redirect(`${frontendUrl}/verify-pin`);
       }
 
       // Generate a secure one-time session code
