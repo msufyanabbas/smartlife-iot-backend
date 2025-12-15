@@ -276,7 +276,7 @@ export class AssetsController {
 
   @Delete(':id')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN)
+  // @Roles(UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete asset' })
   @ApiResponse({ status: 204, description: 'Asset deleted successfully' })
