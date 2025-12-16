@@ -6,6 +6,7 @@ import { BaseEntity } from '../../../common/entities/base.entity';
 export enum UserRole {
   SUPER_ADMIN = 'super_admin',
   TENANT_ADMIN = 'tenant_admin',
+  CUSTOMER_USER = 'customer_user',
   USER = 'user',
 }
 
@@ -47,6 +48,11 @@ export class User extends BaseEntity {
 
   @Column({ nullable: true })
   tenantId?: string;
+
+  // NEW: Customer ID - links user to a specific customer
+  @Column({ nullable: true })
+  @Index()
+  customerId?: string;
 
   @Column({ nullable: true })
   avatar?: string;
@@ -92,6 +98,16 @@ export class User extends BaseEntity {
   // Method to check if user has role
   hasRole(role: UserRole): boolean {
     return this.role === role;
+  }
+
+  // NEW: Check if user is a customer user
+  isCustomerUser(): boolean {
+    return this.role === UserRole.CUSTOMER_USER;
+  }
+
+  // NEW: Check if user is admin (tenant or super)
+  isAdmin(): boolean {
+    return this.role === UserRole.SUPER_ADMIN || this.role === UserRole.TENANT_ADMIN;
   }
 
   // Method to update last login

@@ -33,6 +33,12 @@ export class CreateUserDto {
   @IsEnum(UserRole)
   role?: UserRole;
 
+  // In CreateUserDto
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  customerId?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -63,6 +69,11 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  customerId?: string;
 
   @ApiPropertyOptional({ enum: UserRole })
   @IsOptional()
