@@ -12,6 +12,7 @@ export { ThrottlerModule } from '@nestjs/throttler';
 export { SeederModule } from '../database/seeds/seeder.module';
 export { HealthModule } from './health/health.module';
 export { MetricsModule } from './metrics/metrics.module';
+export {CustomersModule} from './customers/customers.module';
 
 // ============================================
 // FEATURE MODULES (application modules)
@@ -97,11 +98,15 @@ import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { PaymentsModule } from './payments/payments.module';
 import { TwoFactorAuthModule } from './two-factor/two-factor-auth.module';
+import { CustomersModule } from './customers/customers.module';
+import { CustomerUsersModule } from './customer-users/customer-users.module';
 
 // ============================================
 // FEATURE MODULES ARRAY (for spreading in app.module.ts)
 // ============================================
 export const featureModules = [
+  CustomerUsersModule,
+  CustomersModule,
   PaymentsModule,
   TwoFactorAuthModule,
   // Core
