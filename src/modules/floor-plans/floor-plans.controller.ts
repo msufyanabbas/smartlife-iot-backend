@@ -29,6 +29,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import { UpdateFloorPlanSettingsDto } from './dto/floor-plan-settings.dto';
 
 @ApiTags('floor-plans')
 @Controller('floor-plans')
@@ -148,5 +149,36 @@ export class FloorPlansController {
     @Param('zoneId') zoneId: string,
   ) {
     return this.floorPlansService.removeZone(id, zoneId, user.id);
+  }
+
+  @Get(':id/settings')
+  @ApiOperation({ summary: 'Get floor plan settings' })
+  @ApiResponse({ status: 200, description: 'Floor plan settings retrieved' })
+  getSettings(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.floorPlansService.getSettings(id, user.id);
+  }
+
+  @Patch(':id/settings')
+  @ApiOperation({ summary: 'Update floor plan settings' })
+  @ApiResponse({ status: 200, description: 'Floor plan settings updated' })
+  updateSettings(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+    @Body() settingsDto: UpdateFloorPlanSettingsDto,
+  ) {
+    return this.floorPlansService.updateSettings(id, user.id, settingsDto);
+  }
+
+  @Post(':id/settings/reset')
+  @ApiOperation({ summary: 'Reset floor plan settings to default' })
+  @ApiResponse({ status: 200, description: 'Floor plan settings reset to default' })
+  resetSettings(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.floorPlansService.resetSettings(id, user.id);
   }
 }

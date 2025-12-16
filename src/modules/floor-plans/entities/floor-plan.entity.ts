@@ -7,6 +7,22 @@ export enum FloorPlanStatus {
   ARCHIVED = 'archived',
 }
 
+export interface FloorPlanSettings {
+  measurementUnit: 'metric' | 'imperial';
+  autoSave: boolean;
+  gridSettings: {
+    showGrid: boolean;
+    snapToGrid: boolean;
+    gridSize: number;
+  };
+  defaultColors: {
+    gateways: string;
+    sensorsToGateway: string;
+    zones: string;
+    sensorsToGrid: string;
+  };
+}
+
 @Entity('floor_plans')
 @Index(['userId', 'status'])
 export class FloorPlan extends BaseEntity {
@@ -64,4 +80,25 @@ export class FloorPlan extends BaseEntity {
   @Column({ name: 'tenant_id', nullable: true })
   @Index()
   tenantId?: string;
+
+  @Column({
+  type: 'jsonb',
+  nullable: true,
+  default: {
+    measurementUnit: 'metric',
+    autoSave: true,
+    gridSettings: {
+      showGrid: true,
+      snapToGrid: true,
+      gridSize: 1,
+    },
+    defaultColors: {
+      gateways: '#22c55e',
+      sensorsToGateway: '#f59e0b',
+      zones: '#3b82f6',
+      sensorsToGrid: '#a855f7',
+    },
+  },
+})
+settings: FloorPlanSettings;
 }

@@ -237,4 +237,79 @@ export class FloorPlansService {
       totalZones,
     };
   }
+
+   async getSettings(id: string, userId: string) {
+    const floorPlan = await this.findOne(id, userId);
+    
+    // Return default settings if none exist
+    if (!floorPlan.settings) {
+      return {
+        measurementUnit: 'metric',
+        autoSave: true,
+        gridSettings: {
+          showGrid: true,
+          snapToGrid: true,
+          gridSize: 1,
+        },
+        defaultColors: {
+          gateways: '#22c55e',
+          sensorsToGateway: '#f59e0b',
+          zones: '#3b82f6',
+          sensorsToGrid: '#a855f7',
+        },
+      };
+    }
+    
+    return floorPlan.settings;
+  }
+
+   async updateSettings(
+    id: string,
+    userId: string,
+    settingsDto: any,
+  ): Promise<FloorPlan> {
+    const floorPlan = await this.findOne(id, userId);
+
+    // Merge with existing settings
+    floorPlan.settings = {
+      ...floorPlan.settings,
+      ...settingsDto,
+      gridSettings: {
+        ...floorPlan.settings?.gridSettings,
+        ...settingsDto.gridSettings,
+      },
+      defaultColors: {
+        ...floorPlan.settings?.defaultColors,
+        ...settingsDto.defaultColors,
+      },
+    };
+
+    floorPlan.updatedBy = userId;
+
+    return await this.floorPlanRepository.save(floorPlan);
+  }
+
+   async resetSettings(id: string, userId: string): Promise<FloorPlan> {
+    const floorPlan = await this.findOne(id, userId);
+
+    floorPlan.settings = {
+      measurementUnit: 'metric',
+      autoSave: true,
+      gridSettings: {
+        showGrid: true,
+        snapToGrid: true,
+        gridSize: 1,
+      },
+      defaultColors: {
+        gateways: '#22c55e',
+        sensorsToGateway: '#f59e0b',
+        zones: '#3b82f6',
+        sensorsToGrid: '#a855f7',
+      },
+    };
+
+    floorPlan.updatedBy = userId;
+
+    return await this.floorPlanRepository.save(floorPlan);
+  }
 }
