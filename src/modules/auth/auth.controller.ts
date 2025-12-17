@@ -409,45 +409,7 @@ async appleAuthCallback(
       },
     },
   })
-
-  /**
- * Verify 2FA code for OAuth login
- */
-@Post('oauth/verify-2fa')
-@HttpCode(HttpStatus.OK)
-@ApiOperation({ 
-  summary: 'Verify 2FA code for OAuth login',
-  description: 'Complete OAuth login by verifying 2FA code'
-})
-@ApiResponse({
-  status: 200,
-  description: 'Returns access token, refresh token, and user information',
-  type: AuthResponseDto,
-})
-@ApiResponse({ status: 401, description: 'Invalid 2FA code' })
-@ApiBody({
-  schema: {
-    type: 'object',
-    properties: {
-      userId: { type: 'string', example: 'user-uuid' },
-      code: { type: 'string', example: '123456' },
-    },
-    required: ['userId', 'code'],
-  },
-})
-
-
-async verifyOAuth2FA(
-  @Body('userId') userId: string,
-  @Body('code') code: string,
-  @Ip() ipAddress: string,
-  @Headers('user-agent') userAgent: string,
-): Promise<AuthResponseDto> {
-  return this.authService.verifyOAuth2FA(userId, code, ipAddress, userAgent);
-}
-
-
-  @ApiResponse({ status: 401, description: 'Invalid or expired code' })
+   @ApiResponse({ status: 401, description: 'Invalid or expired code' })
   async exchangeCode(
     @Body() exchangeCodeDto: ExchangeCodeDto,
     @Ip() ipAddress: string,
@@ -491,6 +453,40 @@ async verifyOAuth2FA(
       user: sessionData.profile,
     };
   }
+
+  /**
+ * Verify 2FA code for OAuth login
+ */
+@Post('oauth/verify-2fa')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ 
+  summary: 'Verify 2FA code for OAuth login',
+  description: 'Complete OAuth login by verifying 2FA code'
+})
+@ApiResponse({
+  status: 200,
+  description: 'Returns access token, refresh token, and user information',
+  type: AuthResponseDto,
+})
+@ApiResponse({ status: 401, description: 'Invalid 2FA code' })
+@ApiBody({
+  schema: {
+    type: 'object',
+    properties: {
+      userId: { type: 'string', example: 'user-uuid' },
+      code: { type: 'string', example: '123456' },
+    },
+    required: ['userId', 'code'],
+  },
+})
+async verifyOAuth2FA(
+  @Body('userId') userId: string,
+  @Body('code') code: string,
+  @Ip() ipAddress: string,
+  @Headers('user-agent') userAgent: string,
+): Promise<AuthResponseDto> {
+  return this.authService.verifyOAuth2FA(userId, code, ipAddress, userAgent);
+}
 
   // ============ OAuth Account Management ============
 
