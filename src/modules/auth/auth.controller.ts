@@ -171,11 +171,26 @@ export class AuthController {
 
       // Type guard: Check if 2FA is required (shouldn't happen in OAuth flow)
       if ('requires2FA' in authResponse) {
-        this.logger.error(
-          'Unexpected 2FA challenge in OAuth flow for Google login',
-        );
-        const frontendUrl = process.env.FRONTEND_URL;
-        return res.redirect(`${frontendUrl}/verify-pin`);
+        this.logger.log(`2FA required for OAuth user: ${authResponse.userId}`);
+        const sessionCode = randomBytes(32).toString('hex');
+
+      const sessionData = {
+        requires2FA: true,
+        userId: authResponse.userId,
+        method: authResponse.method,
+        profile,
+        expiresAt: Date.now() + 300000, // 5 minutes for 2FA
+      };
+
+      await this.redis.set(
+        `oauth:session:${sessionCode}`,
+        JSON.stringify(sessionData),
+        300, // 5 minutes TTL
+      );
+
+      // Redirect to frontend with session code
+      const frontendUrl = process.env.FRONTEND_URL;
+      return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
       }
 
       // Generate a secure one-time session code
@@ -236,12 +251,29 @@ export class AuthController {
 
       // Type guard: Check if 2FA is required (shouldn't happen in OAuth flow)
       if ('requires2FA' in authResponse) {
-        this.logger.error(
-          'Unexpected 2FA challenge in OAuth flow for GitHub login',
-        );
-        const frontendUrl = process.env.FRONTEND_URL;
-        return res.redirect(`${frontendUrl}/login?error=auth_failed`);
-      }
+      this.logger.log(`2FA required for OAuth user: ${authResponse.userId}`);
+      
+      // Generate a secure one-time session code WITH 2FA info
+      const sessionCode = randomBytes(32).toString('hex');
+
+      const sessionData = {
+        requires2FA: true,
+        userId: authResponse.userId,
+        method: authResponse.method,
+        profile,
+        expiresAt: Date.now() + 300000, // 5 minutes for 2FA
+      };
+
+      await this.redis.set(
+        `oauth:session:${sessionCode}`,
+        JSON.stringify(sessionData),
+        300, // 5 minutes TTL
+      );
+
+      // Redirect to frontend with session code
+      const frontendUrl = process.env.FRONTEND_URL;
+      return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
+    }
 
       // Generate a secure one-time session code
       const sessionCode = randomBytes(32).toString('hex');
@@ -301,12 +333,29 @@ export class AuthController {
 
       // Type guard: Check if 2FA is required (shouldn't happen in OAuth flow)
       if ('requires2FA' in authResponse) {
-        this.logger.error(
-          'Unexpected 2FA challenge in OAuth flow for Apple login',
-        );
-        const frontendUrl = process.env.FRONTEND_URL;
-        return res.redirect(`${frontendUrl}/login?error=auth_failed`);
-      }
+      this.logger.log(`2FA required for OAuth user: ${authResponse.userId}`);
+      
+      // Generate a secure one-time session code WITH 2FA info
+      const sessionCode = randomBytes(32).toString('hex');
+
+      const sessionData = {
+        requires2FA: true,
+        userId: authResponse.userId,
+        method: authResponse.method,
+        profile,
+        expiresAt: Date.now() + 300000, // 5 minutes for 2FA
+      };
+
+      await this.redis.set(
+        `oauth:session:${sessionCode}`,
+        JSON.stringify(sessionData),
+        300, // 5 minutes TTL
+      );
+
+      // Redirect to frontend with session code
+      const frontendUrl = process.env.FRONTEND_URL;
+      return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
+    }
 
       // Generate a secure one-time session code
       const sessionCode = randomBytes(32).toString('hex');
@@ -358,6 +407,44 @@ export class AuthController {
       },
     },
   })
+
+  /**
+ * Verify 2FA code for OAuth login
+ */
+@Post('oauth/verify-2fa')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ 
+  summary: 'Verify 2FA code for OAuth login',
+  description: 'Complete OAuth login by verifying 2FA code'
+})
+@ApiResponse({
+  status: 200,
+  description: 'Returns access token, refresh token, and user information',
+  type: AuthResponseDto,
+})
+@ApiResponse({ status: 401, description: 'Invalid 2FA code' })
+@ApiBody({
+  schema: {
+    type: 'object',
+    properties: {
+      userId: { type: 'string', example: 'user-uuid' },
+      code: { type: 'string', example: '123456' },
+    },
+    required: ['userId', 'code'],
+  },
+})
+
+
+async verifyOAuth2FA(
+  @Body('userId') userId: string,
+  @Body('code') code: string,
+  @Ip() ipAddress: string,
+  @Headers('user-agent') userAgent: string,
+): Promise<AuthResponseDto> {
+  return this.authService.verifyOAuth2FA(userId, code, ipAddress, userAgent);
+}
+
+
   @ApiResponse({ status: 401, description: 'Invalid or expired code' })
   async exchangeCode(
     @Body() exchangeCodeDto: ExchangeCodeDto,
