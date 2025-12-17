@@ -90,16 +90,13 @@ export class PaymentsService {
       }
 
       // Check if there's already a pending payment for this upgrade
-      const existingPending = await this.paymentRepository.findOne({
-        where: {
-          userId,
-          status: PaymentStatus.PENDING,
-          metadata: {
-            plan,
-            billingPeriod,
-          } as any,
-        },
-      });
+      const existingPending = await this.paymentRepository
+  .createQueryBuilder('payment')
+  .where('payment.userId = :userId', { userId })
+  .andWhere('payment.status = :status', { status: PaymentStatus.PENDING })
+  .andWhere("payment.metadata->>'plan' = :plan", { plan })
+  .andWhere("payment.metadata->>'billingPeriod' = :billingPeriod", { billingPeriod })
+  .getOne();
 
       if (existingPending) {
         this.logger.warn(`Reusing existing pending payment: ${existingPending.paymentIntentId}`);
@@ -308,6 +305,15 @@ export class PaymentsService {
         // Get current subscription
         const currentSub = await this.subscriptionsService.findCurrent(payment.userId);
 
+         // 🔍 ADD THESE DEBUG LOGS
+      this.logger.log(`Current subscription: ${JSON.stringify({
+        plan: currentSub.plan,
+        billingPeriod: currentSub.billingPeriod,
+        status: currentSub.status
+      })}`);
+      
+      this.logger.log(`Target: ${targetPlan} - ${targetBilling}`);
+
         // Determine if this is an upgrade or renewal
         const planOrder = [
           SubscriptionPlan.FREE,
@@ -319,14 +325,24 @@ export class PaymentsService {
         const currentPlanIndex = planOrder.indexOf(currentSub.plan);
         const targetPlanIndex = planOrder.indexOf(targetPlan);
 
+        this.logger.log(`Plan indices - Current: ${currentPlanIndex}, Target: ${targetPlanIndex}`);
+
         if (targetPlanIndex > currentPlanIndex) {
           // UPGRADE
           this.logger.log(`⬆️ Upgrading subscription from ${currentSub.plan} to ${targetPlan}`);
           
-          await this.subscriptionsService.upgrade(payment.userId, {
-            plan: targetPlan,
-            billingPeriod: targetBilling,
-          });
+           const upgraded = await this.subscriptionsService.upgrade(payment.userId, {
+          plan: targetPlan,
+          billingPeriod: targetBilling,
+        });
+
+        this.logger.log(`✅ Upgrade completed: ${JSON.stringify({
+          id: upgraded.id,
+          plan: upgraded.plan,
+          status: upgraded.status,
+          nextBillingDate: upgraded.nextBillingDate
+        })}`);
+        
         } else if (targetPlanIndex === currentPlanIndex) {
           // RENEWAL
           this.logger.log(`🔄 Renewing subscription for ${targetPlan} plan`);
@@ -573,13 +589,10 @@ export class PaymentsService {
    * Check for payments that require manual review
    */
   async getPaymentsRequiringReview(): Promise<Payment[]> {
-    return await this.paymentRepository.find({
-      where: {
-        status: PaymentStatus.SUCCEEDED,
-        metadata: {
-          requiresManualReview: true,
-        } as any,
-      },
-    });
-  }
+  return await this.paymentRepository
+    .createQueryBuilder('payment')
+    .where('payment.status = :status', { status: PaymentStatus.SUCCEEDED })
+    .andWhere("payment.metadata->>'requiresManualReview' = 'true'")
+    .getMany();
+}
 }
