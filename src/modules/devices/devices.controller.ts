@@ -34,6 +34,7 @@ import { SubscriptionGuard } from '@/common/guards/subscription.guard';
 import { FeatureLimitGuard } from '@/common/guards/feature-limit.guard';
 import { AccessControl } from '@/common/decorators/access-control.decorator';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
 
 @ApiTags('devices')
 @Controller('devices')
@@ -58,14 +59,14 @@ export class DevicesController {
   @ApiOperation({ summary: 'Get all devices with pagination' })
   @ApiResponse({ status: 200, description: 'List of devices' })
   findAll(@CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
-    return this.devicesService.findAll(user.id, paginationDto);
+    return this.devicesService.findAll(user, paginationDto);
   }
 
   @Get('statistics')
   @ApiOperation({ summary: 'Get device statistics' })
   @ApiResponse({ status: 200, description: 'Device statistics' })
   getStatistics(@CurrentUser() user: User) {
-    return this.devicesService.getStatistics(user.id);
+    return this.devicesService.getStatistics(user);
   }
 
   @Get(':id')
@@ -73,7 +74,7 @@ export class DevicesController {
   @ApiResponse({ status: 200, description: 'Device found' })
   @ApiResponse({ status: 404, description: 'Device not found' })
   findOne(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.devicesService.findOne(id, user.id);
+    return this.devicesService.findOne(id, user);
   }
 
   @Patch(':id')
@@ -85,7 +86,7 @@ export class DevicesController {
     @Param('id', ParseIdPipe) id: string,
     @Body() updateDeviceDto: UpdateDeviceDto,
   ) {
-    return this.devicesService.update(id, user.id, updateDeviceDto);
+    return this.devicesService.update(id, user, updateDeviceDto);
   }
 
   @Post(':id/activate')
@@ -94,7 +95,7 @@ export class DevicesController {
   @ApiResponse({ status: 200, description: 'Device activated' })
   @ApiResponse({ status: 400, description: 'Device already active' })
   activate(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.devicesService.activate(id, user.id);
+    return this.devicesService.activate(id, user);
   }
 
   @Post(':id/deactivate')
@@ -102,7 +103,7 @@ export class DevicesController {
   @ApiOperation({ summary: 'Deactivate device' })
   @ApiResponse({ status: 200, description: 'Device deactivated' })
   deactivate(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.devicesService.deactivate(id, user.id);
+    return this.devicesService.deactivate(id, user);
   }
 
   @Get(':id/credentials')
@@ -117,7 +118,7 @@ export class DevicesController {
     @CurrentUser() user: User,
     @Param('id', ParseIdPipe) id: string,
   ) {
-    return this.devicesService.getCredentials(id, user.id);
+    return this.devicesService.getCredentials(id,user);
   }
 
   @Post(':id/regenerate-credentials')
@@ -128,7 +129,7 @@ export class DevicesController {
     @CurrentUser() user: User,
     @Param('id', ParseIdPipe) id: string,
   ) {
-    return this.devicesService.regenerateCredentials(id, user.id);
+    return this.devicesService.regenerateCredentials(id, user);
   }
 
   @Delete(':id')
@@ -137,7 +138,7 @@ export class DevicesController {
   @ApiResponse({ status: 204, description: 'Device deleted' })
   @ApiResponse({ status: 404, description: 'Device not found' })
   async remove(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    const result = await this.devicesService.remove(id, user.id);
+    const result = await this.devicesService.remove(id, user);
      await this.subscriptionsService.decrementUsage(user.id, 'devices', 1);
      return result;
   }
@@ -159,5 +160,80 @@ export class DevicesController {
       user.id,
       body.status,
     );
+  }
+
+   /**
+   * ============================================
+   * Customer-specific endpoints
+   * ============================================
+   */
+
+    /**
+   * Get devices by customer ID
+   * Customer users can only access their own customer
+   * Admins can access any customer
+   */
+  @Get('customer/:customerId')
+  @UseGuards(CustomerAccessGuard) // Validates customer access
+  @ApiOperation({ summary: 'Get all devices for a specific customer' })
+  @ApiResponse({ status: 200, description: 'Devices retrieved' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async getDevicesByCustomer(
+    @CurrentUser() user: User,
+    @Param('customerId') customerId: string,
+  ) {
+    const devices = await this.devicesService.findByCustomer(customerId, user);
+    return {
+      message: 'Devices retrieved successfully',
+      data: devices,
+    };
+  }
+
+  /**
+   * Assign device to customer (Admins only)
+   */
+  @Post(':id/assign-customer')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Assign device to a customer (Admins only)' })
+  @ApiResponse({ status: 200, description: 'Device assigned to customer' })
+  async assignToCustomer(
+    @CurrentUser() user: User,
+    @Param('id') deviceId: string,
+    @Body('customerId') customerId: string,
+  ) {
+    const device = await this.devicesService.assignToCustomer(
+      deviceId,
+      customerId,
+      user,
+    );
+    return {
+      message: 'Device assigned to customer successfully',
+      data: device,
+    };
+  }
+
+  /**
+   * Unassign device from customer (Admins only)
+   */
+  @Post(':id/unassign-customer')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Unassign device from customer (Admins only)' })
+  @ApiResponse({ status: 200, description: 'Device unassigned from customer' })
+  async unassignFromCustomer(
+    @CurrentUser() user: User,
+    @Param('id') deviceId: string,
+  ) {
+    const device = await this.devicesService.unassignFromCustomer(
+      deviceId,
+      user,
+    );
+    return {
+      message: 'Device unassigned from customer successfully',
+      data: device,
+    };
   }
 }

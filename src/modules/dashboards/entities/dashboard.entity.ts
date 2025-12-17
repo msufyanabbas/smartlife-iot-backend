@@ -1,4 +1,4 @@
-import { Entity, Column, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import { Entity, Column, ManyToOne, JoinColumn, OneToMany, Index } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { User } from '../../users/entities/user.entity';
 
@@ -59,6 +59,14 @@ export class Dashboard extends BaseEntity {
   @Column()
   userId: string;
 
+  @Column({ nullable: true })
+  @Index()
+  customerId?: string;
+  
+  @Column({ nullable: true })
+  @Index()
+  tenantId?: string;
+
   @ManyToOne(() => User)
   @JoinColumn({ name: 'userId' })
   user: User;
@@ -93,6 +101,9 @@ export class Dashboard extends BaseEntity {
 
   @Column({ default: false })
   isDefault: boolean;
+
+  @Column({ default: false })
+  isPublic: boolean; 
 
   @Column({ default: false })
   isFavorite: boolean;

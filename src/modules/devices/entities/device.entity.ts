@@ -127,6 +127,10 @@ export class Device extends BaseEntity {
   @Column({ type: 'timestamp', nullable: true })
   activatedAt?: Date;
 
+  @Column({ nullable: true })
+  @Index()
+  customerId?: string;
+
   // Statistics
   @Column({ type: 'int', default: 0 })
   messageCount: number;

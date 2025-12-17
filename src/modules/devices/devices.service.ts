@@ -11,7 +11,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import { Device } from '@modules/index.entities';
+import { Device, User } from '@modules/index.entities';
 import { DeviceStatus } from './entities/device.entity';
 import { CreateDeviceDto } from '@modules/devices/dto/create-device.dto';
 import { UpdateDeviceDto } from '@modules/devices/dto/update-device.dto';
@@ -21,6 +21,7 @@ import {
   PaginatedResponseDto,
 } from '@/common/dto/pagination.dto';
 import { generateToken, generateRandomString } from '@/common/utils/helpers';
+import { UserRole } from '../users/entities/user.entity';
 
 /**
  * Device Topic Strategy
@@ -270,7 +271,7 @@ export class DevicesService {
    */
   async sendCommand(
     deviceId: string,
-    userId: string,
+    user: User,
     command: {
       type: string;
       params?: any;
@@ -278,7 +279,7 @@ export class DevicesService {
       confirmed?: boolean; // For LoRaWAN
     },
   ): Promise<void> {
-    const device = await this.findOne(deviceId, userId);
+    const device = await this.findOne(deviceId, user);
 
     const deviceType = device.metadata?.deviceType || 'generic';
     const gatewayType = device.metadata?.gatewayType;
@@ -362,14 +363,32 @@ export class DevicesService {
   // ==========================================
 
   async findAll(
-    userId: string,
+    user: User,
     paginationDto: PaginationDto,
   ): Promise<PaginatedResponseDto<Device>> {
     const { page, limit, search, sortBy, sortOrder } = paginationDto;
 
-    const queryBuilder = this.deviceRepository
-      .createQueryBuilder('device')
-      .where('device.userId = :userId', { userId });
+
+    const queryBuilder = this.deviceRepository.createQueryBuilder('device');
+
+    // ========================================
+    // CUSTOMER FILTERING LOGIC
+    // ========================================
+    if (user.role === UserRole.CUSTOMER_USER) {
+      // Customer users only see their customer's devices
+      if (!user.customerId) {
+        return PaginatedResponseDto.create([], page, limit, 0);
+      }
+      queryBuilder.andWhere('device.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    } else if (user.role === UserRole.TENANT_ADMIN) {
+      // Tenant admins see all devices in their tenant
+      queryBuilder.andWhere('device.tenantId = :tenantId', {
+        tenantId: user.tenantId,
+      });
+    }
+    // SUPER_ADMIN sees everything (no filter)
 
     if (search) {
       queryBuilder.andWhere(
@@ -390,10 +409,25 @@ export class DevicesService {
     return PaginatedResponseDto.create(devices, page, limit, total);
   }
 
-  async findOne(id: string, userId: string): Promise<Device> {
-    const device = await this.deviceRepository.findOne({
-      where: { id, userId },
-    });
+  async findOne(id: string, user: User): Promise<Device> {
+    const queryBuilder = this.deviceRepository.createQueryBuilder('device')
+      .where('device.id = :id', { id });
+     
+     // Apply customer filtering
+    if (user.role === UserRole.CUSTOMER_USER) {
+      if (!user.customerId) {
+        throw new ForbiddenException('No customer assigned');
+      }
+      queryBuilder.andWhere('device.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    } else if (user.role === UserRole.TENANT_ADMIN) {
+      queryBuilder.andWhere('device.tenantId = :tenantId', {
+        tenantId: user.tenantId,
+      });
+    }
+    
+    const device = await queryBuilder.getOne();
 
     if (!device) {
       throw new NotFoundException(`Device with ID ${id} not found`);
@@ -428,17 +462,17 @@ export class DevicesService {
 
   async update(
     id: string,
-    userId: string,
+    user: User,
     updateDeviceDto: UpdateDeviceDto,
   ): Promise<Device> {
-    const device = await this.findOne(id, userId);
+    const device = await this.findOne(id, user);
     Object.assign(device, updateDeviceDto);
     await this.deviceRepository.save(device);
     return device;
   }
 
-  async activate(id: string, userId: string): Promise<Device> {
-    const device = await this.findOne(id, userId);
+  async activate(id: string, user: User): Promise<Device> {
+    const device = await this.findOne(id, user);
 
     if (device.status === DeviceStatus.ACTIVE) {
       throw new BadRequestException('Device is already active');
@@ -450,15 +484,15 @@ export class DevicesService {
     return device;
   }
 
-  async deactivate(id: string, userId: string): Promise<Device> {
-    const device = await this.findOne(id, userId);
+  async deactivate(id: string, user: User): Promise<Device> {
+    const device = await this.findOne(id, user);
     device.status = DeviceStatus.INACTIVE;
     await this.deviceRepository.save(device);
     return device;
   }
 
-  async remove(id: string, userId: string): Promise<void> {
-    const device = await this.findOne(id, userId);
+  async remove(id: string, user: User): Promise<void> {
+    const device = await this.findOne(id, user);
     await this.deviceRepository.softRemove(device);
   }
 
@@ -481,26 +515,54 @@ export class DevicesService {
     );
   }
 
-  async getStatistics(userId: string): Promise<any> {
+ async getStatistics(user: User): Promise<any> {
+    const queryBuilder = this.deviceRepository.createQueryBuilder('device');
+
+    // Apply customer filtering
+    if (user.role === UserRole.CUSTOMER_USER) {
+      if (!user.customerId) {
+        return this.getEmptyStatistics();
+      }
+      queryBuilder.where('device.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    } else if (user.role === UserRole.TENANT_ADMIN) {
+      queryBuilder.where('device.tenantId = :tenantId', {
+        tenantId: user.tenantId,
+      });
+    }
+    // SUPER_ADMIN: no filter
+
     const [
       totalDevices,
       activeDevices,
       inactiveDevices,
       offlineDevices,
-      onlineDevices,
     ] = await Promise.all([
-      this.deviceRepository.count({ where: { userId } }),
-      this.deviceRepository.count({
-        where: { userId, status: DeviceStatus.ACTIVE },
-      }),
-      this.deviceRepository.count({
-        where: { userId, status: DeviceStatus.INACTIVE },
-      }),
-      this.deviceRepository.count({
-        where: { userId, status: DeviceStatus.OFFLINE },
-      }),
-      this.countOnlineDevices(userId),
+      queryBuilder.getCount(),
+      queryBuilder
+        .clone()
+        .andWhere('device.status = :status', { status: DeviceStatus.ACTIVE })
+        .getCount(),
+      queryBuilder
+        .clone()
+        .andWhere('device.status = :status', { status: DeviceStatus.INACTIVE })
+        .getCount(),
+      queryBuilder
+        .clone()
+        .andWhere('device.status = :status', { status: DeviceStatus.OFFLINE })
+        .getCount(),
     ]);
+
+    // Get online devices (seen in last 5 minutes)
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const onlineDevices = await queryBuilder
+      .clone()
+      .andWhere('device.lastSeenAt > :fiveMinutesAgo', { fiveMinutesAgo })
+      .getCount();
+
+    // Get devices by type
+    const devicesByType = await this.getDevicesByType(user);
 
     return {
       totalDevices,
@@ -508,12 +570,24 @@ export class DevicesService {
       inactiveDevices,
       offlineDevices,
       onlineDevices,
-      devicesByType: await this.getDevicesByType(userId),
+      devicesByType,
       devicesByStatus: {
         active: activeDevices,
         inactive: inactiveDevices,
         offline: offlineDevices,
       },
+    };
+  }
+
+  private getEmptyStatistics() {
+    return {
+      totalDevices: 0,
+      activeDevices: 0,
+      inactiveDevices: 0,
+      offlineDevices: 0,
+      onlineDevices: 0,
+      devicesByType: {},
+      devicesByStatus: { active: 0, inactive: 0, offline: 0 },
     };
   }
 
@@ -526,16 +600,28 @@ export class DevicesService {
       .getCount();
   }
 
-  private async getDevicesByType(
-    userId: string,
-  ): Promise<Record<string, number>> {
-    const devices = await this.deviceRepository
+  private async getDevicesByType(user: User): Promise<Record<string, number>> {
+    const queryBuilder = this.deviceRepository
       .createQueryBuilder('device')
       .select('device.type', 'type')
       .addSelect('COUNT(*)', 'count')
-      .where('device.userId = :userId', { userId })
-      .groupBy('device.type')
-      .getRawMany();
+      .groupBy('device.type');
+
+    // Apply customer filtering
+    if (user.role === UserRole.CUSTOMER_USER) {
+      if (!user.customerId) {
+        return {};
+      }
+      queryBuilder.where('device.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    } else if (user.role === UserRole.TENANT_ADMIN) {
+      queryBuilder.where('device.tenantId = :tenantId', {
+        tenantId: user.tenantId,
+      });
+    }
+
+    const devices = await queryBuilder.getRawMany();
 
     return devices.reduce((acc, { type, count }) => {
       acc[type] = parseInt(count);
@@ -587,27 +673,27 @@ export class DevicesService {
 
   async getCredentials(
     id: string,
-    userId: string,
+    user: User,
   ): Promise<DeviceCredentialsDto> {
-    const device = await this.deviceRepository
+    const device = await this.findOne(id, user);
+     const deviceWithCreds = await this.deviceRepository
       .createQueryBuilder('device')
       .where('device.id = :id', { id })
-      .andWhere('device.userId = :userId', { userId })
       .addSelect(['device.accessToken', 'device.secretKey', 'device.metadata'])
       .getOne();
 
-    if (!device) {
+    if (!deviceWithCreds) {
       throw new NotFoundException(`Device with ID ${id} not found`);
     }
 
-    return this.generateCredentials(device);
+    return this.generateCredentials(deviceWithCreds);
   }
 
   async regenerateCredentials(
     id: string,
-    userId: string,
+    user: User,
   ): Promise<DeviceCredentialsDto> {
-    const device = await this.findOne(id, userId);
+    const device = await this.findOne(id, user);
 
     const accessToken = generateToken(64);
     const secretKey = `sk_${generateToken(32)}`;
@@ -617,6 +703,63 @@ export class DevicesService {
 
     await this.deviceRepository.save(device);
 
-    return this.getCredentials(id, userId);
+    return this.getCredentials(id, user);
   }
+
+  async unassignFromCustomer(deviceId: string, user: User): Promise<Device> {
+    // Only admins can unassign
+    if (
+      user.role !== UserRole.SUPER_ADMIN &&
+      user.role !== UserRole.TENANT_ADMIN
+    ) {
+      throw new ForbiddenException('Only admins can unassign devices');
+    }
+
+    const device = await this.findOne(deviceId, user);
+    device.customerId = undefined;
+    return await this.deviceRepository.save(device);
+  }
+
+  /**
+   * ============================================
+   * Assign device to customer
+   * ============================================
+   */
+  async assignToCustomer(
+    deviceId: string,
+    customerId: string,
+    user: User,
+  ): Promise<Device> {
+    // Only admins can assign devices to customers
+    if (
+      user.role !== UserRole.SUPER_ADMIN &&
+      user.role !== UserRole.TENANT_ADMIN
+    ) {
+      throw new ForbiddenException('Only admins can assign devices to customers');
+    }
+
+    const device = await this.findOne(deviceId, user);
+    device.customerId = customerId;
+    return await this.deviceRepository.save(device);
+  }
+
+  /**
+   * ============================================
+   * Get devices by customer
+   * ============================================
+   */
+  async findByCustomer(customerId: string, user: User): Promise<Device[]> {
+    // Validate customer access
+    if (user.role === UserRole.CUSTOMER_USER) {
+      if (user.customerId !== customerId) {
+        throw new ForbiddenException('Access denied to this customer');
+      }
+    }
+
+    return await this.deviceRepository.find({
+      where: { customerId },
+      order: { name: 'ASC' },
+    });
+  }
+
 }

@@ -5,9 +5,11 @@ export enum AssetType {
   BUILDING = 'building',
   FLOOR = 'floor',
   ROOM = 'room',
+  OFFICE = 'office', // Added
   VEHICLE = 'vehicle',
   EQUIPMENT = 'equipment',
   INFRASTRUCTURE = 'infrastructure',
+  ZONE = 'zone', // Added
   OTHER = 'other',
 }
 
@@ -96,4 +98,11 @@ export class Asset extends BaseEntity {
     warrantyExpiry?: Date;
     serviceInterval?: number; // in days
   };
+
+  // ADD THESE TWO PROPERTIES
+  @Column({ default: 0 })
+  deviceCount: number;
+
+  @Column({ default: 0 })
+  childrenCount: number;
 }

@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, IsNull } from 'typeorm';
@@ -15,6 +16,8 @@ import {
   QueryAssetsDto,
   UpdateAttributesDto,
 } from './dto/assets.dto';
+import { User } from '../index.entities';
+import { UserRole } from '../users/entities/user.entity';
 
 @Injectable()
 export class AssetsService {
@@ -29,7 +32,7 @@ export class AssetsService {
   /**
    * Create a new asset
    */
-  async create(createAssetDto: CreateAssetDto): Promise<Asset> {
+  async create(createAssetDto: CreateAssetDto, user: User): Promise<Asset> {
     // Check if parent asset exists
     if (createAssetDto.parentAssetId) {
       const parentAsset = await this.assetRepository.findOne({
@@ -49,9 +52,23 @@ export class AssetsService {
       if (isCircular) {
         throw new BadRequestException('Cannot create circular asset hierarchy');
       }
+
+      if (user.role === UserRole.CUSTOMER_USER) {
+        if (parentAsset.customerId !== user.customerId) {
+          throw new ForbiddenException(
+            'Cannot create asset under another customer\'s asset',
+          );
+        }
+      }
     }
 
-    const asset = this.assetRepository.create(createAssetDto);
+    const asset = this.assetRepository.create(
+      {
+        ...createAssetDto,
+        tenantId: user.tenantId,
+        customerId: user.role === UserRole.CUSTOMER_USER ? user.customerId : createAssetDto.customerId
+      }
+    );
     const savedAsset = await this.assetRepository.save(asset);
 
     // Emit event
@@ -63,7 +80,7 @@ export class AssetsService {
   /**
    * Find all assets with filters and pagination
    */
-  async findAll(queryDto: QueryAssetsDto): Promise<{
+  async findAll(queryDto: QueryAssetsDto, user: User): Promise<{
     assets: Asset[];
     total: number;
     page: number;
@@ -75,6 +92,33 @@ export class AssetsService {
     const skip = (page - 1) * limit;
 
     const queryBuilder = this.assetRepository.createQueryBuilder('asset');
+
+     // ========================================
+    // CUSTOMER FILTERING LOGIC (if user provided)
+    // ========================================
+    if (user) {
+      if (user.role === UserRole.CUSTOMER_USER) {
+        // Customer users only see their customer's assets
+        if (!user.customerId) {
+          return {
+            assets: [],
+            total: 0,
+            page,
+            limit,
+            totalPages: 0,
+          };
+        }
+        queryBuilder.andWhere('asset.customerId = :customerId', {
+          customerId: user.customerId,
+        });
+      } else if (user.role === UserRole.TENANT_ADMIN) {
+        // Tenant admins see all assets in their tenant
+        queryBuilder.andWhere('asset.tenantId = :tenantId', {
+          tenantId: user.tenantId,
+        });
+      }
+      // SUPER_ADMIN sees everything (no filter)
+    }
 
     // Apply filters
     if (queryDto.search) {
@@ -88,13 +132,20 @@ export class AssetsService {
       queryBuilder.andWhere('asset.type = :type', { type: queryDto.type });
     }
 
-    if (queryDto.tenantId) {
+      if (queryDto.tenantId && user.role === UserRole.SUPER_ADMIN) {
       queryBuilder.andWhere('asset.tenantId = :tenantId', {
         tenantId: queryDto.tenantId,
       });
     }
 
-    if (queryDto.customerId) {
+     if (queryDto.customerId) {
+      // Validate access
+      if (
+        user.role === UserRole.CUSTOMER_USER &&
+        user.customerId !== queryDto.customerId
+      ) {
+        throw new ForbiddenException('Access denied to this customer');
+      }
       queryBuilder.andWhere('asset.customerId = :customerId', {
         customerId: queryDto.customerId,
       });
@@ -145,11 +196,27 @@ export class AssetsService {
   /**
    * Find one asset by ID
    */
-  async findOne(id: string): Promise<Asset> {
-    const asset = await this.assetRepository.findOne({
-      where: { id },
-      relations: ['parentAsset'],
-    });
+   async findOne(id: string, user: User): Promise<Asset> {
+    const queryBuilder = this.assetRepository
+      .createQueryBuilder('asset')
+      .leftJoinAndSelect('asset.parentAsset', 'parentAsset')
+      .where('asset.id = :id', { id });
+
+    // Apply customer filtering
+    if (user.role === UserRole.CUSTOMER_USER) {
+      if (!user.customerId) {
+        throw new ForbiddenException('No customer assigned');
+      }
+      queryBuilder.andWhere('asset.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    } else if (user.role === UserRole.TENANT_ADMIN) {
+      queryBuilder.andWhere('asset.tenantId = :tenantId', {
+        tenantId: user.tenantId,
+      });
+    }
+
+    const asset = await queryBuilder.getOne();
 
     if (!asset) {
       throw new NotFoundException('Asset not found');
@@ -161,8 +228,21 @@ export class AssetsService {
   /**
    * Update asset
    */
-  async update(id: string, updateAssetDto: UpdateAssetDto): Promise<Asset> {
-    const asset = await this.findOne(id);
+   async update(
+    id: string,
+    updateAssetDto: UpdateAssetDto,
+    user: User,
+  ): Promise<Asset> {
+    const asset = await this.findOne(id, user);
+
+    // Customer users cannot change customerId
+    if (
+      user.role === UserRole.CUSTOMER_USER &&
+      updateAssetDto.customerId &&
+      updateAssetDto.customerId !== asset.customerId
+    ) {
+      throw new ForbiddenException('Cannot change customer assignment');
+    }
 
     // If parent is being changed, validate hierarchy
     if (
@@ -176,6 +256,19 @@ export class AssetsService {
 
       if (isCircular) {
         throw new BadRequestException('Cannot create circular asset hierarchy');
+      }
+
+      // Validate parent asset access for customer users
+      if (user.role === UserRole.CUSTOMER_USER) {
+        const parentAsset = await this.assetRepository.findOne({
+          where: { id: updateAssetDto.parentAssetId },
+        });
+
+        if (parentAsset && parentAsset.customerId !== user.customerId) {
+          throw new ForbiddenException(
+            'Cannot move asset under another customer\'s asset',
+          );
+        }
       }
     }
 
@@ -191,8 +284,16 @@ export class AssetsService {
   /**
    * Delete asset
    */
-  async remove(id: string): Promise<void> {
-    const asset = await this.findOne(id);
+  async remove(id: string, user: User): Promise<void> {
+    const asset = await this.findOne(id, user);
+
+    // Only admins can delete assets (or add owner check if needed)
+    if (
+      user.role !== UserRole.SUPER_ADMIN &&
+      user.role !== UserRole.TENANT_ADMIN
+    ) {
+      throw new ForbiddenException('Only admins can delete assets');
+    }
 
     // Check if asset has children
     const children = await this.assetRepository.count({
@@ -227,13 +328,15 @@ export class AssetsService {
    */
   async getHierarchy(
     id: string,
+    user: User,
     maxDepth: number = 10,
     includeDevices: boolean = false,
   ): Promise<any> {
-    const asset = await this.findOne(id);
+    const asset = await this.findOne(id, user); // This checks customer access
 
     const hierarchy = await this.buildHierarchy(
       asset,
+      user,
       maxDepth,
       0,
       includeDevices,
@@ -245,24 +348,40 @@ export class AssetsService {
   /**
    * Get root assets (no parent)
    */
-  async getRootAssets(): Promise<Asset[]> {
-    return await this.assetRepository.find({
-      where: { parentAssetId: IsNull() },
-      order: { name: 'ASC' },
-    });
+   async getRootAssets(user: User): Promise<Asset[]> {
+    const queryBuilder = this.assetRepository
+      .createQueryBuilder('asset')
+      .where('asset.parentAssetId IS NULL');
+
+    // Apply customer filtering
+    if (user.role === UserRole.CUSTOMER_USER) {
+      if (!user.customerId) {
+        return [];
+      }
+      queryBuilder.andWhere('asset.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    } else if (user.role === UserRole.TENANT_ADMIN) {
+      queryBuilder.andWhere('asset.tenantId = :tenantId', {
+        tenantId: user.tenantId,
+      });
+    }
+
+    return await queryBuilder.orderBy('asset.name', 'ASC').getMany();
   }
+
 
   /**
    * Get asset path (from root to asset)
    */
-  async getAssetPath(id: string): Promise<Asset[]> {
+  async getAssetPath(id: string, user: User): Promise<Asset[]> {
     const path: Asset[] = [];
-    let currentAsset = await this.findOne(id);
+    let currentAsset = await this.findOne(id, user);
 
     path.unshift(currentAsset);
 
     while (currentAsset.parentAssetId) {
-      currentAsset = await this.findOne(currentAsset.parentAssetId);
+      currentAsset = await this.findOne(currentAsset.parentAssetId, user);
       path.unshift(currentAsset);
     }
 
@@ -272,18 +391,36 @@ export class AssetsService {
   /**
    * Get child assets
    */
-  async getChildren(id: string): Promise<Asset[]> {
-    return await this.assetRepository.find({
-      where: { parentAssetId: id },
-      order: { name: 'ASC' },
-    });
+  async getChildren(id: string, user: User): Promise<Asset[]> {
+    await this.findOne(id, user); // Validate access to parent
+
+    const queryBuilder = this.assetRepository
+      .createQueryBuilder('asset')
+      .where('asset.parentAssetId = :id', { id });
+
+    // Apply customer filtering
+    if (user.role === UserRole.CUSTOMER_USER) {
+      queryBuilder.andWhere('asset.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    } else if (user.role === UserRole.TENANT_ADMIN) {
+      queryBuilder.andWhere('asset.tenantId = :tenantId', {
+        tenantId: user.tenantId,
+      });
+    }
+
+    return await queryBuilder.orderBy('asset.name', 'ASC').getMany();
   }
 
   /**
    * Assign device to asset
    */
-  async assignDevice(assetId: string, deviceId: string): Promise<void> {
-    const asset = await this.findOne(assetId);
+  async assignDevice(
+    assetId: string,
+    deviceId: string,
+    user: User,
+  ): Promise<void> {
+    const asset = await this.findOne(assetId, user);
 
     const device = await this.deviceRepository.findOne({
       where: { id: deviceId },
@@ -291,6 +428,15 @@ export class AssetsService {
 
     if (!device) {
       throw new NotFoundException('Device not found');
+    }
+
+    // Validate customer match
+    if (user.role === UserRole.CUSTOMER_USER) {
+      if (device.customerId !== user.customerId) {
+        throw new ForbiddenException(
+          'Cannot assign device from another customer',
+        );
+      }
     }
 
     device.assetId = assetId;
@@ -306,7 +452,13 @@ export class AssetsService {
   /**
    * Unassign device from asset
    */
-  async unassignDevice(assetId: string, deviceId: string): Promise<void> {
+  async unassignDevice(
+    assetId: string,
+    deviceId: string,
+    user: User,
+  ): Promise<void> {
+    await this.findOne(assetId, user); // Validate access
+
     const device = await this.deviceRepository.findOne({
       where: { id: deviceId, assetId },
     });
@@ -327,11 +479,33 @@ export class AssetsService {
     });
   }
 
+
   /**
    * Bulk assign devices to asset
    */
-  async bulkAssignDevices(assetId: string, deviceIds: string[]): Promise<void> {
-    const asset = await this.findOne(assetId);
+   async bulkAssignDevices(
+    assetId: string,
+    deviceIds: string[],
+    user: User,
+  ): Promise<void> {
+    const asset = await this.findOne(assetId, user);
+
+    // Validate all devices belong to the same customer (for customer users)
+    if (user.role === UserRole.CUSTOMER_USER) {
+      const devices = await this.deviceRepository.find({
+        where: { id: In(deviceIds) },
+      });
+
+      const invalidDevices = devices.filter(
+        (d) => d.customerId !== user.customerId,
+      );
+
+      if (invalidDevices.length > 0) {
+        throw new ForbiddenException(
+          'Cannot assign devices from another customer',
+        );
+      }
+    }
 
     await this.deviceRepository.update({ id: In(deviceIds) }, { assetId });
 
@@ -345,11 +519,21 @@ export class AssetsService {
   /**
    * Get devices assigned to asset
    */
-  async getDevices(assetId: string): Promise<Device[]> {
-    return await this.deviceRepository.find({
-      where: { assetId },
-      order: { name: 'ASC' },
-    });
+  async getDevices(assetId: string, user: User): Promise<Device[]> {
+    await this.findOne(assetId, user); // Validate access
+
+    const queryBuilder = this.deviceRepository
+      .createQueryBuilder('device')
+      .where('device.assetId = :assetId', { assetId });
+
+    // Apply customer filtering for devices too
+    if (user.role === UserRole.CUSTOMER_USER) {
+      queryBuilder.andWhere('device.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    }
+
+    return await queryBuilder.orderBy('device.name', 'ASC').getMany();
   }
 
   /**
@@ -358,8 +542,9 @@ export class AssetsService {
   async updateAttributes(
     id: string,
     updateAttributesDto: UpdateAttributesDto,
+    user: User,
   ): Promise<Asset> {
-    const asset = await this.findOne(id);
+    const asset = await this.findOne(id, user);
 
     asset.attributes = {
       ...asset.attributes,
@@ -376,14 +561,28 @@ export class AssetsService {
     latitude: number,
     longitude: number,
     radiusKm: number,
+    user: User,
   ): Promise<Asset[]> {
-    // Simplified location search
-    // In production, use PostGIS for accurate geospatial queries
-    const assets = await this.assetRepository
+    const queryBuilder = this.assetRepository
       .createQueryBuilder('asset')
       .where("asset.location->>'latitude' IS NOT NULL")
-      .andWhere("asset.location->>'longitude' IS NOT NULL")
-      .getMany();
+      .andWhere("asset.location->>'longitude' IS NOT NULL");
+
+    // Apply customer filtering
+    if (user.role === UserRole.CUSTOMER_USER) {
+      if (!user.customerId) {
+        return [];
+      }
+      queryBuilder.andWhere('asset.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    } else if (user.role === UserRole.TENANT_ADMIN) {
+      queryBuilder.andWhere('asset.tenantId = :tenantId', {
+        tenantId: user.tenantId,
+      });
+    }
+
+    const assets = await queryBuilder.getMany();
 
     // Filter by distance (Haversine formula)
     return assets.filter((asset) => {
@@ -405,7 +604,7 @@ export class AssetsService {
   /**
    * Get asset statistics
    */
-  async getStatistics(): Promise<{
+  async getStatistics(user: User): Promise<{
     total: number;
     active: number;
     inactive: number;
@@ -413,15 +612,37 @@ export class AssetsService {
     withDevices: number;
     withoutDevices: number;
   }> {
+    const queryBuilder = this.assetRepository.createQueryBuilder('asset');
+
+    // Apply customer filtering
+    if (user.role === UserRole.CUSTOMER_USER) {
+      if (!user.customerId) {
+        return this.getEmptyStatistics();
+      }
+      queryBuilder.where('asset.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    } else if (user.role === UserRole.TENANT_ADMIN) {
+      queryBuilder.where('asset.tenantId = :tenantId', {
+        tenantId: user.tenantId,
+      });
+    }
+
     const [total, active, inactive] = await Promise.all([
-      this.assetRepository.count(),
-      this.assetRepository.count({ where: { active: true } }),
-      this.assetRepository.count({ where: { active: false } }),
+      queryBuilder.getCount(),
+      queryBuilder
+        .clone()
+        .andWhere('asset.active = :active', { active: true })
+        .getCount(),
+      queryBuilder
+        .clone()
+        .andWhere('asset.active = :active', { active: false })
+        .getCount(),
     ]);
 
     // Count by type
-    const types = await this.assetRepository
-      .createQueryBuilder('asset')
+    const types = await queryBuilder
+      .clone()
       .select('asset.type', 'type')
       .addSelect('COUNT(*)', 'count')
       .groupBy('asset.type')
@@ -437,8 +658,8 @@ export class AssetsService {
     });
 
     // Count assets with/without devices
-    const assetsWithDevices = await this.assetRepository
-      .createQueryBuilder('asset')
+    const assetsWithDevices = await queryBuilder
+      .clone()
       .innerJoin('devices', 'device', 'device.assetId = asset.id')
       .select('COUNT(DISTINCT asset.id)', 'count')
       .getRawOne();
@@ -456,11 +677,72 @@ export class AssetsService {
     };
   }
 
+    /**
+   * ============================================
+   * CUSTOMER-SPECIFIC METHODS
+   * ============================================
+   */
+
+  /**
+   * Get assets by customer
+   */
+  async findByCustomer(customerId: string, user: User): Promise<Asset[]> {
+    // Validate access
+    if (user.role === UserRole.CUSTOMER_USER && user.customerId !== customerId) {
+      throw new ForbiddenException('Access denied to this customer');
+    }
+
+    return await this.assetRepository.find({
+      where: { customerId },
+      relations: ['parentAsset'],
+      order: { name: 'ASC' },
+    });
+  }
+
+  /**
+   * Assign asset to customer
+   */
+  async assignToCustomer(
+    assetId: string,
+    customerId: string,
+    user: User,
+  ): Promise<Asset> {
+    // Only admins can assign
+    if (
+      user.role !== UserRole.SUPER_ADMIN &&
+      user.role !== UserRole.TENANT_ADMIN
+    ) {
+      throw new ForbiddenException('Only admins can assign assets to customers');
+    }
+
+    const asset = await this.findOne(assetId, user);
+    asset.customerId = customerId;
+    return await this.assetRepository.save(asset);
+  }
+
+  /**
+   * Unassign asset from customer
+   */
+  async unassignFromCustomer(assetId: string, user: User): Promise<Asset> {
+    // Only admins can unassign
+    if (
+      user.role !== UserRole.SUPER_ADMIN &&
+      user.role !== UserRole.TENANT_ADMIN
+    ) {
+      throw new ForbiddenException('Only admins can unassign assets');
+    }
+
+    const asset = await this.findOne(assetId, user);
+    asset.customerId = undefined;
+    return await this.assetRepository.save(asset);
+  }
+
   /**
    * Private: Build asset hierarchy recursively
    */
   private async buildHierarchy(
     asset: Asset,
+    user: User,
     maxDepth: number,
     currentDepth: number,
     includeDevices: boolean,
@@ -471,15 +753,16 @@ export class AssetsService {
     };
 
     if (includeDevices) {
-      result.devices = await this.getDevices(asset.id);
+      result.devices = await this.getDevices(asset.id, user);
     }
 
     if (currentDepth < maxDepth) {
-      const children = await this.getChildren(asset.id);
+      const children = await this.getChildren(asset.id, user);
 
       for (const child of children) {
         const childHierarchy = await this.buildHierarchy(
           child,
+          user,
           maxDepth,
           currentDepth + 1,
           includeDevices,
@@ -544,5 +827,21 @@ export class AssetsService {
 
   private deg2rad(deg: number): number {
     return deg * (Math.PI / 180);
+  }
+
+  private getEmptyStatistics() {
+    const byType: any = {};
+    Object.values(AssetType).forEach((type) => {
+      byType[type] = 0;
+    });
+
+    return {
+      total: 0,
+      active: 0,
+      inactive: 0,
+      byType,
+      withDevices: 0,
+      withoutDevices: 0,
+    };
   }
 }

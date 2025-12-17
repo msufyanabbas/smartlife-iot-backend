@@ -107,7 +107,7 @@ export class MailService {
       const smtpFrom = this.configService.get<string>('SMTP_FROM');
       const appName = this.configService.get<string>(
         'APP_NAME',
-        'IoT Platform',
+        'Smart Life IoT Platform',
       );
 
       // Validate sender email
@@ -141,6 +141,7 @@ export class MailService {
 
   /**
    * Send verification email using database template
+   * ✅ FIXED: Uses correct variable names matching the template
    */
   async sendVerificationEmail(
     email: string,
@@ -151,19 +152,25 @@ export class MailService {
       'FRONTEND_URL',
       'http://localhost:3000',
     );
-    const appName = this.configService.get<string>('APP_NAME', 'IoT Platform');
-    const verificationUrl = `${frontendUrl}/verify-email?token=${token}`;
+    const appName = this.configService.get<string>(
+      'APP_NAME',
+      'Smart Life IoT Platform',
+    );
+
+    // ✅ Build the verification URL
+    const verificationLink = `${frontendUrl}/verify-email?token=${token}`;
 
     try {
-      // Get template from database
+      // ✅ Get template from database with CORRECT variable names
       const { subject, html, text } =
         await this.emailTemplatesService.getRenderedEmail(
           EmailTemplateType.VERIFICATION,
           {
-            userName: name,
-            appName,
-            verificationUrl,
-            year: new Date().getFullYear().toString(),
+            userName: name, // ✅ Template expects: userName
+            appName, // ✅ Template expects: appName
+            verificationLink, // ✅ Template expects: verificationLink (NOT verificationUrl)
+            expirationTime: '24', // ✅ Template expects: expirationTime
+            year: new Date().getFullYear().toString(), // ✅ Auto-added but explicit is better
           },
         );
 
@@ -179,8 +186,8 @@ export class MailService {
       );
 
       // Fallback to inline template if database template not found
-      const html = this.getVerificationEmailTemplate(name, verificationUrl);
-      const text = `Hi ${name},\n\nPlease verify your email by visiting: ${verificationUrl}\n\nThis link will expire in 24 hours.`;
+      const html = this.getVerificationEmailTemplate(name, verificationLink);
+      const text = `Hi ${name},\n\nPlease verify your email by visiting: ${verificationLink}\n\nThis link will expire in 24 hours.`;
 
       return this.sendEmail({
         to: email,
@@ -193,22 +200,28 @@ export class MailService {
 
   /**
    * Send welcome email using database template
+   * ✅ FIXED: Uses correct variable names matching the template
    */
   async sendWelcomeEmail(email: string, name: string): Promise<boolean> {
     const frontendUrl = this.configService.get<string>(
       'FRONTEND_URL',
       'http://localhost:3000',
     );
-    const appName = this.configService.get<string>('APP_NAME', 'IoT Platform');
+    const appName = this.configService.get<string>(
+      'APP_NAME',
+      'Smart Life IoT Platform',
+    );
 
     try {
+      // ✅ Template expects: userName, appName, dashboardLink, docsLink, year
       const { subject, html, text } =
         await this.emailTemplatesService.getRenderedEmail(
           EmailTemplateType.WELCOME,
           {
-            name,
+            userName: name, // ✅ Template expects: userName (NOT just name)
             appName,
-            dashboardUrl: `${frontendUrl}/overview`,
+            dashboardLink: `${frontendUrl}/dashboard`, // ✅ Template expects: dashboardLink
+            docsLink: `${frontendUrl}/docs`, // ✅ Template expects: docsLink
             year: new Date().getFullYear().toString(),
           },
         );
@@ -239,6 +252,7 @@ export class MailService {
 
   /**
    * Send password reset email using database template
+   * ✅ FIXED: Uses correct variable names matching the template
    */
   async sendPasswordResetEmail(
     email: string,
@@ -249,17 +263,24 @@ export class MailService {
       'FRONTEND_URL',
       'http://localhost:3000',
     );
-    const appName = this.configService.get<string>('APP_NAME', 'IoT Platform');
-    const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
+    const appName = this.configService.get<string>(
+      'APP_NAME',
+      'Smart Life IoT Platform',
+    );
+
+    // ✅ Build the reset URL
+    const resetLink = `${frontendUrl}/reset-password?token=${token}`;
 
     try {
+      // ✅ Template expects: userName, appName, resetLink, expirationTime, year
       const { subject, html, text } =
         await this.emailTemplatesService.getRenderedEmail(
           EmailTemplateType.PASSWORD_RESET,
           {
-            name,
+            userName: name, // ✅ Template expects: userName
             appName,
-            resetUrl,
+            resetLink, // ✅ Template expects: resetLink (NOT resetUrl)
+            expirationTime: '1', // ✅ Template expects: expirationTime (in hours)
             year: new Date().getFullYear().toString(),
           },
         );
@@ -276,8 +297,8 @@ export class MailService {
       );
 
       // Fallback
-      const html = this.getPasswordResetEmailTemplate(name, resetUrl);
-      const text = `Hi ${name},\n\nYou requested to reset your password. Please visit: ${resetUrl}\n\nThis link will expire in 1 hour.\n\nIf you didn't request this, please ignore this email.`;
+      const html = this.getPasswordResetEmailTemplate(name, resetLink);
+      const text = `Hi ${name},\n\nYou requested to reset your password. Please visit: ${resetLink}\n\nThis link will expire in 1 hour.\n\nIf you didn't request this, please ignore this email.`;
 
       return this.sendEmail({
         to: email,
@@ -289,12 +310,68 @@ export class MailService {
   }
 
   /**
+   * Send two-factor authentication code email using database template
+   * ✅ FIXED: Uses correct variable names matching the template
+   */
+  async sendTwoFactorCode(
+    email: string,
+    name: string,
+    code: string,
+  ): Promise<boolean> {
+    const appName = this.configService.get<string>(
+      'APP_NAME',
+      'Smart Life IoT Platform',
+    );
+
+    try {
+      // ✅ Template expects: userName, code, appName, year
+      const { subject, html, text } =
+        await this.emailTemplatesService.getRenderedEmail(
+          EmailTemplateType.TWO_FACTOR_CODE,
+          {
+            userName: name, // ✅ Template expects: userName
+            code, // ✅ Template expects: code
+            appName,
+            year: new Date().getFullYear().toString(),
+          },
+        );
+
+      return this.sendEmail({
+        to: email,
+        subject,
+        html,
+        text,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to get 2FA code template: ${error.message}. Using fallback.`,
+      );
+
+      // Fallback to inline template if database template not found
+      const html = this.getTwoFactorCodeEmailTemplate(name, code);
+      const text = `Hi ${name},\n\nYour two-factor authentication code is: ${code}\n\nThis code will expire in 10 minutes.\n\nIf you didn't request this code, please ignore this email or contact support.`;
+
+      return this.sendEmail({
+        to: email,
+        subject: `Your Two-Factor Authentication Code - ${appName}`,
+        html,
+        text,
+      });
+    }
+  }
+
+  /**
    * Email verification template (fallback)
    */
   private getVerificationEmailTemplate(
     name: string,
-    verificationUrl: string,
+    verificationLink: string,
   ): string {
+    const appName = this.configService.get<string>(
+      'APP_NAME',
+      'Smart Life IoT Platform',
+    );
+
     return `
 <!DOCTYPE html>
 <html>
@@ -323,11 +400,11 @@ export class MailService {
     </div>
     <div class="content">
       <h2>Hi ${name}! 👋</h2>
-      <p>Thank you for registering with <strong>IoT Platform</strong>!</p>
+      <p>Thank you for registering with <strong>${appName}</strong>!</p>
       <p>To complete your registration and start using our platform, please verify your email address by clicking the button below:</p>
       
       <div style="text-align: center;">
-        <a href="${verificationUrl}" class="button">Verify Email Address</a>
+        <a href="${verificationLink}" class="button">Verify Email Address</a>
       </div>
       
       <div class="note">
@@ -335,21 +412,18 @@ export class MailService {
       </div>
       
       <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
-      <p style="word-break: break-all; color: #667eea; font-size: 14px;">${verificationUrl}</p>
+      <p style="word-break: break-all; color: #667eea; font-size: 14px;">${verificationLink}</p>
       
       <p style="margin-top: 30px;">If you didn't create an account, please ignore this email.</p>
     </div>
     <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} IoT Platform. All rights reserved.</p>
-      <p>Need help? <a href="mailto:support@iotplatform.com">Contact Support</a></p>
+      <p>&copy; ${new Date().getFullYear()} ${appName}. All rights reserved.</p>
     </div>
   </div>
 </body>
 </html>
     `;
   }
-
-  
 
   /**
    * Welcome email template (fallback)
@@ -358,6 +432,10 @@ export class MailService {
     const frontendUrl = this.configService.get<string>(
       'FRONTEND_URL',
       'http://localhost:3000',
+    );
+    const appName = this.configService.get<string>(
+      'APP_NAME',
+      'Smart Life IoT Platform',
     );
 
     return `
@@ -370,26 +448,26 @@ export class MailService {
   <style>
     body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f4f4f4; }
     .container { max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; padding: 40px 20px; text-align: center; }
+    .header { background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: #fff; padding: 40px 20px; text-align: center; }
     .header h1 { margin: 0; font-size: 28px; }
     .content { padding: 40px 30px; }
-    .content h2 { color: #667eea; margin-top: 0; }
-    .button { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff !important; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 20px 0; }
-    .feature { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 6px; }
-    .feature h3 { margin: 0 0 10px 0; color: #667eea; font-size: 16px; }
+    .content h2 { color: #10B981; margin-top: 0; }
+    .button { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: #fff !important; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 20px 0; }
+    .feature { background: #f0fdf4; padding: 15px; margin: 10px 0; border-radius: 6px; border-left: 4px solid #10B981; }
+    .feature h3 { margin: 0 0 10px 0; color: #10B981; font-size: 16px; }
     .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 14px; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <h1>🎉 Welcome to IoT Platform!</h1>
+      <h1>🎉 Welcome to ${appName}!</h1>
     </div>
     <div class="content">
       <h2>Hi ${name}! 👋</h2>
-      <p>Your email has been verified successfully! You're all set to start using IoT Platform.</p>
+      <p>Your email has been verified successfully! You're all set to start using ${appName}.</p>
       
-      <h3 style="color: #667eea; margin-top: 30px;">What's Next?</h3>
+      <h3 style="color: #10B981; margin-top: 30px;">What's Next?</h3>
       
       <div class="feature">
         <h3>📊 Connect Your Devices</h3>
@@ -407,13 +485,13 @@ export class MailService {
       </div>
       
       <div style="text-align: center;">
-        <a href="${frontendUrl}/overview" class="button">Go to Dashboard</a>
+        <a href="${frontendUrl}/dashboard" class="button">Go to Dashboard</a>
       </div>
       
       <p style="margin-top: 30px;">If you have any questions, our support team is here to help!</p>
     </div>
     <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} IoT Platform. All rights reserved.</p>
+      <p>&copy; ${new Date().getFullYear()} ${appName}. All rights reserved.</p>
     </div>
   </div>
 </body>
@@ -426,8 +504,13 @@ export class MailService {
    */
   private getPasswordResetEmailTemplate(
     name: string,
-    resetUrl: string,
+    resetLink: string,
   ): string {
+    const appName = this.configService.get<string>(
+      'APP_NAME',
+      'Smart Life IoT Platform',
+    );
+
     return `
 <!DOCTYPE html>
 <html>
@@ -438,10 +521,10 @@ export class MailService {
   <style>
     body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f4f4f4; }
     .container { max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; padding: 40px 20px; text-align: center; }
+    .header { background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%); color: #fff; padding: 40px 20px; text-align: center; }
     .header h1 { margin: 0; font-size: 28px; }
     .content { padding: 40px 30px; }
-    .button { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff !important; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 20px 0; }
+    .button { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%); color: #fff !important; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 20px 0; }
     .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }
     .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 14px; }
   </style>
@@ -456,7 +539,7 @@ export class MailService {
       <p>We received a request to reset your password. Click the button below to create a new password:</p>
       
       <div style="text-align: center;">
-        <a href="${resetUrl}" class="button">Reset Password</a>
+        <a href="${resetLink}" class="button">Reset Password</a>
       </div>
       
       <div class="warning">
@@ -468,7 +551,7 @@ export class MailService {
       <p style="margin-top: 30px; font-size: 14px; color: #6c757d;">For security reasons, we cannot display your current password. If you remember your password, you can safely ignore this email.</p>
     </div>
     <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} IoT Platform. All rights reserved.</p>
+      <p>&copy; ${new Date().getFullYear()} ${appName}. All rights reserved.</p>
     </div>
   </div>
 </body>
@@ -477,56 +560,15 @@ export class MailService {
   }
 
   /**
- * Send two-factor authentication code email using database template
- */
-async sendTwoFactorCode(
-  email: string,
-  name: string,
-  code: string,
-): Promise<boolean> {
-  const appName = this.configService.get<string>('APP_NAME', 'IoT Platform');
-
-  try {
-    const { subject, html, text } =
-      await this.emailTemplatesService.getRenderedEmail(
-        EmailTemplateType.TWO_FACTOR_CODE,
-        {
-          name,
-          appName,
-          code,
-          year: new Date().getFullYear().toString(),
-        },
-      );
-
-    return this.sendEmail({
-      to: email,
-      subject,
-      html,
-      text,
-    });
-  } catch (error) {
-    this.logger.error(
-      `Failed to get 2FA code template: ${error.message}. Using fallback.`,
+   * Two-factor authentication code email template (fallback)
+   */
+  private getTwoFactorCodeEmailTemplate(name: string, code: string): string {
+    const appName = this.configService.get<string>(
+      'APP_NAME',
+      'Smart Life IoT Platform',
     );
 
-    // Fallback to inline template if database template not found
-    const html = this.getTwoFactorCodeEmailTemplate(name, code);
-    const text = `Hi ${name},\n\nYour two-factor authentication code is: ${code}\n\nThis code will expire in 10 minutes.\n\nIf you didn't request this code, please ignore this email or contact support.`;
-
-    return this.sendEmail({
-      to: email,
-      subject: `Your Two-Factor Authentication Code - ${appName}`,
-      html,
-      text,
-    });
-  }
-}
-
-/**
- * Two-factor authentication code email template (fallback)
- */
-private getTwoFactorCodeEmailTemplate(name: string, code: string): string {
-  return `
+    return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -568,16 +610,15 @@ private getTwoFactorCodeEmailTemplate(name: string, code: string): string {
       </div>
       
       <p style="margin-top: 30px; font-size: 14px; color: #6c757d;">
-        Never share this code with anyone. IoT Platform staff will never ask you for this code.
+        Never share this code with anyone. ${appName} staff will never ask you for this code.
       </p>
     </div>
     <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} IoT Platform. All rights reserved.</p>
-      <p>Need help? <a href="mailto:support@iotplatform.com" style="color: #667eea; text-decoration: none;">Contact Support</a></p>
+      <p>&copy; ${new Date().getFullYear()} ${appName}. All rights reserved.</p>
     </div>
   </div>
 </body>
 </html>
   `;
-}
+  }
 }

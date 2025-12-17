@@ -93,6 +93,11 @@ export class CreateDashboardDto {
   @IsString()
   description?: string;
 
+  @ApiPropertyOptional({ example: 'Customer ID' })
+  @IsOptional()
+  @IsString()
+  customerId?: string;
+
   @ApiPropertyOptional({
     enum: DashboardVisibility,
     default: DashboardVisibility.PRIVATE,
