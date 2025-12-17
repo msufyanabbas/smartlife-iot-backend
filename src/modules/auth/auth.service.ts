@@ -844,35 +844,41 @@ export class AuthService {
    * Reset password with token
    */
   async resetPassword(
-    token: string,
-    newPassword: string,
-  ): Promise<{ message: string }> {
-    const user = await this.userRepository.findOne({
-      where: { passwordResetToken: token },
-    });
+  token: string,
+  newPassword: string,
+): Promise<{ message: string }> {
+  const user = await this.userRepository.findOne({
+    where: { passwordResetToken: token },
+  });
 
-    if (!user || !user.passwordResetExpires) {
-      throw new BadRequestException('Invalid or expired reset token');
-    }
-
-    if (new Date() > user.passwordResetExpires) {
-      throw new BadRequestException('Reset token has expired');
-    }
-
-    user.password = newPassword;
-    user.passwordResetToken = undefined;
-    user.passwordResetExpires = undefined;
-    await this.userRepository.save(user);
-
-    await this.logoutAll(user.id, token);
-
-    this.logger.log(`Password reset for user: ${user.email}`);
-
-    return {
-      message:
-        'Password reset successfully. You can now log in with your new password.',
-    };
+  if (!user || !user.passwordResetExpires) {
+    throw new BadRequestException('Invalid or expired reset token');
   }
+
+  if (new Date() > user.passwordResetExpires) {
+    throw new BadRequestException('Reset token has expired');
+  }
+
+  user.password = newPassword;
+  user.passwordResetToken = undefined;
+  user.passwordResetExpires = undefined;
+  await this.userRepository.save(user);
+
+  // ✅ FIX: Manually revoke tokens instead of using logoutAll()
+  await this.refreshTokenRepository.update(
+    { userId: user.id, isRevoked: false },
+    { isRevoked: true },
+  );
+
+  await this.sessionService.deleteSession(user.id);
+
+  this.logger.log(`Password reset for user: ${user.email}`);
+
+  return {
+    message:
+      'Password reset successfully. You can now log in with your new password.',
+  };
+}
 
   /**
    * Change password
