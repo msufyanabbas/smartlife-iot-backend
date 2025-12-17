@@ -66,6 +66,9 @@ export class SubscriptionsService {
     private readonly subscriptionRepository: Repository<Subscription>,
   ) {}
 
+  /**
+   * Create subscription - now handles both manual and automatic creation
+   */
   async create(
     userId: string,
     createSubscriptionDto: CreateSubscriptionDto,
@@ -108,6 +111,25 @@ export class SubscriptionsService {
     });
 
     return await this.subscriptionRepository.save(subscription);
+  }
+
+  /**
+   * Get or create subscription - ensures user always has one
+   * Call this on user registration or first login
+   */
+  async getOrCreateFreeSubscription(userId: string): Promise<Subscription> {
+    try {
+      return await this.findCurrent(userId);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        this.logger.log(`Creating free subscription for new user: ${userId}`);
+        return await this.create(userId, {
+          plan: SubscriptionPlan.FREE,
+          billingPeriod: BillingPeriod.MONTHLY,
+        });
+      }
+      throw error;
+    }
   }
 
   async findCurrent(userId: string): Promise<Subscription> {
@@ -186,6 +208,9 @@ export class SubscriptionsService {
     };
   }
 
+  /**
+   * Upgrade subscription to a higher plan
+   */
   async upgrade(
     userId: string,
     upgradeDto: UpgradeSubscriptionDto,
@@ -201,7 +226,11 @@ export class SubscriptionsService {
       SubscriptionPlan.PROFESSIONAL,
       SubscriptionPlan.ENTERPRISE,
     ];
-    if (planOrder.indexOf(plan) <= planOrder.indexOf(subscription.plan)) {
+    
+    const currentPlanIndex = planOrder.indexOf(subscription.plan);
+    const newPlanIndex = planOrder.indexOf(plan);
+    
+    if (newPlanIndex <= currentPlanIndex) {
       throw new ConflictException(
         'Cannot downgrade or switch to same plan using upgrade endpoint',
       );
@@ -214,9 +243,17 @@ export class SubscriptionsService {
     subscription.features = this.getPlanFeatures(plan);
     subscription.status = SubscriptionStatus.ACTIVE;
     subscription.nextBillingDate = this.calculateNextBillingDate(billingPeriod);
+    subscription.trialEndsAt = undefined; // Clear trial when upgrading
+    subscription.cancelledAt = undefined; // Clear cancellation
     subscription.updatedBy = userId;
 
-    return await this.subscriptionRepository.save(subscription);
+    const updated = await this.subscriptionRepository.save(subscription);
+    
+    this.logger.log(
+      `✅ Subscription upgraded for user ${userId}: ${subscription.plan} → ${plan}`
+    );
+
+    return updated;
   }
 
   /**
@@ -255,12 +292,58 @@ export class SubscriptionsService {
     subscription.billingPeriod = billingPeriod;
     subscription.status = SubscriptionStatus.ACTIVE;
     subscription.cancelledAt = undefined; // Clear any cancellation
+    subscription.trialEndsAt = undefined; // Clear trial status
     subscription.updatedBy = userId;
 
     await this.subscriptionRepository.save(subscription);
 
     this.logger.log(
-      `Subscription renewed for user ${userId}. Next billing: ${newNextBillingDate.toISOString()}`
+      `✅ Subscription renewed for user ${userId}. Next billing: ${newNextBillingDate.toISOString()}`
+    );
+
+    return subscription;
+  }
+
+  /**
+   * Downgrade subscription (e.g., from Professional to Starter)
+   * This should happen at the end of the billing period
+   */
+  async downgrade(
+    userId: string,
+    targetPlan: SubscriptionPlan,
+  ): Promise<Subscription> {
+    const subscription = await this.findCurrent(userId);
+
+    const planOrder = [
+      SubscriptionPlan.FREE,
+      SubscriptionPlan.STARTER,
+      SubscriptionPlan.PROFESSIONAL,
+      SubscriptionPlan.ENTERPRISE,
+    ];
+    
+    const currentPlanIndex = planOrder.indexOf(subscription.plan);
+    const newPlanIndex = planOrder.indexOf(targetPlan);
+    
+    if (newPlanIndex >= currentPlanIndex) {
+      throw new ConflictException(
+        'Target plan must be lower than current plan for downgrade',
+      );
+    }
+
+    // Schedule downgrade for next billing date
+    subscription.metadata = {
+      ...subscription.metadata,
+      scheduledDowngrade: {
+        plan: targetPlan,
+        effectiveDate: subscription.nextBillingDate,
+      },
+    };
+    subscription.updatedBy = userId;
+
+    await this.subscriptionRepository.save(subscription);
+
+    this.logger.log(
+      `Downgrade scheduled for user ${userId}: ${subscription.plan} → ${targetPlan} on ${subscription.nextBillingDate}`
     );
 
     return subscription;
@@ -398,5 +481,12 @@ export class SubscriptionsService {
     const subscription = await this.findCurrent(userId);
 
     return subscription.features?.[feature] === true;
+  }
+
+  /**
+   * Get pricing for a plan
+   */
+  getPlanPricing(plan: SubscriptionPlan, billingPeriod: BillingPeriod): number {
+    return this.planPricing[plan][billingPeriod];
   }
 }

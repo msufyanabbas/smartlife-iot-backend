@@ -5,11 +5,13 @@ import {
   BadRequestException,
   InternalServerErrorException,
   Logger,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import * as crypto from 'crypto';
 import { 
   Payment, 
   PaymentStatus, 
@@ -29,6 +31,7 @@ import {
 export class PaymentsService {
   private readonly moyasarApiUrl = 'https://api.moyasar.com/v1';
   private readonly moyasarApiKey: string;
+  private readonly moyasarWebhookSecret: string;
   private readonly logger = new Logger(PaymentsService.name);
 
   constructor(
@@ -38,16 +41,23 @@ export class PaymentsService {
     private readonly configService: ConfigService,
   ) {
     const apiKey = this.configService.get<string>('MOYASAR_API_KEY');
+    const webhookSecret = this.configService.get<string>('MOYASAR_WEBHOOK_SECRET');
     
     if (!apiKey) {
       throw new Error('MOYASAR_API_KEY must be configured in environment variables');
     }
     
     this.moyasarApiKey = apiKey;
+    this.moyasarWebhookSecret = webhookSecret || '';
+    
+    if (!this.moyasarWebhookSecret) {
+      this.logger.warn('⚠️ MOYASAR_WEBHOOK_SECRET not set - webhook signature verification disabled');
+    }
   }
 
   /**
    * Create a Moyasar invoice (hosted payment page)
+   * Ensures user has a subscription before creating payment
    */
   async createPaymentIntent(
     userId: string,
@@ -62,14 +72,61 @@ export class PaymentsService {
     try {
       const { plan, billingPeriod } = createPaymentIntentDto;
 
-      // Get subscription
-      const subscription = await this.subscriptionsService.findCurrent(userId);
+      // Ensure user has a subscription (create free one if not exists)
+      let subscription = await this.subscriptionsService
+        .findCurrent(userId)
+        .catch(() => null);
+
+      if (!subscription) {
+        this.logger.log(`Creating free subscription for user ${userId} before payment`);
+        subscription = await this.subscriptionsService.getOrCreateFreeSubscription(userId);
+      }
 
       // Calculate amount
-      const amount = this.calculateAmount(plan, billingPeriod);
+      const amount = this.subscriptionsService.getPlanPricing(plan, billingPeriod);
 
       if (amount === 0) {
         throw new BadRequestException('Cannot create payment for free plan');
+      }
+
+      // Check if there's already a pending payment for this upgrade
+      const existingPending = await this.paymentRepository.findOne({
+        where: {
+          userId,
+          status: PaymentStatus.PENDING,
+          metadata: {
+            plan,
+            billingPeriod,
+          } as any,
+        },
+      });
+
+      if (existingPending) {
+        this.logger.warn(`Reusing existing pending payment: ${existingPending.paymentIntentId}`);
+        
+        // Fetch the invoice URL from Moyasar
+        try {
+          const response = await axios.get(
+            `${this.moyasarApiUrl}/invoices/${existingPending.paymentIntentId}`,
+            {
+              auth: {
+                username: this.moyasarApiKey,
+                password: '',
+              },
+            },
+          );
+
+          return {
+            paymentUrl: response.data.url,
+            invoiceId: existingPending.paymentIntentId,
+            amount: existingPending.amount,
+            currency: existingPending.currency,
+            description: existingPending.description || '',
+          };
+        } catch (fetchError) {
+          this.logger.warn(`Could not fetch existing invoice, creating new one`);
+          // Continue to create new invoice
+        }
       }
 
       // Convert to halalas (must end with 0)
@@ -117,7 +174,7 @@ export class PaymentsService {
 
       const invoice = response.data;
 
-      this.logger.log(`Invoice created: ${invoice.id} - URL: ${invoice.url}`);
+      this.logger.log(`✅ Invoice created: ${invoice.id} - URL: ${invoice.url}`);
 
       // Save payment record (status: PENDING)
       const payment = this.paymentRepository.create({
@@ -164,12 +221,27 @@ export class PaymentsService {
   }
 
   /**
-   * Verify payment/invoice status
+   * Verify payment/invoice status with idempotency protection
    * Called by: Frontend after redirect OR Webhook
    */
   async verifyPayment(invoiceId: string): Promise<Payment> {
     try {
-      this.logger.log(`Verifying payment: ${invoiceId}`);
+      this.logger.log(`🔍 Verifying payment: ${invoiceId}`);
+
+      // Find payment in database first
+      const payment = await this.paymentRepository.findOne({
+        where: { paymentIntentId: invoiceId },
+      });
+
+      if (!payment) {
+        throw new NotFoundException(`Payment not found for invoice: ${invoiceId}`);
+      }
+
+      // IDEMPOTENCY: If already processed successfully, return immediately
+      if (payment.status === PaymentStatus.SUCCEEDED && payment.paidAt) {
+        this.logger.log(`✅ Payment ${invoiceId} already processed successfully`);
+        return payment;
+      }
 
       // Fetch invoice from Moyasar
       const response = await axios.get(
@@ -185,84 +257,19 @@ export class PaymentsService {
       const invoice = response.data;
       this.logger.debug(`Invoice status from Moyasar: ${invoice.status}`);
 
-      // Find payment in database
-      const payment = await this.paymentRepository.findOne({
-        where: { paymentIntentId: invoiceId },
-      });
-
-      if (!payment) {
-        throw new NotFoundException(`Payment not found for invoice: ${invoiceId}`);
-      }
-
-      // Only process if status changed
-      if (payment.status === PaymentStatus.SUCCEEDED) {
-        this.logger.log(`Payment ${invoiceId} already processed`);
-        return payment;
-      }
-
-      // Update based on invoice status
+      // Process based on invoice status
       if (invoice.status === 'paid') {
-        this.logger.log(`Payment ${invoiceId} is PAID - processing subscription`);
-
-        payment.status = PaymentStatus.SUCCEEDED;
-        payment.paidAt = new Date(invoice.paid_at || invoice.updated_at);
-
-        // Save first
-        await this.paymentRepository.save(payment);
-
-        // Then upgrade/renew subscription
-        if (payment.metadata?.plan && payment.metadata?.billingPeriod) {
-          try {
-            const targetPlan = payment.metadata.plan as SubscriptionPlan;
-            const targetBilling = payment.metadata.billingPeriod as BillingPeriod;
-
-            // Get current subscription to check if this is an upgrade or renewal
-            const currentSub = await this.subscriptionsService.findCurrent(payment.userId);
-
-            const isUpgrade = currentSub.plan !== targetPlan;
-            const isRenewal = currentSub.plan === targetPlan;
-
-            if (isUpgrade) {
-              this.logger.log(`Upgrading subscription from ${currentSub.plan} to ${targetPlan}`);
-              
-              await this.subscriptionsService.upgrade(payment.userId, {
-                plan: targetPlan,
-                billingPeriod: targetBilling,
-              });
-            } else if (isRenewal) {
-              this.logger.log(`Renewing subscription for ${targetPlan} plan`);
-              
-              // For renewals, extend the next billing date
-              await this.subscriptionsService.renew(payment.userId, targetBilling);
-            }
-            
-            this.logger.log(
-              `✅ Subscription ${isUpgrade ? 'upgraded' : 'renewed'} for user ${payment.userId}`
-            );
-          } catch (upgradeError) {
-            this.logger.error(
-              `Failed to process subscription: ${upgradeError.message}`,
-              upgradeError.stack,
-            );
-            // Payment is marked as succeeded but subscription update failed
-            // This should trigger an alert/notification for manual review
-          }
-        }
+        return await this.processSuccessfulPayment(payment, invoice);
       } else if (invoice.status === 'expired' || invoice.status === 'canceled') {
-        this.logger.warn(`Payment ${invoiceId} is ${invoice.status.toUpperCase()}`);
-        
-        payment.status = PaymentStatus.CANCELLED;
-        payment.failureReason = `Invoice ${invoice.status}`;
-        
-        await this.paymentRepository.save(payment);
+        return await this.processFailedPayment(payment, invoice);
       } else if (invoice.status === 'pending') {
         this.logger.log(`Payment ${invoiceId} still PENDING`);
-        // Keep as pending
+        return payment;
       }
 
       return payment;
     } catch (error) {
-      this.logger.error(`Verification failed: ${error.message}`, error.stack);
+      this.logger.error(`❌ Verification failed: ${error.message}`, error.stack);
       
       if (error instanceof NotFoundException) {
         throw error;
@@ -273,22 +280,136 @@ export class PaymentsService {
   }
 
   /**
+   * Process successful payment with proper locking and error handling
+   */
+  private async processSuccessfulPayment(
+    payment: Payment,
+    invoice: any,
+  ): Promise<Payment> {
+    // Double-check status to prevent race conditions
+    if (payment.status === PaymentStatus.SUCCEEDED) {
+      this.logger.log(`Payment ${payment.paymentIntentId} already marked as succeeded`);
+      return payment;
+    }
+
+    this.logger.log(`💰 Payment ${payment.paymentIntentId} is PAID - processing subscription`);
+
+    // Update payment status first
+    payment.status = PaymentStatus.SUCCEEDED;
+    payment.paidAt = new Date(invoice.paid_at || invoice.updated_at);
+    await this.paymentRepository.save(payment);
+
+    // Process subscription upgrade/renewal
+    if (payment.metadata?.plan && payment.metadata?.billingPeriod) {
+      try {
+        const targetPlan = payment.metadata.plan as SubscriptionPlan;
+        const targetBilling = payment.metadata.billingPeriod as BillingPeriod;
+
+        // Get current subscription
+        const currentSub = await this.subscriptionsService.findCurrent(payment.userId);
+
+        // Determine if this is an upgrade or renewal
+        const planOrder = [
+          SubscriptionPlan.FREE,
+          SubscriptionPlan.STARTER,
+          SubscriptionPlan.PROFESSIONAL,
+          SubscriptionPlan.ENTERPRISE,
+        ];
+        
+        const currentPlanIndex = planOrder.indexOf(currentSub.plan);
+        const targetPlanIndex = planOrder.indexOf(targetPlan);
+
+        if (targetPlanIndex > currentPlanIndex) {
+          // UPGRADE
+          this.logger.log(`⬆️ Upgrading subscription from ${currentSub.plan} to ${targetPlan}`);
+          
+          await this.subscriptionsService.upgrade(payment.userId, {
+            plan: targetPlan,
+            billingPeriod: targetBilling,
+          });
+        } else if (targetPlanIndex === currentPlanIndex) {
+          // RENEWAL
+          this.logger.log(`🔄 Renewing subscription for ${targetPlan} plan`);
+          
+          await this.subscriptionsService.renew(payment.userId, targetBilling);
+        } else {
+          // DOWNGRADE (shouldn't happen through normal flow)
+          this.logger.warn(`⚠️ Payment for downgrade detected: ${currentSub.plan} → ${targetPlan}`);
+          
+          // For downgrades, we still process as renewal of current billing period
+          await this.subscriptionsService.renew(payment.userId, targetBilling);
+        }
+        
+        this.logger.log(`✅ Subscription updated successfully for user ${payment.userId}`);
+      } catch (subscriptionError) {
+        this.logger.error(
+          `❌ Failed to update subscription: ${subscriptionError.message}`,
+          subscriptionError.stack,
+        );
+        
+        // Payment succeeded but subscription update failed
+        // Mark payment with error metadata for manual review
+        payment.metadata = {
+          ...payment.metadata,
+          subscriptionUpdateError: subscriptionError.message,
+          requiresManualReview: true,
+        };
+        
+        await this.paymentRepository.save(payment);
+        
+        // Don't throw - payment is still successful
+        // But log for alerting/monitoring
+        this.logger.error(`🚨 ALERT: Payment ${payment.id} succeeded but subscription update failed!`);
+      }
+    }
+
+    return payment;
+  }
+
+  /**
+   * Process failed/cancelled payment
+   */
+  private async processFailedPayment(payment: Payment, invoice: any): Promise<Payment> {
+    this.logger.warn(`❌ Payment ${payment.paymentIntentId} is ${invoice.status.toUpperCase()}`);
+    
+    payment.status = PaymentStatus.CANCELLED;
+    payment.failureReason = `Invoice ${invoice.status}`;
+    
+    await this.paymentRepository.save(payment);
+    
+    return payment;
+  }
+
+  /**
    * Webhook handler - Called by Moyasar when payment status changes
    * CRITICAL: This runs independently of user actions
    */
-  async handleWebhook(payload: any): Promise<{ received: boolean }> {
+  async handleWebhook(
+    payload: any,
+    signature?: string,
+  ): Promise<{ received: boolean; message?: string }> {
     try {
       this.logger.log(`📥 Webhook received: ${payload.type}`);
       this.logger.debug(`Webhook payload: ${JSON.stringify(payload)}`);
 
+      // Verify webhook signature if secret is configured
+      if (this.moyasarWebhookSecret && signature) {
+        const isValid = this.verifyWebhookSignature(payload, signature);
+        if (!isValid) {
+          this.logger.error('❌ Invalid webhook signature');
+          return { received: false, message: 'Invalid signature' };
+        }
+        this.logger.log('✅ Webhook signature verified');
+      }
+
       // Moyasar sends different event types
       if (payload.type === 'invoice_paid' || payload.type === 'payment_paid') {
-        // Use invoice_id instead of id (payment id)
-        const invoiceId = payload.data?.invoice_id;
+        // Extract invoice ID from payload
+        const invoiceId = payload.data?.id || payload.data?.invoice_id;
         
         if (!invoiceId) {
-          this.logger.error('Webhook missing invoice ID');
-          return { received: false };
+          this.logger.error('❌ Webhook missing invoice ID');
+          return { received: false, message: 'Missing invoice ID' };
         }
 
         this.logger.log(`Processing webhook for invoice: ${invoiceId}`);
@@ -297,25 +418,44 @@ export class PaymentsService {
         await this.verifyPayment(invoiceId);
 
         this.logger.log(`✅ Webhook processed successfully for: ${invoiceId}`);
+        
+        return { received: true, message: 'Payment processed' };
       } else {
-        this.logger.log(`Unhandled webhook type: ${payload.type}`);
+        this.logger.log(`ℹ️ Unhandled webhook type: ${payload.type}`);
+        return { received: true, message: 'Event type not handled' };
       }
-
-      return { received: true };
     } catch (error) {
       this.logger.error(
         `❌ Webhook processing failed: ${error.message}`,
         error.stack,
       );
       
-      // Don't throw - we still want to return 200 to Moyasar
-      // Log error for manual review
-      return { received: false };
+      // Return success to Moyasar to prevent retries for permanent errors
+      // But log for manual investigation
+      return { received: true, message: `Error: ${error.message}` };
     }
   }
 
   /**
-   * Get payment history
+   * Verify Moyasar webhook signature
+   */
+  private verifyWebhookSignature(payload: any, signature: string): boolean {
+    try {
+      const payloadString = JSON.stringify(payload);
+      const hmac = crypto
+        .createHmac('sha256', this.moyasarWebhookSecret)
+        .update(payloadString)
+        .digest('hex');
+      
+      return hmac === signature;
+    } catch (error) {
+      this.logger.error(`Signature verification error: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Get payment history with pagination
    */
   async getPaymentHistory(
     userId: string,
@@ -372,6 +512,12 @@ export class PaymentsService {
       throw new NotFoundException('Payment not found');
     }
 
+    // Check if already refunded first
+    if (payment.status === PaymentStatus.REFUNDED) {
+      throw new ConflictException('Payment already refunded');
+    }
+
+    // Then check if it's eligible for refund
     if (payment.status !== PaymentStatus.SUCCEEDED) {
       throw new BadRequestException('Can only refund successful payments');
     }
@@ -381,7 +527,7 @@ export class PaymentsService {
         ? Math.round(amount * 100)
         : Math.round(payment.amount * 100);
 
-      this.logger.log(`Refunding payment ${paymentId}: ${refundAmount / 100} SAR`);
+      this.logger.log(`💸 Refunding payment ${paymentId}: ${refundAmount / 100} SAR`);
 
       const refundResponse = await axios.post(
         `${this.moyasarApiUrl}/payments/${payment.paymentIntentId}/refund`,
@@ -400,6 +546,7 @@ export class PaymentsService {
         ...payment.metadata,
         refundId: refundResponse.data.id,
         refundReason: reason || '',
+        refundAmount: refundAmount / 100,
       };
 
       await this.paymentRepository.save(payment);
@@ -408,25 +555,31 @@ export class PaymentsService {
 
       return payment;
     } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const errorData = error.response?.data;
+        this.logger.error(`Moyasar refund error: ${JSON.stringify(errorData)}`);
+        
+        throw new BadRequestException(
+          errorData?.message || 'Failed to process refund',
+        );
+      }
+      
       this.logger.error(`Refund failed: ${error.message}`, error.stack);
       throw new InternalServerErrorException('Failed to process refund');
     }
   }
 
   /**
-   * Calculate amount based on plan
+   * Check for payments that require manual review
    */
-  private calculateAmount(
-    plan: SubscriptionPlan,
-    billingPeriod: BillingPeriod,
-  ): number {
-    const pricing = {
-      [SubscriptionPlan.FREE]: { monthly: 0, yearly: 0 },
-      [SubscriptionPlan.STARTER]: { monthly: 49, yearly: 490 },
-      [SubscriptionPlan.PROFESSIONAL]: { monthly: 149, yearly: 1490 },
-      [SubscriptionPlan.ENTERPRISE]: { monthly: 499, yearly: 4990 },
-    };
-
-    return pricing[plan][billingPeriod];
+  async getPaymentsRequiringReview(): Promise<Payment[]> {
+    return await this.paymentRepository.find({
+      where: {
+        status: PaymentStatus.SUCCEEDED,
+        metadata: {
+          requiresManualReview: true,
+        } as any,
+      },
+    });
   }
 }

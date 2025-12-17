@@ -436,16 +436,14 @@ export class AuthService {
         await this.userRepository.save(user);
 
         try {
-          await this.subscriptionsService.create(user.id, {
-            plan: SubscriptionPlan.FREE,
-          });
-          this.logger.log(`FREE subscription created for OAuth user: ${email}`);
-        } catch (error) {
-          this.logger.error(
-            `Failed to create subscription for OAuth user ${email}:`,
-            error,
-          );
-        }
+  await this.subscriptionsService.getOrCreateFreeSubscription(user.id);
+  this.logger.log(`FREE subscription ensured for OAuth user: ${email}`);
+} catch (error) {
+  this.logger.error(
+    `Failed to ensure subscription for OAuth user ${email}:`,
+    error,
+  );
+}
 
         oauthAccount = this.oauthAccountRepository.create({
           userId: user.id,

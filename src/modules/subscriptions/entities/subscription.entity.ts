@@ -74,6 +74,15 @@ export class Subscription extends BaseEntity {
     whiteLabel: boolean;
   };
 
+  @Column({ type: 'jsonb', nullable: true })
+  metadata?: {
+    scheduledDowngrade?: {
+      plan: SubscriptionPlan;
+      effectiveDate: Date | undefined;
+    };
+    [key: string]: any;
+  };
+
   @Column({ name: 'next_billing_date', type: 'timestamp', nullable: true })
   nextBillingDate?: Date;
 
