@@ -386,73 +386,68 @@ async appleAuthCallback(
   }
 }
 
-  @Post('exchange-code')
-  @ApiOperation({
-    summary: 'Exchange session code for access tokens',
-    description:
-      'Exchanges a one-time session code received from OAuth callback for access and refresh tokens',
-  })
-  @ApiBody({ type: ExchangeCodeDto })
-  @ApiResponse({
-    status: 200,
-    description: 'Returns access token, refresh token, and user information',
-    schema: {
-      example: {
-        accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-        refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-        userId: 'user-id-here',
-        user: {
-          id: 'user-id',
-          email: 'user@example.com',
-          name: 'John Doe',
-        },
-      },
-    },
-  })
-   @ApiResponse({ status: 401, description: 'Invalid or expired code' })
-  async exchangeCode(
-    @Body() exchangeCodeDto: ExchangeCodeDto,
-    @Ip() ipAddress: string,
-    @Headers('user-agent') userAgent: string,
-  ) {
-    const { code } = exchangeCodeDto;
+@Post('exchange-code')
+@ApiOperation({
+  summary: 'Exchange session code for access tokens',
+  description: 'Exchanges one-time session code. May return tokens OR 2FA challenge.'
+})
+@ApiResponse({
+  status: 200,
+  description: 'Returns tokens OR 2FA challenge',
+})
+@ApiResponse({ status: 401, description: 'Invalid or expired code' })
+async exchangeCode(
+  @Body() exchangeCodeDto: ExchangeCodeDto,
+  @Ip() ipAddress: string,
+  @Headers('user-agent') userAgent: string,
+) {
+  const { code } = exchangeCodeDto;
 
-    if (!code) {
-      throw new UnauthorizedException('Code is required');
-    }
+  if (!code) {
+    throw new UnauthorizedException('Code is required');
+  }
 
-    // Get tokens from Redis
-    const sessionKey = `oauth:session:${code}`;
-    const data = await this.redis.get(sessionKey);
+  const sessionKey = `oauth:session:${code}`;
+  const data = await this.redis.get(sessionKey);
 
-    if (!data) {
-      throw new UnauthorizedException('Invalid or expired code');
-    }
+  if (!data) {
+    throw new UnauthorizedException('Invalid or expired code');
+  }
 
-    const sessionData = JSON.parse(data);
+  const sessionData = JSON.parse(data);
 
-    // Verify not expired (extra safety check)
-    if (Date.now() > sessionData.expiresAt) {
-      await this.redis.del(sessionKey);
-      throw new UnauthorizedException('Code has expired');
-    }
-
-    // Delete the code immediately (one-time use)
+  // Verify not expired
+  if (Date.now() > sessionData.expiresAt) {
     await this.redis.del(sessionKey);
+    throw new UnauthorizedException('Code has expired');
+  }
 
-    // Log the token exchange for security audit
-    this.logger.log(
-      `Token exchange for user ${sessionData.userId} from ${ipAddress}`,
-    );
+  // Delete the code immediately (one-time use)
+  await this.redis.del(sessionKey);
 
-    // Return tokens to client
+  // ✅ CHECK IF THIS IS A 2FA CHALLENGE
+  if (sessionData.requires2FA) {
+    this.logger.log(`2FA challenge for user ${sessionData.userId}`);
+    
     return {
-      accessToken: sessionData.accessToken,
-      refreshToken: sessionData.refreshToken,
+      requires2FA: true,
       userId: sessionData.userId,
-      user: sessionData.profile,
+      method: sessionData.method,
     };
   }
+
+  // ✅ NO 2FA - RETURN TOKENS
+  this.logger.log(
+    `Token exchange for user ${sessionData.userId} from ${ipAddress}`,
+  );
+
+  return {
+    accessToken: sessionData.accessToken,
+    refreshToken: sessionData.refreshToken,
+    userId: sessionData.userId,
+    user: sessionData.profile,
+  };
+}
 
   /**
  * Verify 2FA code for OAuth login
