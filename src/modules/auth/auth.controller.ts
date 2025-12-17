@@ -149,30 +149,34 @@ export class AuthController {
   }
 
   @Get('google/callback')
-  @UseGuards(GoogleAuthGuard)
-  @ApiOperation({ summary: 'Google OAuth callback' })
-  @ApiResponse({
-    status: 302,
-    description: 'Redirects to frontend with session code',
-  })
-  async googleAuthCallback(
-    @Req() req: Request,
-    @Ip() ipAddress: string,
-    @Headers('user-agent') userAgent: string,
-    @Res() res: Response,
-  ) {
-    try {
-      const profile = req.user as any;
-      const authResponse = await this.authService.googleLogin(
-        profile,
-        ipAddress,
-        userAgent,
+@UseGuards(GoogleAuthGuard)
+@ApiOperation({ summary: 'Google OAuth callback' })
+@ApiResponse({
+  status: 302,
+  description: 'Redirects to frontend with session code',
+})
+async googleAuthCallback(
+  @Req() req: Request,
+  @Ip() ipAddress: string,
+  @Headers('user-agent') userAgent: string,
+  @Res() res: Response,
+) {
+  try {
+    const profile = req.user as any;
+    const authResponse = await this.authService.googleLogin(
+      profile,
+      ipAddress,
+      userAgent,
+    );
+
+    // ✅ Check if 2FA is required (this is NORMAL, not an error!)
+    if ('requires2FA' in authResponse) {
+      this.logger.log(
+        `2FA required for Google OAuth user: ${authResponse.userId}`,
       );
 
-      // Type guard: Check if 2FA is required (shouldn't happen in OAuth flow)
-      if ('requires2FA' in authResponse) {
-        this.logger.log(`2FA required for OAuth user: ${authResponse.userId}`);
-        const sessionCode = randomBytes(32).toString('hex');
+      // ✅ Generate session code and store 2FA challenge info
+      const sessionCode = randomBytes(32).toString('hex');
 
       const sessionData = {
         requires2FA: true,
@@ -188,37 +192,37 @@ export class AuthController {
         300, // 5 minutes TTL
       );
 
-      // Redirect to frontend with session code
+      // ✅ Redirect to frontend with session code
       const frontendUrl = process.env.FRONTEND_URL;
       return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
-      }
-
-      // Generate a secure one-time session code
-      const sessionCode = randomBytes(32).toString('hex');
-
-      const sessionData = {
-        accessToken: authResponse.accessToken,
-        refreshToken: authResponse.refreshToken,
-        profile,
-        userId: authResponse.user.id,
-        expiresAt: Date.now() + 60000,
-      };
-
-      await this.redis.set(
-        `oauth:session:${sessionCode}`,
-        JSON.stringify(sessionData),
-        60, // 60 seconds TTL
-      );
-
-      // Redirect to frontend with session code
-      const frontendUrl = process.env.FRONTEND_URL;
-      return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
-    } catch (error) {
-      this.logger.error('Google auth callback error:', error);
-      const frontendUrl = process.env.FRONTEND_URL;
-      return res.redirect(`${frontendUrl}/login?error=auth_failed`);
     }
+
+    // ✅ No 2FA - proceed with normal token flow
+    const sessionCode = randomBytes(32).toString('hex');
+
+    const sessionData = {
+      accessToken: authResponse.accessToken,
+      refreshToken: authResponse.refreshToken,
+      profile,
+      userId: authResponse.user.id,
+      expiresAt: Date.now() + 60000, // 1 minute
+    };
+
+    await this.redis.set(
+      `oauth:session:${sessionCode}`,
+      JSON.stringify(sessionData),
+      60, // 60 seconds TTL
+    );
+
+    // Redirect to frontend with session code
+    const frontendUrl = process.env.FRONTEND_URL;
+    return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
+  } catch (error) {
+    this.logger.error('Google auth callback error:', error);
+    const frontendUrl = process.env.FRONTEND_URL;
+    return res.redirect(`${frontendUrl}/login?error=auth_failed`);
   }
+}
 
   @Get('github')
   @UseGuards(GitHubAuthGuard)
@@ -229,31 +233,32 @@ export class AuthController {
   }
 
   @Get('github/callback')
-  @UseGuards(GitHubAuthGuard)
-  @ApiOperation({ summary: 'GitHub OAuth callback' })
-  @ApiResponse({
-    status: 302,
-    description: 'Redirects to frontend with session code',
-  })
-  async githubAuthCallback(
-    @Req() req: Request,
-    @Ip() ipAddress: string,
-    @Headers('user-agent') userAgent: string,
-    @Res() res: Response,
-  ) {
-    try {
-      const profile = req.user as any;
-      const authResponse = await this.authService.githubLogin(
-        profile,
-        ipAddress,
-        userAgent,
+@UseGuards(GitHubAuthGuard)
+@ApiOperation({ summary: 'GitHub OAuth callback' })
+@ApiResponse({
+  status: 302,
+  description: 'Redirects to frontend with session code',
+})
+async githubAuthCallback(
+  @Req() req: Request,
+  @Ip() ipAddress: string,
+  @Headers('user-agent') userAgent: string,
+  @Res() res: Response,
+) {
+  try {
+    const profile = req.user as any;
+    const authResponse = await this.authService.githubLogin(
+      profile,
+      ipAddress,
+      userAgent,
+    );
+
+    // ✅ Check if 2FA is required
+    if ('requires2FA' in authResponse) {
+      this.logger.log(
+        `2FA required for GitHub OAuth user: ${authResponse.userId}`,
       );
 
-      // Type guard: Check if 2FA is required (shouldn't happen in OAuth flow)
-      if ('requires2FA' in authResponse) {
-      this.logger.log(`2FA required for OAuth user: ${authResponse.userId}`);
-      
-      // Generate a secure one-time session code WITH 2FA info
       const sessionCode = randomBytes(32).toString('hex');
 
       const sessionData = {
@@ -261,46 +266,44 @@ export class AuthController {
         userId: authResponse.userId,
         method: authResponse.method,
         profile,
-        expiresAt: Date.now() + 300000, // 5 minutes for 2FA
+        expiresAt: Date.now() + 300000,
       };
 
       await this.redis.set(
         `oauth:session:${sessionCode}`,
         JSON.stringify(sessionData),
-        300, // 5 minutes TTL
+        300,
       );
 
-      // Redirect to frontend with session code
       const frontendUrl = process.env.FRONTEND_URL;
       return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
     }
 
-      // Generate a secure one-time session code
-      const sessionCode = randomBytes(32).toString('hex');
+    // No 2FA - normal flow
+    const sessionCode = randomBytes(32).toString('hex');
 
-      const sessionData = {
-        accessToken: authResponse.accessToken,
-        refreshToken: authResponse.refreshToken,
-        profile,
-        userId: authResponse.user.id,
-        expiresAt: Date.now() + 60000,
-      };
+    const sessionData = {
+      accessToken: authResponse.accessToken,
+      refreshToken: authResponse.refreshToken,
+      profile,
+      userId: authResponse.user.id,
+      expiresAt: Date.now() + 60000,
+    };
 
-      await this.redis.set(
-        `oauth:session:${sessionCode}`,
-        JSON.stringify(sessionData),
-        60, // 60 seconds TTL
-      );
+    await this.redis.set(
+      `oauth:session:${sessionCode}`,
+      JSON.stringify(sessionData),
+      60,
+    );
 
-      // Redirect to frontend with session code
-      const frontendUrl = process.env.FRONTEND_URL;
-      return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
-    } catch (error) {
-      this.logger.error('GitHub auth callback error:', error);
-      const frontendUrl = process.env.FRONTEND_URL;
-      return res.redirect(`${frontendUrl}/login?error=auth_failed`);
-    }
+    const frontendUrl = process.env.FRONTEND_URL;
+    return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
+  } catch (error) {
+    this.logger.error('GitHub auth callback error:', error);
+    const frontendUrl = process.env.FRONTEND_URL;
+    return res.redirect(`${frontendUrl}/login?error=auth_failed`);
   }
+}
 
   @Get('apple')
   @UseGuards(AppleAuthGuard)
@@ -311,31 +314,32 @@ export class AuthController {
   }
 
   @Post('apple/callback')
-  @UseGuards(AppleAuthGuard)
-  @ApiOperation({ summary: 'Apple OAuth callback' })
-  @ApiResponse({
-    status: 302,
-    description: 'Redirects to frontend with session code',
-  })
-  async appleAuthCallback(
-    @Req() req: Request,
-    @Ip() ipAddress: string,
-    @Headers('user-agent') userAgent: string,
-    @Res() res: Response,
-  ) {
-    try {
-      const profile = req.user as any;
-      const authResponse = await this.authService.appleLogin(
-        profile,
-        ipAddress,
-        userAgent,
+@UseGuards(AppleAuthGuard)
+@ApiOperation({ summary: 'Apple OAuth callback' })
+@ApiResponse({
+  status: 302,
+  description: 'Redirects to frontend with session code',
+})
+async appleAuthCallback(
+  @Req() req: Request,
+  @Ip() ipAddress: string,
+  @Headers('user-agent') userAgent: string,
+  @Res() res: Response,
+) {
+  try {
+    const profile = req.user as any;
+    const authResponse = await this.authService.appleLogin(
+      profile,
+      ipAddress,
+      userAgent,
+    );
+
+    // ✅ Check if 2FA is required
+    if ('requires2FA' in authResponse) {
+      this.logger.log(
+        `2FA required for Apple OAuth user: ${authResponse.userId}`,
       );
 
-      // Type guard: Check if 2FA is required (shouldn't happen in OAuth flow)
-      if ('requires2FA' in authResponse) {
-      this.logger.log(`2FA required for OAuth user: ${authResponse.userId}`);
-      
-      // Generate a secure one-time session code WITH 2FA info
       const sessionCode = randomBytes(32).toString('hex');
 
       const sessionData = {
@@ -343,46 +347,44 @@ export class AuthController {
         userId: authResponse.userId,
         method: authResponse.method,
         profile,
-        expiresAt: Date.now() + 300000, // 5 minutes for 2FA
+        expiresAt: Date.now() + 300000,
       };
 
       await this.redis.set(
         `oauth:session:${sessionCode}`,
         JSON.stringify(sessionData),
-        300, // 5 minutes TTL
+        300,
       );
 
-      // Redirect to frontend with session code
       const frontendUrl = process.env.FRONTEND_URL;
       return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
     }
 
-      // Generate a secure one-time session code
-      const sessionCode = randomBytes(32).toString('hex');
+    // No 2FA - normal flow
+    const sessionCode = randomBytes(32).toString('hex');
 
-      const sessionData = {
-        accessToken: authResponse.accessToken,
-        refreshToken: authResponse.refreshToken,
-        profile,
-        userId: authResponse.user.id,
-        expiresAt: Date.now() + 60000,
-      };
+    const sessionData = {
+      accessToken: authResponse.accessToken,
+      refreshToken: authResponse.refreshToken,
+      profile,
+      userId: authResponse.user.id,
+      expiresAt: Date.now() + 60000,
+    };
 
-      await this.redis.set(
-        `oauth:session:${sessionCode}`,
-        JSON.stringify(sessionData),
-        60, // 60 seconds TTL
-      );
+    await this.redis.set(
+      `oauth:session:${sessionCode}`,
+      JSON.stringify(sessionData),
+      60,
+    );
 
-      // Redirect to frontend with session code
-      const frontendUrl = process.env.FRONTEND_URL;
-      return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
-    } catch (error) {
-      this.logger.error('Apple auth callback error:', error);
-      const frontendUrl = process.env.FRONTEND_URL;
-      return res.redirect(`${frontendUrl}/login?error=auth_failed`);
-    }
+    const frontendUrl = process.env.FRONTEND_URL;
+    return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
+  } catch (error) {
+    this.logger.error('Apple auth callback error:', error);
+    const frontendUrl = process.env.FRONTEND_URL;
+    return res.redirect(`${frontendUrl}/login?error=auth_failed`);
   }
+}
 
   @Post('exchange-code')
   @ApiOperation({
