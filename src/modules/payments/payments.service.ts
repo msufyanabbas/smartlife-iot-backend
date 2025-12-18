@@ -8,7 +8,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import * as crypto from 'crypto';
@@ -39,6 +39,7 @@ export class PaymentsService {
     private readonly paymentRepository: Repository<Payment>,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly configService: ConfigService,
+    private readonly dataSource: DataSource,
   ) {
     const apiKey = this.configService.get<string>('MOYASAR_API_KEY');
     const webhookSecret = this.configService.get<string>('MOYASAR_WEBHOOK_SECRET');
@@ -57,7 +58,7 @@ export class PaymentsService {
 
   /**
    * Create a Moyasar invoice (hosted payment page)
-   * Ensures user has a subscription before creating payment
+   * Validates upgrade eligibility BEFORE creating payment
    */
   async createPaymentIntent(
     userId: string,
@@ -82,6 +83,23 @@ export class PaymentsService {
         subscription = await this.subscriptionsService.getOrCreateFreeSubscription(userId);
       }
 
+      // CRITICAL: Validate this is an upgrade or renewal, NOT a downgrade
+      if (plan !== SubscriptionPlan.FREE) {
+        const isUpgrade = this.subscriptionsService.isUpgrade(subscription.plan, plan);
+        const isRenewal = this.subscriptionsService.isRenewal(subscription.plan, plan);
+
+        if (!isUpgrade && !isRenewal) {
+          throw new BadRequestException(
+            `Cannot create payment for downgrade from ${subscription.plan} to ${plan}. ` +
+            `Please use the downgrade scheduling feature instead.`
+          );
+        }
+
+        this.logger.log(
+          `Payment intent validation: ${isUpgrade ? 'UPGRADE' : 'RENEWAL'} from ${subscription.plan} to ${plan}`
+        );
+      }
+
       // Calculate amount
       const amount = this.subscriptionsService.getPlanPricing(plan, billingPeriod);
 
@@ -89,14 +107,14 @@ export class PaymentsService {
         throw new BadRequestException('Cannot create payment for free plan');
       }
 
-      // Check if there's already a pending payment for this upgrade
+      // Check if there's already a pending payment for this exact upgrade
       const existingPending = await this.paymentRepository
-  .createQueryBuilder('payment')
-  .where('payment.userId = :userId', { userId })
-  .andWhere('payment.status = :status', { status: PaymentStatus.PENDING })
-  .andWhere("payment.metadata->>'plan' = :plan", { plan })
-  .andWhere("payment.metadata->>'billingPeriod' = :billingPeriod", { billingPeriod })
-  .getOne();
+        .createQueryBuilder('payment')
+        .where('payment.userId = :userId', { userId })
+        .andWhere('payment.status = :status', { status: PaymentStatus.PENDING })
+        .andWhere("payment.metadata->>'plan' = :plan", { plan })
+        .andWhere("payment.metadata->>'billingPeriod' = :billingPeriod", { billingPeriod })
+        .getOne();
 
       if (existingPending) {
         this.logger.warn(`Reusing existing pending payment: ${existingPending.paymentIntentId}`);
@@ -113,20 +131,25 @@ export class PaymentsService {
             },
           );
 
-          return {
-            paymentUrl: response.data.url,
-            invoiceId: existingPending.paymentIntentId,
-            amount: existingPending.amount,
-            currency: existingPending.currency,
-            description: existingPending.description || '',
-          };
+          // Check if invoice is still valid (not expired/cancelled)
+          if (response.data.status === 'pending') {
+            return {
+              paymentUrl: response.data.url,
+              invoiceId: existingPending.paymentIntentId,
+              amount: existingPending.amount,
+              currency: existingPending.currency,
+              description: existingPending.description || '',
+            };
+          } else {
+            // Invoice expired/cancelled, create new one
+            this.logger.log(`Existing invoice ${response.data.status}, creating new one`);
+          }
         } catch (fetchError) {
           this.logger.warn(`Could not fetch existing invoice, creating new one`);
-          // Continue to create new invoice
         }
       }
 
-      // Convert to halalas (must end with 0)
+      // Convert to halalas (must end with 0 for Moyasar)
       let amountInHalalas = Math.round(amount * 100);
       if (amountInHalalas % 10 !== 0) {
         amountInHalalas = Math.ceil(amountInHalalas / 10) * 10;
@@ -151,6 +174,7 @@ export class PaymentsService {
           subscription_id: subscription.id,
           plan: plan,
           billing_period: billingPeriod,
+          original_plan: subscription.plan, // Track original plan for validation
         },
       };
 
@@ -187,6 +211,8 @@ export class PaymentsService {
           plan,
           billingPeriod,
           invoiceId: invoice.id,
+          originalPlan: subscription.plan,
+          createdAt: new Date().toISOString(),
         },
         createdBy: userId,
       });
@@ -210,6 +236,10 @@ export class PaymentsService {
         throw new BadRequestException(
           errorData?.message || 'Failed to create payment',
         );
+      }
+
+      if (error instanceof BadRequestException) {
+        throw error;
       }
 
       this.logger.error(`Payment creation failed: ${error.message}`, error.stack);
@@ -277,7 +307,7 @@ export class PaymentsService {
   }
 
   /**
-   * Process successful payment with proper locking and error handling
+   * Process successful payment with transaction and proper error handling
    */
   private async processSuccessfulPayment(
     payment: Payment,
@@ -289,97 +319,79 @@ export class PaymentsService {
       return payment;
     }
 
-    this.logger.log(`💰 Payment ${payment.paymentIntentId} is PAID - processing subscription`);
+    this.logger.log(`💰 Payment ${payment.paymentIntentId} is PAID - processing with transaction`);
 
-    // Update payment status first
-    payment.status = PaymentStatus.SUCCEEDED;
-    payment.paidAt = new Date(invoice.paid_at || invoice.updated_at);
-    await this.paymentRepository.save(payment);
+    // Use transaction to ensure atomicity
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    // Process subscription upgrade/renewal
-    if (payment.metadata?.plan && payment.metadata?.billingPeriod) {
-      try {
+    try {
+      // Update payment status first (within transaction)
+      payment.status = PaymentStatus.SUCCEEDED;
+      payment.paidAt = new Date(invoice.paid_at || invoice.updated_at);
+      const updatedPayment = await queryRunner.manager.save(Payment, payment);
+
+      // Process subscription upgrade/renewal
+      if (payment.metadata?.plan && payment.metadata?.billingPeriod) {
         const targetPlan = payment.metadata.plan as SubscriptionPlan;
         const targetBilling = payment.metadata.billingPeriod as BillingPeriod;
 
-        // Get current subscription
-        const currentSub = await this.subscriptionsService.findCurrent(payment.userId);
+        this.logger.log(`Processing subscription change: ${targetPlan} - ${targetBilling}`);
 
-         // 🔍 ADD THESE DEBUG LOGS
-      this.logger.log(`Current subscription: ${JSON.stringify({
-        plan: currentSub.plan,
-        billingPeriod: currentSub.billingPeriod,
-        status: currentSub.status
-      })}`);
-      
-      this.logger.log(`Target: ${targetPlan} - ${targetBilling}`);
-
-        // Determine if this is an upgrade or renewal
-        const planOrder = [
-          SubscriptionPlan.FREE,
-          SubscriptionPlan.STARTER,
-          SubscriptionPlan.PROFESSIONAL,
-          SubscriptionPlan.ENTERPRISE,
-        ];
-        
-        const currentPlanIndex = planOrder.indexOf(currentSub.plan);
-        const targetPlanIndex = planOrder.indexOf(targetPlan);
-
-        this.logger.log(`Plan indices - Current: ${currentPlanIndex}, Target: ${targetPlanIndex}`);
-
-        if (targetPlanIndex > currentPlanIndex) {
-          // UPGRADE
-          this.logger.log(`⬆️ Upgrading subscription from ${currentSub.plan} to ${targetPlan}`);
-          
-           const upgraded = await this.subscriptionsService.upgrade(payment.userId, {
-          plan: targetPlan,
-          billingPeriod: targetBilling,
-        });
-
-        this.logger.log(`✅ Upgrade completed: ${JSON.stringify({
-          id: upgraded.id,
-          plan: upgraded.plan,
-          status: upgraded.status,
-          nextBillingDate: upgraded.nextBillingDate
-        })}`);
-        
-        } else if (targetPlanIndex === currentPlanIndex) {
-          // RENEWAL
-          this.logger.log(`🔄 Renewing subscription for ${targetPlan} plan`);
-          
-          await this.subscriptionsService.renew(payment.userId, targetBilling);
-        } else {
-          // DOWNGRADE (shouldn't happen through normal flow)
-          this.logger.warn(`⚠️ Payment for downgrade detected: ${currentSub.plan} → ${targetPlan}`);
-          
-          // For downgrades, we still process as renewal of current billing period
-          await this.subscriptionsService.renew(payment.userId, targetBilling);
-        }
-        
-        this.logger.log(`✅ Subscription updated successfully for user ${payment.userId}`);
-      } catch (subscriptionError) {
-        this.logger.error(
-          `❌ Failed to update subscription: ${subscriptionError.message}`,
-          subscriptionError.stack,
+        // Call subscription service with query runner for transaction
+        await this.subscriptionsService.processSubscriptionAfterPayment(
+          payment.userId,
+          targetPlan,
+          targetBilling,
+          payment.amount,
+          queryRunner,
         );
-        
-        // Payment succeeded but subscription update failed
-        // Mark payment with error metadata for manual review
-        payment.metadata = {
-          ...payment.metadata,
-          subscriptionUpdateError: subscriptionError.message,
-          requiresManualReview: true,
-        };
-        
-        await this.paymentRepository.save(payment);
-        
-        // Don't throw - payment is still successful
-        // But log for alerting/monitoring
-        this.logger.error(`🚨 ALERT: Payment ${payment.id} succeeded but subscription update failed!`);
-      }
-    }
 
-    return payment;
+        this.logger.log(`✅ Subscription updated successfully within transaction`);
+      }
+
+      // Commit transaction
+      await queryRunner.commitTransaction();
+      
+      this.logger.log(`✅ Transaction committed successfully for payment ${payment.id}`);
+
+      return updatedPayment;
+
+    } catch (error) {
+      // Rollback transaction on error
+      await queryRunner.rollbackTransaction();
+      
+      this.logger.error(
+        `❌ Transaction rolled back: ${error.message}`,
+        error.stack,
+      );
+
+      // Mark payment as succeeded but with error flag for manual review
+      payment.status = PaymentStatus.SUCCEEDED;
+      payment.paidAt = new Date(invoice.paid_at || invoice.updated_at);
+      payment.metadata = {
+        ...payment.metadata,
+        subscriptionUpdateError: error.message,
+        requiresManualReview: true,
+        errorTimestamp: new Date().toISOString(),
+      };
+      
+      await this.paymentRepository.save(payment);
+      
+      this.logger.error(
+        `🚨 CRITICAL: Payment ${payment.id} succeeded but subscription update failed! ` +
+        `Marked for manual review.`
+      );
+
+      // Throw error to notify caller
+      throw new InternalServerErrorException(
+        'Payment processed but subscription update failed. Our team will review this shortly.'
+      );
+
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   /**
@@ -421,7 +433,7 @@ export class PaymentsService {
       // Moyasar sends different event types
       if (payload.type === 'invoice_paid' || payload.type === 'payment_paid') {
         // Extract invoice ID from payload
-        const invoiceId = payload.data?.id || payload.data?.invoice_id;
+        const invoiceId = payload.data?.invoice_id;
         
         if (!invoiceId) {
           this.logger.error('❌ Webhook missing invoice ID');
@@ -430,7 +442,7 @@ export class PaymentsService {
 
         this.logger.log(`Processing webhook for invoice: ${invoiceId}`);
 
-        // Verify and process the payment
+        // Verify and process the payment (with transaction)
         await this.verifyPayment(invoiceId);
 
         this.logger.log(`✅ Webhook processed successfully for: ${invoiceId}`);
@@ -512,7 +524,7 @@ export class PaymentsService {
   }
 
   /**
-   * Refund payment
+   * Refund payment with subscription downgrade handling
    */
   async refundPayment(
     userId: string,
@@ -537,6 +549,10 @@ export class PaymentsService {
     if (payment.status !== PaymentStatus.SUCCEEDED) {
       throw new BadRequestException('Can only refund successful payments');
     }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
     try {
       const refundAmount = amount
@@ -565,12 +581,19 @@ export class PaymentsService {
         refundAmount: refundAmount / 100,
       };
 
-      await this.paymentRepository.save(payment);
+      await queryRunner.manager.save(Payment, payment);
+
+      // TODO: Handle subscription downgrade if needed based on refund
+      // This would depend on your business logic
+
+      await queryRunner.commitTransaction();
 
       this.logger.log(`✅ Payment refunded: ${paymentId}`);
 
       return payment;
     } catch (error) {
+      await queryRunner.rollbackTransaction();
+
       if (axios.isAxiosError(error)) {
         const errorData = error.response?.data;
         this.logger.error(`Moyasar refund error: ${JSON.stringify(errorData)}`);
@@ -582,6 +605,8 @@ export class PaymentsService {
       
       this.logger.error(`Refund failed: ${error.message}`, error.stack);
       throw new InternalServerErrorException('Failed to process refund');
+    } finally {
+      await queryRunner.release();
     }
   }
 
@@ -589,10 +614,71 @@ export class PaymentsService {
    * Check for payments that require manual review
    */
   async getPaymentsRequiringReview(): Promise<Payment[]> {
-  return await this.paymentRepository
-    .createQueryBuilder('payment')
-    .where('payment.status = :status', { status: PaymentStatus.SUCCEEDED })
-    .andWhere("payment.metadata->>'requiresManualReview' = 'true'")
-    .getMany();
-}
+    return await this.paymentRepository
+      .createQueryBuilder('payment')
+      .where('payment.status = :status', { status: PaymentStatus.SUCCEEDED })
+      .andWhere("payment.metadata->>'requiresManualReview' = 'true'")
+      .orderBy('payment.createdAt', 'DESC')
+      .getMany();
+  }
+
+  /**
+   * Manually retry failed subscription update for a payment
+   * ADMIN ONLY
+   */
+  async retrySubscriptionUpdate(paymentId: string): Promise<Payment> {
+    const payment = await this.paymentRepository.findOne({
+      where: { id: paymentId },
+    });
+
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+
+    if (payment.status !== PaymentStatus.SUCCEEDED) {
+      throw new BadRequestException('Can only retry for succeeded payments');
+    }
+
+    if (!payment.metadata?.requiresManualReview) {
+      throw new BadRequestException('Payment does not require manual review');
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const targetPlan = payment.metadata.plan as SubscriptionPlan;
+      const targetBilling = payment.metadata.billingPeriod as BillingPeriod;
+
+      await this.subscriptionsService.processSubscriptionAfterPayment(
+        payment.userId,
+        targetPlan,
+        targetBilling,
+        payment.amount,
+        queryRunner,
+      );
+
+      // Clear manual review flag
+      payment.metadata = {
+        ...payment.metadata,
+        requiresManualReview: false,
+        manuallyResolvedAt: new Date().toISOString(),
+      };
+
+      await queryRunner.manager.save(Payment, payment);
+      await queryRunner.commitTransaction();
+
+      this.logger.log(`✅ Manually resolved payment ${paymentId}`);
+
+      return payment;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      
+      this.logger.error(`Failed to retry subscription update: ${error.message}`);
+      throw new InternalServerErrorException('Failed to retry subscription update');
+    } finally {
+      await queryRunner.release();
+    }
+  }
 }

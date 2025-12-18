@@ -3,9 +3,10 @@ import {
   NotFoundException,
   ConflictException,
   Logger,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, QueryRunner } from 'typeorm';
 import {
   Subscription,
   SubscriptionPlan,
@@ -60,6 +61,14 @@ export class SubscriptionsService {
       storage: 1000,
     },
   };
+
+  // Plan hierarchy for validation
+  private readonly planOrder = [
+    SubscriptionPlan.FREE,
+    SubscriptionPlan.STARTER,
+    SubscriptionPlan.PROFESSIONAL,
+    SubscriptionPlan.ENTERPRISE,
+  ];
 
   constructor(
     @InjectRepository(Subscription)
@@ -209,33 +218,73 @@ export class SubscriptionsService {
   }
 
   /**
-   * Upgrade subscription to a higher plan
+   * Validate if upgrade is allowed (prevents downgrades)
    */
-  async upgrade(
+  validateUpgrade(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): void {
+    const currentPlanIndex = this.planOrder.indexOf(currentPlan);
+    const targetPlanIndex = this.planOrder.indexOf(targetPlan);
+    
+    if (targetPlanIndex <= currentPlanIndex) {
+      throw new BadRequestException(
+        `Cannot downgrade from ${currentPlan} to ${targetPlan}. Current plan is equal or higher.`
+      );
+    }
+  }
+
+  /**
+   * Check if plan change is an upgrade
+   */
+  isUpgrade(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): boolean {
+    const currentPlanIndex = this.planOrder.indexOf(currentPlan);
+    const targetPlanIndex = this.planOrder.indexOf(targetPlan);
+    return targetPlanIndex > currentPlanIndex;
+  }
+
+  /**
+   * Check if plan change is a renewal (same plan)
+   */
+  isRenewal(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): boolean {
+    return currentPlan === targetPlan;
+  }
+
+  /**
+   * Upgrade subscription - ONLY called after payment verification
+   * This is now a PRIVATE method called by payment service
+   */
+  async upgradeAfterPayment(
     userId: string,
-    upgradeDto: UpgradeSubscriptionDto,
+    plan: SubscriptionPlan,
+    billingPeriod: BillingPeriod,
+    paymentAmount: number,
+    queryRunner?: QueryRunner,
   ): Promise<Subscription> {
-    const subscription = await this.findCurrent(userId);
+    const useTransaction = !!queryRunner;
+    const repository = useTransaction 
+      ? queryRunner.manager.getRepository(Subscription)
+      : this.subscriptionRepository;
 
-    const { plan, billingPeriod = subscription.billingPeriod } = upgradeDto;
+    // Get current subscription with lock to prevent race conditions
+    const subscription = await repository.findOne({
+      where: { userId },
+      lock: useTransaction ? { mode: 'pessimistic_write' } : undefined,
+    });
 
-    // Validate upgrade (can't downgrade using this endpoint)
-    const planOrder = [
-      SubscriptionPlan.FREE,
-      SubscriptionPlan.STARTER,
-      SubscriptionPlan.PROFESSIONAL,
-      SubscriptionPlan.ENTERPRISE,
-    ];
-    
-    const currentPlanIndex = planOrder.indexOf(subscription.plan);
-    const newPlanIndex = planOrder.indexOf(plan);
-    
-    if (newPlanIndex <= currentPlanIndex) {
-      throw new ConflictException(
-        'Cannot downgrade or switch to same plan using upgrade endpoint',
+    if (!subscription) {
+      throw new NotFoundException('No subscription found for user');
+    }
+
+    // Validate this is actually an upgrade
+    this.validateUpgrade(subscription.plan, plan);
+
+    // Validate payment amount matches plan pricing
+    const expectedAmount = this.planPricing[plan][billingPeriod];
+    if (Math.abs(paymentAmount - expectedAmount) > 0.01) {
+      throw new BadRequestException(
+        `Payment amount ${paymentAmount} does not match plan price ${expectedAmount}`
       );
     }
 
+    // Update subscription
     subscription.plan = plan;
     subscription.billingPeriod = billingPeriod;
     subscription.price = this.planPricing[plan][billingPeriod];
@@ -247,7 +296,15 @@ export class SubscriptionsService {
     subscription.cancelledAt = undefined; // Clear cancellation
     subscription.updatedBy = userId;
 
-    const updated = await this.subscriptionRepository.save(subscription);
+    // Clear any scheduled downgrades
+    if (subscription.metadata?.scheduledDowngrade) {
+      subscription.metadata = {
+        ...subscription.metadata,
+        scheduledDowngrade: undefined,
+      };
+    }
+
+    const updated = await repository.save(subscription);
     
     this.logger.log(
       `✅ Subscription upgraded for user ${userId}: ${subscription.plan} → ${plan}`
@@ -257,14 +314,36 @@ export class SubscriptionsService {
   }
 
   /**
-   * Renew subscription - extend the billing period for the same plan
+   * Renew subscription - ONLY called after payment verification
    * Called when a user pays for their current plan again
    */
-  async renew(
+  async renewAfterPayment(
     userId: string,
     billingPeriod: BillingPeriod,
+    paymentAmount: number,
+    queryRunner?: QueryRunner,
   ): Promise<Subscription> {
-    const subscription = await this.findCurrent(userId);
+    const useTransaction = !!queryRunner;
+    const repository = useTransaction 
+      ? queryRunner.manager.getRepository(Subscription)
+      : this.subscriptionRepository;
+
+    const subscription = await repository.findOne({
+      where: { userId },
+      lock: useTransaction ? { mode: 'pessimistic_write' } : undefined,
+    });
+
+    if (!subscription) {
+      throw new NotFoundException('No subscription found for user');
+    }
+
+    // Validate payment amount matches current plan pricing
+    const expectedAmount = this.planPricing[subscription.plan][billingPeriod];
+    if (Math.abs(paymentAmount - expectedAmount) > 0.01) {
+      throw new BadRequestException(
+        `Payment amount ${paymentAmount} does not match plan price ${expectedAmount}`
+      );
+    }
 
     // Calculate the new next billing date
     const currentNextBilling = subscription.nextBillingDate || new Date();
@@ -282,7 +361,6 @@ export class SubscriptionsService {
       newNextBillingDate = new Date(baseDate);
       newNextBillingDate.setFullYear(newNextBillingDate.getFullYear() + 1);
     } else {
-      // Fallback to monthly if unknown billing period
       newNextBillingDate = new Date(baseDate);
       newNextBillingDate.setMonth(newNextBillingDate.getMonth() + 1);
     }
@@ -291,11 +369,11 @@ export class SubscriptionsService {
     subscription.nextBillingDate = newNextBillingDate;
     subscription.billingPeriod = billingPeriod;
     subscription.status = SubscriptionStatus.ACTIVE;
-    subscription.cancelledAt = undefined; // Clear any cancellation
-    subscription.trialEndsAt = undefined; // Clear trial status
+    subscription.cancelledAt = undefined;
+    subscription.trialEndsAt = undefined;
     subscription.updatedBy = userId;
 
-    await this.subscriptionRepository.save(subscription);
+    await repository.save(subscription);
 
     this.logger.log(
       `✅ Subscription renewed for user ${userId}. Next billing: ${newNextBillingDate.toISOString()}`
@@ -305,24 +383,76 @@ export class SubscriptionsService {
   }
 
   /**
-   * Downgrade subscription (e.g., from Professional to Starter)
-   * This should happen at the end of the billing period
+   * Process subscription change after successful payment
+   * This is the main entry point called by PaymentsService
    */
-  async downgrade(
+  async processSubscriptionAfterPayment(
+    userId: string,
+    targetPlan: SubscriptionPlan,
+    billingPeriod: BillingPeriod,
+    paymentAmount: number,
+    queryRunner?: QueryRunner,
+  ): Promise<Subscription> {
+    const subscription = await this.findCurrent(userId);
+
+    // Determine action type
+    if (this.isUpgrade(subscription.plan, targetPlan)) {
+      return await this.upgradeAfterPayment(
+        userId,
+        targetPlan,
+        billingPeriod,
+        paymentAmount,
+        queryRunner,
+      );
+    } else if (this.isRenewal(subscription.plan, targetPlan)) {
+      return await this.renewAfterPayment(
+        userId,
+        billingPeriod,
+        paymentAmount,
+        queryRunner,
+      );
+    } else {
+      // This is a downgrade attempt - should never happen if payment validation is correct
+      throw new BadRequestException(
+        `Cannot process downgrade from ${subscription.plan} to ${targetPlan} via payment`
+      );
+    }
+  }
+
+  /**
+   * OLD UPGRADE ENDPOINT - Now deprecated, redirect to payment flow
+   * Keep for backward compatibility but should not process upgrades directly
+   */
+  async upgrade(
+    userId: string,
+    upgradeDto: UpgradeSubscriptionDto,
+  ): Promise<{ requiresPayment: true; message: string; plan: SubscriptionPlan; billingPeriod: BillingPeriod }> {
+    const subscription = await this.findCurrent(userId);
+    const { plan, billingPeriod = subscription.billingPeriod } = upgradeDto;
+
+    // Validate upgrade
+    this.validateUpgrade(subscription.plan, plan);
+
+    // Return payment requirement instead of processing directly
+    return {
+      requiresPayment: true,
+      message: 'Please complete payment to upgrade your subscription',
+      plan,
+      billingPeriod,
+    };
+  }
+
+  /**
+   * Schedule downgrade for end of billing period
+   */
+  async scheduleDowngrade(
     userId: string,
     targetPlan: SubscriptionPlan,
   ): Promise<Subscription> {
     const subscription = await this.findCurrent(userId);
 
-    const planOrder = [
-      SubscriptionPlan.FREE,
-      SubscriptionPlan.STARTER,
-      SubscriptionPlan.PROFESSIONAL,
-      SubscriptionPlan.ENTERPRISE,
-    ];
-    
-    const currentPlanIndex = planOrder.indexOf(subscription.plan);
-    const newPlanIndex = planOrder.indexOf(targetPlan);
+    const currentPlanIndex = this.planOrder.indexOf(subscription.plan);
+    const newPlanIndex = this.planOrder.indexOf(targetPlan);
     
     if (newPlanIndex >= currentPlanIndex) {
       throw new ConflictException(
@@ -349,6 +479,43 @@ export class SubscriptionsService {
     return subscription;
   }
 
+  /**
+   * Execute scheduled downgrade (called by cron job)
+   */
+  async executeScheduledDowngrade(userId: string): Promise<Subscription | null> {
+    const subscription = await this.findCurrent(userId);
+
+    if (!subscription.metadata?.scheduledDowngrade) {
+      return null;
+    }
+
+    const { plan: targetPlan, effectiveDate } = subscription.metadata.scheduledDowngrade;
+    const now = new Date();
+
+    if (effectiveDate && new Date(effectiveDate) <= now) {
+      subscription.plan = targetPlan;
+      subscription.price = this.planPricing[targetPlan][subscription.billingPeriod];
+      subscription.limits = this.planLimits[targetPlan];
+      subscription.features = this.getPlanFeatures(targetPlan);
+      
+      // Clear scheduled downgrade
+      subscription.metadata = {
+        ...subscription.metadata,
+        scheduledDowngrade: undefined,
+      };
+
+      await this.subscriptionRepository.save(subscription);
+
+      this.logger.log(
+        `✅ Executed scheduled downgrade for user ${userId} to ${targetPlan}`
+      );
+
+      return subscription;
+    }
+
+    return null;
+  }
+
   async cancel(userId: string): Promise<Subscription> {
     const subscription = await this.findCurrent(userId);
 
@@ -365,7 +532,6 @@ export class SubscriptionsService {
 
   async getInvoices(userId: string) {
     // TODO: Implement actual invoice retrieval from billing system
-    // For now, return mock data
     return {
       invoices: [],
       total: 0,

@@ -10,8 +10,6 @@ import {
   HttpCode,
   HttpStatus,
   Headers,
-  Req,
-  RawBodyRequest,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -39,8 +37,23 @@ export class PaymentsController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ 
-    summary: 'Create a payment invoice',
-    description: 'Creates a Moyasar invoice for upgrading or renewing a subscription. Returns a payment URL where the user can complete the payment.'
+    summary: 'Create a payment invoice for subscription upgrade/renewal',
+    description: `
+      Creates a Moyasar invoice for upgrading or renewing a subscription. 
+      
+      **Important Notes:**
+      - This endpoint validates that the request is an UPGRADE or RENEWAL (not downgrade)
+      - Downgrades are not allowed and must be scheduled via /subscriptions/downgrade/schedule
+      - Returns a payment URL where the user completes the payment
+      - After payment, subscription is automatically updated via webhook or verify endpoint
+      
+      **Flow:**
+      1. User calls this endpoint with desired plan
+      2. System validates upgrade eligibility
+      3. Returns payment URL
+      4. User completes payment on Moyasar
+      5. Webhook or verify endpoint processes payment and updates subscription
+    `
   })
   @ApiResponse({ 
     status: 201, 
@@ -49,13 +62,16 @@ export class PaymentsController {
       example: {
         paymentUrl: 'https://moyasar.com/invoice/inv_xxxxx',
         invoiceId: 'inv_xxxxx',
-        amount: 49,
+        amount: 149,
         currency: 'SAR',
-        description: 'Smart Life Starter Plan - monthly'
+        description: 'Smart Life Professional Plan - monthly'
       }
     }
   })
-  @ApiResponse({ status: 400, description: 'Bad request - Invalid plan or already have pending payment' })
+  @ApiResponse({ 
+    status: 400, 
+    description: 'Bad request - Cannot create payment for downgrade, free plan, or invalid parameters' 
+  })
   @ApiResponse({ status: 404, description: 'Subscription not found' })
   async createPayment(
     @CurrentUser() user: User,
@@ -72,25 +88,45 @@ export class PaymentsController {
   @ApiBearerAuth()
   @ApiOperation({ 
     summary: 'Verify payment status and update subscription',
-    description: 'Checks the payment status with Moyasar and updates the subscription if payment succeeded. Call this after user returns from payment page.'
+    description: `
+      Checks the payment status with Moyasar and updates the subscription if payment succeeded.
+      
+      **When to call:**
+      - After user returns from Moyasar payment page
+      - To check status of pending payment
+      
+      **What it does:**
+      - Fetches invoice status from Moyasar
+      - If paid: Updates subscription with transaction (atomic)
+      - If failed: Marks payment as cancelled
+      - Idempotent: Safe to call multiple times
+      
+      **Transaction Safety:**
+      - Uses database transaction to ensure payment + subscription update are atomic
+      - If subscription update fails, payment is marked for manual review
+    `
   })
   @ApiResponse({ 
     status: 200, 
-    description: 'Payment verified and subscription updated',
+    description: 'Payment verified',
     schema: {
       example: {
         id: 'uuid',
         status: 'succeeded',
-        amount: 49,
-        paidAt: '2025-12-03T10:30:00Z',
+        amount: 149,
+        paidAt: '2025-12-18T10:30:00Z',
         metadata: {
-          plan: 'starter',
+          plan: 'professional',
           billingPeriod: 'monthly'
         }
       }
     }
   })
   @ApiResponse({ status: 404, description: 'Payment not found' })
+  @ApiResponse({ 
+    status: 500, 
+    description: 'Payment processed but subscription update failed - marked for manual review' 
+  })
   async verifyPayment(
     @CurrentUser() user: User,
     @Param('invoiceId') invoiceId: string,
@@ -113,10 +149,11 @@ export class PaymentsController {
         payments: [
           {
             id: 'uuid',
-            amount: 49,
+            amount: 149,
             status: 'succeeded',
             createdAt: '2025-12-03T10:00:00Z',
-            paidAt: '2025-12-03T10:30:00Z'
+            paidAt: '2025-12-03T10:30:00Z',
+            description: 'Smart Life Professional Plan - monthly'
           }
         ],
         pagination: {
@@ -157,7 +194,16 @@ export class PaymentsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Refund a payment',
-    description: 'Processes a full or partial refund for a successful payment'
+    description: `
+      Processes a full or partial refund for a successful payment.
+      
+      **Business Logic:**
+      - Only successful payments can be refunded
+      - Refunds are processed through Moyasar
+      - Uses transaction to ensure atomicity
+      
+      **TODO:** Implement subscription downgrade logic after refund based on your business rules
+    `
   })
   @ApiResponse({ 
     status: 200, 
@@ -166,16 +212,19 @@ export class PaymentsController {
       example: {
         id: 'uuid',
         status: 'refunded',
-        refundedAt: '2025-12-03T11:00:00Z',
+        refundedAt: '2025-12-18T11:00:00Z',
         metadata: {
           refundId: 'ref_xxxxx',
           refundReason: 'Customer request',
-          refundAmount: 49
+          refundAmount: 149
         }
       }
     }
   })
-  @ApiResponse({ status: 400, description: 'Cannot refund this payment - not successful or already refunded' })
+  @ApiResponse({ 
+    status: 400, 
+    description: 'Cannot refund this payment - not successful or already refunded' 
+  })
   @ApiResponse({ status: 404, description: 'Payment not found' })
   async refundPayment(
     @CurrentUser() user: User, 
@@ -188,8 +237,21 @@ export class PaymentsController {
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
-    summary: 'Moyasar webhook endpoint',
-    description: 'Called by Moyasar servers when payment status changes. This endpoint is PUBLIC and does not require authentication.'
+    summary: 'Moyasar webhook endpoint (PUBLIC)',
+    description: `
+      Called by Moyasar servers when payment status changes.
+      
+      **Security:**
+      - Verifies webhook signature if MOYASAR_WEBHOOK_SECRET is configured
+      - Idempotent - safe for Moyasar to retry
+      
+      **What it does:**
+      - Receives payment status updates from Moyasar
+      - Calls verifyPayment to process the update
+      - Uses same transaction logic as verify endpoint
+      
+      **This endpoint is PUBLIC** - no authentication required as Moyasar doesn't support auth headers
+    `
   })
   @ApiHeader({
     name: 'x-moyasar-signature',
@@ -198,21 +260,11 @@ export class PaymentsController {
   })
   @ApiResponse({ 
     status: 200, 
-    description: 'Webhook processed successfully',
+    description: 'Webhook acknowledged (always returns 200 to Moyasar)',
     schema: {
       example: {
         received: true,
         message: 'Payment processed'
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Webhook processing failed but acknowledged',
-    schema: {
-      example: {
-        received: true,
-        message: 'Error: Payment not found'
       }
     }
   })
@@ -223,17 +275,73 @@ export class PaymentsController {
     return this.paymentsService.handleWebhook(payload, signature);
   }
 
-  // ADMIN ENDPOINT: Get payments requiring manual review
+  // ============================================================================
+  // ADMIN ENDPOINTS
+  // ============================================================================
+
   @Get('admin/review-required')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard) // TODO: Add AdminGuard
   @ApiBearerAuth()
   @ApiOperation({ 
-    summary: 'Get payments requiring manual review (Admin)',
-    description: 'Returns payments where the payment succeeded but subscription update failed'
+    summary: '[ADMIN] Get payments requiring manual review',
+    description: `
+      Returns payments where the payment succeeded but subscription update failed.
+      These require manual intervention.
+      
+      **TODO:** Add admin role guard to restrict access
+    `
   })
-  @ApiResponse({ status: 200, description: 'List of payments requiring review' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'List of payments requiring review',
+    schema: {
+      example: [
+        {
+          id: 'uuid',
+          userId: 'user-uuid',
+          status: 'succeeded',
+          paidAt: '2025-12-18T10:30:00Z',
+          metadata: {
+            requiresManualReview: true,
+            subscriptionUpdateError: 'Cannot downgrade using upgrade endpoint',
+            errorTimestamp: '2025-12-18T10:30:05Z'
+          }
+        }
+      ]
+    }
+  })
   async getPaymentsRequiringReview() {
-    // TODO: Add admin role guard
     return this.paymentsService.getPaymentsRequiringReview();
+  }
+
+  @Post('admin/retry/:paymentId')
+  @UseGuards(JwtAuthGuard) // TODO: Add AdminGuard
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ 
+    summary: '[ADMIN] Manually retry failed subscription update',
+    description: `
+      Attempts to reprocess the subscription update for a payment that previously failed.
+      
+      **Use case:**
+      - Payment succeeded but subscription update failed due to temporary error
+      - Admin reviews the issue and manually retries
+      
+      **TODO:** Add admin role guard to restrict access
+    `
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Subscription update retried successfully' 
+  })
+  @ApiResponse({ 
+    status: 400, 
+    description: 'Payment not eligible for retry' 
+  })
+  @ApiResponse({ status: 404, description: 'Payment not found' })
+  async retrySubscriptionUpdate(
+    @Param('paymentId') paymentId: string,
+  ) {
+    return this.paymentsService.retrySubscriptionUpdate(paymentId);
   }
 }

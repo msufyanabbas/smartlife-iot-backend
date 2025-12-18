@@ -956,7 +956,7 @@ export class AuthService {
     refreshTokenExpiry.setDate(
       refreshTokenExpiry.getDate() +
         parseInt(
-          this.configService.get<string>('JWT_REFRESH_EXPIRATION', '7'),
+          this.configService.get<string>('JWT_REFRESH_EXPIRATION', '7d'),
           10,
         ),
     );
