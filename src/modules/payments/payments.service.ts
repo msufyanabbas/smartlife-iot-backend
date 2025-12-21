@@ -160,15 +160,23 @@ export class PaymentsService {
       );
 
       // Callback URL
-      const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:3001';
-      const callbackUrl = `${frontendUrl}/payment/callback`;
+      const frontendUrl = this.configService.get('FRONTEND_URL');
+      const callbackUrl = `${frontendUrl}`;
+      const backUrl = `${frontendUrl}/subscription-plans`;
+      const successUrl = `${frontendUrl}/payment-status`;
+      
 
       // Create invoice payload
       const invoicePayload = {
         amount: amountInHalalas,
         currency: 'SAR',
         description: `Smart Life ${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan - ${billingPeriod}`,
-        callback_url: callbackUrl,
+        callback_url: null,
+        back_url: backUrl,
+        success_url: successUrl,
+        logo_url: 'https://dev.smart-life.sa/assets/smartlife-text-black-THaafVXq.png',
+        
+        
         metadata: {
           user_id: userId,
           subscription_id: subscription.id,
