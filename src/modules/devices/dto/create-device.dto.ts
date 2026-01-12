@@ -1,3 +1,6 @@
+// src/modules/devices/dto/create-device.dto.ts
+// UPDATED WITH CODEC SUPPORT
+
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
@@ -75,8 +78,15 @@ export class CreateDeviceDto {
   location?: string;
 
   @ApiPropertyOptional({
-    example: { manufacturer: 'Acme Corp', model: 'X100' },
-    description: 'Additional metadata',
+    example: { 
+      manufacturer: 'Milesight', 
+      model: 'WS558',
+      codecId: 'milesight-ws558', // 🆕 CODEC ID
+      deviceType: 'lorawan-milesight',
+      gatewayType: 'milesight',
+      devEUI: '24e124538d063257' // For LoRaWAN devices
+    },
+    description: 'Additional metadata (including codec configuration)',
   })
   @IsObject()
   @IsOptional()

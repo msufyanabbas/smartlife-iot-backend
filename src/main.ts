@@ -11,9 +11,11 @@ import {
   TimeoutInterceptor,
   LoggingInterceptor,
   TransformInterceptor,
+  AuditInterceptor,
 } from './common/interceptors/index';
 import { SubscriptionsService } from './modules/subscriptions/subscriptions.service';
 import { ApiUsageInterceptor } from './common/interceptors/api-usage.interceptor';
+import { AuditService } from './modules/audit/audit.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {

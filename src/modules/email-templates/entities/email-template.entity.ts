@@ -17,6 +17,7 @@ export enum EmailTemplateType {
   DEVICE_OFFLINE = 'device_offline',
   SUBSCRIPTION_EXPIRING = 'subscription_expiring',
   CUSTOM = 'custom',
+  INVITATION = 'invitation',
 }
 
 @Entity('email_templates')

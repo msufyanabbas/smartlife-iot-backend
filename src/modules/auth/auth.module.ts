@@ -15,7 +15,7 @@ import { OAuthAccount } from './entities/oauth-account.entity';
 import { GoogleStrategy } from './strategies/oauth/google.strategy';
 import { GitHubStrategy } from './strategies/oauth/github.strategy';
 import { AppleStrategy } from './strategies/oauth/apple.strategy';
-import { TokenBlacklist } from '../index.entities';
+import { Customer, Invitation, Tenant, TokenBlacklist } from '../index.entities';
 import { redisService } from '@/lib/redis/redis.service';
 import { SubscriptionsModule } from '../index.module';
 import { SessionService } from './session/session.service';
@@ -28,6 +28,9 @@ import { TwoFactorAuthModule } from '../two-factor/two-factor-auth.module';
       RefreshToken,
       OAuthAccount,
       TokenBlacklist,
+      Invitation,
+      Tenant,
+      Customer
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({

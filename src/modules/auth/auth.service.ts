@@ -5,6 +5,7 @@ import {
   BadRequestException,
   Logger,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -12,7 +13,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { User } from '../users/entities/user.entity';
+import { Customer, Invitation, Tenant, User } from '@modules/index.entities';
 import { RefreshToken } from './entities/refresh-token.entity';
 import {
   OAuthAccount,
@@ -33,6 +34,10 @@ import { SubscriptionPlan } from '../subscriptions/entities/subscription.entity'
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { SessionService } from './session/session.service';
 import { TwoFactorAuthService } from '../two-factor/two-factor-auth.service';
+import { UserRole } from '../users/entities/user.entity';
+import { InvitationStatus } from './entities/invitation.entity';
+import { TenantStatus } from '../tenants/entities/tenant.entity';
+import { CreateInvitationDto } from './dto/invitation.dto';
 
 @Injectable()
 export class AuthService {
@@ -48,6 +53,12 @@ export class AuthService {
     private oauthAccountRepository: Repository<OAuthAccount>,
     @InjectRepository(TokenBlacklist)
     private tokenBlacklistRepository: Repository<TokenBlacklist>,
+    @InjectRepository(Invitation)
+    private invitationRepository: Repository<Invitation>,
+    @InjectRepository(Tenant)
+    private tenantRepository: Repository<Tenant>,
+    @InjectRepository(Customer)
+    private customerRepository: Repository<Customer>,
     private jwtService: JwtService,
     private configService: ConfigService,
     private mailService: MailService,
@@ -61,7 +72,7 @@ export class AuthService {
   async register(
     registerDto: RegisterDto,
   ): Promise<{ message: string; email: string }> {
-    const { email, password, name, phone } = registerDto;
+    const { email, password, name, phone, companyName, invitationToken } = registerDto;
 
     const existingUser = await this.userRepository.findOne({
       where: { email },
@@ -83,6 +94,130 @@ export class AuthService {
       }
     }
 
+    let tenantId: string | undefined;
+    let customerId: string | undefined;
+    let role: UserRole = UserRole.TENANT_ADMIN;
+    let tenant: Tenant | undefined;
+
+    // ========================================
+    // SCENARIO 1: Invitation-based signup
+    // ========================================
+    if (invitationToken) {
+      const invitation = await this.invitationRepository.findOne({
+        where: { token: invitationToken },
+        relations: ['tenant', 'customer'],
+      });
+
+      if (!invitation) {
+        throw new BadRequestException('Invalid invitation token');
+      }
+
+      if (!invitation.canBeAcceptedBy(email)) {
+        if (invitation.email.toLowerCase() !== email.toLowerCase()) {
+          throw new BadRequestException(
+            `This invitation was sent to ${invitation.email}`,
+          );
+        }
+        throw new BadRequestException(
+          'Invitation has expired or been revoked',
+        );
+      }
+
+      tenantId = invitation.tenantId;
+      customerId = invitation.customerId;
+      role = invitation.role;
+      tenant = invitation.tenant;
+
+      // Mark invitation as accepted
+      invitation.status = InvitationStatus.ACCEPTED;
+      invitation.acceptedAt = new Date();
+      await this.invitationRepository.save(invitation);
+
+      this.logger.log(
+        `User ${email} accepting invitation as ${role} for tenant ${tenant.name}`,
+      );
+    }
+    // ========================================
+    // SCENARIO 2: Company signup (B2B/B2G)
+    // ========================================
+    else if (companyName) {
+      // Validate company name
+      if (companyName.trim().length < 2) {
+        throw new BadRequestException(
+          'Company name must be at least 2 characters',
+        );
+      }
+
+      // Check for duplicate tenant name
+      const existingTenant = await this.tenantRepository.findOne({
+        where: { name: companyName },
+      });
+
+      if (existingTenant) {
+        throw new ConflictException(
+          'A company with this name already exists. Please choose a different name.',
+        );
+      }
+
+      // Create new tenant
+      tenant = this.tenantRepository.create({
+        name: companyName,
+        email: email, // Use signup email as tenant email
+        title: companyName,
+        status: TenantStatus.ACTIVE,
+        configuration: {
+          maxDevices: 100,
+          maxUsers: 10,
+          maxAssets: 50,
+          maxDashboards: 10,
+          maxRuleChains: 5,
+          dataRetentionDays: 30,
+          features: ['basic'],
+        },
+        isolationMode: 'full',
+      });
+
+      const savedTenant = await this.tenantRepository.save(tenant);
+      tenantId = savedTenant.id;
+      role = UserRole.TENANT_ADMIN;
+
+      this.logger.log(
+        `New tenant created: ${companyName} (${tenantId}) by ${email}`,
+      );
+    }
+    // ========================================
+    // SCENARIO 3: Individual signup (B2C)
+    // ========================================
+    else {
+      // Create personal workspace for individual users
+      const workspaceName = `${name}'s Workspace`;
+
+      tenant = this.tenantRepository.create({
+        name: workspaceName,
+        email: email,
+        title: workspaceName,
+        status: TenantStatus.ACTIVE,
+        configuration: {
+          maxDevices: 10,
+          maxUsers: 1,
+          maxAssets: 10,
+          maxDashboards: 3,
+          maxRuleChains: 2,
+          dataRetentionDays: 30,
+          features: ['basic'],
+        },
+        isolationMode: 'full',
+      });
+
+      const savedTenant = await this.tenantRepository.save(tenant);
+      tenantId = savedTenant.id;
+      role = UserRole.TENANT_ADMIN;
+
+      this.logger.log(
+        `Individual user signup: ${email} - created personal workspace ${tenantId}`,
+      );
+    }
+
     const verificationToken = this.generateVerificationToken();
 
     const user = this.userRepository.create({
@@ -90,14 +225,22 @@ export class AuthService {
       password,
       name,
       phone,
+      tenantId,
+      customerId,
+      role,
       emailVerified: false,
       emailVerificationToken: verificationToken,
     });
 
-    await this.userRepository.save(user);
+    const savedUser = await this.userRepository.save(user);
+
+     if (role === UserRole.TENANT_ADMIN && tenant && !tenant.tenantAdminId) {
+      tenant.tenantAdminId = savedUser.id;
+      await this.tenantRepository.save(tenant);
+    }
 
     try {
-      await this.subscriptionsService.create(user.id, {
+      await this.subscriptionsService.create(savedUser.id, {
         plan: SubscriptionPlan.FREE,
       });
       this.logger.log(`FREE subscription created for user: ${email}`);
@@ -126,6 +269,221 @@ export class AuthService {
         'Registration successful. Please check your email to verify your account.',
       email,
     };
+  }
+
+   /**
+   * ✅ NEW: Create invitation
+   */
+  async createInvitation(
+    invitedBy: string,
+    createInvitationDto: CreateInvitationDto,
+  ): Promise<{ message: string; token: string }> {
+    const { email, role, customerId, inviteeName } = createInvitationDto;
+
+    const inviter = await this.userRepository.findOne({
+      where: { id: invitedBy },
+      relations: ['tenant']
+    });
+
+    if (!inviter || !inviter.tenantId) {
+      throw new BadRequestException('Invalid inviter or missing tenant');
+    }
+
+       // Super admins can do anything
+    if (inviter.role !== UserRole.SUPER_ADMIN) {
+      // Customer admins can only invite customer users
+      if (inviter.role === UserRole.CUSTOMER_ADMIN) {
+        if (role !== UserRole.CUSTOMER_USER) {
+          throw new ForbiddenException(
+            'Customer admins can only invite customer users',
+          );
+        }
+        if (!customerId || customerId !== inviter.customerId) {
+          throw new ForbiddenException(
+            'Customer admins can only invite to their own customer',
+          );
+        }
+      }
+
+      // Tenant admins cannot invite super admins
+      if (
+        inviter.role === UserRole.TENANT_ADMIN &&
+        role === UserRole.SUPER_ADMIN
+      ) {
+        throw new ForbiddenException('Cannot invite super admins');
+      }
+
+      // Regular users cannot invite anyone
+      if (inviter.role === UserRole.USER || inviter.role === UserRole.CUSTOMER_USER) {
+        throw new ForbiddenException('You do not have permission to invite users');
+      }
+    }
+
+    // Validate customer exists and belongs to tenant
+    if (customerId) {
+      const customer = await this.customerRepository.findOne({
+        where: { id: customerId },
+      });
+
+      if (!customer) {
+        throw new NotFoundException('Customer not found');
+      }
+
+      if (customer.tenantId !== inviter.tenantId) {
+        throw new ForbiddenException(
+          'Customer does not belong to your tenant',
+        );
+      }
+    }
+
+    // Check if user already exists
+    const existingUser = await this.userRepository.findOne({
+      where: { email },
+    });
+
+    if (existingUser) {
+      throw new ConflictException('User with this email already exists');
+    }
+
+    // Check for pending invitation
+    const existingInvitation = await this.invitationRepository.findOne({
+      where: {
+        email,
+        tenantId: inviter.tenantId,
+        status: InvitationStatus.PENDING,
+      },
+    });
+
+    if (existingInvitation && !existingInvitation.isExpired()) {
+      throw new ConflictException(
+        'An invitation for this email already exists',
+      );
+    }
+
+    // Generate invitation token
+    const token = this.generateVerificationToken();
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // Expires in 7 days
+
+    const invitation = this.invitationRepository.create({
+      token,
+      email,
+      role,
+      tenantId: inviter.tenantId,
+      customerId,
+      invitedBy,
+      inviteeName,
+      status: InvitationStatus.PENDING,
+      expiresAt,
+    });
+
+    await this.invitationRepository.save(invitation);
+
+    // Send invitation email
+    try {
+      await this.mailService.sendInvitationEmail(
+        email,
+        inviteeName || email,
+        inviter.name,
+        token,
+        role,
+      );
+      this.logger.log(`Invitation sent to ${email} by ${inviter.email}`);
+    } catch (error) {
+      this.logger.error(`Failed to send invitation email to ${email}:`, error);
+    }
+
+    return {
+      message: 'Invitation sent successfully',
+      token, // Return token for testing purposes
+    };
+  }
+
+  /**
+   * ✅ NEW: Get invitation details
+   */
+  async getInvitation(token: string): Promise<Invitation> {
+    const invitation = await this.invitationRepository.findOne({
+      where: { token },
+      relations: ['tenant', 'customer', 'inviter'],
+    });
+
+    if (!invitation) {
+      throw new NotFoundException('Invitation not found');
+    }
+
+    if (!invitation.isValid()) {
+      throw new BadRequestException('Invitation has expired or been revoked');
+    }
+
+    return invitation;
+  }
+
+
+  /**
+   * ✅ NEW: List invitations (for admins)
+   */
+  async listInvitations(userId: string): Promise<Invitation[]> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+    });
+
+    if (!user || !user.tenantId) {
+      throw new BadRequestException('Invalid user');
+    }
+
+    const where: any = { tenantId: user.tenantId };
+
+    // Customer admins only see their customer's invitations
+    if (user.role === UserRole.CUSTOMER_ADMIN) {
+      where.customerId = user.customerId;
+    }
+
+    return this.invitationRepository.find({
+      where,
+      relations: ['tenant', 'customer', 'inviter'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  /**
+   * ✅ NEW: Revoke invitation
+   */
+  async revokeInvitation(userId: string, invitationId: string): Promise<void> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const invitation = await this.invitationRepository.findOne({
+      where: { id: invitationId },
+    });
+
+    if (!invitation) {
+      throw new NotFoundException('Invitation not found');
+    }
+
+    // Permission check
+    if (
+      user.role !== UserRole.SUPER_ADMIN &&
+      invitation.tenantId !== user.tenantId
+    ) {
+      throw new ForbiddenException('Cannot revoke this invitation');
+    }
+
+    if (invitation.status !== InvitationStatus.PENDING) {
+      throw new BadRequestException('Only pending invitations can be revoked');
+    }
+
+    invitation.status = InvitationStatus.REVOKED;
+    await this.invitationRepository.save(invitation);
+
+    this.logger.log(
+      `Invitation ${invitationId} revoked by user ${user.email}`,
+    );
   }
 
   /**
@@ -426,11 +784,20 @@ export class AuthService {
           `OAuth account linked to existing user: ${email} (${provider})`,
         );
       } else {
+        const workspaceName = `${name}'s Workspace`;
+        const tenant = await this.tenantRepository.save({
+          name: workspaceName,
+          email,
+          status: TenantStatus.ACTIVE,
+          configuration: { maxDevices: 10, maxUsers: 1, maxAssets: 10, maxDashboards: 3, maxRuleChains: 2, dataRetentionDays: 30, features: ['basic'] },
+        });
         user = this.userRepository.create({
           email,
           name,
           emailVerified,
           avatar,
+          tenantId: tenant.id,
+          role: UserRole.TENANT_ADMIN,
           password: this.generateRandomPassword(),
         });
         await this.userRepository.save(user);
@@ -989,6 +1356,9 @@ export class AuthService {
         email: user.email,
         name: user.name,
         role: user.role,
+        tenantId: user.tenantId,
+        customerId: user.customerId,
+        avatar: user.avatar,
       },
     };
   }

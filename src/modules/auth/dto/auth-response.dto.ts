@@ -1,4 +1,50 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { UserRole } from '@/modules/users/entities/user.entity';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+class UserInfoDto {
+  @ApiProperty({
+    example: '123e4567-e89b-12d3-a456-426614174000',
+    description: 'Unique user identifier',
+  })
+  id: string;
+
+  @ApiProperty({
+    example: 'john.doe@smartlife.sa',
+    description: 'User email address',
+  })
+  email: string;
+
+  @ApiProperty({
+    example: 'John Doe',
+    description: 'User full name',
+  })
+  name: string;
+
+   @ApiProperty({
+    example: 'Avatar',
+    description: 'Avatar Link',
+  })
+  avatar: string | null | undefined;
+
+  @ApiProperty({
+    example: UserRole.TENANT_ADMIN,
+    description: 'User role',
+    enum: UserRole,
+  })
+  role: UserRole;
+
+  @ApiPropertyOptional({
+    example: 'tenant-uuid',
+    description: 'Tenant ID (if user belongs to a tenant)',
+  })
+  tenantId?: string;
+
+  @ApiPropertyOptional({
+    example: 'customer-uuid',
+    description: 'Customer ID (if user belongs to a customer)',
+  })
+  customerId?: string;
+}
 
 export class AuthResponseDto {
   @ApiProperty({
@@ -34,10 +80,5 @@ export class AuthResponseDto {
       role: 'user',
     },
   })
-  user: {
-    id: string;
-    email: string;
-    name: string;
-    role: string;
-  };
+  user: UserInfoDto;
 }

@@ -11,6 +11,7 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -35,9 +36,15 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole, UserStatus } from './entities/user.entity';
+import { AuditInterceptor } from '@/common/interceptors';
+import { Audit } from '@/common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '../audit/entities/audit-log.entity';
+import { RequireSubscriptionLimit, ResourceType, SubscriptionLimitGuard } from '@/common/guards/subscription-limit.guard';
 
 @ApiTags('Users')
 @Controller('users')
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionLimitGuard)
+// @UseInterceptors(AuditInterceptor)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
@@ -47,10 +54,20 @@ export class UsersController {
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @RequireSubscriptionLimit({
+    resource: ResourceType.USER,
+    operation: 'create',
+  })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a new user' })
   @ApiResponse({ status: 201, description: 'User created successfully' })
   @ApiResponse({ status: 409, description: 'User already exists' })
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.USER,
+    severity: AuditSeverity.INFO,
+    description: 'User created',
+  })
   async create(@Body() createUserDto: CreateUserDto) {
     const user = await this.usersService.create(createUserDto);
     return {

@@ -4,12 +4,12 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export class ExchangeCodeDto {
   @ApiProperty({
-    description: 'One-time session code from OAuth callback',
+    description: 'One-time session code from OAuth callback URL',
     example: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6',
+    minLength: 64,
+    maxLength: 64,
   })
   @IsString()
-  @IsNotEmpty()
+  @IsNotEmpty({ message: 'Code is required' })
   code: string;
 }
-
-// test code

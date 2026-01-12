@@ -6,7 +6,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, QueryRunner } from 'typeorm';
+import { Repository, QueryRunner, DataSource } from 'typeorm';
 import {
   Subscription,
   SubscriptionPlan,
@@ -17,6 +17,7 @@ import {
   CreateSubscriptionDto,
   UpgradeSubscriptionDto,
 } from './dto/create-subscription.dto';
+import { Customer, Device, Tenant, User } from '../index.entities';
 
 @Injectable()
 export class SubscriptionsService {
@@ -73,7 +74,89 @@ export class SubscriptionsService {
   constructor(
     @InjectRepository(Subscription)
     private readonly subscriptionRepository: Repository<Subscription>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    @InjectRepository(Tenant)
+    private readonly tenantRepository: Repository<Tenant>,
+     private readonly dataSource: DataSource,
   ) {}
+
+  /**
+   * ✅ NEW: Get tenant-wide usage statistics
+   * This aggregates usage across ALL users in a tenant
+   */
+  async getTenantUsage(tenantId: string): Promise<{
+    devices: number;
+    users: number;
+    customers: number;
+    apiCalls: number;
+    storage: number;
+  }> {
+    // Count users in tenant
+    const usersCount = await this.userRepository.count({
+      where: { tenantId },
+    });
+
+    // Count customers in tenant (if you have Customer entity)
+    const customersQuery = this.dataSource
+      .getRepository(Customer)
+      .createQueryBuilder('customer')
+      .where('customer.tenantId = :tenantId', { tenantId })
+      .getCount();
+
+    const customersCount = await customersQuery;
+
+    // Count devices in tenant (you'll need to adapt this to your Device entity)
+    // For now, returning 0 - implement based on your device module
+    const devicesCount = await this.getDeviceCountForTenant(tenantId);
+
+    // Get API calls and storage (tracked in subscription)
+    const tenant = await this.tenantRepository.findOne({
+      where: { id: tenantId },
+    });
+
+    if (!tenant || !tenant.tenantAdminId) {
+      return {
+        devices: devicesCount,
+        users: usersCount,
+        customers: customersCount,
+        apiCalls: 0,
+        storage: 0,
+      };
+    }
+
+    const subscription = await this.subscriptionRepository.findOne({
+      where: { userId: tenant.tenantAdminId },
+    });
+
+    return {
+      devices: devicesCount,
+      users: usersCount,
+      customers: customersCount,
+      apiCalls: subscription?.usage.apiCalls || 0,
+      storage: subscription?.usage.storage || 0,
+    };
+  }
+
+  /**
+   * ✅ NEW: Check if tenant can perform action based on limits
+   */
+  async canTenantPerformAction(
+    tenantId: string,
+    resource: 'devices' | 'users' | 'apiCalls' | 'storage',
+  ): Promise<boolean> {
+    const tenant = await this.tenantRepository.findOne({
+      where: { id: tenantId },
+    });
+
+    if (!tenant || !tenant.tenantAdminId) {
+      this.logger.warn(`Tenant ${tenantId} has no admin - denying access`);
+      return false;
+    }
+
+    return this.canPerformAction(tenant.tenantAdminId, resource);
+  }
+
 
   /**
    * Create subscription - now handles both manual and automatic creation
@@ -620,8 +703,9 @@ export class SubscriptionsService {
     await this.subscriptionRepository.save(subscription);
   }
 
-  /**
-   * Check if user can perform action based on limits
+   /**
+   * ✅ ENHANCED: Check if user can perform action
+   * Now checks tenant-wide usage
    */
   async canPerformAction(
     userId: string,
@@ -629,7 +713,6 @@ export class SubscriptionsService {
   ): Promise<boolean> {
     const subscription = await this.findCurrent(userId);
 
-    const currentUsage = subscription.usage[resource] || 0;
     const limit = subscription.limits[resource];
 
     // -1 means unlimited
@@ -637,8 +720,77 @@ export class SubscriptionsService {
       return true;
     }
 
+    // Get user's tenant
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+    });
+
+    if (!user || !user.tenantId) {
+      return false;
+    }
+
+    // Get ACTUAL tenant-wide usage
+    const tenantUsage = await this.getTenantUsage(user.tenantId);
+    const currentUsage = tenantUsage[resource] || 0;
+
+    this.logger.debug(
+      `Checking ${resource} limit for tenant ${user.tenantId}: ${currentUsage}/${limit}`,
+    );
+
     return currentUsage < limit;
   }
+
+   /**
+   * ✅ NEW: Increment usage for tenant
+   */
+  async incrementTenantUsage(
+    tenantId: string,
+    resource: 'devices' | 'users' | 'apiCalls' | 'storage',
+    amount: number = 1,
+  ): Promise<void> {
+    const tenant = await this.tenantRepository.findOne({
+      where: { id: tenantId },
+    });
+
+    if (!tenant || !tenant.tenantAdminId) {
+      throw new NotFoundException('Tenant admin not found');
+    }
+
+    await this.incrementUsage(tenant.tenantAdminId, resource, amount);
+  }
+
+    /**
+   * ✅ NEW: Decrement usage for tenant
+   */
+  async decrementTenantUsage(
+    tenantId: string,
+    resource: 'devices' | 'users' | 'apiCalls' | 'storage',
+    amount: number = 1,
+  ): Promise<void> {
+    const tenant = await this.tenantRepository.findOne({
+      where: { id: tenantId },
+    });
+
+    if (!tenant || !tenant.tenantAdminId) {
+      throw new NotFoundException('Tenant admin not found');
+    }
+
+    await this.decrementUsage(tenant.tenantAdminId, resource, amount);
+  }
+
+   /**
+   * ✅ HELPER: Get device count for tenant
+   * Implement this based on your Device entity
+   */
+  private async getDeviceCountForTenant(tenantId: string): Promise<number> {
+     return this.dataSource
+    .getRepository(Device)
+    .createQueryBuilder('device')
+    .where('device.tenantId = :tenantId', { tenantId })
+    .andWhere('device.deletedAt IS NULL') // Exclude soft-deleted
+    .getCount();
+  }
+
 
   /**
    * Check if feature is available for user

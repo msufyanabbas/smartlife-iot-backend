@@ -1,11 +1,23 @@
-import { Entity, Column, Index, BeforeInsert, BeforeUpdate } from 'typeorm';
+// src/modules/users/entities/user.entity.ts
+import {
+  Entity,
+  Column,
+  Index,
+  BeforeInsert,
+  BeforeUpdate,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { Exclude } from 'class-transformer';
 import * as bcrypt from 'bcrypt';
 import { BaseEntity } from '../../../common/entities/base.entity';
+import { Tenant } from '../../tenants/entities/tenant.entity';
+import { Customer } from '../../customers/entities/customers.entity'; // ✅ Fixed import path
 
 export enum UserRole {
   SUPER_ADMIN = 'super_admin',
   TENANT_ADMIN = 'tenant_admin',
+  CUSTOMER_ADMIN = 'customer_admin',
   CUSTOMER_USER = 'customer_user',
   USER = 'user',
 }
@@ -17,6 +29,8 @@ export enum UserStatus {
 }
 
 @Entity('users')
+@Index(['role'])
+@Index(['status'])
 export class User extends BaseEntity {
   @Column({ unique: true })
   @Index()
@@ -46,13 +60,29 @@ export class User extends BaseEntity {
   })
   status: UserStatus;
 
+  // ✅ Tenant relationship
   @Column({ nullable: true })
-  tenantId?: string;
+  @Index()
+  tenantId?: string | any;
 
-  // NEW: Customer ID - links user to a specific customer
+  @ManyToOne(() => Tenant, (tenant) => tenant.users, {
+    nullable: true,
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'tenantId' })
+  tenant?: Tenant;
+
+  // ✅ Customer relationship
   @Column({ nullable: true })
   @Index()
   customerId?: string;
+
+  @ManyToOne(() => Customer, (customer) => customer.users, {
+    nullable: true,
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'customerId' })
+  customer?: Customer;
 
   @Column({ nullable: true })
   avatar?: string;
@@ -100,18 +130,67 @@ export class User extends BaseEntity {
     return this.role === role;
   }
 
-  // NEW: Check if user is a customer user
+  // Check if user is a customer user
   isCustomerUser(): boolean {
-    return this.role === UserRole.CUSTOMER_USER;
+    return (
+      this.role === UserRole.CUSTOMER_USER ||
+      this.role === UserRole.CUSTOMER_ADMIN
+    );
   }
 
-  // NEW: Check if user is admin (tenant or super)
+  // Check if user is admin (tenant or super)
   isAdmin(): boolean {
-    return this.role === UserRole.SUPER_ADMIN || this.role === UserRole.TENANT_ADMIN;
+    return (
+      this.role === UserRole.SUPER_ADMIN ||
+      this.role === UserRole.TENANT_ADMIN
+    );
+  }
+
+  // ✅ Check if user can manage tenant
+  canManageTenant(): boolean {
+    return (
+      this.role === UserRole.SUPER_ADMIN ||
+      this.role === UserRole.TENANT_ADMIN
+    );
+  }
+
+  // ✅ Check if user can manage customers
+  canManageCustomers(): boolean {
+    return (
+      this.role === UserRole.SUPER_ADMIN ||
+      this.role === UserRole.TENANT_ADMIN
+    );
+  }
+
+  // ✅ Check access to specific tenant
+  hasAccessToTenant(tenantId: string): boolean {
+    if (this.role === UserRole.SUPER_ADMIN) return true;
+    return this.tenantId === tenantId;
+  }
+
+  // ✅ Check access to specific customer
+  hasAccessToCustomer(customerId: string): boolean {
+    if (this.role === UserRole.SUPER_ADMIN) return true;
+    if (this.role === UserRole.TENANT_ADMIN && this.tenantId) {
+      // Tenant admin can access all customers in their tenant
+      // Need to verify customer belongs to tenant (done in service layer)
+      return true;
+    }
+    return this.customerId === customerId;
   }
 
   // Method to update last login
   updateLastLogin() {
     this.lastLoginAt = new Date();
+  }
+
+  // ✅ NEW: Check if user belongs to tenant
+  belongsToTenant(tenantId: string): boolean {
+    return this.tenantId === tenantId;
+  }
+
+  // ✅ NEW: Check if user belongs to customer
+  belongsToCustomer(customerId: string): boolean {
+    return this.customerId === customerId;
   }
 }

@@ -1,3 +1,6 @@
+// src/modules/gateway/gateway.module.ts
+// UPDATED - Now imports DevicesModule for credential verification
+
 import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
@@ -8,8 +11,9 @@ import { DeviceListenerService } from './device-listener.service';
 import { Device } from '../devices/entities/device.entity';
 import { Telemetry } from '../telemetry/entities/telemetry.entity';
 import { WebsocketModule } from '../websocket/websocket.module';
+import { DevicesModule } from '../devices/devices.module';
 import mqttConfig from '../../config/mqtt.config';
-import { TelemetryModule } from '../index.module';
+import { TelemetryModule } from '../telemetry/telemetry.module';
 
 @Module({
   imports: [
@@ -18,6 +22,7 @@ import { TelemetryModule } from '../index.module';
     WebsocketModule,
     JwtModule,
     forwardRef(() => TelemetryModule),
+    forwardRef(() => DevicesModule), // 🆕 Import DevicesModule for credential verification
   ],
   controllers: [GatewayController],
   providers: [GatewayService, DeviceListenerService],

@@ -60,7 +60,9 @@ import {
   WidgetType,
   DeviceCredentials,
   DeviceCommand,
+  Customer,
 } from '@modules/index.entities';
+import { CustomerSeeder } from './customer/customers.seeder';
 
 export interface SeederConfig {
   name: string;
@@ -85,6 +87,12 @@ export const SEEDERS: SeederConfig[] = [
     seeder: TenantSeeder,
     emoji: '🏢',
     entity: Tenant,
+  },
+  {
+    name: 'Customers',
+    seeder: CustomerSeeder,
+    emoji: '🏢',
+    entity: Customer,
   },
   {
     name: 'Devices',

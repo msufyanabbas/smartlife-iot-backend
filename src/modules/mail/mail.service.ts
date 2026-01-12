@@ -140,6 +140,81 @@ export class MailService {
   }
 
   /**
+   * Send invitation email using database template
+   * ✅ FIXED: Uses database template with proper error handling
+   */
+  async sendInvitationEmail(
+    email: string,
+    name: string,
+    inviterName: string,
+    token: string,
+    role: string,
+  ): Promise<boolean> {
+    const frontendUrl = this.configService.get<string>(
+      'FRONTEND_URL',
+      'http://localhost:3000',
+    );
+    const appName = this.configService.get<string>(
+      'APP_NAME',
+      'Smart Life IoT Platform',
+    );
+
+    // ✅ Build the invitation URL
+    const invitationLink = `${frontendUrl}/auth/accept-invitation?token=${token}`;
+
+    // ✅ Map role to display name
+    const roleDisplay = {
+      tenant_admin: 'Tenant Administrator',
+      customer_admin: 'Customer Administrator',
+      customer_user: 'User',
+    }[role] || role;
+
+    try {
+      // ✅ Template expects: userName, inviterName, role, invitationLink, appName, expirationTime, year
+      const { subject, html, text } =
+        await this.emailTemplatesService.getRenderedEmail(
+          EmailTemplateType.INVITATION,
+          {
+            userName: name, // ✅ Template expects: userName
+            inviterName, // ✅ Template expects: inviterName
+            role: roleDisplay, // ✅ Template expects: role (display name)
+            invitationLink, // ✅ Template expects: invitationLink
+            appName,
+            expirationTime: '7', // ✅ Template expects: expirationTime (in days)
+            year: new Date().getFullYear().toString(),
+          },
+        );
+
+      return this.sendEmail({
+        to: email,
+        subject,
+        html,
+        text,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to get invitation template: ${error.message}. Using fallback.`,
+      );
+
+      // Fallback to inline template if database template not found
+      const html = this.getInvitationEmailTemplate(
+        name,
+        inviterName,
+        roleDisplay,
+        invitationLink,
+      );
+      const text = `Hi ${name},\n\n${inviterName} has invited you to join ${appName} as a ${roleDisplay}.\n\nAccept your invitation by visiting: ${invitationLink}\n\nThis invitation will expire in 7 days.\n\nIf you don't recognize this invitation, please ignore this email.`;
+
+      return this.sendEmail({
+        to: email,
+        subject: `You've been invited to join ${appName}`,
+        html,
+        text,
+      });
+    }
+  }
+
+  /**
    * Send verification email using database template
    * ✅ FIXED: Uses correct variable names matching the template
    */
@@ -358,6 +433,78 @@ export class MailService {
         text,
       });
     }
+  }
+
+  /**
+   * Invitation email template (fallback)
+   */
+  private getInvitationEmailTemplate(
+    name: string,
+    inviterName: string,
+    role: string,
+    invitationLink: string,
+  ): string {
+    const appName = this.configService.get<string>(
+      'APP_NAME',
+      'Smart Life IoT Platform',
+    );
+
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>You've Been Invited</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f4f4f4; }
+    .container { max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .header { background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); color: #fff; padding: 40px 20px; text-align: center; }
+    .header h1 { margin: 0; font-size: 28px; }
+    .content { padding: 40px 30px; }
+    .content h2 { color: #3B82F6; margin-top: 0; }
+    .button { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); color: #fff !important; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 20px 0; transition: transform 0.2s; }
+    .button:hover { transform: scale(1.05); }
+    .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 14px; }
+    .info-box { background: #eff6ff; border-left: 4px solid #3B82F6; padding: 15px; margin: 20px 0; }
+    .note { background: #f8f9fa; border-left: 4px solid #3B82F6; padding: 15px; margin: 20px 0; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🎉 You've Been Invited!</h1>
+    </div>
+    <div class="content">
+      <h2>Hi ${name}! 👋</h2>
+      <p><strong>${inviterName}</strong> has invited you to join <strong>${appName}</strong>.</p>
+      
+      <div class="info-box">
+        <strong>Your Role:</strong> ${role}
+      </div>
+      
+      <p>Click the button below to accept your invitation and create your account:</p>
+      
+      <div style="text-align: center;">
+        <a href="${invitationLink}" class="button">Accept Invitation</a>
+      </div>
+      
+      <div class="note">
+        <strong>⏰ Important:</strong> This invitation link will expire in 7 days.
+      </div>
+      
+      <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
+      <p style="word-break: break-all; color: #3B82F6; font-size: 14px;">${invitationLink}</p>
+      
+      <p style="margin-top: 30px;">If you don't recognize this invitation, please ignore this email.</p>
+    </div>
+    <div class="footer">
+      <p>&copy; ${new Date().getFullYear()} ${appName}. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
+    `;
   }
 
   /**

@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEmail,
   IsNotEmpty,
@@ -14,10 +14,12 @@ import { Transform } from 'class-transformer';
 export class RegisterDto {
   @ApiProperty({
     example: 'John Doe',
-    description: 'User full name',
+    description: 'Full name of the user',
+    minLength: 2,
   })
   @IsString()
   @IsNotEmpty({ message: 'Name is required' })
+  @MinLength(2, { message: 'Name must be at least 2 characters long' })
   name: string;
 
   @ApiProperty({
@@ -53,4 +55,24 @@ export class RegisterDto {
   @IsValidPhone()
   @Transform(({ value }) => transformPhoneNumber(value))
   phone?: string;
+
+   @ApiPropertyOptional({
+    example: 'Smart Life Solutions',
+    description:
+      'Company/Organization name - creates a new tenant (leave empty to join existing tenant via invitation)',
+    minLength: 2,
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(2, { message: 'Company name must be at least 2 characters' })
+  companyName?: string;
+
+  @ApiPropertyOptional({
+    example: 'INVITE-TOKEN-12345',
+    description:
+      'Invitation token to join an existing tenant or customer (optional)',
+  })
+  @IsOptional()
+  @IsString()
+  invitationToken?: string;
 }

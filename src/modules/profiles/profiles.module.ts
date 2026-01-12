@@ -7,12 +7,13 @@ import { DeviceProfile } from './entities/device-profile.entity';
 import { AssetProfile } from './entities/asset-profile.entity';
 import { Device } from '../devices/entities/device.entity';
 import { Asset } from '../assets/entities/asset.entity';
+import { AssetProfilesController } from './asset-profile.controller';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([DeviceProfile, AssetProfile, Device, Asset]),
   ],
-  controllers: [ProfilesController],
+  controllers: [ProfilesController, AssetProfilesController],
   providers: [DeviceProfilesService, AssetProfilesService],
   exports: [DeviceProfilesService, AssetProfilesService],
 })

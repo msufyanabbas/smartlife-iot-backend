@@ -35,23 +35,29 @@ import { FeatureLimitGuard } from '@/common/guards/feature-limit.guard';
 import { AccessControl } from '@/common/decorators/access-control.decorator';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
+import { RequireSubscriptionLimit, ResourceType, SubscriptionLimitGuard } from '@/common/guards/subscription-limit.guard';
 
 @ApiTags('devices')
 @Controller('devices')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionLimitGuard)
 @ApiBearerAuth()
 export class DevicesController {
   constructor(private readonly devicesService: DevicesService, private readonly subscriptionsService: SubscriptionsService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionGuard, FeatureLimitGuard)
+  // @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionGuard, FeatureLimitGuard)
+  // @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionLimitGuard)
   @Roles(UserRole.USER, UserRole.TENANT_ADMIN)
-  @RequireSubscription(SubscriptionPlan.STARTER, SubscriptionPlan.PROFESSIONAL, SubscriptionPlan.ENTERPRISE)
+  @RequireSubscriptionLimit({
+    resource: ResourceType.DEVICE,
+    operation: 'create',
+  }) // ✅ Check device limit
+  // @RequireSubscription(SubscriptionPlan.STARTER, SubscriptionPlan.PROFESSIONAL, SubscriptionPlan.ENTERPRISE)
   @ApiOperation({ summary: 'Create a new device' })
   @ApiResponse({ status: 201, description: 'Device created successfully' })
   @ApiResponse({ status: 409, description: 'Device already exists' })
   create(@CurrentUser() user: User, @Body() createDeviceDto: CreateDeviceDto) {
-    return this.devicesService.create(user.id, createDeviceDto);
+    return this.devicesService.create(user, createDeviceDto);
   }
 
   @Get()

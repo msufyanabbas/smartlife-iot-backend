@@ -1,11 +1,17 @@
+// src/modules/audit/dto/audit.dto.ts
 import {
   IsOptional,
   IsEnum,
   IsString,
   IsBoolean,
   IsDateString,
+  IsArray,
+  IsNumber,
+  Min,
+  Max,
 } from 'class-validator';
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   AuditAction,
   AuditEntityType,
@@ -28,11 +34,11 @@ export class CreateAuditLogDto {
   @IsString()
   userEmail?: string;
 
-  @ApiPropertyOptional({ enum: AuditAction })
+  @ApiProperty({ enum: AuditAction })
   @IsEnum(AuditAction)
   action: AuditAction;
 
-  @ApiPropertyOptional({ enum: AuditEntityType })
+  @ApiProperty({ enum: AuditEntityType })
   @IsEnum(AuditEntityType)
   entityType: AuditEntityType;
 
@@ -72,7 +78,12 @@ export class CreateAuditLogDto {
   @IsString()
   userAgent?: string;
 
-  @ApiPropertyOptional({ enum: AuditSeverity })
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  requestId?: string;
+
+  @ApiPropertyOptional({ enum: AuditSeverity, default: AuditSeverity.INFO })
   @IsOptional()
   @IsEnum(AuditSeverity)
   severity?: AuditSeverity;
@@ -87,10 +98,20 @@ export class CreateAuditLogDto {
   @IsString()
   errorMessage?: string;
 
+  @ApiProperty()
+  @IsString()
+  tenantId: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  tenantId?: string;
+  customerId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
 }
 
 export class QueryAuditLogsDto {
@@ -98,6 +119,16 @@ export class QueryAuditLogsDto {
   @IsOptional()
   @IsString()
   userId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  tenantId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  customerId?: string;
 
   @ApiPropertyOptional({ enum: AuditAction })
   @IsOptional()
@@ -121,6 +152,7 @@ export class QueryAuditLogsDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @Type(() => Boolean)
   @IsBoolean()
   success?: boolean;
 
@@ -137,18 +169,84 @@ export class QueryAuditLogsDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  tenantId?: string;
+  search?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
-  search?: string;
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
   page?: number;
 
   @ApiPropertyOptional({ default: 50 })
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(1000)
   limit?: number;
+
+  @ApiPropertyOptional({ enum: ['ASC', 'DESC'], default: 'DESC' })
+  @IsOptional()
+  @IsString()
+  sortOrder?: 'ASC' | 'DESC';
+}
+
+export class AuditLogResponseDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty()
+  userId?: string;
+
+  @ApiProperty()
+  userName?: string;
+
+  @ApiProperty()
+  userEmail?: string;
+
+  @ApiProperty()
+  tenantId: string;
+
+  @ApiProperty({ enum: AuditAction })
+  action: AuditAction;
+
+  @ApiProperty({ enum: AuditEntityType })
+  entityType: AuditEntityType;
+
+  @ApiProperty()
+  entityId?: string;
+
+  @ApiProperty()
+  entityName?: string;
+
+  @ApiProperty()
+  description?: string;
+
+  @ApiProperty({ enum: AuditSeverity })
+  severity: AuditSeverity;
+
+  @ApiProperty()
+  timestamp: Date;
+
+  @ApiProperty()
+  success: boolean;
+
+  @ApiProperty()
+  ipAddress?: string;
+
+  @ApiProperty()
+  metadata?: Record<string, any>;
+
+  @ApiProperty()
+  changes?: {
+    before?: Record<string, any>;
+    after?: Record<string, any>;
+  };
 }

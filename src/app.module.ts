@@ -16,8 +16,11 @@ import { CustomThrottlerGuard } from '@common/guards/throttle.guard';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppDataSource } from './database/data-source';
 import { AppController } from './app.controller';
-import { MetricsInterceptor } from './common/interceptors';
+import { AuditInterceptor, MetricsInterceptor } from './common/interceptors';
 import { MetricsModule } from './modules/metrics/metrics.module'; 
+import { Audit } from './common/decorators/audit.decorator';
+import { SubscriptionLimitGuard } from './common/guards/subscription-limit.guard';
+import { UsageTrackingInterceptor } from './common/interceptors/usage-tracking.interceptor';
 
 @Module({
   imports: [
@@ -89,6 +92,18 @@ import { MetricsModule } from './modules/metrics/metrics.module';
     {
       provide: APP_INTERCEPTOR,
       useClass: MetricsInterceptor
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditInterceptor,
+    }, 
+    // {
+    //   provide: APP_GUARD,
+    //   useClass: SubscriptionLimitGuard
+    // },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: UsageTrackingInterceptor
     }
   ],
 })

@@ -20,6 +20,9 @@ export class EmailTemplateSeeder implements ISeeder {
     this.logger.log('🌱 Starting email template seeding...');
 
     const emailTemplates = [
+      // ========================================
+      // VERIFICATION EMAIL TEMPLATE
+      // ========================================
       {
         type: EmailTemplateType.VERIFICATION,
         name: 'Email Verification',
@@ -81,6 +84,10 @@ If you didn't create an account, please ignore this email.
         },
         isActive: true,
       },
+
+      // ========================================
+      // WELCOME EMAIL TEMPLATE
+      // ========================================
       {
         type: EmailTemplateType.WELCOME,
         name: 'Welcome Email',
@@ -160,6 +167,10 @@ The {{appName}} Team
         },
         isActive: true,
       },
+
+      // ========================================
+      // PASSWORD RESET EMAIL TEMPLATE
+      // ========================================
       {
         type: EmailTemplateType.PASSWORD_RESET,
         name: 'Password Reset Request',
@@ -187,7 +198,7 @@ The {{appName}} Team
       </div>
       
       <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
-        <strong>⚠️ Security Notice:</strong> This link will expire in {{expirationTime}} hours for security reasons.
+        <strong>⚠️ Security Notice:</strong> This link will expire in {{expirationTime}} hour(s) for security reasons.
       </div>
       
       <p>If the button doesn't work, copy and paste this link into your browser:</p>
@@ -212,7 +223,7 @@ We received a request to reset your password for your {{appName}} account.
 
 Reset your password: {{resetLink}}
 
-This link will expire in {{expirationTime}} hours for security reasons.
+This link will expire in {{expirationTime}} hour(s) for security reasons.
 
 ⚠️ Didn't request this?
 If you didn't request a password reset, please ignore this email and your password will remain unchanged.
@@ -229,6 +240,10 @@ For security reasons, we never ask for your password via email.
         },
         isActive: true,
       },
+
+      // ========================================
+      // PASSWORD CHANGED EMAIL TEMPLATE
+      // ========================================
       {
         type: EmailTemplateType.PASSWORD_CHANGED,
         name: 'Password Changed Confirmation',
@@ -308,6 +323,10 @@ Support: {{supportEmail}}
         },
         isActive: true,
       },
+
+      // ========================================
+      // TWO FACTOR CODE EMAIL TEMPLATE
+      // ========================================
       {
         type: EmailTemplateType.TWO_FACTOR_CODE,
         name: 'Two-Factor Authentication Code',
@@ -370,6 +389,82 @@ This is an automated security email. Please do not reply.
         },
         isActive: true,
       },
+
+      // ========================================
+      // INVITATION EMAIL TEMPLATE ⭐ (MISSING)
+      // ========================================
+      {
+        type: EmailTemplateType.INVITATION,
+        name: 'User Invitation',
+        subject: "You've Been Invited to {{appName}}",
+        description: 'Sent when a user is invited to join the platform',
+        htmlTemplate: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>You've Been Invited</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f4f4f4;">
+  <div style="max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+    <div style="background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); color: #fff; padding: 40px 20px; text-align: center;">
+      <h1 style="margin: 0; font-size: 28px;">🎉 You've Been Invited!</h1>
+    </div>
+    <div style="padding: 40px 30px;">
+      <h2 style="color: #3B82F6; margin-top: 0;">Hi {{userName}}! 👋</h2>
+      <p><strong>{{inviterName}}</strong> has invited you to join <strong>{{appName}}</strong>.</p>
+      
+      <div style="background: #eff6ff; border-left: 4px solid #3B82F6; padding: 15px; margin: 20px 0;">
+        <strong>Your Role:</strong> {{role}}
+      </div>
+      
+      <p>Click the button below to accept your invitation and create your account:</p>
+      
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="{{invitationLink}}" style="display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); color: #fff !important; text-decoration: none; border-radius: 6px; font-weight: bold;">Accept Invitation</a>
+      </div>
+      
+      <div style="background: #f8f9fa; border-left: 4px solid #3B82F6; padding: 15px; margin: 20px 0; font-size: 14px;">
+        <strong>⏰ Important:</strong> This invitation link will expire in {{expirationTime}} days.
+      </div>
+      
+      <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
+      <p style="word-break: break-all; color: #3B82F6; font-size: 14px;">{{invitationLink}}</p>
+      
+      <p style="margin-top: 30px;">If you don't recognize this invitation, please ignore this email.</p>
+    </div>
+    <div style="background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 14px;">
+      <p>&copy; {{year}} {{appName}}. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>`,
+        textTemplate: `Hi {{userName}},
+
+{{inviterName}} has invited you to join {{appName}} as a {{role}}.
+
+Accept your invitation by visiting: {{invitationLink}}
+
+This invitation will expire in {{expirationTime}} days.
+
+If you don't recognize this invitation, please ignore this email.
+
+© {{year}} {{appName}}. All rights reserved.`,
+        variables: {
+          userName: 'Invited user name',
+          inviterName: 'Name of person who sent invitation',
+          role: 'User role in the platform',
+          invitationLink: 'Invitation acceptance URL',
+          expirationTime: 'Invitation expiration time in days',
+          appName: 'Application name',
+          year: 'Current year',
+        },
+        isActive: true,
+      },
+
+      // ========================================
+      // ACCOUNT LOCKED EMAIL TEMPLATE
+      // ========================================
       {
         type: EmailTemplateType.ACCOUNT_LOCKED,
         name: 'Account Locked Notification',
@@ -459,6 +554,10 @@ Support: {{supportEmail}}
         },
         isActive: true,
       },
+
+      // ========================================
+      // ALERT NOTIFICATION EMAIL TEMPLATE
+      // ========================================
       {
         type: EmailTemplateType.ALERT_NOTIFICATION,
         name: 'Alert Notification',
@@ -542,6 +641,10 @@ To manage your alert preferences, visit your account settings.
         },
         isActive: true,
       },
+
+      // ========================================
+      // DEVICE OFFLINE EMAIL TEMPLATE
+      // ========================================
       {
         type: EmailTemplateType.DEVICE_OFFLINE,
         name: 'Device Offline Notification',
@@ -636,6 +739,10 @@ This notification was sent because you have enabled offline alerts for this devi
         },
         isActive: true,
       },
+
+      // ========================================
+      // SUBSCRIPTION EXPIRING EMAIL TEMPLATE
+      // ========================================
       {
         type: EmailTemplateType.SUBSCRIPTION_EXPIRING,
         name: 'Subscription Expiring Soon',
@@ -732,6 +839,10 @@ Have questions? Our support team is here to help at {{supportEmail}}
         },
         isActive: true,
       },
+
+      // ========================================
+      // CUSTOM EMAIL TEMPLATE
+      // ========================================
       {
         type: EmailTemplateType.CUSTOM,
         name: 'Custom Email Template',
@@ -774,6 +885,9 @@ Have questions? Our support team is here to help at {{supportEmail}}
       },
     ];
 
+    // ========================================
+    // SEED TEMPLATES
+    // ========================================
     for (const templateData of emailTemplates) {
       try {
         const existing = await this.emailTemplateRepository.findOne({

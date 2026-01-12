@@ -1,5 +1,5 @@
 // src/modules/gateway/device-listener.service.ts
-// FIXED VERSION - TypeScript errors resolved
+// UPDATED WITH CODEC SUPPORT
 
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
@@ -15,8 +15,8 @@ import {
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { StandardTelemetry } from '@/common/interfaces/standard-telemetry.interface';
 import { TelemetryService } from '../telemetry/telemetry.service';
+import { CodecRegistryService } from '../devices/codecs/codec-registry.service';
 
-// Keep your existing DeviceMessage interface
 export interface DeviceMessage {
   deviceKey: string;
   timestamp: Date;
@@ -40,6 +40,7 @@ export class DeviceListenerService {
     private websocketGateway: WebsocketGateway,
     private eventEmitter: EventEmitter2,
     private telemetryService: TelemetryService,
+    private codecRegistry: CodecRegistryService, // 🆕 INJECT CODEC REGISTRY
   ) {}
 
   // ============================================
@@ -59,13 +60,50 @@ export class DeviceListenerService {
         `🔌 Protocol: ${standardTelemetry.protocol.toUpperCase()}`,
       );
       this.logger.log(`📱 Device Key: ${standardTelemetry.deviceKey}`);
-      this.logger.log(
-        `📦 Data Keys: ${Object.keys(standardTelemetry.data).join(', ')}`,
-      );
-      if (standardTelemetry.temperature)
-        this.logger.log(`🌡️  Temperature: ${standardTelemetry.temperature}°C`);
-      if (standardTelemetry.humidity)
-        this.logger.log(`💧 Humidity: ${standardTelemetry.humidity}%`);
+      
+      // 🆕 DECODE PAYLOAD IF NEEDED
+      const device = await this.deviceRepository.findOne({
+        where: { deviceKey: standardTelemetry.deviceKey },
+      });
+      
+      let decodedData = standardTelemetry.data;
+      
+      // If device has codec metadata, use it for decoding
+      if (device?.metadata?.codecId || device?.metadata?.manufacturer) {
+        this.logger.log(`🔧 Attempting to decode payload...`);
+        
+        decodedData = this.codecRegistry.decode(
+          standardTelemetry.data,
+          {
+            codecId: device.metadata?.codecId,
+            manufacturer: device.metadata?.manufacturer,
+            model: device.metadata?.model,
+            fPort: standardTelemetry.metadata?.fPort,
+            devEUI: device.metadata?.devEUI,
+            gatewayType: device.metadata?.gatewayType,
+          },
+        );
+        
+        this.logger.log(`✅ Payload decoded successfully!`);
+        this.logger.log(`📦 Decoded Keys: ${Object.keys(decodedData).join(', ')}`);
+      }
+      
+      // Merge decoded data with standard telemetry
+      const finalData = {
+        ...decodedData,
+        temperature: decodedData.temperature ?? standardTelemetry.temperature,
+        humidity: decodedData.humidity ?? standardTelemetry.humidity,
+        pressure: decodedData.pressure ?? standardTelemetry.pressure,
+        latitude: decodedData.latitude ?? standardTelemetry.latitude,
+        longitude: decodedData.longitude ?? standardTelemetry.longitude,
+        batteryLevel: decodedData.batteryLevel ?? standardTelemetry.batteryLevel,
+        signalStrength: decodedData.signalStrength ?? standardTelemetry.signalStrength,
+      };
+      
+      if (finalData.temperature)
+        this.logger.log(`🌡️  Temperature: ${finalData.temperature}°C`);
+      if (finalData.humidity)
+        this.logger.log(`💧 Humidity: ${finalData.humidity}%`);
       this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
 
       // Convert StandardTelemetry to DeviceMessage format
@@ -75,16 +113,7 @@ export class DeviceListenerService {
         timestamp: new Date(standardTelemetry.timestamp),
         data: {
           ts: standardTelemetry.receivedAt || Date.now(),
-          values: {
-            ...standardTelemetry.data,
-            temperature: standardTelemetry.temperature,
-            humidity: standardTelemetry.humidity,
-            pressure: standardTelemetry.pressure,
-            latitude: standardTelemetry.latitude,
-            longitude: standardTelemetry.longitude,
-            batteryLevel: standardTelemetry.batteryLevel,
-            signalStrength: standardTelemetry.signalStrength,
-          },
+          values: finalData,
           protocol: standardTelemetry.protocol,
           metadata: standardTelemetry.metadata,
         },
@@ -106,9 +135,6 @@ export class DeviceListenerService {
   // EVENT HANDLER - Processes Telemetry
   // ============================================
 
-  /**
-   * Handle device telemetry events
-   */
   @OnEvent('device.telemetry')
   async handleTelemetryEvent(message: DeviceMessage): Promise<void> {
     try {
@@ -118,7 +144,7 @@ export class DeviceListenerService {
 
       // Find or auto-register device
       let device = await this.deviceRepository.findOne({
-        where: { id: message.deviceKey },
+        where: { deviceKey: message.deviceKey },
       });
 
       if (!device) {
@@ -211,15 +237,11 @@ export class DeviceListenerService {
   // AUTO-REGISTRATION (FIXED)
   // ============================================
 
-  /**
-   * Auto-register new device when first seen
-   */
   private async autoRegisterDevice(message: DeviceMessage): Promise<Device> {
     try {
       const protocol = message.data.protocol || 'unknown';
       const detectedType = this.detectDeviceType(message.data);
 
-      // Create device with ALL required fields
       const device = this.deviceRepository.create({
         deviceKey: message.deviceKey,
         name: `${detectedType} ${message.deviceKey}`,
@@ -228,7 +250,7 @@ export class DeviceListenerService {
         connectionType: this.mapProtocolToConnectionType(protocol),
 
         // Required fields
-        userId: 'system', // Default user - CHANGE THIS in production!
+        userId: 'system',
         tenantId: 'default',
 
         // Optional fields
@@ -254,7 +276,6 @@ export class DeviceListenerService {
       const saved = await this.deviceRepository.save(device);
       this.logger.log(`✅ Device auto-registered: ${saved.id}`);
 
-      // Emit event
       this.eventEmitter.emit('device.created', {
         deviceId: saved.id,
         deviceKey: saved.deviceKey,
@@ -268,9 +289,6 @@ export class DeviceListenerService {
     }
   }
 
-  /**
-   * Detect device type from telemetry data
-   */
   private detectDeviceType(data: any): string {
     const values = data.values || data;
 
@@ -290,20 +308,14 @@ export class DeviceListenerService {
     return 'Generic IoT Device';
   }
 
-  /**
-   * Map detected type to DeviceType enum
-   */
   private mapToDeviceType(detectedType: string): DeviceType {
     if (detectedType.includes('Sensor')) return DeviceType.SENSOR;
     if (detectedType.includes('Tracker')) return DeviceType.TRACKER;
     if (detectedType.includes('Camera')) return DeviceType.CAMERA;
     if (detectedType.includes('Gateway')) return DeviceType.GATEWAY;
-    return DeviceType.SENSOR; // Default
+    return DeviceType.SENSOR;
   }
 
-  /**
-   * Map protocol to connection type
-   */
   private mapProtocolToConnectionType(protocol: string): DeviceConnectionType {
     switch (protocol.toLowerCase()) {
       case 'mqtt':

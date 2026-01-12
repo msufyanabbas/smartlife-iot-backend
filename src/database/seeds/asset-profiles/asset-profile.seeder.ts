@@ -40,11 +40,65 @@ export class AssetProfileSeeder implements ISeeder {
         description: 'Default profile for general purpose assets',
         default: true,
         image: 'https://example.com/images/default-asset.png',
+
+        // These properties exist in entity but aren't decorated - they'll be stored
         attributesConfig: {
           server: ['latitude', 'longitude', 'address'],
           shared: ['model', 'manufacturer', 'serialNumber'],
         },
+
+        customFields: [
+          {
+            key: 'location',
+            label: 'Location',
+            type: 'string',
+            required: true,
+          },
+          {
+            key: 'installationDate',
+            label: 'Installation Date',
+            type: 'date',
+            required: false,
+          },
+        ],
+
+        metadataSchema: {
+          properties: {
+            notes: {
+              type: 'string',
+              title: 'Notes',
+              description: 'Additional notes about the asset',
+            },
+            status: {
+              type: 'string',
+              title: 'Status',
+              required: true,
+            },
+          },
+        },
+
+        attributesSchema: {
+          required: [
+            {
+              key: 'location',
+              label: 'Location',
+              type: 'string',
+            },
+          ],
+          optional: [
+            {
+              key: 'installationDate',
+              label: 'Installation Date',
+              type: 'date',
+            },
+          ],
+        },
+
+        serverAttributeKeys: ['latitude', 'longitude', 'address'],
+        sharedAttributeKeys: ['model', 'manufacturer', 'serialNumber'],
+
         defaultQueueName: 'Main',
+
         alarmRules: [
           {
             id: generateId(),
@@ -67,39 +121,192 @@ export class AssetProfileSeeder implements ISeeder {
               },
             },
             propagate: false,
+            propagateToParent: false,
+            propagateToChildren: false,
           },
         ],
+
+        locationConfig: {
+          required: true,
+          requireCoordinates: true,
+          requireAddress: false,
+          allowManualEntry: true,
+          defaultZoom: 15,
+        },
+
+        deviceConfig: {
+          allowDevices: true,
+        },
+
+        mapConfig: {
+          icon: 'asset',
+          iconColor: '#1976D2',
+          markerType: 'pin',
+          showLabel: true,
+        },
+
+        additionalInfo: {
+          color: '#1976D2',
+          icon: 'asset',
+        },
+      },
+      {
+        name: 'Smart Building Profile',
+        description: 'Profile for smart buildings with HVAC and automation',
+        tenantId: getRandomItem(tenants)?.id,
+        default: false,
+        image: 'https://example.com/images/building.png',
+
+        attributesConfig: {
+          server: ['floor', 'room', 'zone', 'area'],
+          shared: ['buildingName', 'address', 'capacity'],
+        },
+
         customFields: [
           {
-            key: 'location',
-            label: 'Location',
+            key: 'buildingName',
+            label: 'Building Name',
             type: 'string',
             required: true,
           },
           {
-            key: 'installationDate',
-            label: 'Installation Date',
-            type: 'date',
-            required: false,
+            key: 'totalFloors',
+            label: 'Total Floors',
+            type: 'number',
+            required: true,
+          },
+          {
+            key: 'buildingType',
+            label: 'Building Type',
+            type: 'string',
+            required: true,
+            options: ['Commercial', 'Residential', 'Industrial', 'Mixed-Use'],
           },
         ],
+
         metadataSchema: {
           properties: {
-            notes: {
-              type: 'string',
-              title: 'Notes',
-              description: 'Additional notes about the asset',
+            constructionYear: {
+              type: 'number',
+              title: 'Construction Year',
             },
-            status: {
-              type: 'string',
-              title: 'Status',
+            totalArea: {
+              type: 'number',
+              title: 'Total Area (sqm)',
               required: true,
             },
           },
         },
+
+        attributesSchema: {
+          required: [
+            {
+              key: 'buildingName',
+              label: 'Building Name',
+              type: 'string',
+            },
+            {
+              key: 'totalFloors',
+              label: 'Total Floors',
+              type: 'number',
+              validation: {
+                min: 1,
+                max: 200,
+              },
+            },
+          ],
+          optional: [
+            {
+              key: 'occupancyLimit',
+              label: 'Occupancy Limit',
+              type: 'number',
+            },
+          ],
+        },
+
+        serverAttributeKeys: ['hvacStatus', 'energyConsumption', 'occupancy'],
+        sharedAttributeKeys: ['buildingName', 'address', 'totalFloors'],
+
+        defaultQueueName: 'Main',
+
+        calculatedFields: [
+          {
+            id: 'calc1',
+            name: 'energyCostPerSqm',
+            type: 'number',
+            expression: 'totalEnergyConsumption / totalArea',
+            description: 'Energy cost per square meter',
+            unit: 'SAR/sqm',
+            decimalPlaces: 2,
+          },
+        ],
+
+        alarmRules: [
+          {
+            id: generateId(),
+            alarmType: 'High Temperature',
+            severity: 'WARNING',
+            createCondition: {
+              condition: {
+                key: 'temperature',
+                valueType: 'NUMERIC',
+                value: 28,
+                operation: 'GREATER',
+              },
+            },
+            propagate: true,
+            propagateToParent: true,
+          },
+          {
+            id: generateId(),
+            alarmType: 'Fire Alarm',
+            severity: 'CRITICAL',
+            createCondition: {
+              condition: {
+                key: 'fireDetected',
+                valueType: 'BOOLEAN',
+                value: true,
+                operation: 'EQUAL',
+              },
+            },
+            propagate: true,
+            propagateToParent: true,
+            propagateToChildren: true,
+          },
+        ],
+
+        hierarchyConfig: {
+          allowChildren: true,
+          allowedChildTypes: ['floor', 'zone', 'room'],
+          requireParent: false,
+          maxDepth: 3,
+        },
+
+        locationConfig: {
+          required: true,
+          requireCoordinates: true,
+          requireAddress: true,
+          defaultZoom: 18,
+        },
+
+        deviceConfig: {
+          allowDevices: true,
+          maxDevices: 100,
+          inheritDevicesToChildren: true,
+        },
+
+        mapConfig: {
+          icon: 'business',
+          iconColor: '#2196F3',
+          markerType: 'pin',
+          showLabel: true,
+          clusterThreshold: 12,
+        },
+
         additionalInfo: {
-          color: '#1976D2',
-          icon: 'asset',
+          color: '#2196F3',
+          icon: 'business',
+          category: 'building',
         },
       },
       {
@@ -107,12 +314,73 @@ export class AssetProfileSeeder implements ISeeder {
         description: 'Profile for industrial machinery and equipment',
         tenantId: getRandomItem(tenants)?.id,
         default: false,
-        image: 'https://example.com/images/industrial-equipment.png',
+        image: 'https://example.com/images/industrial.png',
+
         attributesConfig: {
           server: ['operatingHours', 'maintenanceSchedule', 'lastServiceDate'],
           shared: ['manufacturer', 'model', 'serialNumber', 'warrantyExpiry'],
         },
-        defaultQueueName: 'Industrial',
+
+        customFields: [
+          {
+            key: 'manufacturer',
+            label: 'Manufacturer',
+            type: 'string',
+            required: true,
+          },
+          {
+            key: 'powerRating',
+            label: 'Power Rating (kW)',
+            type: 'number',
+            required: true,
+          },
+          {
+            key: 'operationalStatus',
+            label: 'Operational Status',
+            type: 'string',
+            required: true,
+            options: ['Operational', 'Maintenance', 'Offline', 'Decommissioned'],
+          },
+        ],
+
+        metadataSchema: {
+          properties: {
+            certifications: {
+              type: 'json',
+              title: 'Safety Certifications',
+            },
+            maintenanceHistory: {
+              type: 'json',
+              title: 'Maintenance History',
+            },
+          },
+        },
+
+        attributesSchema: {
+          required: [
+            {
+              key: 'manufacturer',
+              label: 'Manufacturer',
+              type: 'string',
+            },
+            {
+              key: 'powerRating',
+              label: 'Power Rating (kW)',
+              type: 'number',
+              validation: {
+                min: 0,
+                max: 10000,
+              },
+            },
+          ],
+          optional: [],
+        },
+
+        serverAttributeKeys: ['operatingHours', 'temperature', 'vibration'],
+        sharedAttributeKeys: ['manufacturer', 'model', 'serialNumber'],
+
+        defaultQueueName: 'Main',
+
         alarmRules: [
           {
             id: generateId(),
@@ -135,6 +403,7 @@ export class AssetProfileSeeder implements ISeeder {
               },
             },
             propagate: true,
+            propagateToParent: true,
           },
           {
             id: generateId(),
@@ -165,45 +434,29 @@ export class AssetProfileSeeder implements ISeeder {
             propagate: false,
           },
         ],
-        customFields: [
-          {
-            key: 'manufacturer',
-            label: 'Manufacturer',
-            type: 'string',
-            required: true,
-          },
-          {
-            key: 'powerRating',
-            label: 'Power Rating (kW)',
-            type: 'number',
-            required: true,
-          },
-          {
-            key: 'operationalStatus',
-            label: 'Operational Status',
-            type: 'string',
-            required: true,
-            options: [
-              'Operational',
-              'Maintenance',
-              'Offline',
-              'Decommissioned',
-            ],
-          },
-        ],
-        metadataSchema: {
-          properties: {
-            certifications: {
-              type: 'json',
-              title: 'Certifications',
-              description: 'Safety and quality certifications',
-            },
-            maintenanceHistory: {
-              type: 'json',
-              title: 'Maintenance History',
-            },
-          },
+
+        hierarchyConfig: {
+          allowChildren: false,
+          requireParent: false,
         },
+
+        locationConfig: {
+          required: true,
+          requireCoordinates: true,
+        },
+
+        deviceConfig: {
+          allowDevices: true,
+          maxDevices: 20,
+        },
+
+        mapConfig: {
+          icon: 'precision_manufacturing',
+          iconColor: '#FF6F00',
+          markerType: 'circle',
+          showLabel: true,
+        },
+
         additionalInfo: {
           color: '#FF6F00',
           icon: 'factory',
@@ -211,84 +464,185 @@ export class AssetProfileSeeder implements ISeeder {
         },
       },
       {
-        name: 'Building Infrastructure',
-        description: 'Profile for building systems and infrastructure',
+        name: 'Vehicle Fleet',
+        description: 'Profile for fleet management and vehicle tracking',
         tenantId: getRandomItem(tenants)?.id,
         default: false,
-        image: 'https://example.com/images/building.png',
+        image: 'https://example.com/images/vehicle.png',
+
         attributesConfig: {
-          server: ['floor', 'room', 'zone', 'area'],
-          shared: ['buildingName', 'address', 'capacity'],
+          server: ['latitude', 'longitude', 'speed', 'heading', 'odometer'],
+          shared: ['vehicleType', 'make', 'model', 'year', 'licensePlate', 'vin'],
         },
-        defaultQueueName: 'Building',
-        alarmRules: [
-          {
-            id: generateId(),
-            alarmType: 'HVAC Failure',
-            severity: 'MAJOR',
-            createCondition: {
-              condition: {
-                key: 'hvacStatus',
-                valueType: 'STRING',
-                value: 'offline',
-                operation: 'EQUAL',
-              },
-            },
-            propagate: true,
-          },
-          {
-            id: generateId(),
-            alarmType: 'Air Quality Alert',
-            severity: 'WARNING',
-            createCondition: {
-              condition: {
-                key: 'co2Level',
-                valueType: 'NUMERIC',
-                value: 1000,
-                operation: 'GREATER',
-              },
-            },
-            propagate: false,
-          },
-        ],
+
         customFields: [
           {
-            key: 'buildingName',
-            label: 'Building Name',
+            key: 'vehicleType',
+            label: 'Vehicle Type',
+            type: 'string',
+            required: true,
+            options: ['Car', 'Truck', 'Van', 'Motorcycle', 'Bus'],
+          },
+          {
+            key: 'licensePlate',
+            label: 'License Plate',
             type: 'string',
             required: true,
           },
           {
-            key: 'floor',
-            label: 'Floor',
-            type: 'number',
-            required: true,
-          },
-          {
-            key: 'systemType',
-            label: 'System Type',
+            key: 'fuelType',
+            label: 'Fuel Type',
             type: 'string',
             required: true,
-            options: ['HVAC', 'Electrical', 'Plumbing', 'Security', 'Elevator'],
+            options: ['Gasoline', 'Diesel', 'Electric', 'Hybrid'],
           },
         ],
+
         metadataSchema: {
           properties: {
-            blueprintReference: {
+            driverAssigned: {
               type: 'string',
-              title: 'Blueprint Reference',
+              title: 'Assigned Driver',
             },
-            installationYear: {
-              type: 'number',
-              title: 'Installation Year',
+            insuranceExpiry: {
+              type: 'string',
+              title: 'Insurance Expiry',
               required: true,
             },
           },
         },
+
+        attributesSchema: {
+          required: [
+            {
+              key: 'vehicleType',
+              label: 'Vehicle Type',
+              type: 'select',
+              options: [
+                { label: 'Car', value: 'car' },
+                { label: 'Truck', value: 'truck' },
+                { label: 'Van', value: 'van' },
+                { label: 'Motorcycle', value: 'motorcycle' },
+                { label: 'Bus', value: 'bus' },
+              ],
+            },
+            {
+              key: 'licensePlate',
+              label: 'License Plate',
+              type: 'string',
+              validation: {
+                pattern: '^[A-Z0-9]{1,10}$',
+              },
+            },
+          ],
+          optional: [
+            {
+              key: 'capacity',
+              label: 'Passenger Capacity',
+              type: 'number',
+            },
+          ],
+        },
+
+        serverAttributeKeys: ['latitude', 'longitude', 'speed', 'fuelLevel'],
+        sharedAttributeKeys: ['vehicleType', 'licensePlate', 'make', 'model'],
+
+        defaultQueueName: 'Main',
+
+        queueConfig: {
+          submitStrategy: 'SEQUENTIAL_BY_ORIGINATOR',
+          processingStrategy: 'RETRY_FAILED_AND_TIMED_OUT',
+        },
+
+        calculatedFields: [
+          {
+            id: 'calc1',
+            name: 'fuelEfficiency',
+            type: 'number',
+            expression: 'distanceTraveled / fuelConsumed',
+            description: 'Fuel efficiency',
+            unit: 'km/L',
+            decimalPlaces: 2,
+          },
+        ],
+
+        alarmRules: [
+          {
+            id: generateId(),
+            alarmType: 'Speeding',
+            severity: 'MAJOR',
+            createCondition: {
+              condition: {
+                key: 'speed',
+                valueType: 'NUMERIC',
+                value: 120,
+                operation: 'GREATER',
+              },
+            },
+            propagate: true,
+            propagateToParent: true,
+          },
+          {
+            id: generateId(),
+            alarmType: 'Low Fuel',
+            severity: 'WARNING',
+            createCondition: {
+              condition: {
+                key: 'fuelLevel',
+                valueType: 'NUMERIC',
+                value: 20,
+                operation: 'LESS',
+              },
+            },
+            propagate: false,
+          },
+          {
+            id: generateId(),
+            alarmType: 'Geofence Violation',
+            severity: 'CRITICAL',
+            createCondition: {
+              condition: {
+                key: 'outsideGeofence',
+                valueType: 'BOOLEAN',
+                value: true,
+                operation: 'EQUAL',
+              },
+            },
+            propagate: true,
+            propagateToParent: true,
+          },
+        ],
+
+        hierarchyConfig: {
+          allowChildren: false,
+          requireParent: false,
+        },
+
+        locationConfig: {
+          required: true,
+          requireCoordinates: true,
+          requireAddress: false,
+          defaultZoom: 15,
+        },
+
+        deviceConfig: {
+          allowDevices: true,
+          maxDevices: 5,
+          requireDevices: true,
+          minDevices: 1,
+        },
+
+        mapConfig: {
+          icon: 'directions_car',
+          iconColor: '#F44336',
+          markerType: 'custom',
+          showLabel: true,
+        },
+
         additionalInfo: {
-          color: '#2E7D32',
-          icon: 'building',
-          category: 'infrastructure',
+          color: '#F44336',
+          icon: 'directions_car',
+          category: 'fleet',
         },
       },
       {
@@ -296,17 +650,79 @@ export class AssetProfileSeeder implements ISeeder {
         description: 'Profile for IoT sensor devices',
         tenantId: getRandomItem(tenants)?.id,
         default: false,
-        image: 'https://example.com/images/iot-sensor.png',
+        image: 'https://example.com/images/sensor.png',
+
         attributesConfig: {
-          server: [
-            'batteryLevel',
-            'signalStrength',
-            'lastSeen',
-            'firmwareVersion',
-          ],
+          server: ['batteryLevel', 'signalStrength', 'lastSeen', 'firmwareVersion'],
           shared: ['sensorType', 'manufacturer', 'model'],
         },
-        defaultQueueName: 'IoT',
+
+        customFields: [
+          {
+            key: 'sensorType',
+            label: 'Sensor Type',
+            type: 'string',
+            required: true,
+            options: ['Temperature', 'Humidity', 'Pressure', 'Motion', 'Light', 'Air Quality'],
+          },
+          {
+            key: 'calibrationDate',
+            label: 'Last Calibration',
+            type: 'date',
+            required: false,
+          },
+        ],
+
+        metadataSchema: {
+          properties: {
+            communicationProtocol: {
+              type: 'string',
+              title: 'Protocol',
+              description: 'MQTT, HTTP, CoAP, etc.',
+            },
+            samplingRate: {
+              type: 'number',
+              title: 'Sampling Rate (seconds)',
+              required: true,
+            },
+          },
+        },
+
+        attributesSchema: {
+          required: [
+            {
+              key: 'sensorType',
+              label: 'Sensor Type',
+              type: 'select',
+              options: [
+                { label: 'Temperature', value: 'temperature' },
+                { label: 'Humidity', value: 'humidity' },
+                { label: 'Pressure', value: 'pressure' },
+                { label: 'Motion', value: 'motion' },
+                { label: 'Light', value: 'light' },
+                { label: 'Air Quality', value: 'air_quality' },
+              ],
+            },
+          ],
+          optional: [
+            {
+              key: 'calibrationDate',
+              label: 'Calibration Date',
+              type: 'date',
+            },
+            {
+              key: 'accuracy',
+              label: 'Accuracy (%)',
+              type: 'number',
+            },
+          ],
+        },
+
+        serverAttributeKeys: ['batteryLevel', 'signalStrength', 'lastSeen'],
+        sharedAttributeKeys: ['sensorType', 'manufacturer'],
+
+        defaultQueueName: 'Main',
+
         alarmRules: [
           {
             id: generateId(),
@@ -335,64 +751,26 @@ export class AssetProfileSeeder implements ISeeder {
               },
             },
             propagate: true,
-          },
-          {
-            id: generateId(),
-            alarmType: 'Signal Strength Low',
-            severity: 'MINOR',
-            createCondition: {
-              condition: {
-                key: 'signalStrength',
-                valueType: 'NUMERIC',
-                value: -80,
-                operation: 'LESS',
-              },
-            },
-            propagate: false,
+            propagateToParent: true,
           },
         ],
-        customFields: [
-          {
-            key: 'sensorType',
-            label: 'Sensor Type',
-            type: 'string',
-            required: true,
-            options: [
-              'Temperature',
-              'Humidity',
-              'Pressure',
-              'Motion',
-              'Light',
-              'Air Quality',
-            ],
-          },
-          {
-            key: 'calibrationDate',
-            label: 'Last Calibration Date',
-            type: 'date',
-            required: false,
-          },
-          {
-            key: 'accuracy',
-            label: 'Accuracy (%)',
-            type: 'number',
-            required: false,
-          },
-        ],
-        metadataSchema: {
-          properties: {
-            communicationProtocol: {
-              type: 'string',
-              title: 'Communication Protocol',
-              description: 'Network protocol used (MQTT, HTTP, CoAP, etc.)',
-            },
-            samplingRate: {
-              type: 'number',
-              title: 'Sampling Rate (seconds)',
-              required: true,
-            },
-          },
+
+        locationConfig: {
+          required: true,
+          requireCoordinates: true,
         },
+
+        deviceConfig: {
+          allowDevices: false,
+        },
+
+        mapConfig: {
+          icon: 'sensors',
+          iconColor: '#9C27B0',
+          markerType: 'circle',
+          showLabel: false,
+        },
+
         additionalInfo: {
           color: '#9C27B0',
           icon: 'sensors',
@@ -400,180 +778,17 @@ export class AssetProfileSeeder implements ISeeder {
         },
       },
       {
-        name: 'Vehicle Fleet',
-        description: 'Profile for fleet management and vehicle tracking',
-        tenantId: getRandomItem(tenants)?.id,
-        default: false,
-        image: 'https://example.com/images/vehicle.png',
-        attributesConfig: {
-          server: ['latitude', 'longitude', 'speed', 'heading', 'odometer'],
-          shared: [
-            'vehicleType',
-            'make',
-            'model',
-            'year',
-            'licensePlate',
-            'vin',
-          ],
-        },
-        defaultQueueName: 'Fleet',
-        alarmRules: [
-          {
-            id: generateId(),
-            alarmType: 'Speeding',
-            severity: 'MAJOR',
-            createCondition: {
-              condition: {
-                key: 'speed',
-                valueType: 'NUMERIC',
-                value: 120,
-                operation: 'GREATER',
-              },
-            },
-            propagate: true,
-          },
-          {
-            id: generateId(),
-            alarmType: 'Maintenance Required',
-            severity: 'WARNING',
-            createCondition: {
-              condition: {
-                key: 'odometerSinceService',
-                valueType: 'NUMERIC',
-                value: 10000,
-                operation: 'GREATER',
-              },
-            },
-            propagate: false,
-          },
-          {
-            id: generateId(),
-            alarmType: 'Geofence Violation',
-            severity: 'CRITICAL',
-            createCondition: {
-              condition: {
-                key: 'outsideGeofence',
-                valueType: 'BOOLEAN',
-                value: true,
-                operation: 'EQUAL',
-              },
-            },
-            propagate: true,
-          },
-        ],
-        customFields: [
-          {
-            key: 'vehicleType',
-            label: 'Vehicle Type',
-            type: 'string',
-            required: true,
-            options: ['Car', 'Truck', 'Van', 'Motorcycle', 'Bus'],
-          },
-          {
-            key: 'licensePlate',
-            label: 'License Plate',
-            type: 'string',
-            required: true,
-          },
-          {
-            key: 'fuelType',
-            label: 'Fuel Type',
-            type: 'string',
-            required: true,
-            options: ['Gasoline', 'Diesel', 'Electric', 'Hybrid'],
-          },
-          {
-            key: 'capacity',
-            label: 'Passenger Capacity',
-            type: 'number',
-            required: false,
-          },
-        ],
-        metadataSchema: {
-          properties: {
-            driverAssigned: {
-              type: 'string',
-              title: 'Assigned Driver',
-            },
-            insuranceExpiry: {
-              type: 'string',
-              title: 'Insurance Expiry Date',
-              required: true,
-            },
-            registrationNumber: {
-              type: 'string',
-              title: 'Registration Number',
-              required: true,
-            },
-          },
-        },
-        additionalInfo: {
-          color: '#F44336',
-          icon: 'directions_car',
-          category: 'fleet',
-        },
-      },
-      {
         name: 'Energy Management',
-        description: 'Profile for energy monitoring and management systems',
+        description: 'Profile for energy monitoring systems',
         tenantId: getRandomItem(tenants)?.id,
         default: false,
         image: 'https://example.com/images/energy.png',
+
         attributesConfig: {
-          server: [
-            'powerConsumption',
-            'voltage',
-            'current',
-            'powerFactor',
-            'frequency',
-          ],
+          server: ['powerConsumption', 'voltage', 'current', 'powerFactor'],
           shared: ['meterType', 'ratedCapacity', 'location'],
         },
-        defaultQueueName: 'Energy',
-        alarmRules: [
-          {
-            id: generateId(),
-            alarmType: 'High Power Consumption',
-            severity: 'MAJOR',
-            createCondition: {
-              condition: {
-                key: 'powerConsumption',
-                valueType: 'NUMERIC',
-                value: 1000,
-                operation: 'GREATER',
-              },
-            },
-            propagate: true,
-          },
-          {
-            id: generateId(),
-            alarmType: 'Low Power Factor',
-            severity: 'WARNING',
-            createCondition: {
-              condition: {
-                key: 'powerFactor',
-                valueType: 'NUMERIC',
-                value: 0.85,
-                operation: 'LESS',
-              },
-            },
-            propagate: false,
-          },
-          {
-            id: generateId(),
-            alarmType: 'Voltage Anomaly',
-            severity: 'CRITICAL',
-            createCondition: {
-              condition: {
-                key: 'voltage',
-                valueType: 'NUMERIC',
-                value: 250,
-                operation: 'GREATER',
-              },
-            },
-            propagate: true,
-          },
-        ],
+
         customFields: [
           {
             key: 'meterType',
@@ -588,13 +803,8 @@ export class AssetProfileSeeder implements ISeeder {
             type: 'number',
             required: true,
           },
-          {
-            key: 'tariffPlan',
-            label: 'Tariff Plan',
-            type: 'string',
-            required: false,
-          },
         ],
+
         metadataSchema: {
           properties: {
             utilityProvider: {
@@ -605,12 +815,106 @@ export class AssetProfileSeeder implements ISeeder {
               type: 'string',
               title: 'Account Number',
             },
-            billingCycle: {
-              type: 'string',
-              title: 'Billing Cycle',
-            },
           },
         },
+
+        attributesSchema: {
+          required: [
+            {
+              key: 'meterType',
+              label: 'Meter Type',
+              type: 'select',
+              options: [
+                { label: 'Electric', value: 'electric' },
+                { label: 'Gas', value: 'gas' },
+                { label: 'Water', value: 'water' },
+                { label: 'Solar', value: 'solar' },
+              ],
+            },
+            {
+              key: 'ratedCapacity',
+              label: 'Rated Capacity (kW)',
+              type: 'number',
+              validation: {
+                min: 0,
+              },
+            },
+          ],
+          optional: [
+            {
+              key: 'tariffPlan',
+              label: 'Tariff Plan',
+              type: 'string',
+            },
+          ],
+        },
+
+        serverAttributeKeys: ['powerConsumption', 'voltage', 'current'],
+        sharedAttributeKeys: ['meterType', 'ratedCapacity'],
+
+        defaultQueueName: 'Main',
+
+        calculatedFields: [
+          {
+            id: 'calc1',
+            name: 'totalCost',
+            type: 'number',
+            expression: 'powerConsumption * tariffRate',
+            description: 'Total energy cost',
+            unit: 'SAR',
+            decimalPlaces: 2,
+          },
+        ],
+
+        alarmRules: [
+          {
+            id: generateId(),
+            alarmType: 'High Power Consumption',
+            severity: 'MAJOR',
+            createCondition: {
+              condition: {
+                key: 'powerConsumption',
+                valueType: 'NUMERIC',
+                value: 1000,
+                operation: 'GREATER',
+              },
+            },
+            propagate: true,
+            propagateToParent: true,
+          },
+          {
+            id: generateId(),
+            alarmType: 'Voltage Anomaly',
+            severity: 'CRITICAL',
+            createCondition: {
+              condition: {
+                key: 'voltage',
+                valueType: 'NUMERIC',
+                value: 250,
+                operation: 'GREATER',
+              },
+            },
+            propagate: true,
+            propagateToParent: true,
+          },
+        ],
+
+        locationConfig: {
+          required: true,
+          requireCoordinates: true,
+        },
+
+        deviceConfig: {
+          allowDevices: true,
+        },
+
+        mapConfig: {
+          icon: 'bolt',
+          iconColor: '#FFC107',
+          markerType: 'pin',
+          showLabel: true,
+        },
+
         additionalInfo: {
           color: '#FFC107',
           icon: 'bolt',

@@ -4,71 +4,66 @@ import {
   NestInterceptor,
   ExecutionContext,
   CallHandler,
-  ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { User } from '@modules/users/entities/user.entity';
 
-export interface UsageTrackingOptions {
-  resource: 'devices' | 'users' | 'apiCalls' | 'storage';
-  incrementBy?: number;
-}
-
+/**
+ * Interceptor to track API calls usage
+ * Apply this globally or to specific controllers
+ */
 @Injectable()
 export class UsageTrackingInterceptor implements NestInterceptor {
-  constructor(private subscriptionsService: SubscriptionsService) {}
+  private readonly logger = new Logger(UsageTrackingInterceptor.name);
 
-  async intercept(
-    context: ExecutionContext,
-    next: CallHandler,
-  ): Promise<Observable<any>> {
+  constructor(private readonly subscriptionsService: SubscriptionsService) {}
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest();
-    const { user, subscription } = request;
+    const user: User = request.user;
 
-    if (!subscription) {
+    // Only track for authenticated requests
+    if (!user || !user.tenantId) {
       return next.handle();
     }
 
-    // Get metadata from decorator
-    const metadata = Reflect.getMetadata(
-      'usage_tracking',
-      context.getHandler(),
-    ) as UsageTrackingOptions;
-
-    if (!metadata) {
-      return next.handle();
-    }
-
-    const { resource, incrementBy = 1 } = metadata;
-
-    // Check if limit is exceeded
-    const currentUsage = subscription.usage[resource] || 0;
-    const limit = subscription.limits[resource];
-
-    if (limit !== -1 && currentUsage >= limit) {
-      throw new ForbiddenException(
-        `You have reached the ${resource} limit for your plan. Please upgrade.`,
-      );
-    }
+    const startTime = Date.now();
 
     return next.handle().pipe(
-      tap(async () => {
-        // Increment usage after successful operation
-        await this.subscriptionsService.incrementUsage(
-          user.id,
-          resource,
-          incrementBy,
-        );
+      tap({
+        next: async () => {
+          const duration = Date.now() - startTime;
+          
+          try {
+            // Increment API call count for tenant
+            await this.subscriptionsService.incrementTenantUsage(
+              user.tenantId,
+              'apiCalls',
+              1,
+            );
+
+            this.logger.debug(
+              `API call tracked for tenant ${user.tenantId} - Duration: ${duration}ms`,
+            );
+          } catch (error) {
+            this.logger.error(
+              `Failed to track API usage for tenant ${user.tenantId}:`,
+              error,
+            );
+          }
+        },
+        error: (error) => {
+          // Still track failed requests
+          this.subscriptionsService
+            .incrementTenantUsage(user.tenantId, 'apiCalls', 1)
+            .catch((err) =>
+              this.logger.error('Failed to track failed API call:', err),
+            );
+        },
       }),
     );
   }
 }
-
-// Decorator to track usage
-export const TrackUsage = (options: UsageTrackingOptions) => {
-  return (target: any, propertyKey: string, descriptor: PropertyDescriptor) => {
-    Reflect.defineMetadata('usage_tracking', options, descriptor.value);
-    return descriptor;
-  };
-};

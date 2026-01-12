@@ -15,6 +15,7 @@ import {
   Param,
   Inject,
   UnauthorizedException,
+  Logger
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -33,10 +34,9 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { User } from '../users/entities/user.entity';
+import { User, UserRole } from '../users/entities/user.entity';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import type { redisService } from '@/lib/redis/redis.service';
-import { Logger } from '@nestjs/common';
 import {
   GoogleAuthGuard,
   GitHubAuthGuard,
@@ -46,6 +46,9 @@ import { OAuthProviderEnum } from './entities/oauth-account.entity';
 import { randomBytes } from 'crypto';
 import { ExchangeCodeDto } from './dto/exchange-code.dto';
 import { TwoFactorChallengeDto } from '../two-factor/dto/two-factor-challenge.dto';
+import { Roles } from '@/common/decorators/roles.decorator';
+import { RolesGuard } from '@/common/guards';
+import { CreateInvitationDto } from './dto/invitation.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -56,21 +59,211 @@ export class AuthController {
     @Inject('REDIS_SERVICE') private readonly redis: typeof redisService,
   ) {}
 
+  /**
+   * ✅ Register a new user
+   */
+
   @SkipThrottle()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Register a new user' })
+  @ApiOperation({
+    summary: 'Register a new user',
+    description: `
+    Register as:
+    - **Tenant Admin**: Provide companyName to create a new organization
+    - **Individual User**: Don't provide companyName (auto-creates personal workspace)
+    - **Invited User**: Provide invitationToken to join existing tenant/customer
+    `,
+  })
   @ApiResponse({
     status: 201,
     description: 'User successfully registered. Verification email sent.',
+    schema: {
+      example: {
+        message:
+          'Registration successful. Please check your email to verify your account.',
+        email: 'john.doe@smartlife.sa',
+        userId: '123e4567-e89b-12d3-a456-426614174000',
+      },
+    },
   })
-  @ApiResponse({ status: 409, description: 'User already exists' })
-  @ApiResponse({ status: 400, description: 'Invalid input' })
+  @ApiResponse({
+    status: 409,
+    description: 'User already exists',
+    schema: {
+      example: {
+        statusCode: 409,
+        message: 'User with this email already exists',
+        error: 'Conflict',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid input or invitation token',
+  })
   async register(
     @Body() registerDto: RegisterDto,
-  ): Promise<{ message: string; email: string }> {
+  ): Promise<{ message: string; email: string; userId?: string }> {
     return this.authService.register(registerDto);
   }
+
+  /**
+   * ✅ NEW: Create invitation
+   */
+  @Post('invitations')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.TENANT_ADMIN,
+    UserRole.CUSTOMER_ADMIN,
+  )
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Send invitation to join tenant or customer',
+    description: `
+**Role-based Permissions:**
+- **Tenant Admin**: Can invite tenant users, customer admins, customer users
+- **Customer Admin**: Can only invite customer users to their customer
+- **Super Admin**: Can invite anyone anywhere
+    `,
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Invitation sent successfully',
+    schema: {
+      example: {
+        message: 'Invitation sent successfully',
+        token: 'a1b2c3d4e5f6g7h8...',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Insufficient permissions',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'User already exists or invitation already sent',
+  })
+  async createInvitation(
+    @CurrentUser() user: User,
+    @Body() createInvitationDto: CreateInvitationDto,
+  ): Promise<{ message: string; token: string }> {
+    return this.authService.createInvitation(user.id, createInvitationDto);
+  }
+
+  /**
+   * ✅ NEW: Get invitation details (public endpoint)
+   */
+  @Get('invitations/:token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get invitation details',
+    description: 'Retrieve information about an invitation using its token',
+  })
+  @ApiParam({
+    name: 'token',
+    description: 'Invitation token from email',
+    example: 'a1b2c3d4e5f6g7h8...',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Invitation details retrieved',
+    schema: {
+      example: {
+        id: 'invitation-uuid',
+        email: 'sara.ali@example.com',
+        role: 'customer_user',
+        tenantName: 'Smart Life Solutions',
+        customerName: 'King Fahd Hospital',
+        inviterName: 'Ahmed Al-Saud',
+        expiresAt: '2025-12-28T10:00:00.000Z',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Invitation not found',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invitation has expired or been revoked',
+  })
+  async getInvitation(@Param('token') token: string) {
+    const invitation = await this.authService.getInvitation(token);
+
+    return {
+      id: invitation.id,
+      email: invitation.email,
+      role: invitation.role,
+      tenantName: invitation.tenant?.name,
+      customerName: invitation.customer?.title,
+      inviterName: invitation.inviter?.name,
+      inviteeName: invitation.inviteeName,
+      expiresAt: invitation.expiresAt,
+    };
+  }
+
+  /**
+   * ✅ NEW: List invitations (admin only)
+   */
+  @Get('invitations')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.TENANT_ADMIN,
+    UserRole.CUSTOMER_ADMIN,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'List all invitations',
+    description: 'Get all invitations for your tenant/customer',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'List of invitations',
+  })
+  async listInvitations(@CurrentUser() user: User) {
+    return this.authService.listInvitations(user.id);
+  }
+
+  /**
+   * ✅ NEW: Revoke invitation
+   */
+  @Delete('invitations/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.TENANT_ADMIN,
+    UserRole.CUSTOMER_ADMIN,
+  )
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Revoke a pending invitation',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Invitation ID',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Invitation revoked successfully',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Invitation not found',
+  })
+  async revokeInvitation(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+  ): Promise<{ message: string }> {
+    await this.authService.revokeInvitation(user.id, id);
+    return { message: 'Invitation revoked successfully' };
+  }
+
 
   @Get('verify-email')
   @HttpCode(HttpStatus.OK)

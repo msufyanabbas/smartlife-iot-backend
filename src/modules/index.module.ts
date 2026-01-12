@@ -100,11 +100,13 @@ import { PaymentsModule } from './payments/payments.module';
 import { TwoFactorAuthModule } from './two-factor/two-factor-auth.module';
 import { CustomersModule } from './customers/customers.module';
 import { CustomerUsersModule } from './customer-users/customer-users.module';
+import { CodecModule } from './devices/codecs/codec.module';
 
 // ============================================
 // FEATURE MODULES ARRAY (for spreading in app.module.ts)
 // ============================================
 export const featureModules = [
+  CodecModule,
   CustomerUsersModule,
   CustomersModule,
   PaymentsModule,
