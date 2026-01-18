@@ -8,18 +8,15 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
-import { TenantsService } from '@modules/tenants/tenants.service';
 import { User, UserRole } from '@modules/users/entities/user.entity';
 
 export enum ResourceType {
   DEVICE = 'devices',
   USER = 'users',
   CUSTOMER = 'customers',
-  ASSET = 'assets',
-  DASHBOARD = 'dashboards',
-  RULE_CHAIN = 'ruleChains',
   API_CALL = 'apiCalls',
   STORAGE = 'storage',
+  SMS_NOTIFICATION = 'smsNotifications',
 }
 
 export const SUBSCRIPTION_LIMIT_KEY = 'subscription_limit';
@@ -49,7 +46,6 @@ export class SubscriptionLimitGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly subscriptionsService: SubscriptionsService,
-    private readonly tenantsService: TenantsService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -59,8 +55,8 @@ export class SubscriptionLimitGuard implements CanActivate {
       handler,
     );
 
+    // No limit check required
     if (!limitOptions) {
-      // No limit check required
       return true;
     }
 
@@ -73,72 +69,149 @@ export class SubscriptionLimitGuard implements CanActivate {
 
     // Super admins bypass all limits
     if (user.role === UserRole.SUPER_ADMIN) {
-      this.logger.debug(`Super admin ${user.email} bypasses subscription limits`);
+      this.logger.debug(
+        `Super admin ${user.email} bypasses subscription limits`,
+      );
       return true;
     }
 
-    // Get tenant ID (all users have tenantId)
+    // All users must belong to a tenant
     const tenantId = user.tenantId;
 
     if (!tenantId) {
       throw new ForbiddenException('User must belong to a tenant');
     }
 
-    // Get tenant and its admin
-    const tenant = await this.tenantsService.findOne(tenantId);
-    
-    if (!tenant.tenantAdminId) {
-      throw new ForbiddenException('Tenant has no admin configured');
-    }
-
-    // Check if tenant admin has active subscription
-    const canPerform = await this.subscriptionsService.canPerformAction(
-      tenant.tenantAdminId,
-      this.mapResourceToSubscriptionField(limitOptions.resource),
-    );
-
-    if (!canPerform) {
-      const subscription = await this.subscriptionsService.findCurrent(
-        tenant.tenantAdminId,
+    try {
+      // Check tenant-wide limits
+      const canPerform = await this.subscriptionsService.canTenantPerformAction(
+        tenantId,
+        this.mapResourceToSubscriptionField(limitOptions.resource),
       );
 
-      const limitKey = this.mapResourceToSubscriptionField(limitOptions.resource);
-      
-      // Get actual tenant-wide usage
-      const tenantUsage = await this.subscriptionsService.getTenantUsage(tenantId);
-      const currentUsage = tenantUsage[limitKey] || 0;
-      const limit = subscription.limits[limitKey];
+      if (!canPerform) {
+        // Get current usage and limits for error message
+        const subscription = await this.subscriptionsService.findCurrent(
+          user.id,
+        );
+        const tenantUsage =
+          await this.subscriptionsService.getTenantUsage(tenantId);
 
-      this.logger.warn(
-        `Tenant ${tenantId} reached ${limitOptions.resource} limit: ${currentUsage}/${limit}`,
+        const resourceKey = this.mapResourceToSubscriptionField(
+          limitOptions.resource,
+        );
+        const currentUsage = tenantUsage[resourceKey] || 0;
+        const limit = this.getLimit(subscription.limits, limitOptions.resource);
+
+        this.logger.warn(
+          `Tenant ${tenantId} reached ${limitOptions.resource} limit: ${currentUsage}/${limit}`,
+        );
+
+        throw new ForbiddenException(
+          this.generateLimitMessage(
+            limitOptions.resource,
+            currentUsage,
+            limit,
+            subscription.plan,
+            user.role === UserRole.TENANT_ADMIN,
+          ),
+        );
+      }
+
+      this.logger.debug(
+        `Tenant ${tenantId} can perform ${limitOptions.operation} on ${limitOptions.resource}`,
       );
 
+      return true;
+    } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
+      this.logger.error(
+        `Error checking subscription limit for tenant ${tenantId}:`,
+        error,
+      );
       throw new ForbiddenException(
-        `Your tenant has reached the ${limitOptions.resource} limit for the ${subscription.plan} plan (${currentUsage}/${limit}). Please ask your tenant admin to upgrade the subscription.`,
+        'Unable to verify subscription limits. Please try again.',
       );
     }
-
-    this.logger.debug(
-      `Tenant ${tenantId} can perform ${limitOptions.operation} on ${limitOptions.resource}`,
-    );
-
-    return true;
   }
 
+  /**
+   * Map ResourceType to subscription field name
+   */
   private mapResourceToSubscriptionField(
     resource: ResourceType,
-  ): 'devices' | 'users' | 'apiCalls' | 'storage' {
+  ): 'devices' | 'users' | 'customers' | 'apiCalls' | 'storage' | 'smsNotifications' {
     const mapping = {
       [ResourceType.DEVICE]: 'devices' as const,
       [ResourceType.USER]: 'users' as const,
-      [ResourceType.CUSTOMER]: 'users' as const, // Customers count as users
-      [ResourceType.ASSET]: 'devices' as const, // Assets count as devices
-      [ResourceType.DASHBOARD]: 'devices' as const, // Or create separate limit
-      [ResourceType.RULE_CHAIN]: 'devices' as const, // Or create separate limit
+      [ResourceType.CUSTOMER]: 'customers' as const,
       [ResourceType.API_CALL]: 'apiCalls' as const,
       [ResourceType.STORAGE]: 'storage' as const,
+      [ResourceType.SMS_NOTIFICATION]: 'smsNotifications' as const,
     };
 
-    return mapping[resource] || 'devices';
+    return mapping[resource];
+  }
+
+  /**
+   * Get limit value from subscription limits
+   */
+  private getLimit(limits: any, resource: ResourceType): number {
+    switch (resource) {
+      case ResourceType.DEVICE:
+        return limits.devices;
+      case ResourceType.USER:
+        return limits.users;
+      case ResourceType.CUSTOMER:
+        return limits.customers;
+      case ResourceType.API_CALL:
+        return limits.apiCallsPerMonth;
+      case ResourceType.STORAGE:
+        return limits.storageGB;
+      case ResourceType.SMS_NOTIFICATION:
+        return limits.smsNotificationsPerMonth;
+      default:
+        return 0;
+    }
+  }
+
+  /**
+   * Generate user-friendly limit reached message
+   */
+  private generateLimitMessage(
+    resource: ResourceType,
+    currentUsage: number,
+    limit: number,
+    planName: string,
+    isTenantAdmin: boolean,
+  ): string {
+    const resourceName = this.getResourceDisplayName(resource);
+    const limitText = limit === -1 ? 'Unlimited' : limit.toString();
+
+    const baseMessage = `Your tenant has reached the ${resourceName.toLowerCase()} limit for the ${planName} plan (${currentUsage}/${limitText}).`;
+
+    if (isTenantAdmin) {
+      return `${baseMessage} Please upgrade your subscription to increase this limit.`;
+    } else {
+      return `${baseMessage} Please contact your tenant administrator to upgrade the subscription.`;
+    }
+  }
+
+  /**
+   * Get display name for resource
+   */
+  private getResourceDisplayName(resource: ResourceType): string {
+    const names = {
+      [ResourceType.DEVICE]: 'Device',
+      [ResourceType.USER]: 'User',
+      [ResourceType.CUSTOMER]: 'Customer',
+      [ResourceType.API_CALL]: 'API Call',
+      [ResourceType.STORAGE]: 'Storage',
+      [ResourceType.SMS_NOTIFICATION]: 'SMS Notification',
+    };
+
+    return names[resource];
   }
 }

@@ -10,6 +10,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -27,47 +28,71 @@ import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { DeviceStatus } from './entities/device.entity';
 import { Roles } from '@/common/decorators/roles.decorator';
-import { RequireSubscription } from '@/common/decorators/subscription.decorator';
-import { SubscriptionPlan } from '../subscriptions/entities/subscription.entity';
 import { RolesGuard } from '@/common/guards';
-import { SubscriptionGuard } from '@/common/guards/subscription.guard';
-import { FeatureLimitGuard } from '@/common/guards/feature-limit.guard';
-import { AccessControl } from '@/common/decorators/access-control.decorator';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
-import { RequireSubscriptionLimit, ResourceType, SubscriptionLimitGuard } from '@/common/guards/subscription-limit.guard';
+import { 
+  RequireSubscriptionLimit, 
+  ResourceType, 
+  SubscriptionLimitGuard 
+} from '@/common/guards/subscription-limit.guard';
 
 @ApiTags('devices')
 @Controller('devices')
-@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionLimitGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionLimitGuard) // ✅ Global guards
 @ApiBearerAuth()
 export class DevicesController {
-  constructor(private readonly devicesService: DevicesService, private readonly subscriptionsService: SubscriptionsService) {}
+  constructor(
+    private readonly devicesService: DevicesService,
+    private readonly subscriptionsService: SubscriptionsService, // ✅ Inject service
+  ) {}
 
+  /**
+   * ============================================
+   * CREATE DEVICE - With Limit Check
+   * ============================================
+   */
   @Post()
-  // @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionGuard, FeatureLimitGuard)
-  // @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionLimitGuard)
-  @Roles(UserRole.USER, UserRole.TENANT_ADMIN)
+  @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER_ADMIN)
   @RequireSubscriptionLimit({
     resource: ResourceType.DEVICE,
     operation: 'create',
-  }) // ✅ Check device limit
-  // @RequireSubscription(SubscriptionPlan.STARTER, SubscriptionPlan.PROFESSIONAL, SubscriptionPlan.ENTERPRISE)
+  }) // ✅ Guard checks limit BEFORE creation
   @ApiOperation({ summary: 'Create a new device' })
   @ApiResponse({ status: 201, description: 'Device created successfully' })
+  @ApiResponse({ status: 403, description: 'Device limit reached' })
   @ApiResponse({ status: 409, description: 'Device already exists' })
-  create(@CurrentUser() user: User, @Body() createDeviceDto: CreateDeviceDto) {
-    return this.devicesService.create(user, createDeviceDto);
+  async create(
+    @CurrentUser() user: User,
+    @Body() createDeviceDto: CreateDeviceDto,
+  ) {
+    // ✅ Guard already checked limit - safe to create
+    const device = await this.devicesService.create(user, createDeviceDto);
+
+    return {
+      message: 'Device created successfully',
+      data: device,
+    };
   }
 
+  /**
+   * ============================================
+   * GET ALL DEVICES
+   * ============================================
+   */
   @Get()
-  @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER_ADMIN)
   @ApiOperation({ summary: 'Get all devices with pagination' })
   @ApiResponse({ status: 200, description: 'List of devices' })
   findAll(@CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
     return this.devicesService.findAll(user, paginationDto);
   }
 
+  /**
+   * ============================================
+   * GET DEVICE STATISTICS
+   * ============================================
+   */
   @Get('statistics')
   @ApiOperation({ summary: 'Get device statistics' })
   @ApiResponse({ status: 200, description: 'Device statistics' })
@@ -75,6 +100,11 @@ export class DevicesController {
     return this.devicesService.getStatistics(user);
   }
 
+  /**
+   * ============================================
+   * GET DEVICE BY ID
+   * ============================================
+   */
   @Get(':id')
   @ApiOperation({ summary: 'Get device by ID' })
   @ApiResponse({ status: 200, description: 'Device found' })
@@ -83,6 +113,11 @@ export class DevicesController {
     return this.devicesService.findOne(id, user);
   }
 
+  /**
+   * ============================================
+   * UPDATE DEVICE
+   * ============================================
+   */
   @Patch(':id')
   @ApiOperation({ summary: 'Update device' })
   @ApiResponse({ status: 200, description: 'Device updated' })
@@ -95,6 +130,11 @@ export class DevicesController {
     return this.devicesService.update(id, user, updateDeviceDto);
   }
 
+  /**
+   * ============================================
+   * ACTIVATE DEVICE
+   * ============================================
+   */
   @Post(':id/activate')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Activate device' })
@@ -104,6 +144,11 @@ export class DevicesController {
     return this.devicesService.activate(id, user);
   }
 
+  /**
+   * ============================================
+   * DEACTIVATE DEVICE
+   * ============================================
+   */
   @Post(':id/deactivate')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Deactivate device' })
@@ -112,21 +157,30 @@ export class DevicesController {
     return this.devicesService.deactivate(id, user);
   }
 
+  /**
+   * ============================================
+   * GET DEVICE CREDENTIALS
+   * ============================================
+   */
   @Get(':id/credentials')
   @ApiOperation({ summary: 'Get device MQTT credentials' })
   @ApiResponse({
     status: 200,
-    description:
-      'Device credentials retrieved (includes MQTT broker config for gateways)',
+    description: 'Device credentials retrieved',
   })
   @ApiResponse({ status: 404, description: 'Device not found' })
   getCredentials(
     @CurrentUser() user: User,
     @Param('id', ParseIdPipe) id: string,
   ) {
-    return this.devicesService.getCredentials(id,user);
+    return this.devicesService.getCredentials(id, user);
   }
 
+  /**
+   * ============================================
+   * REGENERATE CREDENTIALS
+   * ============================================
+   */
   @Post(':id/regenerate-credentials')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Regenerate device credentials' })
@@ -138,49 +192,75 @@ export class DevicesController {
     return this.devicesService.regenerateCredentials(id, user);
   }
 
+  /**
+   * ============================================
+   * DELETE DEVICE - With Usage Decrement
+   * ============================================
+   */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete device' })
   @ApiResponse({ status: 204, description: 'Device deleted' })
   @ApiResponse({ status: 404, description: 'Device not found' })
   async remove(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    const result = await this.devicesService.remove(id, user);
-     await this.subscriptionsService.decrementUsage(user.id, 'devices', 1);
-     return result;
+    // ✅ Delete device first
+    await this.devicesService.remove(id, user);
+    // No content response
+    return;
   }
 
+  /**
+   * ============================================
+   * BULK UPDATE STATUS
+   * Only Professional+ plans
+   * ============================================
+   */
   @Post('bulk/status')
-  @AccessControl(
-    [UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN],
-    [SubscriptionPlan.PROFESSIONAL, SubscriptionPlan.ENTERPRISE]
-  )
+  @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Bulk update device status' })
+  @ApiOperation({ 
+    summary: 'Bulk update device status (Professional plan required)',
+    description: 'Requires Professional or Enterprise plan'
+  })
   @ApiResponse({ status: 200, description: 'Devices updated' })
-  bulkUpdateStatus(
+  @ApiResponse({ status: 403, description: 'Feature not available in your plan' })
+  async bulkUpdateStatus(
     @CurrentUser() user: User,
     @Body() body: { deviceIds: string[]; status: DeviceStatus },
   ) {
-    return this.devicesService.bulkUpdateStatus(
+    // ✅ Check if user has bulk operations feature (Professional+)
+    const hasFeature = await this.subscriptionsService.hasFeature(
+      user.id,
+      'bulkOperations', // You'd need to add this to your features
+    );
+
+    if (!hasFeature) {
+      if (!hasFeature) { throw new ForbiddenException('Bulk operations require Professional plan or higher');}
+    }
+
+    const result = await this.devicesService.bulkUpdateStatus(
       body.deviceIds,
       user.id,
       body.status,
     );
+
+    return {
+      message: 'Devices updated successfully',
+      data: result,
+    };
   }
 
-   /**
+  /**
    * ============================================
-   * Customer-specific endpoints
+   * CUSTOMER-SPECIFIC ENDPOINTS
    * ============================================
    */
 
-    /**
+  /**
    * Get devices by customer ID
-   * Customer users can only access their own customer
-   * Admins can access any customer
    */
   @Get('customer/:customerId')
-  @UseGuards(CustomerAccessGuard) // Validates customer access
+  @UseGuards(CustomerAccessGuard)
   @ApiOperation({ summary: 'Get all devices for a specific customer' })
   @ApiResponse({ status: 200, description: 'Devices retrieved' })
   @ApiResponse({ status: 403, description: 'Access denied' })
@@ -199,7 +279,6 @@ export class DevicesController {
    * Assign device to customer (Admins only)
    */
   @Post(':id/assign-customer')
-  @UseGuards(RolesGuard)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Assign device to a customer (Admins only)' })
@@ -224,7 +303,6 @@ export class DevicesController {
    * Unassign device from customer (Admins only)
    */
   @Post(':id/unassign-customer')
-  @UseGuards(RolesGuard)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Unassign device from customer (Admins only)' })

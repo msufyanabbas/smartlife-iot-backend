@@ -23,6 +23,7 @@ import {
 import { generateRandomString } from '@/common/utils/helpers';
 import { UserRole } from '../users/entities/user.entity';
 import { DeviceCredentialsService } from './device-credentials.service';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
 @Injectable()
 export class DevicesService {
@@ -31,6 +32,7 @@ export class DevicesService {
     private deviceRepository: Repository<Device>,
     private configService: ConfigService,
     private credentialsService: DeviceCredentialsService,
+    private subscriptionsService: SubscriptionsService,
   ) {}
 
   /**
