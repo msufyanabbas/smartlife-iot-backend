@@ -13,6 +13,7 @@ export { SeederModule } from '../database/seeds/seeder.module';
 export { HealthModule } from './health/health.module';
 export { MetricsModule } from './metrics/metrics.module';
 export {CustomersModule} from './customers/customers.module';
+export {UserSettingsModule} from './user-settings/user-settings.module';
 
 // ============================================
 // FEATURE MODULES (application modules)
@@ -74,6 +75,7 @@ import { AssetsModule } from './assets/assets.module';
 import { AttributesModule } from './attributes/attributes.module';
 import { NodesModule } from './nodes/nodes.module';
 import { WebsocketModule } from './websocket/websocket.module';
+import { UserSettingsModule } from './user-settings/user-settings.module';
 import { MailModule } from './mail/mail.module';
 import { EmailTemplatesModule } from './email-templates/email-templates.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -111,6 +113,7 @@ export const featureModules = [
   CustomersModule,
   PaymentsModule,
   TwoFactorAuthModule,
+  UserSettingsModule,
   // Core
   AuthModule,
   UsersModule,

@@ -56,3 +56,4 @@ export { Payment } from './payments/entities/payment.entity';
 export { TwoFactorAuth } from './two-factor/entities/two-factor-auth.entity';
 export { Customer } from './customers/entities/customers.entity';
 export { Invitation } from './auth/entities/invitation.entity';
+export {UserSettings} from './user-settings/entities/user-settings.entity'
