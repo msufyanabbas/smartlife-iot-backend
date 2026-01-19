@@ -7,9 +7,10 @@ import {
   ConflictException,
   BadRequestException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, LessThan } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Device, User } from '@modules/index.entities';
 import { DeviceStatus } from './entities/device.entity';
@@ -24,13 +25,19 @@ import { generateRandomString } from '@/common/utils/helpers';
 import { UserRole } from '../users/entities/user.entity';
 import { DeviceCredentialsService } from './device-credentials.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { UsersService } from '../users/users.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 @Injectable()
 export class DevicesService {
+  private readonly logger = new Logger(DevicesService.name);
   constructor(
     @InjectRepository(Device)
     private deviceRepository: Repository<Device>,
     private configService: ConfigService,
+    private userService: UsersService,
+     private eventEmitter: EventEmitter2,
     private credentialsService: DeviceCredentialsService,
     private subscriptionsService: SubscriptionsService,
   ) {}
@@ -75,6 +82,12 @@ export class DevicesService {
     });
 
     const savedDevice = await this.deviceRepository.save(device);
+
+    this.subscriptionsService.incrementTenantUsage(
+      user.tenantId,
+      "devices",
+      1
+    );
 
     // Create credentials for the device
     await this.credentialsService.createCredentials(savedDevice);
@@ -239,16 +252,6 @@ export class DevicesService {
     
     // Then delete device
     await this.deviceRepository.softRemove(device);
-  }
-
-  /**
-   * Update last seen timestamp
-   */
-  async updateLastSeen(deviceKey: string): Promise<void> {
-    await this.deviceRepository.update(
-      { deviceKey },
-      { lastSeenAt: new Date() },
-    );
   }
 
   /**
@@ -476,4 +479,69 @@ export class DevicesService {
       order: { name: 'ASC' },
     });
   }
+
+  /**
+ * ✅ Handle device going offline
+ */
+private async handleDeviceOffline(device: Device, user: User): Promise<void> {
+  this.eventEmitter.emit('device.offline', { device, user });
+  this.logger.warn(`Device ${device.name} (${device.id}) went offline`);
+}
+
+/**
+ * ✅ Handle device coming online
+ */
+private async handleDeviceOnline(device: Device, user: User): Promise<void> {
+  this.eventEmitter.emit('device.connected', { device, user });
+  this.logger.log(`Device ${device.name} (${device.id}) is now online`);
+}
+
+/**
+ * ✅ Update updateLastSeen to emit events
+ */
+async updateLastSeen(deviceKey: string): Promise<void> {
+  const device = await this.findByDeviceKey(deviceKey);
+  
+  const wasOffline = device.status === DeviceStatus.OFFLINE;
+  
+  await this.deviceRepository.update(
+    { deviceKey },
+    { 
+      lastSeenAt: new Date(),
+      status: DeviceStatus.ACTIVE 
+    },
+  );
+
+  if (wasOffline) {
+    const user = await this.userService.findOne(device.userId);
+    await this.handleDeviceOnline(device, user);
+  }
+}
+
+/**
+ * ✅ Add a cron job to check for offline devices
+ */
+@Cron(CronExpression.EVERY_5_MINUTES)
+async checkOfflineDevices(): Promise<void> {
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+  
+  const devices = await this.deviceRepository.find({
+    where: {
+      status: DeviceStatus.ACTIVE,
+      lastSeenAt: LessThan(fiveMinutesAgo),
+    },
+  });
+
+  for (const device of devices) {
+    device.status = DeviceStatus.OFFLINE;
+    await this.deviceRepository.save(device);
+    
+    const user = await this.userService.findOne(device.userId);
+    await this.handleDeviceOffline(device, user);
+  }
+  
+  if (devices.length > 0) {
+    this.logger.log(`Marked ${devices.length} devices as offline`);
+  }
+}
 }

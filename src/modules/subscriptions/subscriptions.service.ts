@@ -22,6 +22,7 @@ import {
   UpgradeSubscriptionDto,
 } from './dto/create-subscription.dto';
 import { Customer, Device, Tenant, User } from '../index.entities';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class SubscriptionsService {
@@ -271,6 +272,7 @@ export class SubscriptionsService {
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
     private readonly dataSource: DataSource,
+    private usersService: UsersService,
   ) {}
 
   /**
@@ -426,8 +428,11 @@ export class SubscriptionsService {
    * Find current subscription
    */
   async findCurrent(userId: string): Promise<Subscription> {
+    
+    const user: any = await this.usersService.findByTenant(userId);
+
     const subscription = await this.subscriptionRepository.findOne({
-      where: { userId },
+      where: { userId: user.id },
     });
 
     if (!subscription) {
@@ -938,11 +943,11 @@ export class SubscriptionsService {
       where: { id: tenantId },
     });
 
-    if (!tenant || !tenant.tenantAdminId) {
+        if (!tenant || !tenant.id) {
       throw new NotFoundException('Tenant admin not found');
     }
 
-    await this.incrementUsage(tenant.tenantAdminId, resource, amount);
+    await this.incrementUsage(tenant.id, resource, amount);
   }
 
   /**

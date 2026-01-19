@@ -36,6 +36,8 @@ import {
   ResourceType, 
   SubscriptionLimitGuard 
 } from '@/common/guards/subscription-limit.guard';
+import { Notify } from '@/common/decorators/notify.decorator';
+import { NotificationChannel, NotificationPriority, NotificationType } from '../notifications/entities/notification.entity';
 
 @ApiTags('devices')
 @Controller('devices')
@@ -54,6 +56,19 @@ export class DevicesController {
    */
   @Post()
   @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER_ADMIN)
+  @Notify({
+  type: NotificationType.DEVICE,
+  channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+  priority: NotificationPriority.NORMAL,
+  title: 'Device Created',
+  message: 'Device "{entityName}" has been created successfully',
+  recipients: 'self',
+  entityType: 'device',
+  action: {
+    label: 'View Device',
+    urlTemplate: '/devices/{entityId}',
+  },
+})
   @RequireSubscriptionLimit({
     resource: ResourceType.DEVICE,
     operation: 'create',

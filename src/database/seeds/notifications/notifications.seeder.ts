@@ -1,3 +1,4 @@
+// src/database/seeders/notification.seeder.ts
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -20,29 +21,50 @@ export class NotificationSeeder implements ISeeder {
   ) {}
 
   async seed(): Promise<void> {
-    // Fetch all users first
-    const users = await this.userRepository.find({ take: 10 });
+    // ✅ Fetch users with tenant and customer information
+    const users = await this.userRepository.find({
+      take: 10,
+      relations: ['tenant', 'customer'], // Load relations
+    });
 
     if (users.length === 0) {
       console.log('⚠️  No users found. Please seed users first.');
       return;
     }
 
-    // Helper function to get random item from array
+    console.log(`📧 Seeding notifications for ${users.length} users...`);
+
+    // Helper functions
     const getRandomItem = <T>(array: T[]): T => {
       return array[Math.floor(Math.random() * array.length)];
     };
 
-    // Helper function to generate past date
     const generatePastDate = (hoursAgo: number): Date => {
       const date = new Date();
       date.setHours(date.getHours() - hoursAgo);
       return date;
     };
 
+    // ✅ Organize users by role for better testing
+    const tenantAdmins = users.filter((u) => u.role === 'tenant_admin');
+    const customerAdmins = users.filter((u) => u.role === 'customer_admin');
+    const customerUsers = users.filter((u) => u.role === 'customer_user');
+    const regularUsers = users.filter(
+      (u) => u.role === 'user' || u.role === 'tenant_admin',
+    );
+
+    console.log(
+      `👥 User distribution: ${tenantAdmins.length} tenant admins, ${customerAdmins.length} customer admins, ${customerUsers.length} customer users`,
+    );
+
     const notifications = [
+      // ============================================
+      // CRITICAL ALARMS - Multiple users
+      // ============================================
       {
         userId: users[0].id,
+        tenantId: users[0].tenantId, // ✅ Required
+        customerId: users[0].customerId, // ✅ Can be null
         type: NotificationType.ALARM,
         channel: NotificationChannel.EMAIL,
         priority: NotificationPriority.URGENT,
@@ -83,6 +105,8 @@ export class NotificationSeeder implements ISeeder {
       },
       {
         userId: users[0].id,
+        tenantId: users[0].tenantId,
+        customerId: users[0].customerId,
         type: NotificationType.DEVICE,
         channel: NotificationChannel.PUSH,
         priority: NotificationPriority.HIGH,
@@ -110,6 +134,8 @@ export class NotificationSeeder implements ISeeder {
       },
       {
         userId: users[1]?.id || users[0].id,
+        tenantId: users[1]?.tenantId || users[0].tenantId,
+        customerId: users[1]?.customerId || users[0].customerId,
         type: NotificationType.ALARM,
         channel: NotificationChannel.SMS,
         priority: NotificationPriority.URGENT,
@@ -129,8 +155,14 @@ export class NotificationSeeder implements ISeeder {
         retryCount: 0,
         maxRetries: 3,
       },
+
+      // ============================================
+      // SYSTEM NOTIFICATIONS
+      // ============================================
       {
         userId: users[0].id,
+        tenantId: users[0].tenantId,
+        customerId: users[0].customerId,
         type: NotificationType.SYSTEM,
         channel: NotificationChannel.IN_APP,
         priority: NotificationPriority.NORMAL,
@@ -161,8 +193,14 @@ export class NotificationSeeder implements ISeeder {
         retryCount: 0,
         maxRetries: 3,
       },
+
+      // ============================================
+      // REPORTS
+      // ============================================
       {
         userId: users[0].id,
+        tenantId: users[0].tenantId,
+        customerId: users[0].customerId,
         type: NotificationType.REPORT,
         channel: NotificationChannel.EMAIL,
         priority: NotificationPriority.NORMAL,
@@ -201,8 +239,14 @@ export class NotificationSeeder implements ISeeder {
         retryCount: 0,
         maxRetries: 3,
       },
+
+      // ============================================
+      // USER NOTIFICATIONS
+      // ============================================
       {
         userId: users[1]?.id || users[0].id,
+        tenantId: users[1]?.tenantId || users[0].tenantId,
+        customerId: users[1]?.customerId || users[0].customerId,
         type: NotificationType.USER,
         channel: NotificationChannel.IN_APP,
         priority: NotificationPriority.NORMAL,
@@ -225,8 +269,14 @@ export class NotificationSeeder implements ISeeder {
         retryCount: 0,
         maxRetries: 3,
       },
+
+      // ============================================
+      // WEBHOOK NOTIFICATIONS
+      // ============================================
       {
         userId: users[0].id,
+        tenantId: users[0].tenantId,
+        customerId: users[0].customerId,
         type: NotificationType.ALARM,
         channel: NotificationChannel.WEBHOOK,
         priority: NotificationPriority.HIGH,
@@ -248,73 +298,14 @@ export class NotificationSeeder implements ISeeder {
         retryCount: 0,
         maxRetries: 3,
       },
-      {
-        userId: users[2]?.id || users[0].id,
-        type: NotificationType.DEVICE,
-        channel: NotificationChannel.EMAIL,
-        priority: NotificationPriority.NORMAL,
-        status: NotificationStatus.READ,
-        title: 'Device Firmware Update Available',
-        message: 'Firmware version 2.5.0 is available for 12 of your devices',
-        htmlContent: `
-          <div>
-            <h2>Firmware Update Available</h2>
-            <p>A new firmware version is available for your devices:</p>
-            <p><strong>Version:</strong> 2.5.0<br>
-            <strong>Release Date:</strong> November 1, 2025<br>
-            <strong>Devices Eligible:</strong> 12</p>
-            <h3>What's New:</h3>
-            <ul>
-              <li>Improved battery efficiency</li>
-              <li>Enhanced security features</li>
-              <li>Bug fixes and stability improvements</li>
-            </ul>
-          </div>
-        `,
-        action: {
-          label: 'Update Devices',
-          url: '/devices/firmware-update',
-          type: 'button' as const,
-        },
-        metadata: {
-          firmwareVersion: '2.5.0',
-          eligibleDevices: 12,
-        },
-        recipientEmail: users[2]?.email || users[0].email,
-        isRead: true,
-        readAt: generatePastDate(72),
-        sentAt: generatePastDate(72),
-        deliveredAt: generatePastDate(72),
-        retryCount: 0,
-        maxRetries: 3,
-      },
+
+      // ============================================
+      // FAILED NOTIFICATION (for testing retry)
+      // ============================================
       {
         userId: getRandomItem(users).id,
-        type: NotificationType.SYSTEM,
-        channel: NotificationChannel.PUSH,
-        priority: NotificationPriority.LOW,
-        status: NotificationStatus.DELIVERED,
-        title: 'Storage Usage Notice',
-        message: 'Your storage usage is at 75% capacity',
-        metadata: {
-          storageUsed: 75,
-          storageTotal: 100,
-          unit: 'GB',
-        },
-        action: {
-          label: 'Manage Storage',
-          url: '/settings/storage',
-          type: 'link' as const,
-        },
-        recipientDeviceToken: 'fcm-token-random-device',
-        isRead: false,
-        sentAt: generatePastDate(6),
-        deliveredAt: generatePastDate(6),
-        retryCount: 0,
-        maxRetries: 3,
-      },
-      {
-        userId: getRandomItem(users).id,
+        tenantId: getRandomItem(users).tenantId,
+        customerId: getRandomItem(users).customerId,
         type: NotificationType.ALARM,
         channel: NotificationChannel.EMAIL,
         priority: NotificationPriority.HIGH,
@@ -330,11 +321,17 @@ export class NotificationSeeder implements ISeeder {
         sentAt: generatePastDate(4),
         failedAt: generatePastDate(4),
         errorMessage: 'SMTP error: Recipient email address not found',
-        retryCount: 3,
+        retryCount: 1, // ✅ Has retries remaining
         maxRetries: 3,
       },
+
+      // ============================================
+      // SCHEDULED NOTIFICATION (future)
+      // ============================================
       {
         userId: getRandomItem(users).id,
+        tenantId: getRandomItem(users).tenantId,
+        customerId: getRandomItem(users).customerId,
         type: NotificationType.DEVICE,
         channel: NotificationChannel.IN_APP,
         priority: NotificationPriority.NORMAL,
@@ -354,238 +351,82 @@ export class NotificationSeeder implements ISeeder {
         retryCount: 0,
         maxRetries: 3,
       },
-      {
-        userId: getRandomItem(users).id,
-        type: NotificationType.REPORT,
-        channel: NotificationChannel.EMAIL,
-        priority: NotificationPriority.LOW,
-        status: NotificationStatus.DELIVERED,
-        title: 'Monthly Analytics Report',
-        message: 'Your monthly analytics report for October 2025 is ready',
-        htmlContent: `
-          <div>
-            <h2>Monthly Analytics Report - October 2025</h2>
-            <p>Your comprehensive monthly analytics report is now available.</p>
-            <h3>Key Metrics:</h3>
-            <ul>
-              <li>Total Uptime: 99.8%</li>
-              <li>Data Processed: 15.2 TB</li>
-              <li>Average Response Time: 245ms</li>
-              <li>Critical Alerts: 8</li>
-            </ul>
-          </div>
-        `,
-        action: {
-          label: 'Download Report',
-          url: '/reports/monthly/2025-10/download',
-          type: 'button' as const,
-        },
-        metadata: {
-          reportType: 'monthly_analytics',
-          month: 10,
-          year: 2025,
-        },
-        recipientEmail: getRandomItem(users).email,
-        isRead: false,
-        sentAt: generatePastDate(168), // 1 week ago
-        deliveredAt: generatePastDate(168),
-        retryCount: 0,
-        maxRetries: 3,
-      },
-      {
-        userId: getRandomItem(users).id,
-        type: NotificationType.ALARM,
-        channel: NotificationChannel.SMS,
-        priority: NotificationPriority.URGENT,
-        status: NotificationStatus.DELIVERED,
-        title: 'CO2 Level Critical',
-        message: 'CO2 levels exceed safe threshold (1250 ppm) in Server Room',
-        relatedEntityType: 'alarm',
-        relatedEntityId: 'alarm-co2-001',
-        metadata: {
-          deviceId: 'device-co2-sensor-01',
-          co2Level: 1250,
-          threshold: 1000,
-          location: 'Server Room',
-        },
-        recipientPhone: '+966509876543',
-        isRead: false,
-        sentAt: generatePastDate(0.2),
-        deliveredAt: generatePastDate(0.2),
-        retryCount: 0,
-        maxRetries: 3,
-      },
-      {
-        userId: getRandomItem(users).id,
-        type: NotificationType.USER,
-        channel: NotificationChannel.IN_APP,
-        priority: NotificationPriority.NORMAL,
-        status: NotificationStatus.READ,
-        title: 'Password Changed Successfully',
-        message: 'Your password was changed on November 4, 2025',
-        metadata: {
-          changeDate: '2025-11-04T10:30:00Z',
-          ipAddress: '192.168.1.100',
-        },
-        isRead: true,
-        readAt: generatePastDate(48),
-        retryCount: 0,
-        maxRetries: 3,
-      },
-      {
-        userId: getRandomItem(users).id,
-        type: NotificationType.SYSTEM,
-        channel: NotificationChannel.EMAIL,
-        priority: NotificationPriority.HIGH,
-        status: NotificationStatus.DELIVERED,
-        title: 'Security Alert: New Login Detected',
-        message: 'New login from unrecognized device',
-        htmlContent: `
-          <div style="font-family: Arial, sans-serif;">
-            <h2 style="color: #F59E0B;">Security Alert</h2>
-            <p>We detected a new login to your account from an unrecognized device.</p>
-            <h3>Login Details:</h3>
-            <ul>
-              <li><strong>Date:</strong> November 5, 2025 at 3:45 PM</li>
-              <li><strong>Device:</strong> Chrome on Windows</li>
-              <li><strong>Location:</strong> Riyadh, Saudi Arabia</li>
-              <li><strong>IP Address:</strong> 192.168.1.55</li>
-            </ul>
-            <p>If this was you, you can safely ignore this message. If you don't recognize this activity, please secure your account immediately.</p>
-          </div>
-        `,
-        action: {
-          label: 'Review Login Activity',
-          url: '/security/sessions',
-          type: 'button' as const,
-        },
-        metadata: {
-          ipAddress: '192.168.1.55',
-          device: 'Chrome on Windows',
-          location: 'Riyadh, Saudi Arabia',
-        },
-        recipientEmail: getRandomItem(users).email,
-        isRead: false,
-        sentAt: generatePastDate(2),
-        deliveredAt: generatePastDate(2),
-        retryCount: 0,
-        maxRetries: 3,
-      },
-      {
-        userId: getRandomItem(users).id,
-        type: NotificationType.DEVICE,
-        channel: NotificationChannel.WEBHOOK,
-        priority: NotificationPriority.HIGH,
-        status: NotificationStatus.DELIVERED,
-        title: 'Memory Usage Critical',
-        message: 'Device memory usage at 95.5% - immediate action required',
-        relatedEntityType: 'alarm',
-        relatedEntityId: 'alarm-memory-001',
-        metadata: {
-          deviceId: 'device-edge-01',
-          memoryUsage: 95.5,
-          threshold: 90,
-        },
-        webhookUrl: 'https://monitoring.example.com/webhooks/alerts',
-        isRead: false,
-        sentAt: generatePastDate(1),
-        deliveredAt: generatePastDate(1),
-        retryCount: 0,
-        maxRetries: 3,
-      },
-      {
-        userId: getRandomItem(users).id,
-        type: NotificationType.REPORT,
-        channel: NotificationChannel.EMAIL,
-        priority: NotificationPriority.NORMAL,
-        status: NotificationStatus.PENDING,
-        title: 'Scheduled: Energy Consumption Report',
-        message:
-          'Your weekly energy consumption report will be generated and sent tomorrow',
-        metadata: {
-          reportType: 'energy_consumption',
-          period: 'weekly',
-        },
-        recipientEmail: getRandomItem(users).email,
-        isRead: false,
-        scheduledFor: new Date(Date.now() + 86400000), // 1 day from now
-        retryCount: 0,
-        maxRetries: 3,
-      },
-      {
-        userId: getRandomItem(users).id,
-        type: NotificationType.SYSTEM,
-        channel: NotificationChannel.PUSH,
-        priority: NotificationPriority.NORMAL,
-        status: NotificationStatus.DELIVERED,
-        title: 'Backup Completed Successfully',
-        message: 'Daily backup completed at 02:00 AM',
-        metadata: {
-          backupSize: '2.5 GB',
-          backupTime: '02:00:00',
-          backupDate: '2025-11-06',
-        },
-        recipientDeviceToken: 'fcm-token-backup-notification',
-        isRead: false,
-        sentAt: generatePastDate(4),
-        deliveredAt: generatePastDate(4),
-        retryCount: 0,
-        maxRetries: 3,
-      },
-      {
-        userId: getRandomItem(users).id,
-        type: NotificationType.ALARM,
-        channel: NotificationChannel.EMAIL,
-        priority: NotificationPriority.HIGH,
-        status: NotificationStatus.SENT,
-        title: 'Vibration Anomaly Detected',
-        message: 'Unusual vibration levels (75.5 Hz) detected on Machine A-12',
-        htmlContent: `
-          <div>
-            <h2 style="color: #F59E0B;">Vibration Anomaly Alert</h2>
-            <p>Unusual vibration levels detected on <strong>Machine A-12</strong>.</p>
-            <p><strong>Current Reading:</strong> 75.5 Hz</p>
-            <p><strong>Normal Range:</strong> 50-100 Hz</p>
-            <p>Maintenance inspection recommended.</p>
-          </div>
-        `,
-        relatedEntityType: 'alarm',
-        relatedEntityId: 'alarm-vibration-001',
-        action: {
-          label: 'Schedule Maintenance',
-          url: '/maintenance/schedule',
-          type: 'button' as const,
-        },
-        recipientEmail: getRandomItem(users).email,
-        isRead: false,
-        sentAt: generatePastDate(0.5),
-        retryCount: 0,
-        maxRetries: 3,
-        expiresAt: new Date(Date.now() + 604800000), // 7 days from now
-      },
-      {
-        userId: getRandomItem(users).id,
-        type: NotificationType.USER,
-        channel: NotificationChannel.IN_APP,
-        priority: NotificationPriority.LOW,
-        status: NotificationStatus.READ,
-        title: 'Profile Updated',
-        message: 'Your profile information has been updated successfully',
-        isRead: true,
-        readAt: generatePastDate(96),
-        retryCount: 0,
-        maxRetries: 3,
-      },
     ];
 
-    for (const notificationData of notifications) {
-      const notification = this.notificationRepository.create(notificationData);
-      await this.notificationRepository.save(notification);
-      console.log(
-        `✅ Created notification: ${notificationData.title} (${notificationData.type} - ${notificationData.status})`,
-      );
+    // ✅ Generate random notifications for remaining users
+    const additionalNotifications: any = [];
+    
+    for (let i = 0; i < Math.min(10, users.length); i++) {
+      const user = getRandomItem(users);
+      
+      additionalNotifications.push({
+        userId: user.id,
+        tenantId: user.tenantId,
+        customerId: user.customerId,
+        type: getRandomItem(Object.values(NotificationType)),
+        channel: NotificationChannel.IN_APP,
+        priority: getRandomItem(Object.values(NotificationPriority)),
+        status: getRandomItem([
+          NotificationStatus.DELIVERED,
+          NotificationStatus.READ,
+        ]),
+        title: `Random Notification ${i + 1}`,
+        message: `This is a test notification for ${user.name}`,
+        isRead: Math.random() > 0.5,
+        readAt: Math.random() > 0.5 ? generatePastDate(24) : null,
+        sentAt: generatePastDate(Math.floor(Math.random() * 72)),
+        deliveredAt: generatePastDate(Math.floor(Math.random() * 72)),
+        retryCount: 0,
+        maxRetries: 3,
+      });
     }
 
-    console.log('🎉 Notification seeding completed!');
+    const allNotifications = [...notifications, ...additionalNotifications];
+
+    // ✅ Save all notifications
+    let created = 0;
+    for (const notificationData of allNotifications) {
+      try {
+        const notification =
+          this.notificationRepository.create(notificationData);
+        await this.notificationRepository.save(notification);
+        created++;
+        
+        if (created % 5 === 0) {
+          console.log(`   📧 Created ${created}/${allNotifications.length} notifications...`);
+        }
+      } catch (error) {
+        console.error(
+          `❌ Failed to create notification: ${notificationData.title}`,
+          error.message,
+        );
+      }
+    }
+
+    console.log(`\n✅ Successfully created ${created} notifications!`);
+    console.log(`\n📊 Notification Breakdown:`);
+    
+    // Print statistics
+    const stats = {
+      total: created,
+      unread: allNotifications.filter((n) => !n.isRead).length,
+      byType: {} as Record<string, number>,
+      byChannel: {} as Record<string, number>,
+      byStatus: {} as Record<string, number>,
+    };
+
+    allNotifications.forEach((n) => {
+      stats.byType[n.type] = (stats.byType[n.type] || 0) + 1;
+      stats.byChannel[n.channel] = (stats.byChannel[n.channel] || 0) + 1;
+      stats.byStatus[n.status] = (stats.byStatus[n.status] || 0) + 1;
+    });
+
+    console.log(`   Total: ${stats.total}`);
+    console.log(`   Unread: ${stats.unread}`);
+    console.log(`   By Type:`, stats.byType);
+    console.log(`   By Channel:`, stats.byChannel);
+    console.log(`   By Status:`, stats.byStatus);
+    
+    console.log('\n🎉 Notification seeding completed!');
   }
 }

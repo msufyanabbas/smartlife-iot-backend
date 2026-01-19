@@ -47,21 +47,21 @@ export class NotificationsController {
   @ApiOperation({ summary: 'Get all notifications' })
   @ApiResponse({ status: 200, description: 'List of notifications' })
   findAll(@CurrentUser() user: User, @Query() query: NotificationQueryDto) {
-    return this.notificationsService.findAll(user.id, query);
+    return this.notificationsService.findAll(user, query);
   }
 
   @Get('unread-count')
   @ApiOperation({ summary: 'Get unread notification count' })
   @ApiResponse({ status: 200, description: 'Unread count' })
   getUnreadCount(@CurrentUser() user: User) {
-    return this.notificationsService.getUnreadCount(user.id);
+    return this.notificationsService.getUnreadCount(user);
   }
 
   @Get('statistics')
   @ApiOperation({ summary: 'Get notification statistics' })
   @ApiResponse({ status: 200, description: 'Notification statistics' })
   getStatistics(@CurrentUser() user: User) {
-    return this.notificationsService.getStatistics(user.id);
+    return this.notificationsService.getStatistics(user);
   }
 
   @Get(':id')
@@ -69,7 +69,7 @@ export class NotificationsController {
   @ApiResponse({ status: 200, description: 'Notification found' })
   @ApiResponse({ status: 404, description: 'Notification not found' })
   findOne(@Param('id', ParseIdPipe) id: string, @CurrentUser() user: User) {
-    return this.notificationsService.findOne(id, user.id);
+    return this.notificationsService.findOne(id, user);
   }
 
   @Patch(':id/read')
@@ -77,7 +77,7 @@ export class NotificationsController {
   @ApiOperation({ summary: 'Mark notification as read' })
   @ApiResponse({ status: 200, description: 'Notification marked as read' })
   markAsRead(@Param('id', ParseIdPipe) id: string, @CurrentUser() user: User) {
-    return this.notificationsService.markAsRead(id, user.id);
+    return this.notificationsService.markAsRead(id, user);
   }
 
   @Patch('read/multiple')
@@ -85,7 +85,7 @@ export class NotificationsController {
   @ApiOperation({ summary: 'Mark multiple notifications as read' })
   @ApiResponse({ status: 200, description: 'Notifications marked as read' })
   markMultipleAsRead(@CurrentUser() user: User, @Body() dto: MarkAsReadDto) {
-    return this.notificationsService.markMultipleAsRead(user.id, dto);
+    return this.notificationsService.markMultipleAsRead(user, dto);
   }
 
   @Patch('read/all')
@@ -93,7 +93,7 @@ export class NotificationsController {
   @ApiOperation({ summary: 'Mark all notifications as read' })
   @ApiResponse({ status: 200, description: 'All notifications marked as read' })
   markAllAsRead(@CurrentUser() user: User) {
-    return this.notificationsService.markAllAsRead(user.id);
+    return this.notificationsService.markAllAsRead(user);
   }
 
   @Delete(':id')
@@ -101,7 +101,7 @@ export class NotificationsController {
   @ApiOperation({ summary: 'Delete notification' })
   @ApiResponse({ status: 204, description: 'Notification deleted' })
   remove(@Param('id', ParseIdPipe) id: string, @CurrentUser() user: User) {
-    return this.notificationsService.remove(id, user.id);
+    return this.notificationsService.remove(id, user);
   }
 
   @Delete('read/all')
@@ -109,16 +109,38 @@ export class NotificationsController {
   @ApiOperation({ summary: 'Delete all read notifications' })
   @ApiResponse({ status: 200, description: 'Read notifications deleted' })
   deleteAllRead(@CurrentUser() user: User) {
-    return this.notificationsService.deleteAllRead(user.id);
+    return this.notificationsService.deleteAllRead(user);
   }
 
   @Post('bulk')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Send bulk notifications' })
-  @ApiResponse({ status: 200, description: 'Bulk notifications sent' })
-  sendBulk(@Body() dto: SendBulkNotificationDto) {
-    return this.notificationsService.sendBulk(dto);
-  }
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Send bulk notifications' })
+@ApiResponse({ status: 200, description: 'Bulk notifications sent' })
+sendBulk(@Body() dto: SendBulkNotificationDto, @CurrentUser() user: User) {
+  return this.notificationsService.sendBulk(dto);
+}
+
+@Post('bulk/tenant/:tenantId')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Send bulk notifications to all tenant users' })
+@ApiResponse({ status: 200, description: 'Bulk notifications sent to tenant' })
+sendBulkToTenant(
+  @Param('tenantId') tenantId: string,
+  @Body() dto: Omit<SendBulkNotificationDto, 'userIds'>,
+) {
+  return this.notificationsService.sendBulkToTenant(tenantId, dto);
+}
+
+@Post('bulk/customer/:customerId')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Send bulk notifications to all customer users' })
+@ApiResponse({ status: 200, description: 'Bulk notifications sent to customer' })
+sendBulkToCustomer(
+  @Param('customerId') customerId: string,
+  @Body() dto: Omit<SendBulkNotificationDto, 'userIds'>,
+) {
+  return this.notificationsService.sendBulkToCustomer(customerId, dto);
+}
 
   @Post('retry-failed')
   @HttpCode(HttpStatus.OK)

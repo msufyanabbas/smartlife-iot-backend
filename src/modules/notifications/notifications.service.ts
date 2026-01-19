@@ -1,14 +1,18 @@
+// src/modules/notifications/notifications.service.ts
 import {
   Injectable,
   NotFoundException,
+  ForbiddenException,
+  Logger,
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, LessThan, MoreThan } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import {
   Notification,
   NotificationStatus,
   NotificationChannel,
+  NotificationType,
 } from './entities/notification.entity';
 import {
   CreateNotificationDto,
@@ -17,33 +21,52 @@ import {
   SendBulkNotificationDto,
 } from './dto/notification.dto';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
-import { MailService } from '../../modules/mail/mail.service';
 import { EmailChannel } from './channels/email.channel';
 import { SmsChannel } from './channels/sms.channel';
 import { PushChannel } from './channels/push.channel';
+import { NotificationsRepository } from './repositories/notifications.repository';
+import { User, UserRole } from '../users/entities/user.entity';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
     @InjectRepository(Notification)
     private notificationRepository: Repository<Notification>,
+    private notificationsRepo: NotificationsRepository,
+    private userService: UsersService,
     private eventEmitter: EventEmitter2,
-    private mailService: MailService,
     private emailChannel: EmailChannel,
     private smsChannel: SmsChannel,
     private pushChannel: PushChannel,
   ) {}
 
   /**
-   * Create new notification
+   * ✅ ENHANCED: Create notification with tenant/customer context
    */
-  async create(createDto: CreateNotificationDto): Promise<Notification> {
-    // Check if scheduled or immediate
+  async create(
+    createDto: CreateNotificationDto,
+    user?: User,
+  ): Promise<Notification> {
+    // Get user details if not provided
+    if (!user && createDto.userId) {
+      user = await this.getUserById(createDto.userId);
+    }
+
+    if (!user) {
+      throw new Error('User context required for notification creation');
+    }
+
     const isScheduled =
       createDto.scheduledFor && createDto.scheduledFor > new Date();
 
     const notification = this.notificationRepository.create({
       ...createDto,
+      tenantId: user.tenantId,
+      customerId: user.customerId,
       status: isScheduled
         ? NotificationStatus.PENDING
         : NotificationStatus.PENDING,
@@ -55,6 +78,10 @@ export class NotificationsService {
     if (!isScheduled) {
       await this.sendNotification(saved);
     }
+
+    this.logger.log(
+      `Notification created: ${saved.id} for user ${user.email} in tenant ${user.tenantId}`,
+    );
 
     return saved;
   }
@@ -82,7 +109,6 @@ export class NotificationsService {
           break;
 
         case NotificationChannel.IN_APP:
-          // In-app notifications are already saved, just mark as sent
           notification.markAsSent();
           notification.markAsDelivered();
           await this.notificationRepository.save(notification);
@@ -92,13 +118,14 @@ export class NotificationsService {
           throw new Error(`Unsupported channel: ${notification.channel}`);
       }
 
-      // Emit event
       this.eventEmitter.emit('notification.sent', { notification });
     } catch (error) {
+      this.logger.error(
+        `Failed to send notification ${notification.id}: ${error.message}`,
+      );
       notification.markAsFailed(error.message);
       await this.notificationRepository.save(notification);
 
-      // Retry if possible
       if (notification.canRetry()) {
         this.eventEmitter.emit('notification.retry', { notification });
       }
@@ -116,7 +143,7 @@ export class NotificationsService {
   }
 
   /**
-   * Send SMS notification (placeholder - implement with Twilio/AWS SNS)
+   * Send SMS notification
    */
   private async sendSMS(notification: Notification): Promise<void> {
     await this.smsChannel.send(notification);
@@ -126,7 +153,7 @@ export class NotificationsService {
   }
 
   /**
-   * Send push notification (placeholder - implement with FCM/APNS)
+   * Send push notification
    */
   private async sendPush(notification: Notification): Promise<void> {
     await this.pushChannel.send(notification);
@@ -144,7 +171,7 @@ export class NotificationsService {
     }
 
     // TODO: Implement HTTP POST to webhook
-    console.log(`Sending webhook to ${notification.webhookUrl}`);
+    this.logger.log(`Sending webhook to ${notification.webhookUrl}`);
 
     notification.markAsSent();
     notification.markAsDelivered();
@@ -152,64 +179,23 @@ export class NotificationsService {
   }
 
   /**
-   * Find all notifications with filters
+   * ✅ ENHANCED: Find all with proper access control
    */
-  async findAll(userId: string, query: NotificationQueryDto) {
-    const {
-      page = 1,
-      limit = 20,
-      type,
-      channel,
-      status,
-      isRead,
-      search,
-    } = query;
+  async findAll(user: User, query: NotificationQueryDto) {
+    const { page = 1, limit = 20, type, status, isRead } = query;
 
-    const queryBuilder = this.notificationRepository
-      .createQueryBuilder('notification')
-      .where('notification.userId = :userId', { userId });
-
-    // Filters
-    if (type) {
-      queryBuilder.andWhere('notification.type = :type', { type });
-    }
-
-    if (channel) {
-      queryBuilder.andWhere('notification.channel = :channel', { channel });
-    }
-
-    if (status) {
-      queryBuilder.andWhere('notification.status = :status', { status });
-    }
-
-    if (isRead !== undefined) {
-      queryBuilder.andWhere('notification.isRead = :isRead', { isRead });
-    }
-
-    if (search) {
-      queryBuilder.andWhere(
-        '(notification.title ILIKE :search OR notification.message ILIKE :search)',
-        { search: `%${search}%` },
-      );
-    }
-
-    // Pagination
     const skip = (page - 1) * limit;
-    queryBuilder.skip(skip).take(limit);
 
-    // Order by priority and date
-    queryBuilder
-      .addOrderBy(
-        `CASE notification.priority 
-        WHEN 'urgent' THEN 1 
-        WHEN 'high' THEN 2 
-        WHEN 'normal' THEN 3 
-        WHEN 'low' THEN 4 
-        END`,
-      )
-      .addOrderBy('notification.createdAt', 'DESC');
-
-    const [data, total] = await queryBuilder.getManyAndCount();
+    const [data, total] = await Promise.all([
+      this.notificationsRepo.findAllForUser(user, {
+        type,
+        status,
+        isRead,
+        skip,
+        take: limit,
+      }),
+      this.notificationsRepo.getCountForUser(user, { type, status, isRead }),
+    ]);
 
     return {
       data,
@@ -217,30 +203,37 @@ export class NotificationsService {
       page,
       limit,
       totalPages: Math.ceil(total / limit),
-      unreadCount: await this.getUnreadCount(userId),
+      unreadCount: await this.getUnreadCount(user),
     };
   }
 
   /**
-   * Get notification by ID
+   * ✅ ENHANCED: Find one with access control
    */
-  async findOne(id: string, userId: string): Promise<Notification> {
+  async findOne(id: string, user: User): Promise<Notification> {
     const notification = await this.notificationRepository.findOne({
-      where: { id, userId },
+      where: { id },
     });
 
     if (!notification) {
       throw new NotFoundException(`Notification with ID ${id} not found`);
     }
 
+    // Check access
+    if (!notification.canBeAccessedBy(user)) {
+      throw new ForbiddenException(
+        'You do not have permission to access this notification',
+      );
+    }
+
     return notification;
   }
 
   /**
-   * Mark notification as read
+   * ✅ ENHANCED: Mark as read with access control
    */
-  async markAsRead(id: string, userId: string): Promise<Notification> {
-    const notification = await this.findOne(id, userId);
+  async markAsRead(id: string, user: User): Promise<Notification> {
+    const notification = await this.findOne(id, user);
 
     if (!notification.isRead) {
       notification.markAsRead();
@@ -251,58 +244,86 @@ export class NotificationsService {
   }
 
   /**
-   * Mark multiple notifications as read
+   * Mark multiple as read
    */
   async markMultipleAsRead(
-    userId: string,
+    user: User,
     dto: MarkAsReadDto,
   ): Promise<{ success: number }> {
     const notifications = await this.notificationRepository.find({
       where: {
         id: In(dto.notificationIds),
-        userId,
         isRead: false,
       },
     });
 
-    for (const notification of notifications) {
+    // Filter by access
+    const accessibleNotifications = notifications.filter((n) =>
+      n.canBeAccessedBy(user),
+    );
+
+    for (const notification of accessibleNotifications) {
       notification.markAsRead();
     }
 
-    await this.notificationRepository.save(notifications);
+    await this.notificationRepository.save(accessibleNotifications);
 
-    return { success: notifications.length };
+    return { success: accessibleNotifications.length };
   }
 
   /**
-   * Mark all notifications as read
+   * ✅ FIXED: Mark all as read with access control
    */
-  async markAllAsRead(userId: string): Promise<{ success: number }> {
-    const result = await this.notificationRepository.update(
-      { userId, isRead: false },
-      { isRead: true, readAt: new Date() },
-    );
+  async markAllAsRead(user: User): Promise<{ success: number }> {
+    // Build the WHERE conditions based on user role
+    const whereConditions: any = { isRead: false };
+
+    if (user.role === UserRole.TENANT_ADMIN) {
+      whereConditions.tenantId = user.tenantId;
+    } else if (user.role === UserRole.CUSTOMER_ADMIN) {
+      whereConditions.customerId = user.customerId;
+    } else {
+      whereConditions.userId = user.id;
+    }
+
+    // Use simple update instead of query builder
+    const result = await this.notificationRepository.update(whereConditions, {
+      isRead: true,
+      readAt: new Date(),
+    });
 
     return { success: result.affected || 0 };
   }
 
   /**
-   * Delete notification
+   * Delete notification with access control
    */
-  async remove(id: string, userId: string): Promise<void> {
-    const notification = await this.findOne(id, userId);
+  async remove(id: string, user: User): Promise<void> {
+    const notification = await this.findOne(id, user);
     await this.notificationRepository.softRemove(notification);
   }
 
   /**
    * Delete all read notifications
    */
-  async deleteAllRead(userId: string): Promise<{ deleted: number }> {
+  async deleteAllRead(user: User): Promise<{ deleted: number }> {
+    const whereConditions: any = { isRead: true };
+
+    if (user.role === UserRole.TENANT_ADMIN) {
+      whereConditions.tenantId = user.tenantId;
+    } else if (user.role === UserRole.CUSTOMER_ADMIN) {
+      whereConditions.customerId = user.customerId;
+    } else {
+      whereConditions.userId = user.id;
+    }
+
     const notifications = await this.notificationRepository.find({
-      where: { userId, isRead: true },
+      where: whereConditions,
     });
 
-    await this.notificationRepository.softRemove(notifications);
+    if (notifications.length > 0) {
+      await this.notificationRepository.softRemove(notifications);
+    }
 
     return { deleted: notifications.length };
   }
@@ -310,37 +331,52 @@ export class NotificationsService {
   /**
    * Get unread count
    */
-  async getUnreadCount(userId: string): Promise<number> {
-    return await this.notificationRepository.count({
-      where: { userId, isRead: false },
-    });
+  async getUnreadCount(user: User): Promise<number> {
+    return await this.notificationsRepo.getUnreadCountForUser(user);
   }
 
   /**
    * Get notification statistics
    */
-  async getStatistics(userId: string) {
-    const total = await this.notificationRepository.count({
-      where: { userId },
-    });
-    const unread = await this.getUnreadCount(userId);
+  async getStatistics(user: User) {
+    const queryBuilder = this.notificationRepository.createQueryBuilder(
+      'notification',
+    );
+
+    // Apply access control
+    if (user.role === UserRole.SUPER_ADMIN) {
+      // No filter
+    } else if (user.role === UserRole.TENANT_ADMIN) {
+      queryBuilder.where('notification.tenantId = :tenantId', {
+        tenantId: user.tenantId,
+      });
+    } else if (user.role === UserRole.CUSTOMER_ADMIN) {
+      queryBuilder.where('notification.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    } else {
+      queryBuilder.where('notification.userId = :userId', {
+        userId: user.id,
+      });
+    }
+
+    const total = await queryBuilder.getCount();
+    const unread = await this.getUnreadCount(user);
     const read = total - unread;
 
     // Count by type
-    const byType = await this.notificationRepository
-      .createQueryBuilder('notification')
+    const byType = await queryBuilder
+      .clone()
       .select('notification.type', 'type')
       .addSelect('COUNT(*)', 'count')
-      .where('notification.userId = :userId', { userId })
       .groupBy('notification.type')
       .getRawMany();
 
     // Count by channel
-    const byChannel = await this.notificationRepository
-      .createQueryBuilder('notification')
+    const byChannel = await queryBuilder
+      .clone()
       .select('notification.channel', 'channel')
       .addSelect('COUNT(*)', 'count')
-      .where('notification.userId = :userId', { userId })
       .groupBy('notification.channel')
       .getRawMany();
 
@@ -348,18 +384,98 @@ export class NotificationsService {
       total,
       unread,
       read,
-      byType,
-      byChannel,
+      byType: byType.reduce((acc, { type, count }) => {
+        acc[type] = parseInt(count);
+        return acc;
+      }, {}),
+      byChannel: byChannel.reduce((acc, { channel, count }) => {
+        acc[channel] = parseInt(count);
+        return acc;
+      }, {}),
     };
   }
 
   /**
-   * Send bulk notifications
+   * ✅ NEW: Send bulk notifications (main method)
    */
   async sendBulk(dto: SendBulkNotificationDto): Promise<{ sent: number }> {
-    const notifications = dto.userIds.map((userId) =>
+    if (!dto.userIds || dto.userIds.length === 0) {
+      throw new BadRequestException('userIds array is required and cannot be empty');
+    }
+
+    this.logger.log(`Sending bulk notifications to ${dto.userIds.length} users`);
+
+    // Get all target users
+    const users = await this.userService.findByIds(dto.userIds);
+
+    if (users.length === 0) {
+      throw new NotFoundException('No users found with provided IDs');
+    }
+
+    if (users.length !== dto.userIds.length) {
+      this.logger.warn(
+        `Some users not found. Expected: ${dto.userIds.length}, Found: ${users.length}`,
+      );
+    }
+
+    // Create notifications for all users
+    const notifications = users.map((user) =>
       this.notificationRepository.create({
-        userId,
+        userId: user.id,
+        tenantId: user.tenantId,
+        customerId: user.customerId,
+        type: dto.type,
+        channel: dto.channel,
+        priority: dto.priority,
+        title: dto.title,
+        message: dto.message,
+        htmlContent: dto.htmlContent,
+        metadata: dto.metadata,
+      }),
+    );
+
+    // Save all notifications
+    const saved = await this.notificationRepository.save(notifications);
+
+    this.logger.log(`Created ${saved.length} bulk notifications`);
+
+    // Send all notifications asynchronously
+    const sendPromises = saved.map((notification) =>
+      this.sendNotification(notification).catch((error) => {
+        this.logger.error(
+          `Failed to send bulk notification ${notification.id}: ${error.message}`,
+        );
+      }),
+    );
+
+    // Wait for all to complete
+    await Promise.allSettled(sendPromises);
+
+    return { sent: saved.length };
+  }
+
+  /**
+   * ✅ NEW: Send bulk notifications to tenant users
+   */
+  async sendBulkToTenant(
+    tenantId: string,
+    dto: Omit<SendBulkNotificationDto, 'userIds'>,
+  ): Promise<{ sent: number }> {
+    this.logger.log(`Sending bulk notifications to all users in tenant ${tenantId}`);
+
+    // Get all users in tenant
+    const users = await this.getUsersByTenant(tenantId);
+
+    if (users.length === 0) {
+      this.logger.warn(`No users found in tenant ${tenantId}`);
+      return { sent: 0 };
+    }
+
+    const notifications = users.map((user) =>
+      this.notificationRepository.create({
+        userId: user.id,
+        tenantId: user.tenantId,
+        customerId: user.customerId,
         type: dto.type,
         channel: dto.channel,
         priority: dto.priority,
@@ -374,31 +490,88 @@ export class NotificationsService {
 
     // Send all notifications
     for (const notification of saved) {
-      await this.sendNotification(notification);
+      await this.sendNotification(notification).catch((error) => {
+        this.logger.error(
+          `Failed to send notification ${notification.id}: ${error.message}`,
+        );
+      });
     }
 
     return { sent: saved.length };
   }
 
   /**
-   * Process scheduled notifications (called by cron job)
+   * ✅ NEW: Send bulk notifications to customer users
    */
-  async processScheduledNotifications(): Promise<void> {
-    const scheduled = await this.notificationRepository.find({
-      where: {
-        status: NotificationStatus.PENDING,
-        scheduledFor: LessThan(new Date()),
-      },
-      take: 100, // Process in batches
-    });
+  async sendBulkToCustomer(
+    customerId: string,
+    dto: Omit<SendBulkNotificationDto, 'userIds'>,
+  ): Promise<{ sent: number }> {
+    this.logger.log(`Sending bulk notifications to all users in customer ${customerId}`);
 
-    for (const notification of scheduled) {
-      if (!notification.isExpired()) {
-        await this.sendNotification(notification);
-      } else {
-        notification.markAsFailed('Notification expired');
-        await this.notificationRepository.save(notification);
+    // Get all users in customer
+    const users = await this.getUsersByCustomer(customerId);
+
+    if (users.length === 0) {
+      this.logger.warn(`No users found in customer ${customerId}`);
+      return { sent: 0 };
+    }
+
+    const notifications = users.map((user) =>
+      this.notificationRepository.create({
+        userId: user.id,
+        tenantId: user.tenantId,
+        customerId: user.customerId,
+        type: dto.type,
+        channel: dto.channel,
+        priority: dto.priority,
+        title: dto.title,
+        message: dto.message,
+        htmlContent: dto.htmlContent,
+        metadata: dto.metadata,
+      }),
+    );
+
+    const saved = await this.notificationRepository.save(notifications);
+
+    // Send all notifications
+    for (const notification of saved) {
+      await this.sendNotification(notification).catch((error) => {
+        this.logger.error(
+          `Failed to send notification ${notification.id}: ${error.message}`,
+        );
+      });
+    }
+
+    return { sent: saved.length };
+  }
+
+  /**
+   * Process scheduled notifications (runs every minute)
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async processScheduledNotifications(): Promise<void> {
+    try {
+      const scheduled = await this.notificationsRepo.findPendingToSend();
+
+      if (scheduled.length === 0) {
+        return;
       }
+
+      this.logger.log(`Processing ${scheduled.length} scheduled notifications`);
+
+      for (const notification of scheduled) {
+        if (!notification.isExpired()) {
+          await this.sendNotification(notification);
+        } else {
+          notification.markAsFailed('Notification expired');
+          await this.notificationRepository.save(notification);
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error processing scheduled notifications: ${error.message}`,
+      );
     }
   }
 
@@ -406,12 +579,14 @@ export class NotificationsService {
    * Retry failed notifications
    */
   async retryFailed(): Promise<{ retried: number }> {
-    const failed = await this.notificationRepository.find({
-      where: {
-        status: NotificationStatus.FAILED,
-      },
-      take: 50,
-    });
+    const failed = await this.notificationsRepo.findRetryable();
+
+    if (failed.length === 0) {
+      this.logger.log('No failed notifications to retry');
+      return { retried: 0 };
+    }
+
+    this.logger.log(`Retrying ${failed.length} failed notifications`);
 
     let retried = 0;
     for (const notification of failed) {
@@ -425,75 +600,134 @@ export class NotificationsService {
   }
 
   /**
+   * ✅ NEW: Listen for device events
+   */
+  @OnEvent('device.offline')
+  async handleDeviceOffline(payload: { device: any; user: User }) {
+    const { device, user } = payload;
+
+    await this.create(
+      {
+        userId: user.id,
+        type: NotificationType.DEVICE,
+        channel: NotificationChannel.IN_APP,
+        priority: 'high' as any,
+        title: `Device Offline: ${device.name}`,
+        message: `Device "${device.name}" has gone offline`,
+        relatedEntityType: 'device',
+        relatedEntityId: device.id,
+        action: {
+          label: 'View Device',
+          url: `/devices/${device.id}`,
+          type: 'button',
+        },
+        metadata: {
+          deviceId: device.id,
+          deviceName: device.name,
+          deviceType: device.type,
+        },
+      },
+      user,
+    );
+  }
+
+  /**
+   * ✅ NEW: Listen for device connection
+   */
+  @OnEvent('device.connected')
+  async handleDeviceConnected(payload: { device: any; user: User }) {
+    const { device, user } = payload;
+
+    await this.create(
+      {
+        userId: user.id,
+        type: NotificationType.DEVICE,
+        channel: NotificationChannel.IN_APP,
+        priority: 'normal' as any,
+        title: `Device Connected: ${device.name}`,
+        message: `Device "${device.name}" is now online`,
+        relatedEntityType: 'device',
+        relatedEntityId: device.id,
+        action: {
+          label: 'View Device',
+          url: `/devices/${device.id}`,
+          type: 'button',
+        },
+        metadata: {
+          deviceId: device.id,
+          deviceName: device.name,
+          deviceType: device.type,
+        },
+      },
+      user,
+    );
+  }
+
+  /**
    * Listen for alarm triggered events
    */
   @OnEvent('alarm.triggered')
   async handleAlarmTriggered(payload: any) {
-    const { alarm } = payload;
+    const { alarm, user } = payload;
 
     // Send notifications based on alarm configuration
     if (alarm.notifications?.email && alarm.recipients?.emails) {
       for (const email of alarm.recipients.emails) {
-        await this.create({
-          userId: alarm.userId,
-          type: 'alarm' as any,
-          channel: NotificationChannel.EMAIL,
-          priority:
-            alarm.severity === 'critical' ? ('urgent' as any) : ('high' as any),
-          title: `Alarm: ${alarm.name}`,
-          message: alarm.message || `Alarm ${alarm.name} has been triggered`,
-          recipientEmail: email,
-          relatedEntityType: 'alarm',
-          relatedEntityId: alarm.id,
-          action: {
-            label: 'View Alarm',
-            url: `/alarms/${alarm.id}`,
-            type: 'button',
+        await this.create(
+          {
+            userId: alarm.userId,
+            type: NotificationType.ALARM,
+            channel: NotificationChannel.EMAIL,
+            priority:
+              alarm.severity === 'critical' ? 'urgent' : ('high' as any),
+            title: `Alarm: ${alarm.name}`,
+            message: alarm.message || `Alarm ${alarm.name} has been triggered`,
+            recipientEmail: email,
+            relatedEntityType: 'alarm',
+            relatedEntityId: alarm.id,
+            action: {
+              label: 'View Alarm',
+              url: `/alarms/${alarm.id}`,
+              type: 'button',
+            },
           },
-        });
+          user,
+        );
       }
     }
 
     // Send push notifications
     if (alarm.notifications?.push && alarm.recipients?.userIds) {
       for (const userId of alarm.recipients.userIds) {
-        await this.create({
-          userId,
-          type: 'alarm' as any,
-          channel: NotificationChannel.PUSH,
-          priority:
-            alarm.severity === 'critical' ? ('urgent' as any) : ('high' as any),
-          title: `Alarm: ${alarm.name}`,
-          message: alarm.message || `Alarm ${alarm.name} has been triggered`,
-          relatedEntityType: 'alarm',
-          relatedEntityId: alarm.id,
-        });
+        const recipientUser = await this.getUserById(userId);
+        await this.create(
+          {
+            userId,
+            type: NotificationType.ALARM,
+            channel: NotificationChannel.PUSH,
+            priority:
+              alarm.severity === 'critical' ? 'urgent' : ('high' as any),
+            title: `Alarm: ${alarm.name}`,
+            message: alarm.message || `Alarm ${alarm.name} has been triggered`,
+            relatedEntityType: 'alarm',
+            relatedEntityId: alarm.id,
+          },
+          recipientUser,
+        );
       }
     }
+  }
 
-    // Send webhook
-    if (alarm.notifications?.webhook) {
-      await this.create({
-        userId: alarm.userId,
-        type: 'alarm' as any,
-        channel: NotificationChannel.WEBHOOK,
-        priority:
-          alarm.severity === 'critical' ? ('urgent' as any) : ('high' as any),
-        title: `Alarm: ${alarm.name}`,
-        message: alarm.message || `Alarm ${alarm.name} has been triggered`,
-        webhookUrl: alarm.notifications.webhook,
-        relatedEntityType: 'alarm',
-        relatedEntityId: alarm.id,
-        metadata: {
-          alarm: {
-            id: alarm.id,
-            name: alarm.name,
-            severity: alarm.severity,
-            deviceId: alarm.deviceId,
-            currentValue: alarm.currentValue,
-          },
-        },
-      });
-    }
+  // ✅ Helper methods
+  private async getUserById(userId: string): Promise<User> {
+    return this.userService.findOne(userId);
+  }
+
+  private async getUsersByTenant(tenantId: string): Promise<User[]> {
+    return this.userService.findByTenant(tenantId);
+  }
+
+  private async getUsersByCustomer(customerId: string): Promise<User[]> {
+    return this.userService.findByCustomer(customerId);
   }
 }

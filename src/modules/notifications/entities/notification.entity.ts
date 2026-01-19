@@ -1,3 +1,4 @@
+// src/modules/notifications/entities/notification.entity.ts
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { User } from '../../users/entities/user.entity';
@@ -37,6 +38,8 @@ export enum NotificationStatus {
 @Index(['userId', 'status'])
 @Index(['userId', 'isRead'])
 @Index(['type', 'createdAt'])
+@Index(['tenantId', 'createdAt']) // ✅ NEW: For tenant filtering
+@Index(['customerId', 'createdAt']) // ✅ NEW: For customer filtering
 export class Notification extends BaseEntity {
   @Column()
   userId: string;
@@ -44,6 +47,13 @@ export class Notification extends BaseEntity {
   @ManyToOne(() => User)
   @JoinColumn({ name: 'userId' })
   user: User;
+
+  // ✅ NEW: Tenant and Customer tracking
+  @Column()
+  tenantId: string;
+
+  @Column({ nullable: true })
+  customerId?: string;
 
   @Column({
     type: 'enum',
@@ -75,18 +85,15 @@ export class Notification extends BaseEntity {
   @Column({ type: 'text' })
   message: string;
 
-  // HTML content for emails
   @Column({ type: 'text', nullable: true })
   htmlContent?: string;
 
-  // Related entity information
   @Column({ nullable: true })
-  relatedEntityType?: string; // 'alarm', 'device', 'user', etc.
+  relatedEntityType?: string;
 
   @Column({ nullable: true })
   relatedEntityId?: string;
 
-  // For actions/links in notifications
   @Column({ type: 'jsonb', nullable: true })
   action?: {
     label: string;
@@ -94,11 +101,9 @@ export class Notification extends BaseEntity {
     type?: 'link' | 'button';
   };
 
-  // Additional data
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, any>;
 
-  // Delivery details
   @Column({ nullable: true })
   recipientEmail?: string;
 
@@ -106,12 +111,11 @@ export class Notification extends BaseEntity {
   recipientPhone?: string;
 
   @Column({ nullable: true })
-  recipientDeviceToken?: string; // For push notifications
+  recipientDeviceToken?: string;
 
   @Column({ nullable: true })
   webhookUrl?: string;
 
-  // Tracking
   @Column({ default: false })
   isRead: boolean;
 
@@ -137,10 +141,10 @@ export class Notification extends BaseEntity {
   maxRetries: number;
 
   @Column({ type: 'timestamp', nullable: true })
-  scheduledFor?: Date; // For scheduled notifications
+  scheduledFor?: Date;
 
   @Column({ type: 'timestamp', nullable: true })
-  expiresAt?: Date; // When notification expires
+  expiresAt?: Date;
 
   // Helper methods
   markAsRead(): void {
@@ -174,5 +178,26 @@ export class Notification extends BaseEntity {
 
   isExpired(): boolean {
     return this.expiresAt ? new Date() > this.expiresAt : false;
+  }
+
+  // ✅ NEW: Check if user can access this notification
+  canBeAccessedBy(user: User): boolean {
+    // User owns the notification
+    if (this.userId === user.id) return true;
+
+    // Tenant admin can see all notifications in their tenant
+    if (user.role === 'tenant_admin' && this.tenantId === user.tenantId) {
+      return true;
+    }
+
+    // Customer admin can see notifications for their customer
+    if (
+      user.role === 'customer_admin' &&
+      this.customerId === user.customerId
+    ) {
+      return true;
+    }
+
+    return false;
   }
 }

@@ -535,6 +535,33 @@ export class UsersService {
     });
   }
 
+  async findByCustomer(customerId: string): Promise<User[]> {
+    return await this.userRepository.find({
+      where: { customerId },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  /**
+ * ✅ NEW: Find users by array of IDs
+ */
+async findByIds(userIds: string[]): Promise<User[]> {
+  return await this.userRepository.find({
+    where: {
+      id: In(userIds),
+    },
+    select: [
+      'id',
+      'email',
+      'name',
+      'tenantId',
+      'customerId',
+      'role',
+      'status',
+    ],
+  });
+}
+
   /**
    * Get admin users
    */
