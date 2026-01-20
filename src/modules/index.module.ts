@@ -103,6 +103,7 @@ import { TwoFactorAuthModule } from './two-factor/two-factor-auth.module';
 import { CustomersModule } from './customers/customers.module';
 import { CustomerUsersModule } from './customer-users/customer-users.module';
 import { CodecModule } from './devices/codecs/codec.module';
+import { AutomationModule } from './automation/automation.module';
 
 // ============================================
 // FEATURE MODULES ARRAY (for spreading in app.module.ts)
@@ -149,6 +150,7 @@ export const featureModules = [
   ApiMonitoringModule,
 
   // Integration & Automation
+  AutomationModule,
   IntegrationsModule,
   ScriptsModule,
   SchedulesModule,
