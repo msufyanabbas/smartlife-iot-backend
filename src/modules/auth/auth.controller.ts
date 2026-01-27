@@ -15,7 +15,8 @@ import {
   Param,
   Inject,
   UnauthorizedException,
-  Logger
+  Logger,
+  Patch
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -49,6 +50,7 @@ import { TwoFactorChallengeDto } from '../two-factor/dto/two-factor-challenge.dt
 import { Roles } from '@/common/decorators/roles.decorator';
 import { RolesGuard } from '@/common/guards';
 import { CreateInvitationDto } from './dto/invitation.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -921,4 +923,49 @@ async verifyOAuth2FA(
 
     return session;
   }
+
+@Patch('profile')
+@HttpCode(HttpStatus.OK)
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
+@ApiOperation({ 
+  summary: 'Update user profile',
+  description: 'Update current user name and/or phone number'
+})
+@ApiResponse({
+  status: 200,
+  description: 'Profile updated successfully',
+  schema: {
+    example: {
+      message: 'Profile updated successfully',
+      user: {
+        id: '123e4567-e89b-12d3-a456-426614174000',
+        email: 'ahmed@smartlife.sa',
+        name: 'Ahmed Al-Saud',
+        phone: '+966501234567',
+        avatar: null,
+        role: 'tenant_admin',
+      },
+    },
+  },
+})
+@ApiResponse({
+  status: 400,
+  description: 'Invalid input or no fields provided',
+})
+@ApiResponse({
+  status: 401,
+  description: 'Unauthorized',
+})
+@ApiResponse({
+  status: 409,
+  description: 'Phone number already in use',
+})
+@ApiBody({ type: UpdateProfileDto })
+async updateProfile(
+  @CurrentUser() user: User,
+  @Body() updateProfileDto: UpdateProfileDto,
+): Promise<{ message: string; user: Partial<User> }> {
+  return this.authService.updateProfile(user.id, updateProfileDto);
+}
 }

@@ -38,6 +38,7 @@ import { UserRole } from '../users/entities/user.entity';
 import { InvitationStatus } from './entities/invitation.entity';
 import { TenantStatus } from '../tenants/entities/tenant.entity';
 import { CreateInvitationDto } from './dto/invitation.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class AuthService {
@@ -1466,4 +1467,63 @@ export class AuthService {
       this.logger.log('ℹ️ No expired tokens to clean up');
     }
   }
+
+  /**
+ * Update user profile (name, phone)
+ */
+async updateProfile(
+  userId: string,
+  updateProfileDto: UpdateProfileDto,
+): Promise<{ message: string; user: Partial<User> }> {
+  const { name, phone } = updateProfileDto;
+
+  // Validate that at least one field is provided
+  if (!name && !phone) {
+    throw new BadRequestException('At least one field (name or phone) must be provided');
+  }
+
+  const user = await this.userRepository.findOne({
+    where: { id: userId },
+  });
+
+  if (!user) {
+    throw new NotFoundException('User not found');
+  }
+
+  // Check if phone is being updated and if it's already taken by another user
+  if (phone && phone !== user.phone) {
+    const existingUserWithPhone = await this.userRepository.findOne({
+      where: { phone },
+    });
+
+    if (existingUserWithPhone && existingUserWithPhone.id !== userId) {
+      throw new ConflictException('This phone number is already registered to another user');
+    }
+  }
+
+  // Update fields
+  if (name) {
+    user.name = name.trim();
+  }
+
+  if (phone) {
+    user.phone = phone;
+  }
+
+  await this.userRepository.save(user);
+
+  this.logger.log(`Profile updated for user: ${user.email}`);
+
+  return {
+    message: 'Profile updated successfully',
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone: user.phone,
+      avatar: user.avatar,
+      role: user.role,
+    },
+  };
+}
 }
