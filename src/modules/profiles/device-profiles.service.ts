@@ -13,7 +13,7 @@ import {
   CreateDeviceProfileDto,
   UpdateDeviceProfileDto,
   QueryProfilesDto,
-} from './dto/profiles.dto';
+} from './dto/device-profiles.dto';
 
 @Injectable()
 export class DeviceProfilesService {

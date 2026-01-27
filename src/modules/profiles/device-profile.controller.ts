@@ -18,15 +18,13 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
-import { DeviceProfilesService } from '../profiles/device-profiles.service';
-import { AssetProfilesService } from '../profiles/asset-profiles.service';
+import { DeviceProfilesService } from './device-profiles.service';
+import { AssetProfilesService } from './asset-profiles.service';
 import {
   CreateDeviceProfileDto,
   UpdateDeviceProfileDto,
-  CreateAssetProfileDto,
-  UpdateAssetProfileDto,
   QueryProfilesDto,
-} from './dto/profiles.dto';
+} from './dto/device-profiles.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';

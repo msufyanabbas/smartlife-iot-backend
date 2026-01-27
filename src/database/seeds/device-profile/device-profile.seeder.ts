@@ -2,10 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
-  DeviceProfile,
-  DeviceTransportType,
-  DeviceProvisionType,
+  DeviceProfile
 } from '@modules/profiles/entities/device-profile.entity';
+import { DeviceProvisionType, DeviceTransportType } from '@/modules/profiles/enums/device-profile.enum';
 import { Tenant } from '../../../modules/tenants/entities/tenant.entity';
 import { ISeeder } from '../seeder.interface';
 

@@ -1,0 +1,28 @@
+// Enums
+export enum QueueName {
+  HIGH_PRIORITY = 'HighPriority',
+  LOW_PRIORITY = 'LowPriority',
+  MAIN = 'Main',
+  SEQUENTIAL_BY_ORIGINATOR = 'SequentialByOriginator',
+}
+
+export enum SubmitStrategy {
+  BURST = 'BURST',
+  SEQUENTIAL_BY_ORIGINATOR = 'SEQUENTIAL_BY_ORIGINATOR',
+  BATCH = 'BATCH',
+}
+
+export enum ProcessingStrategy {
+  RETRY_FAILED_AND_TIMED_OUT = 'RETRY_FAILED_AND_TIMED_OUT',
+  SKIP_ALL_FAILURES_AND_TIMED_OUT = 'SKIP_ALL_FAILURES_AND_TIMED_OUT',
+  SKIP_ALL_FAILURES = 'SKIP_ALL_FAILURES',
+  RETRY_ALL = 'RETRY_ALL',
+}
+
+export enum AlarmSeverity {
+  CRITICAL = 'CRITICAL',
+  MAJOR = 'MAJOR',
+  MINOR = 'MINOR',
+  WARNING = 'WARNING',
+  INDETERMINATE = 'INDETERMINATE',
+}

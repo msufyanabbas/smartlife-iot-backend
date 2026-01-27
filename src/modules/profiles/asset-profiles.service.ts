@@ -9,11 +9,8 @@ import { Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AssetProfile } from './entities/asset-profile.entity';
 import { Asset } from '../assets/entities/asset.entity';
-import {
-  CreateAssetProfileDto,
-  UpdateAssetProfileDto,
-  QueryProfilesDto,
-} from './dto/profiles.dto';
+import { CreateAssetProfileDto, UpdateAssetProfileDto } from './dto/asset-profiles.dto';
+import { QueryProfilesDto } from './dto/device-profiles.dto';
 
 @Injectable()
 export class AssetProfilesService {

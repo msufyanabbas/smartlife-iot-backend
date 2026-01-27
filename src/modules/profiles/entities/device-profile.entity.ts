@@ -1,19 +1,6 @@
 import { Entity, Column, Index } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
-
-export enum DeviceTransportType {
-  MQTT = 'mqtt',
-  HTTP = 'http',
-  COAP = 'coap',
-  LWM2M = 'lwm2m',
-  SNMP = 'snmp',
-}
-
-export enum DeviceProvisionType {
-  DISABLED = 'disabled',
-  ALLOW_CREATE_NEW = 'allow_create_new',
-  CHECK_PRE_PROVISIONED = 'check_pre_provisioned',
-}
+import { DeviceProvisionType, DeviceTransportType } from '../enums/device-profile.enum';
 
 @Entity('device_profiles')
 export class DeviceProfile extends BaseEntity {

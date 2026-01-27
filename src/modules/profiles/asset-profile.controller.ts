@@ -20,10 +20,9 @@ import {
 } from '@nestjs/swagger';
 import { AssetProfilesService } from './asset-profiles.service';
 import {
-  CreateAssetProfileDto,
-  UpdateAssetProfileDto,
   QueryProfilesDto,
-} from './dto/profiles.dto';
+} from './dto/device-profiles.dto';
+import { CreateAssetProfileDto, UpdateAssetProfileDto } from './dto/asset-profiles.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
