@@ -7,7 +7,7 @@ import {
   NotificationChannel,
   NotificationPriority,
   NotificationStatus,
-} from '@modules/notifications/entities/notification.entity';
+} from '@common/enums/index.enum';
 import { Notification, User } from '@modules/index.entities';
 import { ISeeder } from '../seeder.interface';
 

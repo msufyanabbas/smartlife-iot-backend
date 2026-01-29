@@ -20,7 +20,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
-import { UsersService } from './users.service';
+import { UsersService } from '@modules/index.service';
 import {
   CreateUserDto,
   UpdateUserDto,
@@ -32,14 +32,10 @@ import {
   BulkUpdateStatusDto,
   InviteUserDto,
 } from './dto/users.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole, UserStatus } from './entities/user.entity';
-import { AuditInterceptor } from '@/common/interceptors';
-import { Audit } from '@/common/decorators/audit.decorator';
-import { AuditAction, AuditEntityType, AuditSeverity } from '../audit/entities/audit-log.entity';
-import { RequireSubscriptionLimit, ResourceType, SubscriptionLimitGuard } from '@/common/guards/subscription-limit.guard';
+import { JwtAuthGuard, RolesGuard, RequireSubscriptionLimit, ResourceType, SubscriptionLimitGuard } from '@common/guards/index.guards';
+import { Roles, Audit } from '@common/decorators/index.decorator';
+import { UserRole, UserStatus, AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
+import { AuditInterceptor } from '@/common/interceptors/index.interceptor';
 
 @ApiTags('Users')
 @Controller('users')

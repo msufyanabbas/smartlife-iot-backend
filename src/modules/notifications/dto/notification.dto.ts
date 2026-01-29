@@ -12,12 +12,7 @@ import {
   Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import {
-  NotificationType,
-  NotificationChannel,
-  NotificationPriority,
-  NotificationStatus,
-} from '../entities/notification.entity';
+import { NotificationStatus, NotificationPriority, NotificationType, NotificationChannel } from '@common/enums/index.enum';
 
 export class CreateNotificationDto {
   @ApiProperty({ example: 'user-uuid' })

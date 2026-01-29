@@ -3,9 +3,9 @@ import { Injectable } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 import {
   Notification,
-  NotificationStatus,
-} from '../entities/notification.entity';
-import { User, UserRole } from '../../users/entities/user.entity';
+  User
+} from '@modules/index.entities';
+import { UserRole, NotificationStatus } from '@common/enums/index.enum';
 
 @Injectable()
 export class NotificationsRepository extends Repository<Notification> {

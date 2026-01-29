@@ -7,8 +7,9 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
-import { User, UserRole } from '@modules/users/entities/user.entity';
+import { SubscriptionsService } from '@modules/index.service';
+import { User } from '@modules/index.entities';
+import { UserRole } from '@common/enums/index.enum';
 
 export enum ResourceType {
   DEVICE = 'devices',

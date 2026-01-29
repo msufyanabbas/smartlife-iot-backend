@@ -11,10 +11,7 @@ import { Observable } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { NotificationsService } from '@/modules/notifications/notifications.service';
 import { NOTIFY_KEY, NotifyMetadata } from '@common/decorators/notify.decorator';
-import {
-  NotificationChannel,
-  NotificationPriority,
-} from '@/modules/notifications/entities/notification.entity';
+import { NotificationChannel, NotificationPriority } from '@common/enums/index.enum';
 
 @Injectable()
 export class NotificationInterceptor implements NestInterceptor {

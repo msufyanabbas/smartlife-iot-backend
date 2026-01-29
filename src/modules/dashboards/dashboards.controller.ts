@@ -27,10 +27,11 @@ import {
 } from './dto/dashboard.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { User, UserRole } from '../users/entities/user.entity';
+import { User } from '../users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
-import { RolesGuard } from '@/common/guards';
+import { RolesGuard } from '@common/guards/index.guards';
 import { Roles } from '@/common/decorators/roles.decorator';
 
 @ApiTags('dashboards')

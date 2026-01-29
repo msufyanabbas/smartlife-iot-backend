@@ -9,7 +9,8 @@ import { Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CustomersService } from '../customers/customers.service';
 import { UsersService } from '../users/users.service';
-import { User, UserRole } from '../users/entities/user.entity';
+import { User } from '../users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 import { Customer } from '../customers/entities/customers.entity';
 
 /**

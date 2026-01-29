@@ -1,130 +1,21 @@
-import { Entity, Column, Index } from 'typeorm';
-import { BaseEntity } from '../../../common/entities/base.entity';
-
-export enum SubscriptionPlan {
-  FREE = 'free',
-  STARTER = 'starter',
-  PROFESSIONAL = 'professional',
-  ENTERPRISE = 'enterprise',
-}
-
-export enum SubscriptionStatus {
-  ACTIVE = 'active',
-  CANCELLED = 'cancelled',
-  EXPIRED = 'expired',
-  TRIAL = 'trial',
-  SUSPENDED = 'suspended',
-}
-
-export enum BillingPeriod {
-  MONTHLY = 'monthly',
-  YEARLY = 'yearly',
-}
-
-export enum SupportLevel {
-  COMMUNITY = 'community',
-  EMAIL = 'email',
-  PRIORITY = 'priority',
-  DEDICATED = 'dedicated',
-}
-
-/**
- * Subscription Limits Interface
- * Based on Smart Life Excel specifications
- */
-export interface SubscriptionLimits {
-  // Core Limits
-  devices: number; // -1 = unlimited
-  users: number; // -1 = unlimited
-  customers: number; // -1 = unlimited
-  apiCallsPerMonth: number; // -1 = unlimited
-  dataRetentionDays: number;
-  storageGB: number;
-
-  // Dashboard & Visualization
-  dashboardTemplates: number;
-  customDashboards: number;
-
-  // Integrations & API
-  customIntegrations: number; // -1 = unlimited
-  webhooks: number; // -1 = unlimited
-  apiRateLimitPerMin: number;
-  concurrentConnections: number;
-
-  // Notifications
-  smsNotificationsPerMonth: number; // -1 = unlimited
-
-  // Data & Reporting
-  historicalDataQueryDays: number;
-
-  // Training & Support
-  trainingSessions: number; // -1 = unlimited
-}
-
-/**
- * Subscription Features Interface
- * Based on Smart Life Excel specifications
- */
-export interface SubscriptionFeatures {
-  // Analytics & Automation
-  realtimeAnalytics: boolean;
-  advancedAutomation: boolean;
-  ruleEngine: 'basic' | 'advanced' | 'premium';
-
-  // Access & Integration
-  restApiAccess: boolean;
-  mqttAccess: boolean;
-  customIntegrations: boolean;
-
-  // Branding & Customization
-  whiteLabelBranding: boolean;
-  brandingLevel: 'none' | 'partial' | 'full';
-
-  // Notifications
-  emailNotifications: boolean;
-  smsNotifications: boolean;
-  mobileAppAccess: boolean;
-
-  // Dashboards & Widgets
-  widgetLibrary: 'basic' | 'standard' | 'advanced';
-  alarmManagement: 'basic' | 'standard' | 'advanced';
-  advancedAlarms: boolean;
-
-  // Data Management
-  dataExport: 'csv' | 'csv-json-excel' | 'all-formats';
-  scheduledReports: 'none' | 'monthly' | 'weekly' | 'realtime';
-
-  // Support & SLA
-  supportLevel: SupportLevel;
-  slaGuarantee: boolean;
-  slaPercentage: number;
-  onboardingSupport: 'none' | 'basic' | 'standard' | 'premium';
-
-  // Development & Advanced
-  floorMapping: number; // 0 = no, >0 = number of floors
-  customDevelopment: boolean;
-  multiTenancy: boolean;
-  customerManagement: boolean;
-
-  // Security & Compliance
-  roleBasedAccess: boolean;
-  auditLogs: boolean;
-  backupRecovery: boolean;
-
-  // Device Management
-  otaUpdates: 'manual' | 'automatic';
-  deviceGroups: boolean;
-  assetManagement: 'none' | 'basic' | 'advanced';
-  geofencing: boolean;
-  customAttributes: boolean;
-  rpcCommands: boolean;
-  dataAggregation: boolean;
-}
-
+import { Entity, Column, Index, OneToOne, JoinColumn } from 'typeorm';
+import { BaseEntity } from '@common/entities/base.entity';
+import { Tenant } from '@modules/index.entities';
+import { SubscriptionPlan, SubscriptionStatus, BillingPeriod } from '@common/enums/index.enum';
+import type { SubscriptionFeatures, SubscriptionLimits } from '@/common/interfaces/index.interface';
 @Entity('subscriptions')
 @Index(['userId', 'status'])
 @Index(['tenantId'])
 export class Subscription extends BaseEntity {
+  @Column({ name: 'tenant_id', nullable: true })
+  tenantId?: string;
+
+  @OneToOne(() => Tenant, tenant => tenant.subscription, {
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'tenantId' })
+  tenant: Tenant;
+
   @Column({
     type: 'enum',
     enum: SubscriptionPlan,
@@ -186,9 +77,6 @@ export class Subscription extends BaseEntity {
 
   @Column({ name: 'user_id' })
   userId: string;
-
-  @Column({ name: 'tenant_id', nullable: true })
-  tenantId?: string;
 
   // Helper method to check if unlimited
   isUnlimited(resource: keyof SubscriptionLimits): boolean {

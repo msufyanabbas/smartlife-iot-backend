@@ -1,11 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import {
-  AlarmSeverity,
-  AlarmStatus,
-  AlarmCondition,
-} from '@modules/alarms/entities/alarm.entity';
+import { AlarmSeverity, AlarmCondition, AlarmStatus } from '@common/enums/index.enum'
 import { Alarm, User, Device } from '@modules/index.entities';
 import { ISeeder } from '../seeder.interface';
 

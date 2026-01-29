@@ -1,41 +1,8 @@
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
-import { BaseEntity } from '../../../common/entities/base.entity';
-import { User } from '../../users/entities/user.entity';
-import { Device } from '../../devices/entities/device.entity';
-
-export enum AlarmSeverity {
-  INFO = 'info',
-  WARNING = 'warning',
-  ERROR = 'error',
-  CRITICAL = 'critical',
-}
-
-export enum AlarmStatus {
-  ACTIVE = 'active',
-  ACKNOWLEDGED = 'acknowledged',
-  CLEARED = 'cleared',
-  RESOLVED = 'resolved',
-}
-
-export enum AlarmCondition {
-  GREATER_THAN = 'gt',
-  LESS_THAN = 'lt',
-  EQUAL = 'eq',
-  NOT_EQUAL = 'neq',
-  GREATER_THAN_OR_EQUAL = 'gte',
-  LESS_THAN_OR_EQUAL = 'lte',
-  BETWEEN = 'between',
-  OUTSIDE = 'outside',
-}
-
-export interface AlarmRule {
-  telemetryKey: string;
-  condition: AlarmCondition;
-  value: number;
-  value2?: number; // For BETWEEN and OUTSIDE conditions
-  duration?: number; // How long condition must be true (seconds)
-}
-
+import { BaseEntity } from '@common/entities/base.entity';
+import { User, Device } from '@modules/index.entities';
+import { AlarmSeverity, AlarmCondition, AlarmStatus } from '@/common/enums/index.enum';
+import type { AlarmRule } from '@/common/interfaces/index.interface';
 @Entity('alarms')
 @Index(['deviceId', 'status'])
 @Index(['userId', 'severity'])

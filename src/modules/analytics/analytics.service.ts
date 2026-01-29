@@ -3,7 +3,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import {
-  Analytics,
   AnalyticsType,
   AnalyticsPeriod,
 } from './entities/analytics.entity';
@@ -14,8 +13,8 @@ import {
 } from './dto/analytics.dto';
 import { Device, DeviceStatus } from '../devices/entities/device.entity';
 import { Telemetry } from '../telemetry/entities/telemetry.entity';
-import { Alarm, AlarmStatus } from '../alarms/entities/alarm.entity';
-import { User } from '../users/entities/user.entity';
+import { Alarm, User, Analytics } from '@modules/index.entities';
+import { AlarmStatus } from '@common/enums/index.enum';
 
 @Injectable()
 export class AnalyticsService {

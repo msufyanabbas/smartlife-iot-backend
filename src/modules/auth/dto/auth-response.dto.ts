@@ -1,4 +1,4 @@
-import { UserRole } from '@/modules/users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 class UserInfoDto {
@@ -19,12 +19,6 @@ class UserInfoDto {
     description: 'User full name',
   })
   name: string;
-
-   @ApiProperty({
-    example: 'Avatar',
-    description: 'Avatar Link',
-  })
-  avatar: string | null | undefined;
 
   @ApiProperty({
     example: UserRole.TENANT_ADMIN,

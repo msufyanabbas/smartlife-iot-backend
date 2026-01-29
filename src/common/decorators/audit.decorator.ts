@@ -1,6 +1,6 @@
 // src/common/decorators/audit.decorator.ts
 import { SetMetadata } from '@nestjs/common';
-import { AuditAction, AuditEntityType, AuditSeverity } from '../../modules/audit/entities/audit-log.entity';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 export interface AuditMetadata {
   action: AuditAction;

@@ -23,21 +23,17 @@ import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { User, UserRole } from '../users/entities/user.entity';
+import { User } from '../users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { DeviceStatus } from './entities/device.entity';
 import { Roles } from '@/common/decorators/roles.decorator';
-import { RolesGuard } from '@/common/guards';
+import { RolesGuard, RequireSubscriptionLimit, ResourceType, SubscriptionLimitGuard } from '@common/guards/index.guards';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
-import { 
-  RequireSubscriptionLimit, 
-  ResourceType, 
-  SubscriptionLimitGuard 
-} from '@/common/guards/subscription-limit.guard';
 import { Notify } from '@/common/decorators/notify.decorator';
-import { NotificationChannel, NotificationPriority, NotificationType } from '../notifications/entities/notification.entity';
+import { NotificationChannel, NotificationPriority, NotificationType } from '@common/enums/index.enum';
 
 @ApiTags('devices')
 @Controller('devices')

@@ -8,6 +8,7 @@ import {
   ScheduleModule,
   ThrottlerModule,
   featureModules,
+  MetricsModule
 } from '@modules/index.module';
 import { ConfigService } from '@modules/index.service';
 import * as redisStore from 'cache-manager-redis-store';
@@ -16,8 +17,7 @@ import { CustomThrottlerGuard } from '@common/guards/throttle.guard';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppDataSource } from './database/data-source';
 import { AppController } from './app.controller';
-import { AuditInterceptor, MetricsInterceptor } from './common/interceptors';
-import { MetricsModule } from './modules/metrics/metrics.module'; 
+import { AuditInterceptor, MetricsInterceptor } from './common/interceptors/index.interceptor';
 import { Audit } from './common/decorators/audit.decorator';
 import { SubscriptionLimitGuard } from './common/guards/subscription-limit.guard';
 import { UsageTrackingInterceptor } from './common/interceptors/usage-tracking.interceptor';

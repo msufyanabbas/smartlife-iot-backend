@@ -1,7 +1,7 @@
 // src/modules/auth/dto/invitation.dto.ts
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEmail, IsNotEmpty, IsOptional, IsString, IsEnum } from 'class-validator';
-import { UserRole } from '@/modules/users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 
 export class CreateInvitationDto {
   @ApiProperty({

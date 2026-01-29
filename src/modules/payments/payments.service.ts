@@ -7,25 +7,21 @@ import {
   Logger,
   ConflictException,
 } from '@nestjs/common';
+import axios from 'axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
-import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
+import { ConfigService, SubscriptionsService } from '@modules/index.service';
 import * as crypto from 'crypto';
+import { Payment } from '@modules/index.entities';
 import { 
-  Payment, 
   PaymentStatus, 
   PaymentProvider 
 } from './entities/payment.entity';
-import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import {
   CreatePaymentIntentDto,
   RefundPaymentDto,
 } from './dto/create-payment.dto';
-import {
-  SubscriptionPlan,
-  BillingPeriod,
-} from '../subscriptions/entities/subscription.entity';
+import { SubscriptionPlan, BillingPeriod } from '@common/enums/index.enum'
 
 @Injectable()
 export class PaymentsService {

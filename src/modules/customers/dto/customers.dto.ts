@@ -6,12 +6,12 @@ import {
   IsBoolean,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { CustomerStatus } from '../entities/customers.entity';
+import { CustomerStatus } from '@common/enums/index.enum';
 
 export class CreateCustomerDto {
   @ApiProperty({ example: 'Acme Corporation' })
   @IsString()
-  title: string;
+  name: string;
 
   @ApiPropertyOptional({ example: 'Saudi Arabia' })
   @IsOptional()
@@ -76,7 +76,7 @@ export class UpdateCustomerDto {
   @ApiPropertyOptional({ example: 'Acme Corporation Updated' })
   @IsOptional()
   @IsString()
-  title?: string;
+  name?: string;
 
   @ApiPropertyOptional({ example: 'Saudi Arabia' })
   @IsOptional()

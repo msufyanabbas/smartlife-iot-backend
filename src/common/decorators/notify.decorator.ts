@@ -4,7 +4,7 @@ import {
   NotificationType,
   NotificationChannel,
   NotificationPriority,
-} from '@/modules/notifications/entities/notification.entity';
+} from '@common/enums/index.enum';
 
 export interface NotifyMetadata {
   /**

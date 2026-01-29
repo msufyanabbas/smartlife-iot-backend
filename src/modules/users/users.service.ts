@@ -9,7 +9,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as crypto from 'crypto';
-import { User, UserRole, UserStatus } from './entities/user.entity';
+import { User } from './entities/user.entity';
+import { UserRole, UserStatus } from '@common/enums/index.enum';
 import {
   CreateUserDto,
   UpdateUserDto,

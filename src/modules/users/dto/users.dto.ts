@@ -7,8 +7,7 @@ import {
   IsBoolean,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { UserRole, UserStatus } from '../entities/user.entity';
-
+import { UserRole, UserStatus } from '@common/enums/index.enum';
 export class CreateUserDto {
   @ApiProperty({ example: 'john@example.com' })
   @IsEmail()

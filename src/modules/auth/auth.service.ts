@@ -8,7 +8,8 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService, SubscriptionsService } from '@modules/index.service';
+import { MailService } from '@modules/mail/mail.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
@@ -24,17 +25,15 @@ import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { TwoFactorChallengeDto } from '../two-factor/dto/two-factor-challenge.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
-import { MailService } from '../mail/mail.service';
 import { GoogleProfile } from './strategies/oauth/google.strategy';
 import { GitHubProfile } from './strategies/oauth/github.strategy';
 import { AppleProfile } from './strategies/oauth/apple.strategy';
 import { TokenBlacklist } from './entities/token-blacklist.entity';
 import { Cron } from '@nestjs/schedule';
-import { SubscriptionPlan } from '../subscriptions/entities/subscription.entity';
-import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { SubscriptionPlan } from '@common/enums/index.enum';
 import { SessionService } from './session/session.service';
 import { TwoFactorAuthService } from '../two-factor/two-factor-auth.service';
-import { UserRole } from '../users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 import { InvitationStatus } from './entities/invitation.entity';
 import { TenantStatus } from '../tenants/entities/tenant.entity';
 import { CreateInvitationDto } from './dto/invitation.dto';
@@ -164,18 +163,7 @@ export class AuthService {
       tenant = this.tenantRepository.create({
         name: companyName,
         email: email, // Use signup email as tenant email
-        title: companyName,
         status: TenantStatus.ACTIVE,
-        configuration: {
-          maxDevices: 100,
-          maxUsers: 10,
-          maxAssets: 50,
-          maxDashboards: 10,
-          maxRuleChains: 5,
-          dataRetentionDays: 30,
-          features: ['basic'],
-        },
-        isolationMode: 'full',
       });
 
       const savedTenant = await this.tenantRepository.save(tenant);
@@ -196,18 +184,7 @@ export class AuthService {
       tenant = this.tenantRepository.create({
         name: workspaceName,
         email: email,
-        title: workspaceName,
         status: TenantStatus.ACTIVE,
-        configuration: {
-          maxDevices: 10,
-          maxUsers: 1,
-          maxAssets: 10,
-          maxDashboards: 3,
-          maxRuleChains: 2,
-          dataRetentionDays: 30,
-          features: ['basic'],
-        },
-        isolationMode: 'full',
       });
 
       const savedTenant = await this.tenantRepository.save(tenant);
@@ -235,8 +212,7 @@ export class AuthService {
 
     const savedUser = await this.userRepository.save(user);
 
-     if (role === UserRole.TENANT_ADMIN && tenant && !tenant.tenantAdminId) {
-      tenant.tenantAdminId = savedUser.id;
+     if (role === UserRole.TENANT_ADMIN && tenant) {
       await this.tenantRepository.save(tenant);
     }
 
@@ -796,7 +772,6 @@ export class AuthService {
           email,
           name,
           emailVerified,
-          avatar,
           tenantId: tenant.id,
           role: UserRole.TENANT_ADMIN,
           password: this.generateRandomPassword(),
@@ -1359,7 +1334,6 @@ export class AuthService {
         role: user.role,
         tenantId: user.tenantId,
         customerId: user.customerId,
-        avatar: user.avatar,
       },
     };
   }
@@ -1521,7 +1495,6 @@ async updateProfile(
       email: user.email,
       name: user.name,
       phone: user.phone,
-      avatar: user.avatar,
       role: user.role,
     },
   };

@@ -1,45 +1,14 @@
 // src/modules/notifications/entities/notification.entity.ts
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
-import { BaseEntity } from '../../../common/entities/base.entity';
-import { User } from '../../users/entities/user.entity';
-
-export enum NotificationType {
-  ALARM = 'alarm',
-  DEVICE = 'device',
-  SYSTEM = 'system',
-  USER = 'user',
-  REPORT = 'report',
-}
-
-export enum NotificationChannel {
-  EMAIL = 'email',
-  SMS = 'sms',
-  PUSH = 'push',
-  WEBHOOK = 'webhook',
-  IN_APP = 'in_app',
-}
-
-export enum NotificationPriority {
-  LOW = 'low',
-  NORMAL = 'normal',
-  HIGH = 'high',
-  URGENT = 'urgent',
-}
-
-export enum NotificationStatus {
-  PENDING = 'pending',
-  SENT = 'sent',
-  DELIVERED = 'delivered',
-  FAILED = 'failed',
-  READ = 'read',
-}
-
+import { NotificationChannel, NotificationPriority, NotificationStatus, NotificationType } from '@common/enums/index.enum';
+import { BaseEntity } from '@common/entities/base.entity';
+import { User } from '@modules/index.entities';
 @Entity('notifications')
 @Index(['userId', 'status'])
 @Index(['userId', 'isRead'])
 @Index(['type', 'createdAt'])
-@Index(['tenantId', 'createdAt']) // ✅ NEW: For tenant filtering
-@Index(['customerId', 'createdAt']) // ✅ NEW: For customer filtering
+@Index(['tenantId', 'createdAt']) 
+@Index(['customerId', 'createdAt']) 
 export class Notification extends BaseEntity {
   @Column()
   userId: string;

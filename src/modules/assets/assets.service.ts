@@ -17,7 +17,7 @@ import {
   UpdateAttributesDto,
 } from './dto/assets.dto';
 import { User } from '../index.entities';
-import { UserRole } from '../users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 
 @Injectable()
 export class AssetsService {

@@ -9,7 +9,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger, UseGuards } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { WsJwtGuard } from '../../common/guards/ws-jwt.guard';
-import { Alarm } from './entities/alarm.entity';
+import { Alarm } from '@modules/index.entities';
 
 /**
  * WebSocket Gateway for real-time alarm notifications

@@ -8,9 +8,8 @@ import {
   BeforeInsert,
 } from 'typeorm';
 import { BaseEntity } from '@/common/entities/base.entity';
-import { User, UserRole } from '@/modules/users/entities/user.entity';
-import { Tenant } from '@/modules/tenants/entities/tenant.entity';
-import { Customer } from '@/modules/customers/entities/customers.entity';
+import { User, Customer, Tenant } from '@modules/index.entities';
+import { UserRole } from '@common/enums/index.enum';
 
 export enum InvitationStatus {
   PENDING = 'pending',

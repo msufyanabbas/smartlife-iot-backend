@@ -11,12 +11,8 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import {
-  AlarmSeverity,
-  AlarmStatus,
-  AlarmCondition,
-  AlarmRule,
-} from '../entities/alarm.entity';
+import { AlarmCondition, AlarmSeverity, AlarmStatus} from '@common/enums/index.enum'
+import type { AlarmRule } from '@common/interfaces/index.interface';
 
 export class AlarmRuleDto implements AlarmRule {
   @ApiProperty({ example: 'temperature' })

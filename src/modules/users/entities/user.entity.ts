@@ -7,26 +7,14 @@ import {
   BeforeUpdate,
   ManyToOne,
   JoinColumn,
+  ManyToMany,
+  JoinTable,
 } from 'typeorm';
 import { Exclude } from 'class-transformer';
 import * as bcrypt from 'bcrypt';
-import { BaseEntity } from '../../../common/entities/base.entity';
-import { Tenant } from '../../tenants/entities/tenant.entity';
-import { Customer } from '../../customers/entities/customers.entity'; // ✅ Fixed import path
-
-export enum UserRole {
-  SUPER_ADMIN = 'super_admin',
-  TENANT_ADMIN = 'tenant_admin',
-  CUSTOMER_ADMIN = 'customer_admin',
-  CUSTOMER_USER = 'customer_user',
-  USER = 'user',
-}
-
-export enum UserStatus {
-  ACTIVE = 'active',
-  INACTIVE = 'inactive',
-  SUSPENDED = 'suspended',
-}
+import { BaseEntity } from '@common/entities/base.entity';
+import { Tenant, Customer, Role } from '@modules/index.entities';
+import { UserRole, UserStatus } from '@/common/enums/index.enum';
 
 @Entity('users')
 @Index(['role'])
@@ -43,15 +31,11 @@ export class User extends BaseEntity {
   @Column()
   name: string;
 
+  @Column({ type: 'enum', enum: UserRole, default: UserRole.TENANT_ADMIN })
+  role: UserRole;
+
   @Column({ nullable: true, unique: true })
   phone?: string;
-
-  @Column({
-    type: 'enum',
-    enum: UserRole,
-    default: UserRole.TENANT_ADMIN,
-  })
-  role: UserRole;
 
   @Column({
     type: 'enum',
@@ -60,10 +44,10 @@ export class User extends BaseEntity {
   })
   status: UserStatus;
 
-  // ✅ Tenant relationship
+  // ✅ Tenant reference (nullable only for super_admin)
   @Column({ nullable: true })
   @Index()
-  tenantId?: string | any;
+  tenantId?: string;
 
   @ManyToOne(() => Tenant, (tenant) => tenant.users, {
     nullable: true,
@@ -72,7 +56,7 @@ export class User extends BaseEntity {
   @JoinColumn({ name: 'tenantId' })
   tenant?: Tenant;
 
-  // ✅ Customer relationship
+  // ✅ Customer reference (nullable, only for customer roles)
   @Column({ nullable: true })
   @Index()
   customerId?: string;
@@ -84,8 +68,10 @@ export class User extends BaseEntity {
   @JoinColumn({ name: 'customerId' })
   customer?: Customer;
 
-  @Column({ nullable: true })
-  avatar?: string;
+  // ✅ Roles (many-to-many)
+  @ManyToMany(() => Role, role => role.users)
+  @JoinTable({ name: 'user_roles' })
+  roles?: Role[];
 
   @Column({ type: 'timestamp', nullable: true })
   lastLoginAt?: Date;

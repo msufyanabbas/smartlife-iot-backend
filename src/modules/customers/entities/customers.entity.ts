@@ -1,22 +1,21 @@
 // src/modules/customers/entities/customer.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
-import { BaseEntity } from '../../../common/entities/base.entity';
-import { Tenant } from '../../tenants/entities/tenant.entity';
-import { User } from '../../users/entities/user.entity';
-
-export enum CustomerStatus {
-  ACTIVE = 'active',
-  INACTIVE = 'inactive',
-  SUSPENDED = 'suspended',
-}
-
+import { BaseEntity } from '@common/entities/base.entity';
+import { Tenant, User } from '@modules/index.entities';
+import { CustomerStatus } from '@common/enums/index.enum';
 @Entity('customers')
 @Index(['tenantId'])
 @Index(['status'])
-@Index(['title'])
+@Index(['name'])
 export class Customer extends BaseEntity {
-  @Column()
-  title: string;
+  @Column({ nullable: true})
+  name: string;
+
+  @Column({ nullable: true })
+  email: string;
+
+  @Column({ nullable: true })
+  phone?: string;
 
   @Column({ nullable: true })
   country?: string;
@@ -35,12 +34,6 @@ export class Customer extends BaseEntity {
 
   @Column({ nullable: true })
   zip?: string;
-
-  @Column({ nullable: true })
-  phone?: string;
-
-  @Column({ nullable: true })
-  email?: string;
 
   @Column({
     type: 'enum',

@@ -3,15 +3,13 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThan, In, Brackets } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 import {
   AuditLog,
-  AuditAction,
-  AuditEntityType,
-  AuditSeverity,
-} from './entities/audit-log.entity';
+} from '@modules/index.entities';
 import { CreateAuditLogDto, QueryAuditLogsDto } from './dto/audit.dto';
-import { User, UserRole } from '../users/entities/user.entity';
-import { Customer } from '../customers/entities/customers.entity';
+import { User, Customer } from '@modules/index.entities';
+import { UserRole } from '@common/enums/index.enum';
 
 export interface AuditContext {
   user: User;

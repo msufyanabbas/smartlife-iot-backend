@@ -3,8 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
   Customer,
-  CustomerStatus,
 } from '@modules/customers/entities/customers.entity';
+import { CustomerStatus } from '@common/enums/index.enum';
 import { Tenant } from '@modules/tenants/entities/tenant.entity';
 import { ISeeder } from '../seeder.interface';
 
@@ -330,7 +330,7 @@ export class CustomerSeeder implements ISeeder {
           };
 
           customers.push({
-            title: companyName,
+            name: companyName,
             country: 'Saudi Arabia',
             state: location.state,
             city: location.city,
@@ -359,7 +359,7 @@ export class CustomerSeeder implements ISeeder {
       // ========================================
       const specialCustomers: Partial<Customer>[] = [
         {
-          title: 'NEOM Smart City Initiative',
+          name: 'NEOM Smart City Initiative',
           country: 'Saudi Arabia',
           state: 'Tabuk Region',
           city: 'NEOM',
@@ -388,7 +388,7 @@ export class CustomerSeeder implements ISeeder {
           isPublic: true,
         },
         {
-          title: 'King Abdullah Financial District',
+          name: 'King Abdullah Financial District',
           country: 'Saudi Arabia',
           state: 'Riyadh Region',
           city: 'Riyadh',
@@ -413,7 +413,7 @@ export class CustomerSeeder implements ISeeder {
           isPublic: false,
         },
         {
-          title: 'Saudi Aramco Industrial Park',
+          name: 'Saudi Aramco Industrial Park',
           country: 'Saudi Arabia',
           state: 'Eastern Province',
           city: 'Dhahran',
@@ -439,7 +439,7 @@ export class CustomerSeeder implements ISeeder {
           isPublic: false,
         },
         {
-          title: 'Riyadh Metro Smart Stations',
+          name: 'Riyadh Metro Smart Stations',
           country: 'Saudi Arabia',
           state: 'Riyadh Region',
           city: 'Riyadh',
@@ -463,7 +463,7 @@ export class CustomerSeeder implements ISeeder {
           isPublic: true,
         },
         {
-          title: 'King Abdulaziz University Smart Campus',
+          name: 'King Abdulaziz University Smart Campus',
           country: 'Saudi Arabia',
           state: 'Makkah Region',
           city: 'Jeddah',
@@ -488,7 +488,7 @@ export class CustomerSeeder implements ISeeder {
           isPublic: true,
         },
         {
-          title: 'Red Sea Development Company',
+          name: 'Red Sea Development Company',
           country: 'Saudi Arabia',
           state: 'Tabuk Region',
           city: 'Red Sea Coast',

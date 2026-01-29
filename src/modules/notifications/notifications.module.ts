@@ -9,7 +9,7 @@ import { EmailChannel } from './channels/email.channel';
 import { SmsChannel } from './channels/sms.channel';
 import { PushChannel } from './channels/push.channel';
 import { MailModule } from '../../modules/mail/mail.module';
-import { UsersModule } from '../users/users.module'; // ✅ Add this
+import { UsersModule } from '../users/users.module'; 
 import { User } from '../index.entities';
 import { UsersService } from '../users/users.service';
 

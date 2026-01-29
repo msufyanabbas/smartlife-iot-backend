@@ -1,13 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { UserRole, UserStatus } from '@common/enums/index.enum';
 import {
   User,
-  UserRole,
-  UserStatus,
-} from '@modules/users/entities/user.entity';
-import { Tenant } from '@modules/tenants/entities/tenant.entity';
-import { Customer } from '@modules/customers/entities/customers.entity';
+  Tenant,
+  Customer
+} from '@modules/index.entities';
 import { ISeeder } from '../seeder.interface';
 
 @Injectable()

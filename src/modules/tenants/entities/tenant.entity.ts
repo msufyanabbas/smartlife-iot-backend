@@ -6,10 +6,12 @@ import {
   OneToMany,
   ManyToOne,
   JoinColumn,
+  OneToOne,
 } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { User } from '../../users/entities/user.entity';
 import { Customer } from '../../customers/entities/customers.entity';
+import { Subscription } from '@/modules/index.entities';
 
 export enum TenantStatus {
   ACTIVE = 'active',
@@ -25,35 +27,11 @@ export class Tenant extends BaseEntity {
   @Column({ unique: true })
   name: string;
 
-  @Column({ nullable: true })
-  title?: string;
-
-  @Column({ type: 'text', nullable: true })
-  description?: string;
-
   @Column({ unique: true })
   email: string;
 
   @Column({ nullable: true })
   phone?: string;
-
-  @Column({ nullable: true })
-  country?: string;
-
-  @Column({ nullable: true })
-  state?: string;
-
-  @Column({ nullable: true })
-  city?: string;
-
-  @Column({ nullable: true })
-  address?: string;
-
-  @Column({ nullable: true, name: 'address2' })
-  address2?: string;
-
-  @Column({ nullable: true })
-  zip?: string;
 
   @Column({
     type: 'enum',
@@ -62,13 +40,15 @@ export class Tenant extends BaseEntity {
   })
   status: TenantStatus;
 
-  @Column({ type: 'jsonb', nullable: true })
-  additionalInfo?: {
-    logo?: string;
-    website?: string;
-    industry?: string;
-    employeeCount?: number;
-  };
+  // ✅ Relations
+  @OneToMany(() => User, user => user.tenant)
+  users?: User[];
+
+  @OneToMany(() => Customer, customer => customer.tenant)
+  customers?: Customer[];  
+
+  @OneToOne(() => Subscription, subscription => subscription.tenant)
+  subscription?: Subscription;
 
   @Column({ type: 'jsonb', default: '{}' })
   configuration: {
@@ -82,33 +62,9 @@ export class Tenant extends BaseEntity {
     features?: string[];
   };
 
-  @Column({ name: 'isolation_mode', default: 'full' })
-  isolationMode: string; // 'full', 'shared'
-
-  @Column({ name: 'tenant_admin_id', nullable: true })
-  tenantAdminId?: string;
-
-  // ✅ Relations - Fixed mapping
-  @OneToMany(() => User, (user) => user.tenant)
-  users?: User[];
-
-  @OneToMany(() => Customer, (customer) => customer.tenant)
-  customers?: Customer[];
-
-  @ManyToOne(() => User, { nullable: true })
-  @JoinColumn({ name: 'tenant_admin_id' })
-  tenantAdmin?: User;
-
   // ✅ Helper methods
   isActive(): boolean {
     return this.status === TenantStatus.ACTIVE;
-  }
-
-  getFullAddress(): string {
-    const parts = [this.address, this.address2, this.city, this.state, this.zip]
-      .filter(Boolean)
-      .join(', ');
-    return parts || 'No address provided';
   }
 
   // ✅ Check if tenant has reached limits

@@ -2,7 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Tenant, TenantStatus } from '@modules/tenants/entities/tenant.entity';
-import { User, UserRole } from '@modules/users/entities/user.entity';
+import { User } from '@modules/users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 import { ISeeder } from '../seeder.interface';
 
 @Injectable()

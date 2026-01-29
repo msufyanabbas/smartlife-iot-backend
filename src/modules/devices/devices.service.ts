@@ -22,7 +22,7 @@ import {
   PaginatedResponseDto,
 } from '@/common/dto/pagination.dto';
 import { generateRandomString } from '@/common/utils/helpers';
-import { UserRole } from '../users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 import { DeviceCredentialsService } from './device-credentials.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -84,7 +84,7 @@ export class DevicesService {
     const savedDevice = await this.deviceRepository.save(device);
 
     this.subscriptionsService.incrementTenantUsage(
-      user.tenantId,
+      user.tenantId as any,
       "devices",
       1
     );

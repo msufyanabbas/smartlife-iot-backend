@@ -15,22 +15,25 @@ import { OAuthAccount } from './entities/oauth-account.entity';
 import { GoogleStrategy } from './strategies/oauth/google.strategy';
 import { GitHubStrategy } from './strategies/oauth/github.strategy';
 import { AppleStrategy } from './strategies/oauth/apple.strategy';
-import { Customer, Invitation, Tenant, TokenBlacklist } from '../index.entities';
+import { Customer, Invitation, Subscription, Tenant, TokenBlacklist } from '../index.entities';
 import { redisService } from '@/lib/redis/redis.service';
 import { SubscriptionsModule } from '../index.module';
 import { SessionService } from './session/session.service';
 import { TwoFactorAuthModule } from '../two-factor/two-factor-auth.module';
+import { TwoFactorAuth, TwoFactorMethod } from '../two-factor/entities/two-factor-auth.entity';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       User,
+      Subscription,
       RefreshToken,
       OAuthAccount,
       TokenBlacklist,
       Invitation,
       Tenant,
-      Customer
+      Customer, 
+      TwoFactorAuth
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({

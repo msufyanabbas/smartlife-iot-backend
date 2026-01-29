@@ -7,7 +7,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Customer, CustomerStatus } from './entities/customers.entity';
+import { CustomerStatus } from '@/common/enums/index.enum';
+import { Customer } from '@modules/index.entities';
 import {
   CreateCustomerDto,
   UpdateCustomerDto,
@@ -29,7 +30,7 @@ export class CustomersService {
     // Check if customer with same title exists in this tenant
     const existingCustomer = await this.customerRepository.findOne({
       where: {
-        title: createCustomerDto.title,
+        name: createCustomerDto.name,
         tenantId: createCustomerDto.tenantId,
       },
     });
@@ -134,11 +135,11 @@ export class CustomersService {
    * Find customer by title and tenant
    */
   async findByTitleAndTenant(
-    title: string,
+    name: string,
     tenantId: string,
   ): Promise<Customer | null> {
     return await this.customerRepository.findOne({
-      where: { title, tenantId },
+      where: { name, tenantId },
     });
   }
 
@@ -152,9 +153,9 @@ export class CustomersService {
     const customer = await this.findOne(id);
 
     // Check if title is being changed and if it's already taken
-    if (updateCustomerDto.title && updateCustomerDto.title !== customer.title) {
+    if (updateCustomerDto.name && updateCustomerDto.name !== customer.name) {
       const existingCustomer = await this.findByTitleAndTenant(
-        updateCustomerDto.title,
+        updateCustomerDto.name,
         customer.tenantId,
       );
       if (existingCustomer) {
@@ -325,7 +326,7 @@ export class CustomersService {
         isPublic: true,
         status: CustomerStatus.ACTIVE,
       },
-      order: { title: 'ASC' },
+      order: { name: 'ASC' },
     });
   }
 
@@ -350,7 +351,7 @@ export class CustomersService {
     }
     return await this.customerRepository.find({
       where,
-      order: { title: 'ASC' },
+      order: { name: 'ASC' },
     });
   }
 }

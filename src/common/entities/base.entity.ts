@@ -25,4 +25,7 @@ export abstract class BaseEntity extends TypeORMBaseEntity {
 
   @Column({ name: 'updated_by', nullable: true })
   updatedBy?: string;
+
+  @Column({ name: 'deleted_by', nullable: true })
+  deletedBy?: string;
 }

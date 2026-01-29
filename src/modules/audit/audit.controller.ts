@@ -21,22 +21,16 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { AuditService } from './audit.service';
+import { AuditService } from '@modules/index.service';
 import {
   CreateAuditLogDto,
   QueryAuditLogsDto,
   AuditLogResponseDto,
 } from './dto/audit.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { User, UserRole } from '../users/entities/user.entity';
-import {
-  AuditAction,
-  AuditEntityType,
-  AuditSeverity,
-} from './entities/audit-log.entity';
+import { JwtAuthGuard, RolesGuard } from '@common/guards/index.guards';
+import { Roles, CurrentUser } from '@common/decorators/index.decorator';
+import { User } from '@modules/index.entities';
+import { UserRole, AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Audit')
 @Controller('audit')

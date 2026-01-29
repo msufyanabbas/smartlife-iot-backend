@@ -1,9 +1,6 @@
 import { IsEnum, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  SubscriptionPlan,
-  BillingPeriod,
-} from '../entities/subscription.entity';
+import { SubscriptionPlan, BillingPeriod} from '@common/enums/index.enum';
 
 export class CreateSubscriptionDto {
   @ApiProperty({ 

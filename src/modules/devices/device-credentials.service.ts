@@ -15,7 +15,8 @@ import { Device } from './entities/device.entity';
 import { DeviceCredentials, CredentialsType } from './entities/device-credentials.entity';
 import { DeviceCredentialsDto } from './dto/device-credentials.dto';
 import { generateToken, generateRandomString } from '@/common/utils/helpers';
-import { User, UserRole } from '../users/entities/user.entity';
+import { User } from '../users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 
 @Injectable()
 export class DeviceCredentialsService {

@@ -1,8 +1,13 @@
 import e from 'express';
+import { UserRole } from './user_roles/entities/user_roles.entity';
 
 // User & Auth entities
 export { User } from './users/entities/user.entity';
 export { RefreshToken } from './auth/entities/refresh-token.entity';
+export { Role } from './roles/entities/roles.entity';
+export { Permission } from './permissions/entities/permissions.entity';
+export { RolePermission } from './role_permissions/entities/role_permissions.entity';
+export { UserRole } from './user_roles/entities/user_roles.entity';
 
 // Device & IoT entities
 export { Device } from './devices/entities/device.entity';

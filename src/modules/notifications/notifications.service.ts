@@ -8,12 +8,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
+import { NotificationChannel, NotificationStatus, NotificationType } from '@common/enums/index.enum';
 import {
   Notification,
-  NotificationStatus,
-  NotificationChannel,
-  NotificationType,
-} from './entities/notification.entity';
+  User
+} from '@modules/index.entities';
 import {
   CreateNotificationDto,
   NotificationQueryDto,
@@ -25,9 +24,9 @@ import { EmailChannel } from './channels/email.channel';
 import { SmsChannel } from './channels/sms.channel';
 import { PushChannel } from './channels/push.channel';
 import { NotificationsRepository } from './repositories/notifications.repository';
-import { User, UserRole } from '../users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { UsersService } from '../users/users.service';
+import { UsersService } from '@modules/index.service';
 
 @Injectable()
 export class NotificationsService {

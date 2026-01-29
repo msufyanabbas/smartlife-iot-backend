@@ -10,7 +10,7 @@ import { Observable } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { AuditService } from '@/modules/audit/audit.service';
 import { AUDIT_KEY, AuditMetadata } from '@/common/decorators/audit.decorator';
-import { AuditSeverity } from '@/modules/audit/entities/audit-log.entity';
+import { AuditSeverity } from '@common/enums/index.enum';
 
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {

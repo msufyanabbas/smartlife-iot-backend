@@ -2,11 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { AuditService } from './audit.service';
-import {
-  AuditAction,
-  AuditEntityType,
-  AuditSeverity,
-} from './entities/audit-log.entity';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @Injectable()
 export class AuditEventsService {

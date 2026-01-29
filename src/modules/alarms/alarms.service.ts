@@ -6,12 +6,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, Between } from 'typeorm';
-import {
-  Alarm,
-  AlarmStatus,
-  AlarmCondition,
-  AlarmSeverity,
-} from './entities/alarm.entity';
+import { Alarm } from '@modules/index.entities'
+import { AlarmCondition, AlarmStatus, AlarmSeverity} from '@common/enums/index.enum';
 import {
   CreateAlarmDto,
   UpdateAlarmDto,

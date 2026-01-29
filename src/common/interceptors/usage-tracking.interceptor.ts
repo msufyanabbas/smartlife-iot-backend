@@ -40,7 +40,7 @@ export class UsageTrackingInterceptor implements NestInterceptor {
           try {
             // Increment API call count for tenant
             await this.subscriptionsService.incrementTenantUsage(
-              user.tenantId,
+              user.tenantId as any,
               'apiCalls',
               1,
             );
@@ -58,7 +58,7 @@ export class UsageTrackingInterceptor implements NestInterceptor {
         error: (error) => {
           // Still track failed requests
           this.subscriptionsService
-            .incrementTenantUsage(user.tenantId, 'apiCalls', 1)
+            .incrementTenantUsage(user.tenantId as any, 'apiCalls', 1)
             .catch((err) =>
               this.logger.error('Failed to track failed API call:', err),
             );

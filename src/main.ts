@@ -1,7 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@modules/index.service';
 import compression from 'compression';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
@@ -12,7 +12,7 @@ import {
   LoggingInterceptor,
   TransformInterceptor,
   AuditInterceptor,
-} from './common/interceptors/index';
+} from './common/interceptors/index.interceptor';
 import { SubscriptionsService } from './modules/subscriptions/subscriptions.service';
 import { ApiUsageInterceptor } from './common/interceptors/api-usage.interceptor';
 import { AuditService } from './modules/audit/audit.service';

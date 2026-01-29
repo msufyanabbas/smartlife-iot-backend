@@ -2,11 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import {
-  AuditAction,
-  AuditEntityType,
-  AuditSeverity,
-} from '@modules/audit/entities/audit-log.entity';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 import { User, Device, Alarm, Tenant, AuditLog, Customer } from '@modules/index.entities';
 import { ISeeder } from '../seeder.interface';
 

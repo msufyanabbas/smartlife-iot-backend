@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource, Repository, Between } from 'typeorm';
-import { Alarm, AlarmStatus, AlarmSeverity } from '../entities/alarm.entity';
+import { Alarm } from '@modules/index.entities';
+import { AlarmSeverity, AlarmStatus } from '@/common/enums/index.enum';
 
 /**
  * Custom repository for complex alarm queries

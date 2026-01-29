@@ -1,12 +1,9 @@
 // src/common/decorators/access-control.decorator.ts
 import { applyDecorators, UseGuards } from '@nestjs/common';
-import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
-import { RolesGuard } from '@common/guards/roles.guard';
-import { SubscriptionGuard } from '@common/guards/subscription.guard';
-import { Roles } from './roles.decorator';
-import { RequireSubscription } from './subscription.decorator';
-import { UserRole } from '@modules/users/entities/user.entity';
-import { SubscriptionPlan } from '@modules/subscriptions/entities/subscription.entity';
+import { JwtAuthGuard, RolesGuard, SubscriptionGuard } from '@common/guards/index.guards';
+import { Roles, RequireSubscription } from '@common/decorators/index.decorator';
+import { UserRole } from '@common/enums/index.enum';
+import { SubscriptionPlan } from '@common/enums/index.enum';
 
 export function AccessControl(
   roles: UserRole[],

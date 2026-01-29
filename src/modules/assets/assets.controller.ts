@@ -28,11 +28,12 @@ import {
   UpdateAttributesDto,
   AssetHierarchyDto,
 } from './dto/assets.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { User, UserRole } from '../users/entities/user.entity';
-import { AssetType } from './entities/asset.entity';
+import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
+import { RolesGuard } from '@common/guards/roles.guard';
+import { Roles } from '@common/decorators/roles.decorator';
+import { User } from '@modules/index.entities';
+import { UserRole } from '@common/enums/index.enum';
+import { AssetType } from '@modules/assets/entities/asset.entity';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
 

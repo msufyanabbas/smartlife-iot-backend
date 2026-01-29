@@ -17,7 +17,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import * as DashboardEntity from './entities/dashboard.entity';
 import { User } from '../index.entities';
-import { UserRole } from '../users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 
 @Injectable()
 export class DashboardsService {

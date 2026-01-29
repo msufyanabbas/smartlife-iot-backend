@@ -28,8 +28,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole } from '../users/entities/user.entity';
-import { CustomerStatus } from './entities/customers.entity';
+import { UserRole, CustomerStatus} from '@common/enums/index.enum';
 
 @ApiTags('Customers')
 @Controller('customers')

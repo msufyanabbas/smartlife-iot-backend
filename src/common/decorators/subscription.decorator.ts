@@ -1,6 +1,6 @@
 // src/common/decorators/subscription.decorator.ts
 import { SetMetadata } from '@nestjs/common';
-import { SubscriptionPlan } from '@modules/subscriptions/entities/subscription.entity';
+import { SubscriptionPlan } from '@common/enums/index.enum';
 
 export const SUBSCRIPTION_KEY = 'subscription';
 export const RequireSubscription = (...plans: SubscriptionPlan[]) => 

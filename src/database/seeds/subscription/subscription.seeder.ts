@@ -1,14 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import type { SubscriptionLimits, SubscriptionFeatures } from '@/common/interfaces/subscription.interface';
 import {
   SubscriptionPlan,
   SubscriptionStatus,
   BillingPeriod,
-  SubscriptionLimits,
-  SubscriptionFeatures,
   SupportLevel,
-} from '@modules/subscriptions/entities/subscription.entity';
+} from '@common/enums/index.enum';
 import { Subscription, User } from '@modules/index.entities';
 import { ISeeder } from '../seeder.interface';
 

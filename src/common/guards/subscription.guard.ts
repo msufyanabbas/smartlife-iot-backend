@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { SUBSCRIPTION_KEY } from '@decorators/subscription.decorator';
-import { SubscriptionPlan, SubscriptionStatus } from '@modules/subscriptions/entities/subscription.entity';
+import { SubscriptionPlan, SubscriptionStatus } from '@common/enums/index.enum';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 
 @Injectable()

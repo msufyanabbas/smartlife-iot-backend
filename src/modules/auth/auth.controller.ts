@@ -33,9 +33,9 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { User, UserRole } from '../users/entities/user.entity';
+import { User } from '../users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum'
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import type { redisService } from '@/lib/redis/redis.service';
 import {
@@ -48,7 +48,7 @@ import { randomBytes } from 'crypto';
 import { ExchangeCodeDto } from './dto/exchange-code.dto';
 import { TwoFactorChallengeDto } from '../two-factor/dto/two-factor-challenge.dto';
 import { Roles } from '@/common/decorators/roles.decorator';
-import { RolesGuard } from '@/common/guards';
+import { RolesGuard, JwtAuthGuard } from '@common/guards/index.guards';
 import { CreateInvitationDto } from './dto/invitation.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
@@ -201,7 +201,7 @@ export class AuthController {
       email: invitation.email,
       role: invitation.role,
       tenantName: invitation.tenant?.name,
-      customerName: invitation.customer?.title,
+      customerName: invitation.customer?.name,
       inviterName: invitation.inviter?.name,
       inviteeName: invitation.inviteeName,
       expiresAt: invitation.expiresAt,
@@ -838,7 +838,6 @@ async verifyOAuth2FA(
       phone: user.phone,
       role: user.role,
       status: user.status,
-      avatar: user.avatar,
       emailVerified: user.emailVerified,
       lastLoginAt: user.lastLoginAt,
       createdAt: user.createdAt,

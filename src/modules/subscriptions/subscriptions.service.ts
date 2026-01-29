@@ -8,21 +8,14 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, QueryRunner, DataSource } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import {
-  Subscription,
-  SubscriptionPlan,
-  SubscriptionStatus,
-  BillingPeriod,
-  SubscriptionLimits,
-  SubscriptionFeatures,
-  SupportLevel,
-} from './entities/subscription.entity';
+import { SubscriptionPlan, SubscriptionStatus, BillingPeriod, SupportLevel } from '@common/enums/index.enum';
+import { SubscriptionFeatures, SubscriptionLimits } from '@common/interfaces/index.interface';
+import { Subscription, Customer, Device, Tenant, User } from '@modules/index.entities';
 import {
   CreateSubscriptionDto,
   UpgradeSubscriptionDto,
 } from './dto/create-subscription.dto';
-import { Customer, Device, Tenant, User } from '../index.entities';
-import { UsersService } from '../users/users.service';
+import { UsersService } from '@modules/index.service';
 
 @Injectable()
 export class SubscriptionsService {
@@ -306,7 +299,7 @@ export class SubscriptionsService {
       where: { id: tenantId },
     });
 
-    if (!tenant || !tenant.tenantAdminId) {
+    if (!tenant) {
       return {
         devices: devicesCount,
         users: usersCount,
@@ -318,7 +311,7 @@ export class SubscriptionsService {
     }
 
     const subscription = await this.subscriptionRepository.findOne({
-      where: { userId: tenant.tenantAdminId },
+      where: { userId: tenant.id },
     });
 
     return {
@@ -342,12 +335,12 @@ export class SubscriptionsService {
       where: { id: tenantId },
     });
 
-    if (!tenant || !tenant.tenantAdminId) {
+    if (!tenant) {
       this.logger.warn(`Tenant ${tenantId} has no admin - denying access`);
       return false;
     }
 
-    return this.canPerformAction(tenant.tenantAdminId, resource);
+    return this.canPerformAction(tenant.id, resource);
   }
 
   /**
@@ -962,11 +955,11 @@ export class SubscriptionsService {
       where: { id: tenantId },
     });
 
-    if (!tenant || !tenant.tenantAdminId) {
+    if (!tenant || !tenant.id) {
       throw new NotFoundException('Tenant admin not found');
     }
 
-    await this.decrementUsage(tenant.tenantAdminId, resource, amount);
+    await this.decrementUsage(tenant.id, resource, amount);
   }
 
   /**
