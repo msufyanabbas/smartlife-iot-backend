@@ -159,6 +159,23 @@ export class CreateAssetDto {
 
 export class UpdateAssetDto extends PartialType(CreateAssetDto) {}
 
+export class SearchAssetQueryDto {
+  @ApiProperty()
+  @IsOptional()
+  @IsString()
+  latitude: number;
+
+  @ApiProperty()
+  @IsOptional()
+  @IsString()
+  longitude: number;
+
+  @ApiProperty()
+  @IsOptional()
+  @IsString()
+  radius: number;
+}
+
 export class QueryAssetsDto {
   @ApiPropertyOptional()
   @IsOptional()

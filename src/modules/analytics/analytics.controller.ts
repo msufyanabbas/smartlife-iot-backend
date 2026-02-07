@@ -20,6 +20,7 @@ import {
   CreateAnalyticsDto,
   QueryAnalyticsDto,
   DeviceAnalyticsDto,
+  TelemetryStatQueryDto,
 } from './dto/analytics.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -90,12 +91,11 @@ export class AnalyticsController {
   @ApiQuery({ name: 'endDate', required: false })
   @ApiResponse({ status: 200, description: 'Telemetry stats retrieved' })
   async getTelemetryStats(
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
+    @Query() queryDto: TelemetryStatQueryDto
   ) {
     const stats = await this.analyticsService.getTelemetryStats(
-      startDate ? new Date(startDate) : undefined,
-      endDate ? new Date(endDate) : undefined,
+      queryDto.startDate ? new Date(queryDto.startDate) : undefined,
+      queryDto.endDate ? new Date(queryDto.endDate) : undefined,
     );
     return {
       message: 'Telemetry statistics retrieved successfully',
@@ -109,12 +109,11 @@ export class AnalyticsController {
   @ApiQuery({ name: 'endDate', required: false })
   @ApiResponse({ status: 200, description: 'Alarm analytics retrieved' })
   async getAlarmAnalytics(
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
+    @Query() queryDto: TelemetryStatQueryDto
   ) {
     const analytics = await this.analyticsService.getAlarmAnalytics(
-      startDate ? new Date(startDate) : undefined,
-      endDate ? new Date(endDate) : undefined,
+      queryDto.startDate ? new Date(queryDto.startDate) : undefined,
+      queryDto.endDate ? new Date(queryDto.endDate) : undefined,
     );
     return {
       message: 'Alarm analytics retrieved successfully',
@@ -130,12 +129,11 @@ export class AnalyticsController {
   @ApiQuery({ name: 'endDate', required: false })
   @ApiResponse({ status: 200, description: 'User analytics retrieved' })
   async getUserActivity(
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
+    @Query() queryDto: TelemetryStatQueryDto
   ) {
     const analytics = await this.analyticsService.getUserActivity(
-      startDate ? new Date(startDate) : undefined,
-      endDate ? new Date(endDate) : undefined,
+      queryDto.startDate ? new Date(queryDto.startDate) : undefined,
+      queryDto.endDate ? new Date(queryDto.endDate) : undefined,
     );
     return {
       message: 'User activity analytics retrieved successfully',

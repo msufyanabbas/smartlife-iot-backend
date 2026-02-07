@@ -106,6 +106,12 @@ export class CreateAlarmDto {
   tags?: string[];
 }
 
+export class TestAlarmDto {
+  @ApiProperty({ example: 25 })
+  @IsNumber()
+  value: number;
+}
+
 export class UpdateAlarmDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -194,6 +200,16 @@ export class AlarmQueryDto {
   @IsNumber()
   @Min(1)
   limit?: number = 20;
+}
+
+export class BulkAcknowledgeAlarmDto {
+  @ApiPropertyOptional()
+  alarmIds: string[];
+}
+export class BulkResolveAlarmDto { 
+  @ApiPropertyOptional()
+  alarmIds: string[]; 
+  note: string 
 }
 
 export class AcknowledgeAlarmDto {

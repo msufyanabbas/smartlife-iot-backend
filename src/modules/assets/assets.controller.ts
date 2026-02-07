@@ -27,6 +27,7 @@ import {
   BulkAssignDevicesDto,
   UpdateAttributesDto,
   AssetHierarchyDto,
+  SearchAssetQueryDto,
 } from './dto/assets.dto';
 import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
 import { RolesGuard } from '@common/guards/roles.guard';
@@ -121,14 +122,12 @@ export class AssetsController {
   @ApiResponse({ status: 200, description: 'Assets found' })
   async searchByLocation(
     @CurrentUser() user: User,
-    @Query('latitude') latitude: number,
-    @Query('longitude') longitude: number,
-    @Query('radius') radius: number,
+    @Query() queryDto: SearchAssetQueryDto
   ) {
     const assets = await this.assetsService.searchByLocation(
-      +latitude,
-      +longitude,
-      +radius,
+      +queryDto.latitude,
+      +queryDto.longitude,
+      +queryDto.radius,
       user
     );
     return {

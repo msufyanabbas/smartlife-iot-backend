@@ -29,6 +29,18 @@ export class CreateAnalyticsDto {
   timestamp: string;
 }
 
+export class TelemetryStatQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+}
+
 export class QueryAnalyticsDto {
   @ApiPropertyOptional({ enum: AnalyticsType })
   @IsOptional()

@@ -24,6 +24,9 @@ import {
   AlarmQueryDto,
   AcknowledgeAlarmDto,
   ResolveAlarmDto,
+  TestAlarmDto,
+  BulkAcknowledgeAlarmDto,
+  BulkResolveAlarmDto,
 } from './dto/alarm.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -162,7 +165,7 @@ export class AlarmsController {
   test(
     @Param('id', ParseIdPipe) id: string,
     @CurrentUser() user: User,
-    @Body() body: { value: number },
+    @Body() body: TestAlarmDto,
   ) {
     return this.alarmsService.testAlarm(id, user.id, body.value);
   }
@@ -173,7 +176,7 @@ export class AlarmsController {
   @ApiResponse({ status: 200, description: 'Alarms acknowledged' })
   bulkAcknowledge(
     @CurrentUser() user: User,
-    @Body() body: { alarmIds: string[] },
+    @Body() body: BulkAcknowledgeAlarmDto,
   ) {
     return this.alarmsService.bulkAcknowledge(user.id, body.alarmIds);
   }
@@ -184,7 +187,7 @@ export class AlarmsController {
   @ApiResponse({ status: 200, description: 'Alarms resolved' })
   bulkResolve(
     @CurrentUser() user: User,
-    @Body() body: { alarmIds: string[]; note: string },
+    @Body() body: BulkResolveAlarmDto,
   ) {
     return this.alarmsService.bulkResolve(user.id, body.alarmIds, body.note);
   }
