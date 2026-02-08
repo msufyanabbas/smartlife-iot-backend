@@ -14,6 +14,7 @@ export { HealthModule } from './health/health.module';
 export { MetricsModule } from './metrics/metrics.module';
 export {CustomersModule} from './customers/customers.module';
 export {UserSettingsModule} from './user-settings/user-settings.module';
+export { RolesModule } from './roles/roles.module'
 
 // ============================================
 // FEATURE MODULES (application modules)
@@ -104,6 +105,7 @@ import { CustomersModule } from './customers/customers.module';
 import { CustomerUsersModule } from './customer-users/customer-users.module';
 import { CodecModule } from './devices/codecs/codec.module';
 import { AutomationModule } from './automation/automation.module';
+import { RolesModule } from './index.module';
 
 // ============================================
 // FEATURE MODULES ARRAY (for spreading in app.module.ts)
@@ -115,6 +117,7 @@ export const featureModules = [
   PaymentsModule,
   TwoFactorAuthModule,
   UserSettingsModule,
+  RolesModule,
   // Core
   AuthModule,
   UsersModule,
