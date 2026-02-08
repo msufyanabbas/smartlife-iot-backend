@@ -31,6 +31,9 @@ import {
   UpdatePreferencesDto,
   BulkUpdateStatusDto,
   InviteUserDto,
+  QueryUsersDto,
+  SearchUsersDto,
+  UpdateStatusDto,
 } from './dto/users.dto';
 import { JwtAuthGuard, RolesGuard, RequireSubscriptionLimit, ResourceType, SubscriptionLimitGuard } from '@common/guards/index.guards';
 import { Roles, Audit } from '@common/decorators/index.decorator';
@@ -79,30 +82,18 @@ export class UsersController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all users' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiQuery({ name: 'search', required: false, type: String })
-  @ApiQuery({ name: 'role', required: false, enum: UserRole })
-  @ApiQuery({ name: 'status', required: false, enum: UserStatus })
-  @ApiQuery({ name: 'tenantId', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
   async findAll(
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-    @Query('search') search?: string,
-    @Query('role') role?: UserRole,
-    @Query('status') status?: UserStatus,
-    @Query('tenantId') tenantId?: string,
+    @Query() queryDto: QueryUsersDto
   ) {
-    const result = await this.usersService.findAll({
-      page: page ? +page : undefined,
-      limit: limit ? +limit : undefined,
-      search,
-      role,
-      status,
-      tenantId,
-    });
-
+      const result = await this.usersService.findAll({
+    page: queryDto.page,
+    limit: queryDto.limit,
+    search: queryDto.search,
+    role: queryDto.role,
+    status: queryDto.status,
+    tenantId: queryDto.tenantId,
+  });
     return {
       message: 'Users retrieved successfully',
       data: result.users,
@@ -280,11 +271,9 @@ export class UsersController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Search users' })
-  @ApiQuery({ name: 'q', required: true, type: String })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Search results' })
-  async search(@Query('q') term: string, @Query('limit') limit?: number) {
-    const users = await this.usersService.search(term, limit ? +limit : 10);
+  async search(@Query() queryDto: SearchUsersDto) {
+    const users = await this.usersService.search(queryDto.q, queryDto.limit ? +queryDto.limit : 10);
     return {
       message: 'Search completed successfully',
       data: users,
@@ -404,9 +393,9 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Status updated successfully' })
   async updateStatus(
     @Param('id') id: string,
-    @Body('status') status: UserStatus,
+    @Body() updateStatusDto: UpdateStatusDto,
   ) {
-    const user = await this.usersService.updateStatus(id, status);
+    const user = await this.usersService.updateStatus(id, updateStatusDto.status);
     return {
       message: 'Status updated successfully',
       data: user,

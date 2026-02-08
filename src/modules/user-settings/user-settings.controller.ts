@@ -24,6 +24,9 @@ import {
   UpdateDisplaySettingsDto,
   UpdateUserSettingsDto,
   UserSettingsResponseDto,
+  UpdateDashboardLayoutDto,
+  UpdateWidgetPreferencesDto,
+  SettingsMessageResponseDto,
 } from './dto/user-settings.dto';
 
 @ApiTags('User Settings')
@@ -157,9 +160,9 @@ export class UserSettingsController {
   })
   async updateDashboardLayout(
     @CurrentUser() user: User,
-    @Body() layout: Record<string, any>,
-  ): Promise<{ message: string }> {
-    await this.userSettingsService.updateDashboardLayout(user.id, layout);
+    @Body() updateDto: UpdateDashboardLayoutDto,
+  ): Promise<SettingsMessageResponseDto> {
+    await this.userSettingsService.updateDashboardLayout(user.id, updateDto.layout);
     return { message: 'Dashboard layout saved successfully' };
   }
 
@@ -177,9 +180,9 @@ export class UserSettingsController {
   })
   async updateWidgetPreferences(
     @CurrentUser() user: User,
-    @Body() preferences: Record<string, any>,
-  ): Promise<{ message: string }> {
-    await this.userSettingsService.updateWidgetPreferences(user.id, preferences);
+    @Body() updateDto: UpdateWidgetPreferencesDto,
+  ): Promise<SettingsMessageResponseDto> {
+    await this.userSettingsService.updateWidgetPreferences(user.id, updateDto.preferences);
     return { message: 'Widget preferences saved successfully' };
   }
 }

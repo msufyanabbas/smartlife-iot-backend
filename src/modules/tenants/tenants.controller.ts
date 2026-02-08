@@ -25,6 +25,9 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import { Roles } from '@/common/decorators/roles.decorator';
+import { UserRole } from '@/common/enums/user.enum';
+import { TenantListResponseDto, TenantMessageResponseDto } from './dto/tenant-response.dto';
 
 @ApiTags('tenants')
 @Controller('tenants')
@@ -35,7 +38,7 @@ export class TenantsController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new tenant' })
-  @ApiResponse({ status: 201, description: 'Tenant created successfully' })
+  @ApiResponse({ status: 201, description: 'Tenant created successfully', type: TenantMessageResponseDto })
   @ApiResponse({ status: 409, description: 'Tenant already exists' })
   create(@CurrentUser() user: User, @Body() createDto: CreateTenantDto) {
     return this.tenantsService.create(user.id, createDto);
@@ -43,7 +46,7 @@ export class TenantsController {
 
   @Get()
   @ApiOperation({ summary: 'Get all tenants' })
-  @ApiResponse({ status: 200, description: 'List of tenants' })
+  @ApiResponse({ status: 200, description: 'List of tenants', type: TenantListResponseDto })
   findAll(@Query() paginationDto: PaginationDto) {
     return this.tenantsService.findAll(paginationDto);
   }

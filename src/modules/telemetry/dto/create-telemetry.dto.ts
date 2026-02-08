@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsObject,
   IsNotEmpty,
@@ -7,6 +8,8 @@ import {
   IsDateString,
   IsLatitude,
   IsLongitude,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
 
 export class CreateTelemetryDto {
@@ -71,4 +74,15 @@ export class CreateTelemetryDto {
   @IsObject()
   @IsOptional()
   metadata?: Record<string, any>;
+}
+
+export class BatchCreateTelemetryDto {
+  @ApiProperty({ 
+    type: [CreateTelemetryDto],
+    description: 'Array of telemetry records'
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateTelemetryDto)
+  data: CreateTelemetryDto[];
 }

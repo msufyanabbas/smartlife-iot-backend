@@ -18,6 +18,7 @@ import { TwoFactorAuthService } from './two-factor-auth.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
+import { AuthenticatorSecretResponseDto, BackupCodesResponseDto, MessageResponseDto, SetupSMSDto, TwoFactorSettingsResponseDto, VerifyCodeDto } from './dto/two-factor-challenge.dto';
 
 @ApiTags('Two-Factor Authentication')
 @ApiBearerAuth()
@@ -42,6 +43,7 @@ export class TwoFactorAuthController {
         hasBackupCodes: true,
       },
     },
+    type: TwoFactorSettingsResponseDto
   })
   async getSettings(@CurrentUser() user: User) {
     return this.twoFactorAuthService.getSettings(user.id);
@@ -62,8 +64,9 @@ export class TwoFactorAuthController {
         manualEntryKey: 'JBSWY3DPEHPK3PXP',
       },
     },
+    type: AuthenticatorSecretResponseDto
   })
-  async generateAuthenticatorSecret(@CurrentUser() user: User) {
+  async generateAuthenticatorSecret(@CurrentUser() user: User): Promise<AuthenticatorSecretResponseDto> {
     return this.twoFactorAuthService.generateAuthenticatorSecret(user.id);
   }
 
@@ -73,6 +76,7 @@ export class TwoFactorAuthController {
   @ApiResponse({
     status: 200,
     description: 'Authenticator 2FA enabled',
+    type: BackupCodesResponseDto
   })
   @ApiResponse({
     status: 400,
@@ -89,9 +93,9 @@ export class TwoFactorAuthController {
   })
   async enableAuthenticator(
     @CurrentUser() user: User,
-    @Body('code') code: string,
+    @Body() verifyDto: VerifyCodeDto,
   ) {
-    return this.twoFactorAuthService.enableAuthenticator(user.id, code);
+    return this.twoFactorAuthService.enableAuthenticator(user.id, verifyDto.code);
   }
 
   // ==================== SMS SETUP ====================
@@ -118,9 +122,9 @@ export class TwoFactorAuthController {
   })
   async setupSMS(
     @CurrentUser() user: User,
-    @Body('phoneNumber') phoneNumber: string,
+    @Body() setupDto: SetupSMSDto,
   ) {
-    return this.twoFactorAuthService.setupSMS(user.id, phoneNumber);
+    return this.twoFactorAuthService.setupSMS(user.id, setupDto.phoneNumber);
   }
 
   @Post('sms/resend')
@@ -129,8 +133,9 @@ export class TwoFactorAuthController {
   @ApiResponse({
     status: 200,
     description: 'Code sent',
+    type: MessageResponseDto
   })
-  async resendSMSCode(@CurrentUser() user: User) {
+  async resendSMSCode(@CurrentUser() user: User): Promise<MessageResponseDto> {
     await this.twoFactorAuthService.sendSMSCode(user.id);
     return { message: 'Verification code sent' };
   }
@@ -141,6 +146,7 @@ export class TwoFactorAuthController {
   @ApiResponse({
     status: 200,
     description: 'SMS 2FA enabled',
+    type: BackupCodesResponseDto
   })
   @ApiResponse({
     status: 400,
@@ -155,8 +161,8 @@ export class TwoFactorAuthController {
       required: ['code'],
     },
   })
-  async enableSMS(@CurrentUser() user: User, @Body('code') code: string) {
-    return this.twoFactorAuthService.enableSMS(user.id, code);
+  async enableSMS(@CurrentUser() user: User, @Body() verifyDto: VerifyCodeDto) {
+    return this.twoFactorAuthService.enableSMS(user.id, verifyDto.code);
   }
 
   // ==================== EMAIL SETUP ====================
@@ -168,7 +174,7 @@ export class TwoFactorAuthController {
     status: 200,
     description: 'Code sent',
   })
-  async sendEmailCode(@CurrentUser() user: User) {
+  async sendEmailCode(@CurrentUser() user: User): Promise<MessageResponseDto> {
     await this.twoFactorAuthService.sendEmailCode(user.id);
     return { message: 'Verification code sent to your email' };
   }
@@ -193,8 +199,8 @@ export class TwoFactorAuthController {
       required: ['code'],
     },
   })
-  async enableEmail(@CurrentUser() user: User, @Body('code') code: string) {
-    return this.twoFactorAuthService.enableEmail(user.id, code);
+  async enableEmail(@CurrentUser() user: User, @Body() verifyDto: VerifyCodeDto) {
+    return this.twoFactorAuthService.enableEmail(user.id, verifyDto.code);
   }
 
   // ==================== DISABLE 2FA ====================
@@ -219,8 +225,8 @@ export class TwoFactorAuthController {
       required: ['code'],
     },
   })
-  async disable(@CurrentUser() user: User, @Body('code') code: string) {
-    return this.twoFactorAuthService.disable(user.id, code);
+  async disable(@CurrentUser() user: User, @Body() verifyDto: VerifyCodeDto) {
+    return this.twoFactorAuthService.disable(user.id, verifyDto.code);
   }
 
   // ==================== BACKUP CODES ====================
@@ -247,8 +253,8 @@ export class TwoFactorAuthController {
   })
   async regenerateBackupCodes(
     @CurrentUser() user: User,
-    @Body('code') code: string,
-  ) {
-    return this.twoFactorAuthService.regenerateBackupCodes(user.id, code);
+    @Body() verifyDto: VerifyCodeDto,
+  ): Promise<BackupCodesResponseDto> {
+    return this.twoFactorAuthService.regenerateBackupCodes(user.id, verifyDto.code);
   }
 }

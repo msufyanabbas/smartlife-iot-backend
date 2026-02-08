@@ -5,9 +5,12 @@ import {
   IsOptional,
   IsEnum,
   IsBoolean,
+  IsNumber,
+  IsArray,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserRole, UserStatus } from '@common/enums/index.enum';
+import { Type } from 'class-transformer';
 export class CreateUserDto {
   @ApiProperty({ example: 'john@example.com' })
   @IsEmail()
@@ -139,7 +142,8 @@ export class UpdatePreferencesDto {
 }
 
 export class BulkUpdateStatusDto {
-  @ApiProperty({ example: ['user-id-1', 'user-id-2'] })
+  @ApiProperty({ example: ['user-id-1', 'user-id-2'], type: [String] })
+  @IsArray()
   @IsString({ each: true })
   userIds: string[];
 
@@ -165,4 +169,58 @@ export class InviteUserDto {
   @IsOptional()
   @IsString()
   tenantId?: string;
+}
+
+export class QueryUsersDto {
+  @ApiPropertyOptional({ default: 1, type: Number })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  page?: number;
+
+  @ApiPropertyOptional({ default: 10, type: Number })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  limit?: number;
+
+  @ApiPropertyOptional({ description: 'Search by name or email' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional({ enum: UserRole })
+  @IsOptional()
+  @IsEnum(UserRole)
+  role?: UserRole;
+
+  @ApiPropertyOptional({ enum: UserStatus })
+  @IsOptional()
+  @IsEnum(UserStatus)
+  status?: UserStatus;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  tenantId?: string;
+}
+
+// Add this DTO for search endpoint
+export class SearchUsersDto {
+  @ApiProperty({ description: 'Search term' })
+  @IsString()
+  q: string;
+
+  @ApiPropertyOptional({ default: 10, type: Number })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  limit?: number;
+}
+
+// Add this DTO for update status endpoint
+export class UpdateStatusDto {
+  @ApiProperty({ enum: UserStatus })
+  @IsEnum(UserStatus)
+  status: UserStatus;
 }

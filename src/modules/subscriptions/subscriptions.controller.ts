@@ -24,6 +24,15 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
+import {
+  SubscriptionResponseDto,
+  SubscriptionMessageResponseDto,
+  PlansListResponseDto,
+  UsageStatisticsResponseDto,
+  UpgradeValidationResponseDto,
+  InvoicesListResponseDto,
+} from './dto/subscription-response.dto';
+import { Subscription } from 'rxjs';
 
 @ApiTags('subscriptions')
 @Controller('subscriptions')
@@ -40,6 +49,7 @@ export class SubscriptionsController {
   @ApiResponse({
     status: 201,
     description: 'Subscription created successfully',
+    type: SubscriptionMessageResponseDto
   })
   @ApiResponse({ status: 409, description: 'User already has a subscription' })
   create(
@@ -51,7 +61,7 @@ export class SubscriptionsController {
 
   @Get()
   @ApiOperation({ summary: 'Get current subscription' })
-  @ApiResponse({ status: 200, description: 'Current subscription details' })
+  @ApiResponse({ status: 200, description: 'Current subscription details', type: SubscriptionResponseDto })
   @ApiResponse({ status: 404, description: 'No subscription found' })
   findCurrent(@CurrentUser() user: User) {
     return this.subscriptionsService.findCurrent(user.id);
@@ -62,6 +72,7 @@ export class SubscriptionsController {
   @ApiResponse({ 
     status: 200, 
     description: 'List of subscription plans',
+    type: PlansListResponseDto,
     schema: {
       example: [
         {
@@ -96,6 +107,7 @@ export class SubscriptionsController {
   @ApiResponse({ 
     status: 200, 
     description: 'Usage statistics',
+    type: UsageStatisticsResponseDto,
     schema: {
       example: {
         current: {
@@ -132,6 +144,7 @@ export class SubscriptionsController {
   @ApiResponse({
     status: 200,
     description: 'Upgrade validated - payment required',
+    type: UpgradeValidationResponseDto,
     schema: {
       example: {
         requiresPayment: true,
@@ -159,6 +172,7 @@ export class SubscriptionsController {
   @ApiResponse({
     status: 200,
     description: 'Downgrade scheduled successfully',
+    type: SubscriptionResponseDto,
     schema: {
       example: {
         id: 'uuid',
@@ -192,6 +206,7 @@ export class SubscriptionsController {
   @ApiResponse({
     status: 200,
     description: 'Scheduled downgrade cancelled',
+    type: SubscriptionResponseDto
   })
   @ApiResponse({ status: 404, description: 'No scheduled downgrade found' })
   async cancelScheduledDowngrade(@CurrentUser() user: User) {
@@ -219,6 +234,7 @@ export class SubscriptionsController {
   @ApiResponse({
     status: 200,
     description: 'Subscription cancelled successfully',
+    type: SubscriptionMessageResponseDto
   })
   @ApiResponse({ status: 404, description: 'No subscription found' })
   @ApiResponse({ status: 409, description: 'Subscription already cancelled' })
@@ -231,7 +247,7 @@ export class SubscriptionsController {
     summary: 'Get subscription invoices',
     description: 'Returns list of all invoices/receipts for this subscription'
   })
-  @ApiResponse({ status: 200, description: 'List of invoices' })
+  @ApiResponse({ status: 200, description: 'List of invoices', type: InvoicesListResponseDto })
   getInvoices(@CurrentUser() user: User) {
     return this.subscriptionsService.getInvoices(user.id);
   }

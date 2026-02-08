@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsNotEmpty, IsDateString, IsOptional } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsEnum, IsNotEmpty, IsDateString, IsOptional, IsString, IsNumber } from 'class-validator';
 
 export enum AggregationInterval {
   HOUR = 'hour',
@@ -40,6 +41,7 @@ export class TimeSeriesQueryDto {
     description: 'Data key to extract',
   })
   @IsNotEmpty()
+  @IsString() // Add this
   key: string;
 
   @ApiProperty({
@@ -63,6 +65,8 @@ export class TimeSeriesQueryDto {
     description: 'Maximum number of records',
     default: 1000,
   })
+  @Type(() => Number) // Add this
+  @IsNumber() // Add this
   @IsOptional()
   limit?: number;
 }

@@ -7,6 +7,8 @@ import {
   IsString,
   Min,
   Max,
+  IsObject,
+  ValidateNested,
 } from 'class-validator';
 import {
   Language,
@@ -14,6 +16,7 @@ import {
   TimeFormat,
   DateFormat,
 } from '../entities/user-settings.entity';
+import { Type } from 'class-transformer';
 
 // ==================== UPDATE GENERAL SETTINGS ====================
 
@@ -97,8 +100,10 @@ export class UpdateDisplaySettingsDto {
 // ==================== UPDATE ALL SETTINGS ====================
 
 export class UpdateUserSettingsDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: UpdateGeneralSettingsDto })
   @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateGeneralSettingsDto)
   general?: UpdateGeneralSettingsDto;
 
   @ApiPropertyOptional()
@@ -166,4 +171,37 @@ export class UserSettingsResponseDto {
 
   @ApiProperty()
   updatedAt: Date;
+}
+
+export class UpdateDashboardLayoutDto {
+  @ApiProperty({ 
+    description: 'Dashboard layout configuration',
+    example: {
+      widgets: [
+        { id: 'widget-1', position: { x: 0, y: 0, w: 6, h: 4 } },
+        { id: 'widget-2', position: { x: 6, y: 0, w: 6, h: 4 } }
+      ]
+    }
+  })
+  @IsObject()
+  layout: Record<string, any>;
+}
+
+// ==================== WIDGET PREFERENCES DTO ====================
+
+export class UpdateWidgetPreferencesDto {
+  @ApiProperty({ 
+    description: 'Widget-specific preferences and configurations',
+    example: {
+      'widget-1': { refreshInterval: 30, showLegend: true },
+      'widget-2': { chartType: 'line', dataPoints: 50 }
+    }
+  })
+  @IsObject()
+  preferences: Record<string, any>;
+}
+
+export class SettingsMessageResponseDto {
+  @ApiProperty({ example: 'Settings updated successfully' })
+  message: string;
 }

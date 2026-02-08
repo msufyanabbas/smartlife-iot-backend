@@ -170,3 +170,14 @@ export class QueryWidgetBundlesDto {
   @IsOptional()
   limit?: number;
 }
+
+export class CloneWidgetTypeDto {
+  @ApiProperty({ description: 'Name for the cloned widget type' })
+  @IsString()
+  name: string;
+}
+
+export class ImportWidgetTypeDto {
+  @ApiProperty({ description: 'Widget type data to import' })
+  widgetData: any; // You might want to define a more specific type
+}

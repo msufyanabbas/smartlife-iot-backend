@@ -27,6 +27,8 @@ import {
   CreateWidgetBundleDto,
   UpdateWidgetBundleDto,
   QueryWidgetBundlesDto,
+  CloneWidgetTypeDto,
+  ImportWidgetTypeDto,
 } from './dto/widgets.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -61,13 +63,6 @@ export class WidgetsController {
 
   @Get('types')
   @ApiOperation({ summary: 'Get all widget types' })
-  @ApiQuery({ name: 'search', required: false })
-  @ApiQuery({ name: 'category', required: false, enum: WidgetTypeCategory })
-  @ApiQuery({ name: 'bundleFqn', required: false })
-  @ApiQuery({ name: 'tenantId', required: false })
-  @ApiQuery({ name: 'system', required: false, type: Boolean })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Widget types retrieved' })
   async findAllWidgetTypes(@Query() queryDto: QueryWidgetTypesDto) {
     const result = await this.widgetTypesService.findAll(queryDto);
@@ -145,8 +140,8 @@ export class WidgetsController {
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Import widget type from JSON' })
   @ApiResponse({ status: 201, description: 'Widget type imported' })
-  async importWidgetType(@Body() widgetData: any) {
-    const widgetType = await this.widgetTypesService.importWidget(widgetData);
+  async importWidgetType(@Body() importDto: ImportWidgetTypeDto) {
+    const widgetType = await this.widgetTypesService.importWidget(importDto.widgetData);
     return {
       message: 'Widget type imported successfully',
       data: widgetType,
@@ -158,8 +153,8 @@ export class WidgetsController {
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Clone widget type' })
   @ApiResponse({ status: 201, description: 'Widget type cloned' })
-  async cloneWidgetType(@Param('id') id: string, @Body('name') name: string) {
-    const widgetType = await this.widgetTypesService.clone(id, name);
+  async cloneWidgetType(@Param('id') id: string, @Body() cloneDto: CloneWidgetTypeDto) {
+    const widgetType = await this.widgetTypesService.clone(id, cloneDto.name);
     return {
       message: 'Widget type cloned successfully',
       data: widgetType,
@@ -209,11 +204,6 @@ export class WidgetsController {
 
   @Get('bundles')
   @ApiOperation({ summary: 'Get all widget bundles' })
-  @ApiQuery({ name: 'search', required: false })
-  @ApiQuery({ name: 'tenantId', required: false })
-  @ApiQuery({ name: 'system', required: false, type: Boolean })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Widget bundles retrieved' })
   async findAllWidgetBundles(@Query() queryDto: QueryWidgetBundlesDto) {
     const result = await this.widgetBundlesService.findAll(queryDto);
