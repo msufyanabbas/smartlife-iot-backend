@@ -64,10 +64,10 @@ export class RolesController {
     return this.rolesService.findOne(id);
   }
 
-  @Get(':id/users-count')
-  @ApiOperation({ summary: 'Get the number of users assigned to this role' })
+  @Get(':id/users')
+  @ApiOperation({ summary: 'Get users assigned to this role and their count' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
-  @ApiResponse({ status: 200, description: 'User count retrieved successfully' })
+  @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Role not found' })
   getUsersCount(@Param('id', ParseUUIDPipe) id: string) {
     return this.rolesService.getUsersCount(id);

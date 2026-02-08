@@ -8,6 +8,7 @@ import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { QueryRoleDto } from './dto/query-role.dto';
 import { AssignPermissionsDto } from './dto/assign-permissions.dto';
+import { User } from '../index.entities';
 
 @Injectable()
 export class RolesService {
@@ -252,14 +253,20 @@ export class RolesService {
     });
   }
 
-  async getUsersCount(id: string): Promise<number> {
-    const role = await this.roleRepository
-      .createQueryBuilder('role')
-      .leftJoin('role.users', 'users')
-      .where('role.id = :id', { id })
-      .select('COUNT(users.id)', 'count')
-      .getRawOne();
+  async getUsersCount(id: string): Promise<{ count: number; users: User[] }> {
+  const role = await this.roleRepository
+    .createQueryBuilder('role')
+    .leftJoinAndSelect('role.users', 'users')
+    .where('role.id = :id', { id })
+    .getOne();
 
-    return parseInt(role.count) || 0;
+  if (!role) {
+    throw new NotFoundException(`Role with ID ${id} not found`);
   }
+
+  return {
+    count: role.users?.length || 0,
+    users: role.users || []
+  };
+}
 }
