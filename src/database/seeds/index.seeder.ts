@@ -29,6 +29,7 @@ import { WidgetBundleSeeder } from './widget-bundle/widget-bundle.seeder';
 import { WidgetTypeSeeder } from './widget-type/widget-type.seeder';
 import { DeviceCredentialsSeeder } from './device-credentials/device-credentials.seeder';
 import { DeviceCommandsSeeder } from './device-commands/device-commands.seeder';
+import { PermissionSeeder } from "./permissions/permissions.seeder";
 import {
   Tenant,
   Device,
@@ -61,8 +62,11 @@ import {
   DeviceCredentials,
   DeviceCommand,
   Customer,
+  Permission,
+  Role
 } from '@modules/index.entities';
 import { CustomerSeeder } from './customer/customers.seeder';
+import { RoleSeeder } from './roles/roles.seeder';
 
 export interface SeederConfig {
   name: string;
@@ -262,10 +266,23 @@ export const SEEDERS: SeederConfig[] = [
     emoji: '📜',
     entity: DeviceCommand,
   },
+  {
+    name: 'Permissions',
+    seeder: PermissionSeeder,
+    emoji: '📜',
+    entity: Permission,
+  },
+  {
+    name: 'Roles',
+    seeder: RoleSeeder,
+    emoji: '📜',
+    entity: Role,
+  },
 ];
 
 // Export individual seeders for backward compatibility
 export {
+  PermissionSeeder,
   UserSeeder,
   TenantSeeder,
   DeviceSeeder,
