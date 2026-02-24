@@ -95,17 +95,18 @@ export class AlarmsService {
     queryBuilder.skip(skip).take(limit);
 
     // Order by severity (critical first), then by triggered date
-    queryBuilder.addOrderBy(
-  `CASE 
-     WHEN alarm.severity = 'critical' THEN 1
-     WHEN alarm.severity = 'error' THEN 2
-     WHEN alarm.severity = 'warning' THEN 3
-     WHEN alarm.severity = 'info' THEN 4
-     ELSE 5
-   END`,
-  'ASC',
-);
-     queryBuilder
+queryBuilder
+  .addSelect(
+    `CASE 
+       WHEN alarm.severity = 'critical' THEN 1
+       WHEN alarm.severity = 'error' THEN 2
+       WHEN alarm.severity = 'warning' THEN 3
+       WHEN alarm.severity = 'info' THEN 4
+       ELSE 5
+     END`,
+    'severity_order',
+  )
+  .orderBy('severity_order', 'ASC')
   .addOrderBy('alarm.triggeredAt', 'DESC', 'NULLS LAST')
   .addOrderBy('alarm.createdAt', 'DESC');
 
