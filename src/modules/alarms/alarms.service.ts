@@ -95,17 +95,19 @@ export class AlarmsService {
     queryBuilder.skip(skip).take(limit);
 
     // Order by severity (critical first), then by triggered date
-    queryBuilder
-      .addOrderBy(
-        `CASE alarm.severity 
-        WHEN 'critical' THEN 1 
-        WHEN 'error' THEN 2 
-        WHEN 'warning' THEN 3 
-        WHEN 'info' THEN 4 
-        END`,
-      )
-      .addOrderBy('alarm.triggeredAt', 'DESC', 'NULLS LAST')
-      .addOrderBy('alarm.createdAt', 'DESC');
+    queryBuilder.addOrderBy(
+  `CASE 
+     WHEN alarm.severity = 'critical' THEN 1
+     WHEN alarm.severity = 'error' THEN 2
+     WHEN alarm.severity = 'warning' THEN 3
+     WHEN alarm.severity = 'info' THEN 4
+     ELSE 5
+   END`,
+  'ASC',
+);
+     queryBuilder
+  .addOrderBy('alarm.triggeredAt', 'DESC', 'NULLS LAST')
+  .addOrderBy('alarm.createdAt', 'DESC');
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
