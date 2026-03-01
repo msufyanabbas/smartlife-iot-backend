@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import {
   DeviceProfile
 } from '@modules/profiles/entities/device-profile.entity';
-import { DeviceProvisionType, DeviceTransportType } from '@/modules/profiles/enums/device-profile.enum';
+import { DeviceProvisionType, DeviceTransportType } from '@common/enums/index.enum';
 import { Tenant } from '../../../modules/tenants/entities/tenant.entity';
 import { ISeeder } from '../seeder.interface';
 

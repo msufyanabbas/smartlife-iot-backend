@@ -1,18 +1,42 @@
 // src/lib/mqtt/mqtt.service.ts
 import * as mqtt from 'mqtt';
-import { kafkaService } from '../kafka/kafka.service';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { KafkaService } from '../kafka/kafka.service';
 
-class MQTTService {
+@Injectable()
+export class MQTTService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(MQTTService.name);
   private client: mqtt.MqttClient | null = null;
   private isConnected = false;
+
+  constructor(
+    // ✅ Inject KafkaService via DI instead of importing singleton
+    private readonly kafka: KafkaService,
+  ) {}
+
+  /**
+   * Auto-connects when NestJS starts
+   */
+  async onModuleInit() {
+    this.logger.log('🚀 Connecting to MQTT Broker...');
+    await this.connect();
+  }
+
+  /**
+   * Auto-disconnects when NestJS stops
+   */
+  async onModuleDestroy() {
+    this.logger.log('🛑 Disconnecting from MQTT...');
+    await this.disconnect();
+  }
 
   /**
    * Connect to MQTT broker
    */
   async connect(): Promise<void> {
     try {
-      this.client = mqtt.connect(process.env.MQTT_BROKER as string, {
-        clientId: process.env.MQTT_CLIENT_ID,
+      this.client = mqtt.connect(process.env.MQTT_BROKER_URL!, {
+        clientId: process.env.MQTT_CLIENT_ID || `smartlife-${Date.now()}`,
         username: process.env.MQTT_USERNAME,
         password: process.env.MQTT_PASSWORD,
         clean: true,
@@ -20,13 +44,13 @@ class MQTTService {
       });
 
       this.client.on('connect', () => {
-        console.log('✅ MQTT Broker connected');
+        this.logger.log('✅ MQTT Broker connected');
         this.isConnected = true;
         this.subscribeToTopics();
       });
 
       this.client.on('error', (error) => {
-        console.error('❌ MQTT Error:', error);
+        this.logger.error('❌ MQTT Error:', error);
         this.isConnected = false;
       });
 
@@ -35,11 +59,11 @@ class MQTTService {
       });
 
       this.client.on('close', () => {
-        console.log('⚠️  MQTT connection closed');
+        this.logger.warn('⚠️  MQTT connection closed');
         this.isConnected = false;
       });
     } catch (error) {
-      console.error('❌ Failed to connect to MQTT:', error);
+      this.logger.error('❌ Failed to connect to MQTT:', error);
       throw error;
     }
   }
@@ -49,18 +73,19 @@ class MQTTService {
    */
   private subscribeToTopics(): void {
     const topics = [
-      process.env.MQTT_TOPIC_TELEMETRY,
-      process.env.MQTT_TOPIC_COMMANDS,
-      process.env.MQTT_TOPIC_STATUS,
-      process.env.MQTT_TOPIC_ALERTS,
-    ];
+      process.env.MQTT_TOPIC_TELEMETRY || 'devices/+/telemetry',
+      process.env.MQTT_TOPIC_COMMANDS || 'devices/+/commands',
+      process.env.MQTT_TOPIC_STATUS || 'devices/+/status',
+      process.env.MQTT_TOPIC_ALERTS || 'devices/+/alerts',
+      'lorawan/+/data',  // LoRaWAN devices
+    ].filter(Boolean);
 
     topics.forEach((topic) => {
-      this.client?.subscribe(topic as any, (err) => {
+      this.client?.subscribe(topic, (err) => {
         if (err) {
-          console.error(`❌ Failed to subscribe to ${topic}:`, err);
+          this.logger.error(`❌ Failed to subscribe to ${topic}:`, err);
         } else {
-          console.log(`✅ Subscribed to MQTT topic: ${topic}`);
+          this.logger.log(`✅ Subscribed to MQTT topic: ${topic}`);
         }
       });
     });
@@ -71,13 +96,12 @@ class MQTTService {
    */
   private async handleMessage(topic: string, message: Buffer): Promise<void> {
     try {
-      console.log(`📨 MQTT message received on ${topic}`);
+      this.logger.log(`📨 MQTT message received on ${topic}`);
 
       const payload = JSON.parse(message.toString());
-      console.log('📦 Payload:', payload);
+      this.logger.debug('📦 Payload:', payload);
 
       // Extract device ID from topic
-      // Example: lorawan/ws202-001/data → deviceId: ws202-001
       const deviceId = this.extractDeviceId(topic);
 
       // Parse based on topic pattern
@@ -85,27 +109,29 @@ class MQTTService {
       if (topic.startsWith('lorawan/')) {
         telemetryData = this.parseLoRaWANPayload(payload, deviceId);
       } else if (topic.startsWith('devices/')) {
-        telemetryData = payload; // Already in correct format
+        telemetryData = payload;
+      } else {
+        telemetryData = payload;
       }
 
-      // Publish to Kafka (same flow as HTTP!)
-      await kafkaService.sendMessage(
+      // ✅ Use injected KafkaService instead of singleton
+      await this.kafka.sendMessage(
         'telemetry.device.raw',
         {
-          deviceId: deviceId,
+          deviceId,
           deviceKey: deviceId,
-          tenantId: 'default',
+          tenantId: 'default',  // TODO: Extract from device credentials
           ...telemetryData,
           receivedAt: Date.now(),
           source: 'mqtt',
-          topic: topic,
+          topic,
         },
         deviceId,
       );
 
-      console.log(`✅ MQTT message forwarded to Kafka for device: ${deviceId}`);
+      this.logger.log(`✅ MQTT message forwarded to Kafka for device: ${deviceId}`);
     } catch (error: any) {
-      console.error('❌ Failed to handle MQTT message:', error);
+      this.logger.error('❌ Failed to handle MQTT message:', error);
     }
   }
 
@@ -113,6 +139,7 @@ class MQTTService {
    * Extract device ID from topic
    */
   private extractDeviceId(topic: string): string {
+    // devices/ws202-001/telemetry → ws202-001
     // lorawan/ws202-001/data → ws202-001
     const parts = topic.split('/');
     return parts[1] || 'unknown';
@@ -122,7 +149,6 @@ class MQTTService {
    * Parse LoRaWAN payload
    */
   private parseLoRaWANPayload(payload: any, deviceId: string): any {
-    // Decode hex data
     const decoded = this.decodeWS202Data(payload.data);
 
     return {
@@ -159,13 +185,13 @@ class MQTTService {
         const value = buffer.readUInt16BE(offset + 2);
 
         switch (type) {
-          case 0x67:
+          case 0x67: // Temperature
             result.temperature = (value / 10).toFixed(1);
             break;
-          case 0x68:
+          case 0x68: // Humidity
             result.humidity = (value / 2).toFixed(1);
             break;
-          case 0x75:
+          case 0x75: // Battery
             result.battery = value;
             break;
         }
@@ -175,7 +201,7 @@ class MQTTService {
 
       return result;
     } catch (error) {
-      console.error('Failed to decode WS202 data:', error);
+      this.logger.error('Failed to decode WS202 data:', error);
       return {};
     }
   }
@@ -191,10 +217,10 @@ class MQTTService {
     return new Promise((resolve, reject) => {
       this.client!.publish(topic, JSON.stringify(message), (err) => {
         if (err) {
-          console.error(`❌ Failed to publish to ${topic}:`, err);
+          this.logger.error(`❌ Failed to publish to ${topic}:`, err);
           reject(err);
         } else {
-          console.log(`📤 Published to MQTT topic: ${topic}`);
+          this.logger.log(`📤 Published to MQTT topic: ${topic}`);
           resolve();
         }
       });
@@ -208,9 +234,14 @@ class MQTTService {
     if (this.client) {
       await this.client.end();
       this.isConnected = false;
-      console.log('✅ MQTT disconnected');
+      this.logger.log('✅ MQTT disconnected');
     }
   }
-}
 
-export const mqttService = new MQTTService();
+  /**
+   * Check if MQTT is connected
+   */
+  isClientConnected(): boolean {
+    return this.isConnected;
+  }
+}

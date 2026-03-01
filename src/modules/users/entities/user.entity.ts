@@ -13,38 +13,45 @@ import {
 import { Exclude } from 'class-transformer';
 import * as bcrypt from 'bcrypt';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, Role } from '@modules/index.entities';
-import { UserRole, UserStatus } from '@/common/enums/index.enum';
+import { Tenant, Customer, Role, Permission } from '@modules/index.entities';
+import { UserRole, UserStatus } from '@common/enums/index.enum';
 
 @Entity('users')
 @Index(['role'])
 @Index(['status'])
+@Index(['tenantId'])
+@Index(['customerId'])
 export class User extends BaseEntity {
   @Column({ unique: true })
   @Index()
   email: string;
 
   @Column()
-  @Exclude() // Exclude password from response
+  @Exclude()
   password: string;
 
   @Column()
   name: string;
 
-  @Column({ type: 'enum', enum: UserRole, default: UserRole.TENANT_ADMIN })
-  role: UserRole;
-
   @Column({ nullable: true, unique: true })
   phone?: string;
 
-  @Column({
-    type: 'enum',
-    enum: UserStatus,
-    default: UserStatus.ACTIVE,
-  })
+  // ══════════════════════════════════════════════════════════════════════════
+  // ROLE & STATUS
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @Column({ type: 'enum', enum: UserRole, default: UserRole.CUSTOMER_USER })
+  @Index()
+  role: UserRole;
+
+  @Column({ type: 'enum', enum: UserStatus, default: UserStatus.ACTIVE })
+  @Index()
   status: UserStatus;
 
-  // ✅ Tenant reference (nullable only for super_admin)
+  // ══════════════════════════════════════════════════════════════════════════
+  // TENANT SCOPE
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({ nullable: true })
   @Index()
   tenantId?: string;
@@ -56,23 +63,49 @@ export class User extends BaseEntity {
   @JoinColumn({ name: 'tenantId' })
   tenant?: Tenant;
 
-  // ✅ Customer reference (nullable, only for customer roles)
+  // ══════════════════════════════════════════════════════════════════════════
+  // CUSTOMER SCOPE
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({ nullable: true })
   @Index()
   customerId?: string;
 
   @ManyToOne(() => Customer, (customer) => customer.users, {
     nullable: true,
-    onDelete: 'CASCADE',
+    onDelete: 'SET NULL',
   })
   @JoinColumn({ name: 'customerId' })
   customer?: Customer;
 
-  // ✅ Roles (many-to-many)
-  @ManyToMany(() => Role, role => role.users)
-  @JoinTable({ name: 'user_roles' })
+  // ══════════════════════════════════════════════════════════════════════════
+  // ROLE-BASED PERMISSIONS (ManyToMany with auto junction table)
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @ManyToMany(() => Role, (role) => role.users, { eager: true })  // ← Add eager loading
+  @JoinTable({
+    name: 'user_roles',
+    joinColumn: { name: 'userId', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'roleId', referencedColumnName: 'id' },
+  })
   roles?: Role[];
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // DIRECT PERMISSIONS
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @ManyToMany(() => Permission, (permission) => permission.users, { eager: true })
+  @JoinTable({
+    name: 'user_permissions',
+    joinColumn: { name: 'userId', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'permissionId', referencedColumnName: 'id' },
+  })
+  directPermissions?: Permission[];
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // AUTH FIELDS
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({ type: 'timestamp', nullable: true })
   lastLoginAt?: Date;
 
@@ -80,9 +113,11 @@ export class User extends BaseEntity {
   emailVerified: boolean;
 
   @Column({ nullable: true })
+  @Exclude()
   emailVerificationToken?: string;
 
   @Column({ nullable: true })
+  @Exclude()
   passwordResetToken?: string;
 
   @Column({ type: 'timestamp', nullable: true })
@@ -91,7 +126,10 @@ export class User extends BaseEntity {
   @Column({ type: 'jsonb', nullable: true })
   preferences?: Record<string, any>;
 
-  // Hash password before insert
+  // ══════════════════════════════════════════════════════════════════════════
+  // HOOKS
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @BeforeInsert()
   @BeforeUpdate()
   async hashPassword() {
@@ -101,82 +139,85 @@ export class User extends BaseEntity {
     }
   }
 
-  // Method to compare passwords
+  // ══════════════════════════════════════════════════════════════════════════
+  // HELPER METHODS
+  // ══════════════════════════════════════════════════════════════════════════
+  
   async comparePassword(attemptedPassword: string): Promise<boolean> {
-    return await bcrypt.compare(attemptedPassword, this.password);
+    return bcrypt.compare(attemptedPassword, this.password);
   }
 
-  // Method to check if user is active
   isActive(): boolean {
     return this.status === UserStatus.ACTIVE;
   }
 
-  // Method to check if user has role
-  hasRole(role: UserRole): boolean {
-    return this.role === role;
+  isSuperAdmin(): boolean {
+    return this.role === UserRole.SUPER_ADMIN;
   }
 
-  // Check if user is a customer user
+  isTenantAdmin(): boolean {
+    return this.role === UserRole.TENANT_ADMIN;
+  }
+
+  isCustomerAdmin(): boolean {
+    return this.role === UserRole.CUSTOMER_ADMIN;
+  }
+
   isCustomerUser(): boolean {
-    return (
-      this.role === UserRole.CUSTOMER_USER ||
-      this.role === UserRole.CUSTOMER_ADMIN
-    );
+    return this.role === UserRole.CUSTOMER_USER;
   }
 
-  // Check if user is admin (tenant or super)
-  isAdmin(): boolean {
-    return (
-      this.role === UserRole.SUPER_ADMIN ||
-      this.role === UserRole.TENANT_ADMIN
-    );
+  isCustomerScoped(): boolean {
+    return !!this.customerId;
   }
 
-  // ✅ Check if user can manage tenant
-  canManageTenant(): boolean {
-    return (
-      this.role === UserRole.SUPER_ADMIN ||
-      this.role === UserRole.TENANT_ADMIN
-    );
-  }
-
-  // ✅ Check if user can manage customers
-  canManageCustomers(): boolean {
-    return (
-      this.role === UserRole.SUPER_ADMIN ||
-      this.role === UserRole.TENANT_ADMIN
-    );
-  }
-
-  // ✅ Check access to specific tenant
   hasAccessToTenant(tenantId: string): boolean {
-    if (this.role === UserRole.SUPER_ADMIN) return true;
+    if (this.isSuperAdmin()) return true;
     return this.tenantId === tenantId;
   }
 
-  // ✅ Check access to specific customer
   hasAccessToCustomer(customerId: string): boolean {
-    if (this.role === UserRole.SUPER_ADMIN) return true;
-    if (this.role === UserRole.TENANT_ADMIN && this.tenantId) {
-      // Tenant admin can access all customers in their tenant
-      // Need to verify customer belongs to tenant (done in service layer)
-      return true;
-    }
+    if (this.isSuperAdmin()) return true;
+    if (this.isTenantAdmin()) return true;
     return this.customerId === customerId;
   }
 
-  // Method to update last login
-  updateLastLogin() {
+  updateLastLogin(): void {
     this.lastLoginAt = new Date();
   }
 
-  // ✅ NEW: Check if user belongs to tenant
   belongsToTenant(tenantId: string): boolean {
     return this.tenantId === tenantId;
   }
 
-  // ✅ NEW: Check if user belongs to customer
   belongsToCustomer(customerId: string): boolean {
     return this.customerId === customerId;
+  }
+
+  /**
+   * Get all effective permissions for this user
+   * Combines role permissions + direct permissions
+   */
+  getEffectivePermissions(): Permission[] {
+    const rolePermissions = this.roles?.flatMap(r => r.permissions || []) || [];
+    const directPermissions = this.directPermissions || [];
+    
+    // Combine and deduplicate by permission ID
+    const allPermissions = [...rolePermissions, ...directPermissions];
+    const uniquePermissions = Array.from(
+      new Map(allPermissions.map(p => [p.id, p])).values()
+    );
+    
+    return uniquePermissions;
+  }
+
+  /**
+   * Check if user has a specific permission
+   */
+  hasPermission(resource: string, action: string): boolean {
+    const permissions = this.getEffectivePermissions();
+    return permissions.some(p => 
+      p.resource === resource && p.action === action
+    );
   }
 }

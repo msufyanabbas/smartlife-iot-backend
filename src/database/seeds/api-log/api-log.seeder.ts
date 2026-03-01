@@ -1,3 +1,4 @@
+// src/database/seeders/api-log.seeder.ts
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -16,281 +17,203 @@ export class APILogSeeder implements ISeeder {
   ) {}
 
   async seed(): Promise<void> {
-    // Fetch users and tenants
-    const users = await this.userRepository.find({ take: 10 });
-    const tenants = await this.tenantRepository.find({ take: 5 });
+    console.log('📝 Seeding API logs...');
 
-    if (users.length === 0) {
-      console.log(
-        '⚠️  No users found. Seeding API logs without user associations.',
-      );
+    // Get first tenant
+    const tenant = await this.tenantRepository.findOne({
+      where: {},
+      order: { createdAt: 'ASC' },
+    });
+
+    if (!tenant) {
+      console.log('⚠️  No tenants found. Please seed tenants first.');
+      return;
     }
 
-    if (tenants.length === 0) {
-      console.log(
-        '⚠️  No tenants found. Seeding API logs without tenant associations.',
-      );
+    // Get users from this tenant
+    const users = await this.userRepository.find({
+      where: { tenantId: tenant.id },
+      take: 3,
+    });
+
+    if (users.length === 0) {
+      console.log('⚠️  No users found. Please seed users first.');
+      return;
     }
 
     // Helper functions
-    const getRandomItem = <T>(array: T[]): T | undefined => {
-      return array.length > 0
-        ? array[Math.floor(Math.random() * array.length)]
-        : undefined;
-    };
-
     const getRandomInt = (min: number, max: number): number => {
       return Math.floor(Math.random() * (max - min + 1)) + min;
     };
 
-    const getRandomDate = (daysAgo: number): Date => {
+    const getMinutesAgo = (minutes: number): Date => {
       const date = new Date();
-      date.setDate(date.getDate() - daysAgo);
-      date.setHours(
-        getRandomInt(0, 23),
-        getRandomInt(0, 59),
-        getRandomInt(0, 59),
-      );
+      date.setMinutes(date.getMinutes() - minutes);
       return date;
     };
 
-    // Common endpoints
-    const endpoints = [
-      '/api/v1/users',
-      '/api/v1/users/:id',
-      '/api/v1/devices',
-      '/api/v1/devices/:id',
-      '/api/v1/devices/:id/telemetry',
-      '/api/v1/alarms',
-      '/api/v1/alarms/:id',
-      '/api/v1/tenants',
-      '/api/v1/tenants/:id',
-      '/api/v1/analytics/dashboard',
-      '/api/v1/analytics/reports',
-      '/api/v1/auth/login',
-      '/api/v1/auth/logout',
-      '/api/v1/auth/refresh',
-      '/api/v1/health',
-    ];
-
-    const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
-    const statusCodes = [200, 201, 204, 400, 401, 403, 404, 422, 500];
-    const userAgents = [
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-      'PostmanRuntime/7.32.3',
-      'axios/1.5.0',
-      'curl/7.88.1',
-    ];
-
-    const ips = [
-      '192.168.1.100',
-      '10.0.0.50',
-      '172.16.0.25',
-      '203.0.113.45',
-      '198.51.100.89',
-      '192.0.2.123',
-    ];
-
-    // Generate API logs
-    const apiLogs: Partial<APILog>[] = [];
-
-    for (let i = 0; i < 100; i++) {
-      const method = getRandomItem(methods)!;
-      const endpoint = getRandomItem(endpoints)!;
-      const statusCode = getRandomItem(statusCodes)!;
-      const isError = statusCode >= 400;
-      const user = getRandomItem(users);
-      const tenant = getRandomItem(tenants);
-
-      const logData: Partial<APILog> = {
-        method,
-        endpoint,
-        statusCode,
-        responseTime: getRandomInt(10, isError ? 5000 : 1000),
-        userId: user?.id,
-        tenantId: tenant?.id,
-        ip: getRandomItem(ips)!,
-        userAgent: getRandomItem(userAgents),
-        timestamp: getRandomDate(getRandomInt(0, 30)),
-      };
-
-      // Add request data
-      if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
-        logData.request = {
-          headers: {
-            'content-type': 'application/json',
-            authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-          },
-          body: this.generateRequestBody(endpoint, method),
-        };
-      } else if (method === 'GET') {
-        logData.request = {
-          headers: {
-            authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-          },
-          query: this.generateQueryParams(endpoint),
-        };
-      }
-
-      // Add response data
-      if (isError) {
-        logData.response = {
-          statusCode,
-          body: this.generateErrorResponse(statusCode),
-        };
-        logData.errorMessage = this.generateErrorMessage(statusCode, endpoint);
-      } else {
-        logData.response = {
-          statusCode,
-          body: this.generateSuccessResponse(endpoint, method, statusCode),
-        };
-      }
-
-      apiLogs.push(logData);
-    }
-
-    // Save logs
-    let created = 0;
-    for (const logData of apiLogs) {
-      const log = this.apiLogRepository.create(logData);
-      await this.apiLogRepository.save(log);
-      created++;
-    }
-
-    console.log(`✅ Created ${created} API log entries`);
-    console.log('🎉 API log seeding completed!');
-  }
-
-  private generateRequestBody(endpoint: string, method: string): any {
-    if (
-      endpoint.includes('/users') &&
-      (method === 'POST' || method === 'PUT')
-    ) {
-      return {
-        email: 'user@example.com',
-        firstName: 'John',
-        lastName: 'Doe',
-        role: 'user',
-      };
-    }
-    if (
-      endpoint.includes('/devices') &&
-      (method === 'POST' || method === 'PUT')
-    ) {
-      return {
-        name: 'Temperature Sensor',
-        type: 'sensor',
-        status: 'active',
-      };
-    }
-    if (
-      endpoint.includes('/alarms') &&
-      (method === 'POST' || method === 'PUT')
-    ) {
-      return {
-        name: 'Temperature Alert',
-        severity: 'critical',
-        rule: { telemetryKey: 'temperature', condition: 'gt', value: 75 },
-      };
-    }
-    if (endpoint.includes('/auth/login')) {
-      return {
-        email: 'user@example.com',
-        password: '********',
-      };
-    }
-    return {};
-  }
-
-  private generateQueryParams(endpoint: string): any {
-    if (endpoint.includes('/devices') && !endpoint.includes(':id')) {
-      return { page: 1, limit: 10, status: 'active' };
-    }
-    if (endpoint.includes('/alarms')) {
-      return { page: 1, limit: 20, severity: 'critical' };
-    }
-    if (endpoint.includes('/analytics')) {
-      return { startDate: '2025-11-01', endDate: '2025-11-05' };
-    }
-    return {};
-  }
-
-  private generateSuccessResponse(
-    endpoint: string,
-    method: string,
-    statusCode: number,
-  ): any {
-    if (statusCode === 204) {
-      return null;
-    }
-    if (method === 'GET' && !endpoint.includes(':id')) {
-      return {
-        data: [],
-        meta: { page: 1, limit: 10, total: 0 },
-      };
-    }
-    if (method === 'POST' || method === 'PUT') {
-      return {
-        id: 'uuid-' + Math.random().toString(36).substring(7),
-        message: 'Resource created successfully',
-      };
-    }
-    if (endpoint.includes('/auth/login')) {
-      return {
-        accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-        refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-      };
-    }
-    return { success: true };
-  }
-
-  private generateErrorResponse(statusCode: number): any {
-    const errors: Record<number, any> = {
-      400: {
-        statusCode: 400,
-        message: 'Bad Request',
-        errors: ['Validation failed'],
+    const apiLogsData = [
+      // 1. Successful GET request
+      {
+        tenantId: tenant.id,
+        customerId: users[0]?.customerId,
+        userId: users[0]?.id,
+        requestId: `req-${Date.now()}-001`,
+        method: 'GET',
+        endpoint: '/api/v1/devices',
+        statusCode: 200,
+        responseTime: 85,
+        ip: '192.168.1.100',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        timestamp: getMinutesAgo(5),
+        request: {
+          query: { page: 1, limit: 10, status: 'active' },
+        },
+        response: {
+          statusCode: 200,
+        },
+        metadata: {
+          route: 'DevicesController.findAll',
+          executionTime: 80,
+          dbQueryCount: 2,
+          cacheHit: false,
+        },
       },
-      401: {
+
+      // 2. Successful POST request (Created)
+      {
+        tenantId: tenant.id,
+        customerId: users[0]?.customerId,
+        userId: users[0]?.id,
+        requestId: `req-${Date.now()}-002`,
+        method: 'POST',
+        endpoint: '/api/v1/devices',
+        statusCode: 201,
+        responseTime: 145,
+        ip: '192.168.1.100',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        timestamp: getMinutesAgo(15),
+        request: {
+          // ⚠️ NO body - it may contain sensitive data
+          // ⚠️ NO headers - they contain Authorization tokens
+        },
+        response: {
+          statusCode: 201,
+        },
+        metadata: {
+          route: 'DevicesController.create',
+          executionTime: 142,
+          dbQueryCount: 3,
+          cacheHit: false,
+        },
+      },
+
+      // 3. Unauthorized request (401)
+      {
+        tenantId: undefined, // No tenant for unauthenticated request
+        customerId: undefined,
+        userId: undefined,
+        requestId: `req-${Date.now()}-003`,
+        method: 'GET',
+        endpoint: '/api/v1/devices',
         statusCode: 401,
-        message: 'Unauthorized',
-        error: 'Invalid credentials',
+        responseTime: 12,
+        ip: '203.0.113.45',
+        userAgent: 'PostmanRuntime/7.32.3',
+        timestamp: getMinutesAgo(30),
+        request: {},
+        response: {
+          statusCode: 401,
+        },
+        errorMessage: 'Unauthorized access attempt to /api/v1/devices',
+        metadata: {
+          route: 'JwtAuthGuard',
+          executionTime: 10,
+          dbQueryCount: 0,
+          cacheHit: false,
+        },
       },
-      403: {
-        statusCode: 403,
-        message: 'Forbidden',
-        error: 'Insufficient permissions',
-      },
-      404: {
-        statusCode: 404,
-        message: 'Not Found',
-        error: 'Resource not found',
-      },
-      422: {
-        statusCode: 422,
-        message: 'Unprocessable Entity',
-        errors: ['Invalid input data'],
-      },
-      500: {
-        statusCode: 500,
-        message: 'Internal Server Error',
-        error: 'An unexpected error occurred',
-      },
-    };
-    return errors[statusCode] || { statusCode, message: 'Error' };
-  }
 
-  private generateErrorMessage(statusCode: number, endpoint: string): string {
-    const messages: Record<number, string> = {
-      400: `Bad request to ${endpoint}`,
-      401: `Unauthorized access attempt to ${endpoint}`,
-      403: `Forbidden access to ${endpoint}`,
-      404: `Resource not found at ${endpoint}`,
-      422: `Validation error for ${endpoint}`,
-      500: `Internal server error at ${endpoint}`,
-    };
-    return messages[statusCode] || `Error at ${endpoint}`;
+      // 4. Not Found error (404)
+      {
+        tenantId: tenant.id,
+        customerId: users[1]?.customerId || users[0]?.customerId,
+        userId: users[1]?.id || users[0]?.id,
+        requestId: `req-${Date.now()}-004`,
+        method: 'GET',
+        endpoint: '/api/v1/devices/non-existent-id',
+        statusCode: 404,
+        responseTime: 45,
+        ip: '192.168.1.101',
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        timestamp: getMinutesAgo(45),
+        request: {
+          params: { id: 'non-existent-id' },
+        },
+        response: {
+          statusCode: 404,
+        },
+        errorMessage: 'Resource not found at /api/v1/devices/non-existent-id',
+        metadata: {
+          route: 'DevicesController.findOne',
+          executionTime: 42,
+          dbQueryCount: 1,
+          cacheHit: false,
+        },
+      },
+
+      // 5. Slow request (performance issue)
+      {
+        tenantId: tenant.id,
+        customerId: users[2]?.customerId || users[0]?.customerId,
+        userId: users[2]?.id || users[0]?.id,
+        requestId: `req-${Date.now()}-005`,
+        method: 'GET',
+        endpoint: '/api/v1/analytics/reports',
+        statusCode: 200,
+        responseTime: 2450, // Slow!
+        ip: '192.168.1.102',
+        userAgent: 'axios/1.5.0',
+        timestamp: getMinutesAgo(60),
+        request: {
+          query: { 
+            startDate: '2025-01-01', 
+            endDate: '2025-11-30',
+            groupBy: 'day'
+          },
+        },
+        response: {
+          statusCode: 200,
+        },
+        metadata: {
+          route: 'AnalyticsController.generateReport',
+          executionTime: 2445,
+          dbQueryCount: 15,
+          cacheHit: false,
+        },
+      },
+    ];
+
+    for (const logData of apiLogsData) {
+      const existing = await this.apiLogRepository.findOne({
+        where: {
+          requestId: logData.requestId,
+        },
+      });
+
+      if (!existing) {
+        const log = this.apiLogRepository.create(logData);
+        await this.apiLogRepository.save(log);
+        console.log(
+          `✅ Created API log: ${logData.method} ${logData.endpoint} (${logData.statusCode})`,
+        );
+      } else {
+        console.log(
+          `⏭️  API log already exists: ${logData.requestId}`,
+        );
+      }
+    }
+
+    console.log('🎉 API log seeding completed! (5 logs created)');
   }
 }

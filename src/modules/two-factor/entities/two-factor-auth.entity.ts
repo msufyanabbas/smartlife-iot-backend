@@ -1,34 +1,48 @@
+// src/modules/auth/entities/two-factor-auth.entity.ts
 import {
   Entity,
   Column,
-  PrimaryGeneratedColumn,
-  CreateDateColumn,
-  UpdateDateColumn,
   Index,
   OneToOne,
   JoinColumn,
+  ManyToOne,
 } from 'typeorm';
-import { User } from '../../users/entities/user.entity';
-
-export enum TwoFactorMethod {
-  AUTHENTICATOR = 'authenticator', // Google Authenticator, Authy, etc.
-  SMS = 'sms',
-  EMAIL = 'email',
-}
+import { BaseEntity } from '@common/entities/base.entity';
+import { User, Tenant } from '@modules/index.entities';
+import { TwoFactorMethod } from '@/common/enums/index.enum';
 
 @Entity('two_factor_auth')
-export class TwoFactorAuth {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+@Index(['userId'])
+@Index(['tenantId'])
+export class TwoFactorAuth extends BaseEntity {
+  // ══════════════════════════════════════════════════════════════════════════
+  // TENANT SCOPING (REQUIRED)
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @Column()
+  @Index()
+  tenantId: string;
 
+  @ManyToOne(() => Tenant)
+  @JoinColumn({ name: 'tenantId' })
+  tenant: Tenant;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // USER RELATIONSHIP
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({ unique: true })
   @Index()
   userId: string;
 
-  @OneToOne(() => User)
+  @OneToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
   user: User;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 2FA SETTINGS
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({ default: false })
   isEnabled: boolean;
 
@@ -39,22 +53,31 @@ export class TwoFactorAuth {
   })
   method?: TwoFactorMethod;
 
-  // For TOTP (Authenticator app)
-  @Column({ nullable: true })
-  secret?: string; // Base32 encoded secret for TOTP
+  // ══════════════════════════════════════════════════════════════════════════
+  // AUTHENTICATOR (TOTP)
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @Column({ nullable: true, select: false })
+  secret?: string;  // Base32 encoded secret for TOTP (sensitive)
 
-  @Column({ nullable: true })
-  backupCodes?: string; // JSON array of backup codes (hashed)
+  @Column({ type: 'text', nullable: true, select: false })
+  backupCodes?: string;  // JSON array of hashed backup codes
 
-  // For SMS
+  // ══════════════════════════════════════════════════════════════════════════
+  // SMS
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({ nullable: true })
   phoneNumber?: string;
 
   @Column({ default: false })
   phoneVerified: boolean;
 
-  // For temporary verification codes (SMS/Email)
-  @Column({ nullable: true })
+  // ══════════════════════════════════════════════════════════════════════════
+  // TEMPORARY VERIFICATION CODES (SMS/Email)
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @Column({ nullable: true, select: false })
   tempCode?: string;
 
   @Column({ type: 'timestamp', nullable: true })
@@ -63,24 +86,22 @@ export class TwoFactorAuth {
   @Column({ default: 0 })
   tempCodeAttempts: number;
 
-  // Tracking
+  // ══════════════════════════════════════════════════════════════════════════
+  // TRACKING
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({ type: 'timestamp', nullable: true })
   lastVerifiedAt?: Date;
 
   @Column({ type: 'timestamp', nullable: true })
   enabledAt?: Date;
 
-  @CreateDateColumn()
-  createdAt: Date;
+  // ══════════════════════════════════════════════════════════════════════════
+  // HELPER METHODS
+  // ══════════════════════════════════════════════════════════════════════════
 
-  @UpdateDateColumn()
-  updatedAt: Date;
-
-  // Helper methods
   isTempCodeValid(): boolean {
-    if (!this.tempCode || !this.tempCodeExpiry) {
-      return false;
-    }
+    if (!this.tempCode || !this.tempCodeExpiry) return false;
     return new Date() < this.tempCodeExpiry;
   }
 
@@ -90,9 +111,15 @@ export class TwoFactorAuth {
 
   resetAttempts(): void {
     this.tempCodeAttempts = 0;
+    this.tempCode = undefined;
+    this.tempCodeExpiry = undefined;
   }
 
   isLocked(): boolean {
-    return this.tempCodeAttempts >= 5; // Lock after 5 failed attempts
+    return this.tempCodeAttempts >= 5;
+  }
+
+  canRetry(): boolean {
+    return !this.isLocked() && this.isTempCodeValid();
   }
 }

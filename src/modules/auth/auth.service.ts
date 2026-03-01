@@ -1,3 +1,4 @@
+// src/modules/auth/auth.service.ts
 import {
   Injectable,
   UnauthorizedException,
@@ -8,36 +9,24 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ConfigService, SubscriptionsService } from '@modules/index.service';
-import { MailService } from '@modules/mail/mail.service';
+import { ConfigService, SubscriptionsService, MailService, TwoFactorAuthService } from '@modules/index.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { Customer, Invitation, Tenant, User } from '@modules/index.entities';
-import { RefreshToken } from './entities/refresh-token.entity';
-import {
-  OAuthAccount,
-  OAuthProviderEnum,
-} from './entities/oauth-account.entity';
+import { Customer, Invitation, Tenant, User, InvitationStatus, RefreshToken, OAuthAccount, TokenBlacklist } from '@modules/index.entities';
+import { TenantStatus, SubscriptionPlan, UserRole, OAuthProviderEnum } from '@common/enums/index.enum';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import { AuthResponseDto } from './dto/auth-response.dto';
+import { AuthResponseDto, UserInfoDto } from './dto/auth-response.dto';
 import { TwoFactorChallengeDto } from '../two-factor/dto/two-factor-challenge.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
-import { GoogleProfile } from './strategies/oauth/google.strategy';
-import { GitHubProfile } from './strategies/oauth/github.strategy';
-import { AppleProfile } from './strategies/oauth/apple.strategy';
-import { TokenBlacklist } from './entities/token-blacklist.entity';
+import { GoogleProfile, AppleProfile, GitHubProfile} from './strategies/oauth/index.strategy';
 import { Cron } from '@nestjs/schedule';
-import { SubscriptionPlan } from '@common/enums/index.enum';
 import { SessionService } from './session/session.service';
-import { TwoFactorAuthService } from '../two-factor/two-factor-auth.service';
-import { UserRole } from '@common/enums/index.enum';
-import { InvitationStatus } from './entities/invitation.entity';
-import { TenantStatus } from '../tenants/entities/tenant.entity';
 import { CreateInvitationDto } from './dto/invitation.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordDto, ForgotPasswordDto, ResetPasswordDto } from './dto/password.dto';
 
 @Injectable()
 export class AuthService {
@@ -66,13 +55,19 @@ export class AuthService {
     private twoFactorAuthService: TwoFactorAuthService,
   ) {}
 
-  /**
-   * Register a new user
-   */
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Registration
+  // ═══════════════════════════════════════════════════════════════════════════
   async register(
     registerDto: RegisterDto,
   ): Promise<{ message: string; email: string }> {
     const { email, password, name, phone, companyName, invitationToken } = registerDto;
+
+    if (companyName && invitationToken) {
+      throw new BadRequestException(
+        'Provide either companyName or invitationToken, not both',
+      );
+    }
 
     const existingUser = await this.userRepository.findOne({
       where: { email },
@@ -98,6 +93,7 @@ export class AuthService {
     let customerId: string | undefined;
     let role: UserRole = UserRole.TENANT_ADMIN;
     let tenant: Tenant | undefined;
+    let invitation: Invitation | undefined;
 
     // ========================================
     // SCENARIO 1: Invitation-based signup
@@ -216,14 +212,16 @@ export class AuthService {
       await this.tenantRepository.save(tenant);
     }
 
+    if(!invitationToken && tenantId) {
     try {
-      await this.subscriptionsService.create(savedUser.id, {
+      await this.subscriptionsService.create(tenantId, {
         plan: SubscriptionPlan.FREE,
       });
       this.logger.log(`FREE subscription created for user: ${email}`);
     } catch (error) {
       this.logger.error(`Failed to create subscription for ${email}:`, error);
     }
+  }
 
     this.logger.log(`New user registered: ${email}`);
 
@@ -252,128 +250,99 @@ export class AuthService {
    * ✅ NEW: Create invitation
    */
   async createInvitation(
+    callerId: string, callerTenantId: string, callerRole: UserRole, callerCustomerId: string,
     invitedBy: string,
     createInvitationDto: CreateInvitationDto,
   ): Promise<{ message: string; token: string }> {
-    const { email, role, customerId, inviteeName } = createInvitationDto;
+    const { email, role, customerId, inviteeName, message, roleIds, permissionIds } = createInvitationDto;
 
-    const inviter = await this.userRepository.findOne({
-      where: { id: invitedBy },
-      relations: ['tenant']
-    });
-
-    if (!inviter || !inviter.tenantId) {
-      throw new BadRequestException('Invalid inviter or missing tenant');
-    }
-
-       // Super admins can do anything
-    if (inviter.role !== UserRole.SUPER_ADMIN) {
-      // Customer admins can only invite customer users
-      if (inviter.role === UserRole.CUSTOMER_ADMIN) {
-        if (role !== UserRole.CUSTOMER_USER) {
+    // ── Permission checks ──────────────────────────────────────────────────
+    if (callerRole !== UserRole.SUPER_ADMIN) {
+      if(callerRole === UserRole.CUSTOMER_ADMIN) {
+        if(role !== UserRole.CUSTOMER_USER) {
           throw new ForbiddenException(
             'Customer admins can only invite customer users',
           );
         }
-        if (!customerId || customerId !== inviter.customerId) {
-          throw new ForbiddenException(
-            'Customer admins can only invite to their own customer',
-          );
+        if (!customerId || customerId !== callerCustomerId) {
+          throw new ForbiddenException('Customer admins can only invite to their own customer');
         }
       }
-
-      // Tenant admins cannot invite super admins
-      if (
-        inviter.role === UserRole.TENANT_ADMIN &&
-        role === UserRole.SUPER_ADMIN
-      ) {
+      if (callerRole === UserRole.TENANT_ADMIN && role === UserRole.SUPER_ADMIN) {
         throw new ForbiddenException('Cannot invite super admins');
       }
-
-      // Regular users cannot invite anyone
-      if (inviter.role === UserRole.USER || inviter.role === UserRole.CUSTOMER_USER) {
+       if (callerRole === UserRole.CUSTOMER_USER) {
         throw new ForbiddenException('You do not have permission to invite users');
       }
-    }
-
-    // Validate customer exists and belongs to tenant
-    if (customerId) {
-      const customer = await this.customerRepository.findOne({
-        where: { id: customerId },
-      });
-
-      if (!customer) {
-        throw new NotFoundException('Customer not found');
       }
 
-      if (customer.tenantId !== inviter.tenantId) {
-        throw new ForbiddenException(
-          'Customer does not belong to your tenant',
-        );
-      }
-    }
-
-    // Check if user already exists
-    const existingUser = await this.userRepository.findOne({
-      where: { email },
-    });
-
-    if (existingUser) {
-      throw new ConflictException('User with this email already exists');
-    }
-
-    // Check for pending invitation
-    const existingInvitation = await this.invitationRepository.findOne({
-      where: {
-        email,
-        tenantId: inviter.tenantId,
-        status: InvitationStatus.PENDING,
-      },
-    });
-
-    if (existingInvitation && !existingInvitation.isExpired()) {
-      throw new ConflictException(
-        'An invitation for this email already exists',
+      // ── Customer-scoped role requires customerId ───────────────────────────
+    if ((role === UserRole.CUSTOMER_ADMIN || role === UserRole.CUSTOMER_USER) && !customerId) {
+      throw new BadRequestException(
+        `customerId is required when inviting a ${role}`,
       );
     }
 
-    // Generate invitation token
-    const token = this.generateVerificationToken();
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // Expires in 7 days
+    // ── Validate customer belongs to tenant ────────────────────────────────
+    if (customerId) {
+      const customer = await this.customerRepository.findOne({ where: { id: customerId } });
+      if (!customer) throw new NotFoundException('Customer not found');
+      if (customer.tenantId !== callerTenantId) {
+        throw new ForbiddenException('Customer does not belong to your tenant');
+      }
+    }
+
+    // ── Duplicate checks ───────────────────────────────────────────────────
+    const existingUser = await this.userRepository.findOne({ where: { email } });
+    if (existingUser) throw new ConflictException('User with this email already exists');
+
+    const existingInvitation = await this.invitationRepository.findOne({
+      where: { email, tenantId: callerTenantId, status: InvitationStatus.PENDING },
+    });
+    if (existingInvitation && !existingInvitation.isExpired()) {
+      throw new ConflictException('An invitation for this email already exists');
+    }
+
+    // ── Create invitation ──────────────────────────────────────────────────
+    // expiresAt NOT set here — @BeforeInsert() on the entity handles it
+    const token = this.generateSecureToken();
 
     const invitation = this.invitationRepository.create({
       token,
       email,
       role,
-      tenantId: inviter.tenantId,
+      tenantId: callerTenantId,
       customerId,
-      invitedBy,
+      invitedById: callerId,    
       inviteeName,
       status: InvitationStatus.PENDING,
-      expiresAt,
+      metadata: {               
+        message,
+        roleIds,
+        permissionIds,
+      },
     });
 
     await this.invitationRepository.save(invitation);
 
-    // Send invitation email
+    const inviter = await this.userRepository.findOne({
+      where: { id: callerId },
+      select: { name: true, email: true },
+    });
+
     try {
       await this.mailService.sendInvitationEmail(
         email,
         inviteeName || email,
-        inviter.name,
+        inviter?.name || 'Smart Life',
         token,
         role,
       );
-      this.logger.log(`Invitation sent to ${email} by ${inviter.email}`);
     } catch (error) {
       this.logger.error(`Failed to send invitation email to ${email}:`, error);
     }
 
-    return {
-      message: 'Invitation sent successfully',
-      token, // Return token for testing purposes
-    };
+    return { message: 'Invitation sent successfully', token };
   }
 
   /**
@@ -400,20 +369,11 @@ export class AuthService {
   /**
    * ✅ NEW: List invitations (for admins)
    */
-  async listInvitations(userId: string): Promise<Invitation[]> {
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-    });
-
-    if (!user || !user.tenantId) {
-      throw new BadRequestException('Invalid user');
-    }
-
-    const where: any = { tenantId: user.tenantId };
-
-    // Customer admins only see their customer's invitations
-    if (user.role === UserRole.CUSTOMER_ADMIN) {
-      where.customerId = user.customerId;
+  // Takes tenantId + role directly — no redundant DB load
+  async listInvitations(tenantId: string, callerRole: UserRole, callerCustomerId?: string) {
+    const where: any = { tenantId };
+    if (callerRole === UserRole.CUSTOMER_ADMIN) {
+      where.customerId = callerCustomerId;
     }
 
     return this.invitationRepository.find({
@@ -426,41 +386,26 @@ export class AuthService {
   /**
    * ✅ NEW: Revoke invitation
    */
-  async revokeInvitation(userId: string, invitationId: string): Promise<void> {
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-    });
+  // Takes tenantId + role directly — no redundant DB load
+  async revokeInvitation(
+    callerId: string,
+    callerTenantId: string,
+    callerRole: UserRole,
+    invitationId: string,
+  ): Promise<void> {
+    const invitation = await this.invitationRepository.findOne({ where: { id: invitationId } });
+    if (!invitation) throw new NotFoundException('Invitation not found');
 
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    const invitation = await this.invitationRepository.findOne({
-      where: { id: invitationId },
-    });
-
-    if (!invitation) {
-      throw new NotFoundException('Invitation not found');
-    }
-
-    // Permission check
-    if (
-      user.role !== UserRole.SUPER_ADMIN &&
-      invitation.tenantId !== user.tenantId
-    ) {
+    if (callerRole !== UserRole.SUPER_ADMIN && invitation.tenantId !== callerTenantId) {
       throw new ForbiddenException('Cannot revoke this invitation');
     }
-
     if (invitation.status !== InvitationStatus.PENDING) {
       throw new BadRequestException('Only pending invitations can be revoked');
     }
 
     invitation.status = InvitationStatus.REVOKED;
     await this.invitationRepository.save(invitation);
-
-    this.logger.log(
-      `Invitation ${invitationId} revoked by user ${user.email}`,
-    );
+    this.logger.log(`Invitation ${invitationId} revoked by user ${callerId}`);
   }
 
   /**
@@ -504,40 +449,23 @@ export class AuthService {
    * Resend verification email
    */
   async resendVerificationEmail(email: string): Promise<{ message: string }> {
-    const user = await this.userRepository.findOne({
-      where: { email },
-    });
+    // Generic message regardless of outcome — prevents email enumeration
+    const genericResponse = { message: 'If the email exists and is unverified, a new link has been sent.' };
 
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
+    const user = await this.userRepository.findOne({ where: { email } });
+    if (!user || user.emailVerified) return genericResponse;
 
-    if (user.emailVerified) {
-      throw new BadRequestException('Email already verified');
-    }
-
-    const verificationToken = this.generateVerificationToken();
+    const verificationToken = this.generateSecureToken();
     user.emailVerificationToken = verificationToken;
     await this.userRepository.save(user);
 
     try {
-      await this.mailService.sendVerificationEmail(
-        email,
-        user.name,
-        verificationToken,
-      );
-      this.logger.log(`Verification email resent to: ${email}`);
+      await this.mailService.sendVerificationEmail(email, user.name, verificationToken);
     } catch (error) {
-      this.logger.error(
-        `Failed to resend verification email to ${email}:`,
-        error,
-      );
-      throw new BadRequestException('Failed to send verification email');
+      this.logger.error(`Failed to resend verification email to ${email}:`, error);
     }
 
-    return {
-      message: 'Verification email sent. Please check your inbox.',
-    };
+    return genericResponse;
   }
 
   /**
@@ -634,6 +562,9 @@ export class AuthService {
    * OAuth Login - Google
    * ✅ Includes session management and 2FA
    */
+  // ═══════════════════════════════════════════════════════════════════════════
+  // OAuth
+  // ═══════════════════════════════════════════════════════════════════════════
   async googleLogin(
     profile: GoogleProfile,
     ipAddress?: string,
@@ -728,7 +659,6 @@ export class AuthService {
 
     if (oauthAccount) {
       user = oauthAccount.user;
-
       oauthAccount.providerEmail = email;
       oauthAccount.profile = profile;
       oauthAccount.accessToken = accessToken;
@@ -766,7 +696,6 @@ export class AuthService {
           name: workspaceName,
           email,
           status: TenantStatus.ACTIVE,
-          configuration: { maxDevices: 10, maxUsers: 1, maxAssets: 10, maxDashboards: 3, maxRuleChains: 2, dataRetentionDays: 30, features: ['basic'] },
         });
         user = this.userRepository.create({
           email,
@@ -779,6 +708,7 @@ export class AuthService {
         await this.userRepository.save(user);
 
         try {
+          await this.subscriptionsService.create(tenant.id, {plan: SubscriptionPlan.FREE});
   await this.subscriptionsService.getOrCreateFreeSubscription(user.id);
   this.logger.log(`FREE subscription ensured for OAuth user: ${email}`);
 } catch (error) {
@@ -787,7 +717,6 @@ export class AuthService {
     error,
   );
 }
-
         oauthAccount = this.oauthAccountRepository.create({
           userId: user.id,
           provider,
@@ -986,7 +915,10 @@ export class AuthService {
    * Refresh access token
    * ✅ Validates session BEFORE allowing refresh
    */
-  async refreshTokens(
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Token Management
+  // ═══════════════════════════════════════════════════════════════════════════
+   async refreshTokens(
     refreshTokenString: string,
     ipAddress?: string,
     userAgent?: string,
@@ -996,66 +928,36 @@ export class AuthService {
       relations: ['user'],
     });
 
-    if (!refreshToken) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
+    if (!refreshToken) throw new UnauthorizedException('Invalid refresh token');
+    if (!refreshToken.isValid()) throw new UnauthorizedException('Refresh token expired or revoked');
+    if (!refreshToken.user.isActive()) throw new UnauthorizedException('User account is not active');
 
-    if (!refreshToken.isValid()) {
-      throw new UnauthorizedException('Refresh token expired or revoked');
-    }
-
-    const user = refreshToken.user;
-
-    if (!user.isActive()) {
-      throw new UnauthorizedException('User account is not active');
-    }
-
-    const existingSession = await this.sessionService.getSession(user.id);
-
+    const existingSession = await this.sessionService.getSession(refreshToken.user.id);
     if (!existingSession) {
-      refreshToken.isRevoked = true;
+      refreshToken.revoke();
       await this.refreshTokenRepository.save(refreshToken);
+      throw new UnauthorizedException('Session expired. Please log in again.');
+    }
 
-      this.logger.warn(
-        `Refresh token rejected for user ${user.email}: No active session`,
-      );
-
+    const isValidForSession = await this.sessionService.isRefreshTokenValidForSession(
+      refreshToken.user.id,
+      refreshTokenString,
+    );
+    if (!isValidForSession) {
+      refreshToken.revoke();
+      await this.refreshTokenRepository.save(refreshToken);
       throw new UnauthorizedException(
-        'Session has expired or was terminated. Please log in again.',
+        'This session is no longer valid. Please log in again.',
       );
     }
 
-    const isTokenValidForSession =
-      await this.sessionService.isRefreshTokenValidForSession(
-        user.id,
-        refreshTokenString,
-      );
-
-    if (!isTokenValidForSession) {
-      refreshToken.isRevoked = true;
-      await this.refreshTokenRepository.save(refreshToken);
-
-      this.logger.warn(
-        `Refresh token rejected for user ${user.email}: Token from old session`,
-      );
-
-      throw new UnauthorizedException(
-        'This session is no longer valid. You may have logged in from another device. Please log in again.',
-      );
-    }
-
-    refreshToken.isRevoked = true;
+    refreshToken.revoke();
     await this.refreshTokenRepository.save(refreshToken);
-
-    await this.sessionService.extendSession(user.id);
-
-    this.logger.log(`Tokens refreshed for user: ${user.email}`);
-
-    const sessionId = existingSession.sessionId;
+    await this.sessionService.extendSession(refreshToken.user.id);
 
     return this.generateAuthResponseWithSessionId(
-      user,
-      sessionId,
+      refreshToken.user,
+      existingSession.sessionId,
       ipAddress,
       userAgent,
     );
@@ -1065,22 +967,22 @@ export class AuthService {
    * Logout user
    * ✅ Deletes session
    */
-  async logout(refreshTokenString: string, accessToken: string): Promise<void> {
+   async logout(
+    refreshTokenString: string,
+    userId: string,  // from @CurrentUser() — guard ensures authenticity
+    accessToken?: string,
+  ): Promise<void> {
     const refreshToken = await this.refreshTokenRepository.findOne({
-      where: { token: refreshTokenString },
+      where: { token: refreshTokenString, userId }, // ← userId ensures caller owns this token
     });
 
     if (refreshToken) {
-      refreshToken.isRevoked = true;
+      refreshToken.revoke();
       await this.refreshTokenRepository.save(refreshToken);
 
-      if (accessToken) {
-        await this.blacklistToken(accessToken, refreshToken.userId);
-      }
-
-      await this.sessionService.deleteSession(refreshToken.userId);
-
-      this.logger.log(`User logged out, token revoked, session deleted`);
+      if (accessToken) await this.blacklistToken(accessToken, userId);
+      await this.sessionService.deleteSession(userId);
+      this.logger.log(`User ${userId} logged out`);
     }
   }
 
@@ -1088,165 +990,125 @@ export class AuthService {
    * Logout from all devices
    * ✅ Deletes session
    */
-  async logoutAll(userId: string, accessToken: string): Promise<void> {
+  async logoutAll(userId: string, accessToken?: string): Promise<void> {
     await this.refreshTokenRepository.update(
       { userId, isRevoked: false },
       { isRevoked: true },
     );
 
-    if (accessToken) {
-      await this.blacklistToken(accessToken, userId);
-    }
-
+    if (accessToken) await this.blacklistToken(accessToken, userId);
     await this.sessionService.deleteSession(userId);
-
-    this.logger.log(`User logged out from all devices: ${userId}`);
+    this.logger.log(`User ${userId} logged out from all devices`);
   }
 
   /**
    * Blacklist an access token
    */
   async blacklistToken(token: string, userId: string): Promise<void> {
+    if (!token) return; // guard against empty strings
     try {
-      const decoded = this.jwtService.decode(token);
+      const decoded = this.jwtService.decode(token) as any;
+      if (!decoded?.exp) return;
       const expiresAt = new Date(decoded.exp * 1000);
-
-      await this.tokenBlacklistRepository.save({
-        token,
-        userId,
-        expiresAt,
-      });
-
-      this.logger.log(`Access token blacklisted for user: ${userId}`);
+      await this.tokenBlacklistRepository.save(
+        this.tokenBlacklistRepository.create({ token, userId, expiresAt, reason: 'logout' }),
+      );
     } catch (error) {
       this.logger.error('Failed to blacklist token:', error);
     }
   }
 
+
   /**
    * Check if token is blacklisted
    */
   async isTokenBlacklisted(token: string): Promise<boolean> {
-    const blacklisted = await this.tokenBlacklistRepository.findOne({
-      where: { token },
-    });
-
-    return !!blacklisted;
+    const entry = await this.tokenBlacklistRepository.findOne({ where: { token } });
+    return !!entry;
   }
 
   /**
    * Request password reset
    */
-  async requestPasswordReset(email: string): Promise<{ message: string }> {
-    const user = await this.userRepository.findOne({
-      where: { email },
-    });
 
-    if (!user) {
-      return {
-        message: 'If the email exists, a password reset link has been sent.',
-      };
-    }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Password Management
+  // ═══════════════════════════════════════════════════════════════════════════
 
-    if (!user.emailVerified) {
-      throw new BadRequestException(
-        'Please verify your email first. Check your inbox for the verification link.',
-      );
-    }
+  async requestPasswordReset(dto: ForgotPasswordDto): Promise<{ message: string }> {
+    // Always return the same message — prevents email enumeration
+    const genericResponse = { message: 'If the email exists, a password reset link has been sent.' };
 
-    const resetToken = this.generateVerificationToken();
+    const user = await this.userRepository.findOne({ where: { email: dto.email } });
+    if (!user || !user.emailVerified) return genericResponse;
+
+    const resetToken = this.generateSecureToken();
     const resetExpiry = new Date();
-    resetExpiry.setHours(resetExpiry.getHours() + 1);
+    resetExpiry.setHours(resetExpiry.getHours() + 1); // 1 hour expiry
 
     user.passwordResetToken = resetToken;
     user.passwordResetExpires = resetExpiry;
     await this.userRepository.save(user);
 
     try {
-      await this.mailService.sendPasswordResetEmail(
-        email,
-        user.name,
-        resetToken,
-      );
-      this.logger.log(`Password reset email sent to: ${email}`);
+      await this.mailService.sendPasswordResetEmail(dto.email, user.name, resetToken);
     } catch (error) {
-      this.logger.error(
-        `Failed to send password reset email to ${email}:`,
-        error,
-      );
+      this.logger.error(`Failed to send password reset email to ${dto.email}:`, error);
     }
 
-    return {
-      message: 'If the email exists, a password reset link has been sent.',
-    };
+    return genericResponse;
   }
 
   /**
    * Reset password with token
    */
-  async resetPassword(
-  token: string,
-  newPassword: string,
-): Promise<{ message: string }> {
-  const user = await this.userRepository.findOne({
-    where: { passwordResetToken: token },
-  });
+  async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
+    // dto.newPassword already validated by DTO (@MinLength + @Matches)
+    const user = await this.userRepository.findOne({
+      where: { passwordResetToken: dto.token },
+    });
 
-  if (!user || !user.passwordResetExpires) {
-    throw new BadRequestException('Invalid or expired reset token');
+    if (!user || !user.passwordResetExpires) {
+      throw new BadRequestException('Invalid or expired reset token');
+    }
+    if (new Date() > user.passwordResetExpires) {
+      throw new BadRequestException('Reset token has expired');
+    }
+
+    user.password = dto.newPassword; // @BeforeUpdate hook hashes it
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    await this.userRepository.save(user);
+
+    // Revoke all refresh tokens — forces re-login on all devices
+    await this.refreshTokenRepository.update(
+      { userId: user.id, isRevoked: false },
+      { isRevoked: true },
+    );
+    await this.sessionService.deleteSession(user.id);
+
+    return { message: 'Password reset successfully. You can now log in with your new password.' };
   }
-
-  if (new Date() > user.passwordResetExpires) {
-    throw new BadRequestException('Reset token has expired');
-  }
-
-  user.password = newPassword;
-  user.passwordResetToken = undefined;
-  user.passwordResetExpires = undefined;
-  await this.userRepository.save(user);
-
-  // ✅ FIX: Manually revoke tokens instead of using logoutAll()
-  await this.refreshTokenRepository.update(
-    { userId: user.id, isRevoked: false },
-    { isRevoked: true },
-  );
-
-  await this.sessionService.deleteSession(user.id);
-
-  this.logger.log(`Password reset for user: ${user.email}`);
-
-  return {
-    message:
-      'Password reset successfully. You can now log in with your new password.',
-  };
-}
-
   /**
    * Change password
    */
-  async changePassword(
-    userId: string,
-    oldPassword: string,
-    newPassword: string,
-  ): Promise<void> {
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-    });
+  async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new BadRequestException('User not found');
 
-    if (!user) {
-      throw new BadRequestException('User not found');
-    }
+    const isValid = await user.comparePassword(dto.currentPassword);
+    if (!isValid) throw new BadRequestException('Current password is incorrect');
 
-    const isPasswordValid = await user.comparePassword(oldPassword);
-
-    if (!isPasswordValid) {
-      throw new BadRequestException('Current password is incorrect');
-    }
-
-    user.password = newPassword;
+    user.password = dto.newPassword; // @BeforeUpdate hook hashes it
     await this.userRepository.save(user);
 
-    await this.logoutAll(userId, '');
+    // Revoke all refresh tokens without blacklisting the access token
+    // (the caller is about to get a 200 response — let their current session expire naturally)
+    await this.refreshTokenRepository.update(
+      { userId, isRevoked: false },
+      { isRevoked: true },
+    );
+    await this.sessionService.deleteSession(userId);
 
     this.logger.log(`Password changed for user: ${user.email}`);
   }
@@ -1261,88 +1123,93 @@ export class AuthService {
     loginMethod?: 'local' | 'google' | 'github' | 'apple',
   ): Promise<AuthResponseDto> {
     const sessionId = uuidv4();
-
-    await this.sessionService.createSession(user.id, sessionId, {
-      ipAddress,
-      userAgent,
-      loginMethod,
-    });
-
-    return this.generateAuthResponseWithSessionId(
-      user,
-      sessionId,
-      ipAddress,
-      userAgent,
-    );
+    await this.sessionService.createSession(user.id, sessionId, { ipAddress, userAgent, loginMethod });
+    return this.generateAuthResponseWithSessionId(user, sessionId, ipAddress, userAgent);
   }
 
   /**
    * Generate authentication response with SPECIFIC session ID
    */
-  private async generateAuthResponseWithSessionId(
+   private async generateAuthResponseWithSessionId(
     user: User,
     sessionId: string,
     ipAddress?: string,
     userAgent?: string,
   ): Promise<AuthResponseDto> {
+    // ── Build JWT payload ──────────────────────────────────────────────────
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
+      tenantId: user.tenantId,     // guards read from JWT — no DB call needed
+      customerId: user.customerId, // same
       sessionId,
     };
 
     const accessToken = this.jwtService.sign(payload);
 
+    // ── Create refresh token ───────────────────────────────────────────────
     const refreshTokenString = this.generateRefreshToken();
     const refreshTokenExpiry = new Date();
-    refreshTokenExpiry.setDate(
-      refreshTokenExpiry.getDate() +
-        parseInt(
-          this.configService.get<string>('JWT_REFRESH_EXPIRATION', '7d'),
-          10,
-        ),
-    );
+    // Config should store as a plain number of days, e.g. JWT_REFRESH_DAYS=7
+    const refreshDays = this.configService.get<number>('jwt.refreshExpiresIn');
+    refreshTokenExpiry.setDate(refreshTokenExpiry.getDate() + refreshDays!);
 
     const refreshToken = this.refreshTokenRepository.create({
       token: refreshTokenString,
       userId: user.id,
+      tenantId: user.tenantId,  // ← denormalized for tenant-level revocation
       expiresAt: refreshTokenExpiry,
-      ipAddress,
-      userAgent,
+      deviceInfo: {             // ← structured jsonb, not flat columns
+        ipAddress,
+        userAgent,
+      },
     });
-
     await this.refreshTokenRepository.save(refreshToken);
 
-    await this.sessionService.addRefreshTokenToSession(
-      user.id,
-      sessionId,
-      refreshTokenString,
-    );
-
+    await this.sessionService.addRefreshTokenToSession(user.id, sessionId, refreshTokenString);
     await this.cleanupExpiredTokens(user.id);
+
+    // ── Resolve subscription plan for UserInfoDto ──────────────────────────
+    let plan: string | undefined;
+    if (user.tenantId) {
+      try {
+        const subscription = await this.subscriptionsService.findByTenantId(user.tenantId);
+        plan = subscription?.plan;
+      } catch {
+        // Non-fatal — plan will be undefined in response, frontend handles gracefully
+      }
+    }
+
+    // ── Build UserInfoDto with all required fields ─────────────────────────
+    const userInfo: UserInfoDto = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      emailVerified: user.emailVerified, // ← was missing in original
+      tenantId: user.tenantId,
+      customerId: user.customerId,
+      plan,                              // ← was missing in original
+    };
 
     return {
       accessToken,
       refreshToken: refreshTokenString,
-      expiresIn: 900,
+      expiresIn: 900, // 15 minutes in seconds
       tokenType: 'Bearer',
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        tenantId: user.tenantId,
-        customerId: user.customerId,
-      },
+      user: userInfo,
     };
   }
 
   /**
    * Generate random refresh token
    */
-  private generateRefreshToken(): string {
+ private generateRefreshToken(): string {
     return crypto.randomBytes(64).toString('hex');
+  }
+  private generateSecureToken(): string {
+    return crypto.randomBytes(32).toString('hex');
   }
 
   /**
@@ -1362,14 +1229,12 @@ export class AuthService {
   /**
    * Clean up expired and old refresh tokens
    */
-  private async cleanupExpiredTokens(userId: string): Promise<void> {
-    const now = new Date();
-
+    private async cleanupExpiredTokens(userId: string): Promise<void> {
     await this.refreshTokenRepository
       .createQueryBuilder()
       .delete()
-      .where('userId = :userId', { userId })
-      .andWhere('expiresAt < :now', { now })
+      .where('"userId" = :userId', { userId })
+      .andWhere('"expiresAt" < :now', { now: new Date() })
       .execute();
 
     const validTokens = await this.refreshTokenRepository.find({
@@ -1378,9 +1243,8 @@ export class AuthService {
     });
 
     if (validTokens.length > 5) {
-      const tokensToRevoke = validTokens.slice(5);
       await this.refreshTokenRepository.update(
-        tokensToRevoke.map((t) => t.id),
+        validTokens.slice(5).map((t) => t.id),
         { isRevoked: true },
       );
     }
@@ -1392,7 +1256,7 @@ export class AuthService {
   async verifyAccessToken(token: string): Promise<JwtPayload> {
     try {
       return this.jwtService.verify(token);
-    } catch (error) {
+    } catch {
       throw new UnauthorizedException('Invalid or expired token');
     }
   }
@@ -1416,17 +1280,14 @@ export class AuthService {
   /**
    * Get current session info
    */
-  async getSessionInfo(userId: string): Promise<any> {
+   async getSessionInfo(userId: string) {
     return this.sessionService.getSession(userId);
   }
-
   /**
    * Cleanup cron - runs every hour
    */
-  @Cron('0 * * * *')
+@Cron('0 * * * *') // every hour
   async cleanupExpiredBlacklistedTokens(): Promise<void> {
-    this.logger.log('🧹 Starting blacklist cleanup...');
-
     const result: any = await this.tokenBlacklistRepository
       .createQueryBuilder()
       .delete()
@@ -1434,26 +1295,27 @@ export class AuthService {
       .execute();
 
     if (result?.affected > 0) {
-      this.logger.log(
-        `✅ Cleaned up ${result.affected} expired blacklisted tokens`,
-      );
-    } else {
-      this.logger.log('ℹ️ No expired tokens to clean up');
+      this.logger.log(`Cleaned up ${result.affected} expired blacklisted tokens`);
     }
   }
 
   /**
  * Update user profile (name, phone)
  */
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Profile
+  // ═══════════════════════════════════════════════════════════════════════════
+
 async updateProfile(
   userId: string,
   updateProfileDto: UpdateProfileDto,
 ): Promise<{ message: string; user: Partial<User> }> {
-  const { name, phone } = updateProfileDto;
+  const { name, phone, preferences } = updateProfileDto;
 
   // Validate that at least one field is provided
-  if (!name && !phone) {
-    throw new BadRequestException('At least one field (name or phone) must be provided');
+  if (!name && !phone && !preferences) {
+    throw new BadRequestException('At least one field (name, phone, or preferences) must be provided');
   }
 
   const user = await this.userRepository.findOne({
@@ -1466,27 +1328,23 @@ async updateProfile(
 
   // Check if phone is being updated and if it's already taken by another user
   if (phone && phone !== user.phone) {
-    const existingUserWithPhone = await this.userRepository.findOne({
+    const conflict = await this.userRepository.findOne({
       where: { phone },
     });
-
-    if (existingUserWithPhone && existingUserWithPhone.id !== userId) {
+    if(conflict && conflict.id !== userId){
       throw new ConflictException('This phone number is already registered to another user');
     }
+    if (name) user.name = name.trim();
+    if (phone) user.phone = phone;
+
+    // Merge preferences — do not replace existing keys that weren't sent
+    if (preferences) {
+      user.preferences = { ...(user.preferences ?? {}), ...preferences };
+    }
+
+     await this.userRepository.save(user);
+    this.logger.log(`Profile updated for user: ${user.email}`);
   }
-
-  // Update fields
-  if (name) {
-    user.name = name.trim();
-  }
-
-  if (phone) {
-    user.phone = phone;
-  }
-
-  await this.userRepository.save(user);
-
-  this.logger.log(`Profile updated for user: ${user.email}`);
 
   return {
     message: 'Profile updated successfully',

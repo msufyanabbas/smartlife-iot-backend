@@ -8,3 +8,4 @@ export * from './permission.guard';
 export * from './subscription-limit.guard';
 export * from './subscription.guard';
 export * from './tenant-isolation.guard';
+export * from './oauth/oauth.guards';

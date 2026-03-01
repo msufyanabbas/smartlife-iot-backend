@@ -718,15 +718,15 @@ export class NotificationsService {
   }
 
   // ✅ Helper methods
-  private async getUserById(userId: string): Promise<User> {
+  async getUserById(userId: string): Promise<User> {
     return this.userService.findOne(userId);
   }
 
-  private async getUsersByTenant(tenantId: string): Promise<User[]> {
+   async getUsersByTenant(tenantId: string): Promise<User[]> {
     return this.userService.findByTenant(tenantId);
   }
 
-  private async getUsersByCustomer(customerId: string): Promise<User[]> {
+  getUsersByCustomer(customerId: string): Promise<User[]> {
     return this.userService.findByCustomer(customerId);
   }
 }

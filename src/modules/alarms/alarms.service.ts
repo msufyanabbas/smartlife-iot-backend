@@ -1,13 +1,13 @@
+// src/modules/alarms/services/alarms.service.ts
 import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, Between } from 'typeorm';
-import { Alarm } from '@modules/index.entities'
-import { AlarmCondition, AlarmStatus, AlarmSeverity} from '@common/enums/index.enum';
+import { Repository, Between } from 'typeorm';
+import { Alarm, Device } from '@modules/index.entities';
+import { AlarmCondition, AlarmStatus, AlarmSeverity } from '@common/enums/index.enum';
 import {
   CreateAlarmDto,
   UpdateAlarmDto,
@@ -16,22 +16,42 @@ import {
   ResolveAlarmDto,
 } from './dto/alarm.dto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { User } from '@modules/users/entities/user.entity';
 
 @Injectable()
 export class AlarmsService {
   constructor(
     @InjectRepository(Alarm)
     private alarmRepository: Repository<Alarm>,
+    @InjectRepository(Device)
+    private deviceRepository: Repository<Device>,
     private eventEmitter: EventEmitter2,
   ) {}
 
   /**
    * Create new alarm rule
    */
-  async create(userId: string, createDto: CreateAlarmDto): Promise<Alarm> {
+  async create(user: User, createDto: CreateAlarmDto): Promise<Alarm> {
+    // If deviceId is provided, get customerId from device
+    let customerId = user.customerId;
+    
+    if (createDto.deviceId) {
+      const device = await this.deviceRepository.findOne({
+        where: { id: createDto.deviceId, tenantId: user.tenantId },
+      });
+      
+      if (!device) {
+        throw new NotFoundException(`Device with ID ${createDto.deviceId} not found`);
+      }
+      
+      customerId = device.customerId;
+    }
+
     const alarm = this.alarmRepository.create({
       ...createDto,
-      userId,
+      tenantId: user.tenantId,
+      customerId,
+      createdBy: user.id,
       status: AlarmStatus.ACTIVE,
     });
 
@@ -46,7 +66,11 @@ export class AlarmsService {
   /**
    * Find all alarms with filters
    */
-  async findAll(userId: string, query: AlarmQueryDto) {
+  async findAll(
+    tenantId: string | undefined,
+    query: AlarmQueryDto,
+    customerId?: string,
+  ) {
     const {
       page = 1,
       limit = 20,
@@ -60,7 +84,12 @@ export class AlarmsService {
     const queryBuilder = this.alarmRepository
       .createQueryBuilder('alarm')
       .leftJoinAndSelect('alarm.device', 'device')
-      .where('alarm.userId = :userId', { userId });
+      .where('alarm.tenantId = :tenantId', { tenantId });
+
+    // Filter by customer if provided
+    if (customerId) {
+      queryBuilder.andWhere('alarm.customerId = :customerId', { customerId });
+    }
 
     // Filter by device
     if (deviceId) {
@@ -95,20 +124,20 @@ export class AlarmsService {
     queryBuilder.skip(skip).take(limit);
 
     // Order by severity (critical first), then by triggered date
-queryBuilder
-  .addSelect(
-    `CASE 
-       WHEN alarm.severity = 'critical' THEN 1
-       WHEN alarm.severity = 'error' THEN 2
-       WHEN alarm.severity = 'warning' THEN 3
-       WHEN alarm.severity = 'info' THEN 4
-       ELSE 5
-     END`,
-    'severity_order',
-  )
-  .orderBy('severity_order', 'ASC')
-  .addOrderBy('alarm.triggeredAt', 'DESC', 'NULLS LAST')
-  .addOrderBy('alarm.createdAt', 'DESC');
+    queryBuilder
+      .addSelect(
+        `CASE 
+           WHEN alarm.severity = 'CRITICAL' THEN 1
+           WHEN alarm.severity = 'ERROR' THEN 2
+           WHEN alarm.severity = 'WARNING' THEN 3
+           WHEN alarm.severity = 'INFO' THEN 4
+           ELSE 5
+         END`,
+        'severity_order',
+      )
+      .orderBy('severity_order', 'ASC')
+      .addOrderBy('alarm.triggeredAt', 'DESC', 'NULLS LAST')
+      .addOrderBy('alarm.createdAt', 'DESC');
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
@@ -124,9 +153,9 @@ queryBuilder
   /**
    * Get alarm by ID
    */
-  async findOne(id: string, userId: string): Promise<Alarm> {
+  async findOne(id: string, tenantId: string | undefined): Promise<Alarm> {
     const alarm = await this.alarmRepository.findOne({
-      where: { id, userId },
+      where: { id, tenantId },
       relations: ['device'],
     });
 
@@ -142,21 +171,30 @@ queryBuilder
    */
   async update(
     id: string,
-    userId: string,
+    tenantId: string | undefined,
     updateDto: UpdateAlarmDto,
   ): Promise<Alarm> {
-    const alarm = await this.findOne(id, userId);
+    const alarm = await this.findOne(id, tenantId);
 
     Object.assign(alarm, updateDto);
-    return await this.alarmRepository.save(alarm);
+    
+    const saved = await this.alarmRepository.save(alarm);
+    
+    // Emit event
+    this.eventEmitter.emit('alarm.updated', { alarm: saved });
+    
+    return saved;
   }
 
   /**
    * Delete alarm
    */
-  async remove(id: string, userId: string): Promise<void> {
-    const alarm = await this.findOne(id, userId);
+  async remove(id: string, tenantId: string | undefined): Promise<void> {
+    const alarm = await this.findOne(id, tenantId);
     await this.alarmRepository.softRemove(alarm);
+    
+    // Emit event
+    this.eventEmitter.emit('alarm.deleted', { alarm });
   }
 
   /**
@@ -164,10 +202,11 @@ queryBuilder
    */
   async acknowledge(
     id: string,
+    tenantId: string | undefined,
     userId: string,
     acknowledgeDto?: AcknowledgeAlarmDto,
   ): Promise<Alarm> {
-    const alarm = await this.findOne(id, userId);
+    const alarm = await this.findOne(id, tenantId);
 
     if (alarm.status !== AlarmStatus.ACTIVE) {
       throw new BadRequestException('Only active alarms can be acknowledged');
@@ -193,8 +232,8 @@ queryBuilder
   /**
    * Clear alarm
    */
-  async clear(id: string, userId: string): Promise<Alarm> {
-    const alarm = await this.findOne(id, userId);
+  async clear(id: string, tenantId: string | undefined): Promise<Alarm> {
+    const alarm = await this.findOne(id, tenantId);
 
     if (
       alarm.status !== AlarmStatus.ACTIVE &&
@@ -219,10 +258,11 @@ queryBuilder
    */
   async resolve(
     id: string,
+    tenantId: string | undefined,
     userId: string,
     resolveDto: ResolveAlarmDto,
   ): Promise<Alarm> {
-    const alarm = await this.findOne(id, userId);
+    const alarm = await this.findOne(id, tenantId);
 
     alarm.resolve(userId, resolveDto.note);
     const saved = await this.alarmRepository.save(alarm);
@@ -236,8 +276,8 @@ queryBuilder
   /**
    * Enable alarm
    */
-  async enable(id: string, userId: string): Promise<Alarm> {
-    const alarm = await this.findOne(id, userId);
+  async enable(id: string, tenantId: string | undefined): Promise<Alarm> {
+    const alarm = await this.findOne(id, tenantId);
     alarm.isEnabled = true;
     return await this.alarmRepository.save(alarm);
   }
@@ -245,8 +285,8 @@ queryBuilder
   /**
    * Disable alarm
    */
-  async disable(id: string, userId: string): Promise<Alarm> {
-    const alarm = await this.findOne(id, userId);
+  async disable(id: string, tenantId: string | undefined): Promise<Alarm> {
+    const alarm = await this.findOne(id, tenantId);
     alarm.isEnabled = false;
     return await this.alarmRepository.save(alarm);
   }
@@ -260,20 +300,23 @@ queryBuilder
     telemetryKey: string,
     value: number,
   ): Promise<void> {
-    // Get all enabled alarms for this device and telemetry key
-    const alarms = await this.alarmRepository.find({
-      where: {
-        deviceId,
-        isEnabled: true,
-      },
+    // Get device to get tenantId
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId },
     });
 
-    for (const alarm of alarms) {
-      // Check if this alarm monitors this telemetry key
-      if (alarm.rule.telemetryKey !== telemetryKey) {
-        continue;
-      }
+    if (!device) return;
 
+    // Get all enabled alarms for this device and telemetry key
+    const alarms = await this.alarmRepository
+      .createQueryBuilder('alarm')
+      .where('alarm.deviceId = :deviceId', { deviceId })
+      .andWhere('alarm.tenantId = :tenantId', { tenantId: device.tenantId })
+      .andWhere('alarm.isEnabled = :enabled', { enabled: true })
+      .andWhere("alarm.rule->>'telemetryKey' = :telemetryKey", { telemetryKey })
+      .getMany();
+
+    for (const alarm of alarms) {
       const conditionMet = this.evaluateCondition(alarm.rule, value);
 
       if (conditionMet) {
@@ -340,12 +383,56 @@ queryBuilder
   /**
    * Get active alarms
    */
-  async getActive(userId: string): Promise<Alarm[]> {
+  async getActive(tenantId: string | undefined, customerId?: string): Promise<Alarm[]> {
+    const whereCondition: any = {
+      tenantId,
+      status: AlarmStatus.ACTIVE,
+    };
+
+    if (customerId) {
+      whereCondition.customerId = customerId;
+    }
+
     return await this.alarmRepository.find({
-      where: { userId, status: AlarmStatus.ACTIVE },
+      where: whereCondition,
       relations: ['device'],
       order: {
-        severity: 'ASC', // Critical first
+        severity: 'ASC', // CRITICAL first
+        triggeredAt: 'DESC',
+      },
+    });
+  }
+
+  /**
+   * Get critical unacknowledged alarms
+   */
+  async getCritical(tenantId: string | undefined, customerId?: string): Promise<Alarm[]> {
+    const whereCondition: any = {
+      tenantId,
+      status: AlarmStatus.ACTIVE,
+      severity: AlarmSeverity.CRITICAL,
+    };
+
+    if (customerId) {
+      whereCondition.customerId = customerId;
+    }
+
+    return await this.alarmRepository.find({
+      where: whereCondition,
+      relations: ['device'],
+      order: { triggeredAt: 'DESC' },
+    });
+  }
+
+  /**
+   * Get alarms for a specific device
+   */
+  async getDeviceAlarms(tenantId: string | undefined, deviceId: string): Promise<Alarm[]> {
+    return await this.alarmRepository.find({
+      where: { tenantId, deviceId },
+      order: {
+        status: 'ASC', // ACTIVE first
+        severity: 'ASC', // CRITICAL first
         triggeredAt: 'DESC',
       },
     });
@@ -354,29 +441,35 @@ queryBuilder
   /**
    * Get alarm statistics
    */
-  async getStatistics(userId: string) {
-    const total = await this.alarmRepository.count({ where: { userId } });
+  async getStatistics(tenantId: string | undefined, customerId?: string) {
+    const whereCondition: any = { tenantId };
+    
+    if (customerId) {
+      whereCondition.customerId = customerId;
+    }
+
+    const total = await this.alarmRepository.count({ where: whereCondition });
 
     const active = await this.alarmRepository.count({
-      where: { userId, status: AlarmStatus.ACTIVE },
+      where: { ...whereCondition, status: AlarmStatus.ACTIVE },
     });
 
     const acknowledged = await this.alarmRepository.count({
-      where: { userId, status: AlarmStatus.ACKNOWLEDGED },
+      where: { ...whereCondition, status: AlarmStatus.ACKNOWLEDGED },
     });
 
     const cleared = await this.alarmRepository.count({
-      where: { userId, status: AlarmStatus.CLEARED },
+      where: { ...whereCondition, status: AlarmStatus.CLEARED },
     });
 
     const resolved = await this.alarmRepository.count({
-      where: { userId, status: AlarmStatus.RESOLVED },
+      where: { ...whereCondition, status: AlarmStatus.RESOLVED },
     });
 
-    // Count by severity
+    // Count by severity (active only)
     const critical = await this.alarmRepository.count({
       where: {
-        userId,
+        ...whereCondition,
         severity: AlarmSeverity.CRITICAL,
         status: AlarmStatus.ACTIVE,
       },
@@ -384,7 +477,7 @@ queryBuilder
 
     const error = await this.alarmRepository.count({
       where: {
-        userId,
+        ...whereCondition,
         severity: AlarmSeverity.ERROR,
         status: AlarmStatus.ACTIVE,
       },
@@ -392,22 +485,31 @@ queryBuilder
 
     const warning = await this.alarmRepository.count({
       where: {
-        userId,
+        ...whereCondition,
         severity: AlarmSeverity.WARNING,
+        status: AlarmStatus.ACTIVE,
+      },
+    });
+
+    const info = await this.alarmRepository.count({
+      where: {
+        ...whereCondition,
+        severity: AlarmSeverity.INFO,
         status: AlarmStatus.ACTIVE,
       },
     });
 
     // Get most triggered alarms
     const mostTriggered = await this.alarmRepository.find({
-      where: { userId },
+      where: whereCondition,
+      relations: ['device'],
       order: { triggerCount: 'DESC' },
       take: 5,
     });
 
     // Get recent alarms
     const recent = await this.alarmRepository.find({
-      where: { userId },
+      where: whereCondition,
       relations: ['device'],
       order: { triggeredAt: 'DESC' },
       take: 10,
@@ -425,6 +527,7 @@ queryBuilder
         critical,
         error,
         warning,
+        info,
       },
       mostTriggered,
       recent,
@@ -435,7 +538,7 @@ queryBuilder
    * Get alarm history for a device
    */
   async getDeviceHistory(
-    userId: string,
+    tenantId: string | undefined,
     deviceId: string,
     days: number = 7,
   ): Promise<Alarm[]> {
@@ -444,11 +547,12 @@ queryBuilder
 
     return await this.alarmRepository.find({
       where: {
-        userId,
+        tenantId,
         deviceId,
         triggeredAt: Between(startDate, new Date()),
       },
       order: { triggeredAt: 'DESC' },
+      take: 100,
     });
   }
 
@@ -456,6 +560,7 @@ queryBuilder
    * Bulk acknowledge alarms
    */
   async bulkAcknowledge(
+    tenantId: string | undefined,
     userId: string,
     alarmIds: string[],
   ): Promise<{ success: number; failed: number }> {
@@ -464,7 +569,29 @@ queryBuilder
 
     for (const id of alarmIds) {
       try {
-        await this.acknowledge(id, userId);
+        await this.acknowledge(id, tenantId, userId);
+        success++;
+      } catch (error) {
+        failed++;
+      }
+    }
+
+    return { success, failed };
+  }
+
+  /**
+   * Bulk clear alarms
+   */
+  async bulkClear(
+    tenantId: string | undefined,
+    alarmIds: string[],
+  ): Promise<{ success: number; failed: number }> {
+    let success = 0;
+    let failed = 0;
+
+    for (const id of alarmIds) {
+      try {
+        await this.clear(id, tenantId);
         success++;
       } catch (error) {
         failed++;
@@ -478,6 +605,7 @@ queryBuilder
    * Bulk resolve alarms
    */
   async bulkResolve(
+    tenantId: string | undefined,
     userId: string,
     alarmIds: string[],
     note: string,
@@ -487,7 +615,7 @@ queryBuilder
 
     for (const id of alarmIds) {
       try {
-        await this.resolve(id, userId, { note });
+        await this.resolve(id, tenantId, userId, { note });
         success++;
       } catch (error) {
         failed++;
@@ -500,8 +628,12 @@ queryBuilder
   /**
    * Test alarm rule (simulate trigger)
    */
-  async testAlarm(id: string, userId: string, testValue: number): Promise<any> {
-    const alarm = await this.findOne(id, userId);
+  async testAlarm(
+    id: string,
+    tenantId: string | undefined,
+    testValue: number,
+  ): Promise<any> {
+    const alarm = await this.findOne(id, tenantId);
 
     const conditionMet = this.evaluateCondition(alarm.rule, testValue);
 

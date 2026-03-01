@@ -1,7 +1,7 @@
-import { MigrationConfig } from '@/common/interfaces/common.interface';
+// src/config/migration.config.ts
+import { MigrationConfig } from '@common/interfaces/common.interface';
 import { registerAs } from '@nestjs/config';
 import { DataSource, DataSourceOptions } from 'typeorm';
-import * as entities from '@modules/index.entities';
 
 export default registerAs(
   'migration',
@@ -15,10 +15,18 @@ export default registerAs(
     database: process.env.DB_DATABASE,
 
     // Migration Settings
-    entities: ['src/modules/**/*.entity.ts'],
-    migrations: ['src/database/migrations/*.ts'],
-    migrationsTableName: process.env.DB_MIGRATIONS_TABLE,
-    synchronize: process.env.DB_SYNCHRONIZE === 'true',
+    entities: [
+      process.env.NODE_ENV === 'production'
+        ? 'dist/modules/**/*.entity.js'
+        : 'src/modules/**/*.entity.ts',
+    ],
+    migrations: [
+      process.env.NODE_ENV === 'production'
+        ? 'dist/database/migrations/*.js'
+        : 'src/database/migrations/*.ts',
+    ],
+    migrationsTableName: process.env.DB_MIGRATIONS_TABLE || 'migrations',
+    synchronize: false, // ⚠️  ALWAYS false for migrations
     logging: process.env.DB_LOGGING === 'true',
 
     // Connection Options

@@ -1,0 +1,16 @@
+export enum WidgetTypeCategory {
+  ALARM_WIDGETS = 'alarm_widgets',
+  ANALYTICS = 'analytics',
+  CARDS = 'cards',
+  CHARTS = 'charts',
+  CONTROL_WIDGETS = 'control_widgets',
+  DATE = 'date',
+  GAUGES = 'gauges',
+  GPIO_WIDGETS = 'gpio_widgets',
+  INPUT_WIDGETS = 'input_widgets',
+  MAPS = 'maps',
+  NAVIGATION = 'navigation',
+  TABLES = 'tables',
+  WEATHER = 'weather',
+  OTHER = 'other',
+}

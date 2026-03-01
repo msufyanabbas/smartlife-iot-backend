@@ -1,47 +1,62 @@
-import { Entity, Column, Index } from 'typeorm';
-import { BaseEntity } from '../../../common/entities/base.entity';
-
-export enum ResourceType {
-  DASHBOARD = 'dashboard',
-  DEVICE = 'device',
-  ASSET = 'asset',
-  REPORT = 'report',
-  FLOOR_PLAN = 'floor_plan',
-}
-
-export enum ShareType {
-  EMAIL = 'email',
-  LINK = 'link',
-}
-
-export enum AccessLevel {
-  VIEW = 'view',
-  EDIT = 'edit',
-  ADMIN = 'admin',
-}
+import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { BaseEntity } from '@common/entities/base.entity'
+import { Tenant, User } from '@modules/index.entities';
+import { ShareType, ShareResourceType, AccessLevel } from '@/common/enums/index.enum';
 
 @Entity('shares')
 @Index(['sharedBy', 'resourceType'])
-// @Index(['token'])
+@Index(['token'])
 @Index(['sharedWith'])
+@Index(['tenantId', 'resourceType'])
 export class Share extends BaseEntity {
+  // ══════════════════════════════════════════════════════════════════════════
+  // TENANT SCOPING (REQUIRED)
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @Column()
+  @Index()
+  tenantId: string;
+
+  @ManyToOne(() => Tenant)
+  @JoinColumn({ name: 'tenantId' })
+  tenant: Tenant;
+  
+  // ══════════════════════════════════════════════════════════════════════════
+  // OWNER
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @Column()
+  @Index()
+  sharedBy: string;  // User ID who created the share
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'sharedBy' })
+  owner: User;  
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RESOURCE REFERENCE
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({
     type: 'enum',
-    enum: ResourceType,
+    enum: ShareResourceType,
   })
-  resourceType: ResourceType;
+  @Index()
+  resourceType: ShareResourceType;
 
-  @Column({ name: 'resource_id' })
+  @Column()
+  @Index()
   resourceId: string;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SHARE CONFIGURATION
+  // ══════════════════════════════════════════════════════════════════════════
 
   @Column({
     type: 'enum',
     enum: ShareType,
   })
   shareType: ShareType;
-
-  @Column({ name: 'shared_with', nullable: true })
-  sharedWith?: string; // Email address for email shares
 
   @Column({
     type: 'enum',
@@ -50,35 +65,64 @@ export class Share extends BaseEntity {
   })
   accessLevel: AccessLevel;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // RECIPIENT (for email shares)
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @Column({ nullable: true })
+  @Index()
+  sharedWith?: string;  // Email address  
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // LINK SHARING
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({ nullable: true, unique: true })
   @Index()
-  token?: string; // For link shares
+  token?: string;  // For link shares
 
-  @Column({ name: 'expires_at', type: 'timestamp', nullable: true })
+  @Column({ default: false })
+  isPublic: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
   expiresAt?: Date;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // STATISTICS
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({ default: 0 })
   views: number;
 
-  @Column({ name: 'is_public', default: false })
-  isPublic: boolean;
+  @Column({ type: 'timestamp', nullable: true })
+  lastViewedAt?: Date;
 
-  @Column({ name: 'shared_by' })
-  @Index()
-  sharedBy: string;
-
-  @Column({ name: 'user_id' })
-  @Index()
-  userId: string;
-
-  @Column({ name: 'tenant_id', nullable: true })
-  @Index()
-  tenantId?: string;
-
+  // ══════════════════════════════════════════════════════════════════════════
+  // METADATA
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({ type: 'jsonb', nullable: true })
   metadata?: {
     resourceName?: string;
     message?: string;
     permissions?: string[];
   };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HELPER METHODS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  isExpired(): boolean {
+    if (!this.expiresAt) return false;
+    return new Date() > this.expiresAt;
+  }
+
+  isValid(): boolean {
+    return !this.isExpired();
+  }
+
+  incrementViews(): void {
+    this.views += 1;
+    this.lastViewedAt = new Date();
+  }
 }

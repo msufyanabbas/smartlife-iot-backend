@@ -14,7 +14,7 @@ import {
   StandardTelemetry,
   IProtocolAdapter,
 } from '@/common/interfaces/standard-telemetry.interface';
-import { DeviceListenerService } from '@/modules/gateway/device-listener.service';
+import { DeviceListenerService } from '@/modules/protocols/device-listener.service';
 
 @Injectable()
 @Controller('v1/ingestion')

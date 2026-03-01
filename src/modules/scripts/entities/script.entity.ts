@@ -1,32 +1,61 @@
-import { Entity, Column, Index } from 'typeorm';
-import { BaseEntity } from '../../../common/entities/base.entity';
-
-export enum ScriptType {
-  PROCESSING = 'processing',
-  FILTER = 'filter',
-  AGGREGATION = 'aggregation',
-  VALIDATION = 'validation',
-  TRANSFORMATION = 'transformation',
-}
-
+// src/modules/scripts/entities/script.entity.ts
+import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { BaseEntity } from '@common/entities/base.entity';
+import { Tenant, User } from '@modules/index.entities';
+import { ScriptType } from '@common/enums/index.enum';
 @Entity('scripts')
 @Index(['userId', 'type'])
+@Index(['tenantId', 'type'])
+@Index(['userId', 'type'])
 export class Script extends BaseEntity {
+  // ══════════════════════════════════════════════════════════════════════════
+  // TENANT SCOPING (REQUIRED)
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @Column()
+  @Index()
+  tenantId: string;
+
+  @ManyToOne(() => Tenant)
+  @JoinColumn({ name: 'tenantId' })
+  tenant: Tenant;
+  
+  // ══════════════════════════════════════════════════════════════════════════
+  // OWNER
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @Column()
+  @Index()
+  userId: string;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'userId' })
+  user: User;
+  
+  // ══════════════════════════════════════════════════════════════════════════
+  // SCRIPT INFO
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column()
   name: string;
 
   @Column({ type: 'text', nullable: true })
   description?: string;
 
-  @Column({ default: 'javascript' })
-  language: string;
-
   @Column({
     type: 'enum',
     enum: ScriptType,
   })
+  @Index()
   type: ScriptType;
 
+  @Column({ default: 'javascript' })
+  language: string;  
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SCRIPT CODE
+  // ══════════════════════════════════════════════════════════════════════════
+  
   @Column({ type: 'text' })
   code: string;
 
@@ -35,19 +64,31 @@ export class Script extends BaseEntity {
 
   @Column({ default: 0 })
   lines: number;
-
-  @Column({
-    name: 'last_modified',
-    type: 'timestamp',
-    default: () => 'CURRENT_TIMESTAMP',
-  })
+  
+  // ══════════════════════════════════════════════════════════════════════════
+  // TRACKING
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   lastModified: Date;
 
-  @Column({ name: 'user_id' })
-  @Index()
-  userId: string;
+  @Column({ default: 0 })
+  executionCount: number;
 
-  @Column({ name: 'tenant_id', nullable: true })
-  @Index()
-  tenantId?: string;
+  @Column({ type: 'timestamp', nullable: true })
+  lastExecutedAt?: Date;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HELPER METHODS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  updateLines(): void {
+    this.lines = this.code.split('\n').length;
+    this.lastModified = new Date();
+  }
+
+  incrementExecutionCount(): void {
+    this.executionCount += 1;
+    this.lastExecutedAt = new Date();
+  }  
 }

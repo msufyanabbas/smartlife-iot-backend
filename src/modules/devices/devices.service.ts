@@ -13,7 +13,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Device, User } from '@modules/index.entities';
-import { DeviceStatus } from './entities/device.entity';
+import { DeviceStatus } from '@common/enums/index.enum';
 import { CreateDeviceDto } from '@modules/devices/dto/create-device.dto';
 import { UpdateDeviceDto } from '@modules/devices/dto/update-device.dto';
 import { DeviceCredentialsDto } from '@modules/devices/dto/device-credentials.dto';
@@ -179,27 +179,29 @@ export class DevicesService {
   /**
    * Find device by device key (used by MQTT gateway)
    */
-  async findByDeviceKey(deviceKey: string): Promise<Device> {
-    const device = await this.deviceRepository.findOne({
-      where: { deviceKey },
-      select: [
-        'id',
-        'deviceKey',
-        'name',
-        'type',
-        'status',
-        'userId',
-        'tenantId',
-        'metadata',
-      ],
-    });
+/**
+ * Find device by deviceKey (with access control)
+ */
+async findByDeviceKey(deviceKey: string, user: User): Promise<Device> {
+  const where: any = { deviceKey };
 
-    if (!device) {
-      throw new NotFoundException(`Device with key ${deviceKey} not found`);
-    }
-
-    return device;
+  // Apply tenant/customer filtering
+  if (user.role !== UserRole.SUPER_ADMIN) {
+    where.tenantId = user.tenantId;
   }
+
+  if (user.role === UserRole.CUSTOMER_ADMIN || user.role === UserRole.CUSTOMER_USER) {
+    where.customerId = user.customerId;
+  }
+
+  const device = await this.deviceRepository.findOne({ where });
+
+  if (!device) {
+    throw new NotFoundException('Device not found');
+  }
+
+  return device;
+}
 
   /**
    * Update device
@@ -544,4 +546,6 @@ async checkOfflineDevices(): Promise<void> {
     this.logger.log(`Marked ${devices.length} devices as offline`);
   }
 }
+
+
 }

@@ -8,7 +8,7 @@ import {
   logLevel,
 } from 'kafkajs';
 
-class KafkaService {
+export class KafkaService {
   private kafka: Kafka;
   private producer: Producer | null = null;
   private consumers: Map<string, Consumer> = new Map();
@@ -311,5 +311,3 @@ class KafkaService {
     }
   }
 }
-
-export const kafkaService = new KafkaService();

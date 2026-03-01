@@ -16,8 +16,8 @@ import { Telemetry } from './entities/telemetry.entity';
 import { Device } from '../devices/entities/device.entity';
 import { CreateTelemetryDto } from './dto/create-telemetry.dto';
 import { QueryTelemetryDto } from './dto/telemetry-query.dto';
-import { kafkaService } from '@/lib/kafka/kafka.service';
-import { redisService } from '@/lib/redis/redis.service';
+import { KafkaService } from '@/lib/kafka/kafka.service';
+import { RedisService } from '@/lib/redis/redis.service';
 
 @Injectable()
 export class TelemetryService {
@@ -26,6 +26,8 @@ export class TelemetryService {
     private telemetryRepository: Repository<Telemetry>,
     @InjectRepository(Device)
     private deviceRepository: Repository<Device>,
+    private kafkaService: KafkaService,
+    private redisService: RedisService,
   ) {}
 
   /**
@@ -67,7 +69,7 @@ export class TelemetryService {
     // Publish to Kafka BEFORE saving to database
     // This allows async processing without blocking the response
     try {
-      await kafkaService.sendMessage(
+      await this.kafkaService.sendMessage(
         'telemetry.device.raw',
         {
           deviceId: device.id,
@@ -93,7 +95,7 @@ export class TelemetryService {
     // Cache latest telemetry in Redis for fast access
     try {
       // 1. Store latest values
-      await redisService.hmset(`device:${device.id}:telemetry:latest`, {
+      await this.redisService.hmset(`device:${device.id}:telemetry:latest`, {
         temperature: createTelemetryDto.temperature?.toString() || '',
         humidity: createTelemetryDto.humidity?.toString() || '',
         pressure: createTelemetryDto.pressure?.toString() || '',
@@ -102,7 +104,7 @@ export class TelemetryService {
       });
 
       // 2. Add to recent readings list (keep last 100)
-      await redisService.lpush(
+      await this.redisService.lpush(
         `telemetry:${device.id}:recent`,
         JSON.stringify({
           ...createTelemetryDto.data,
@@ -111,11 +113,11 @@ export class TelemetryService {
           timestamp: Date.now(),
         }),
       );
-      await redisService.ltrim(`telemetry:${device.id}:recent`, 0, 99);
-      await redisService.expire(`telemetry:${device.id}:recent`, 3600); // 1 hour
+      await this.redisService.ltrim(`telemetry:${device.id}:recent`, 0, 99);
+      await this.redisService.expire(`telemetry:${device.id}:recent`, 3600); // 1 hour
 
       // 3. Update device last seen
-      await redisService.hset(
+      await this.redisService.hset(
         `device:${device.id}:state`,
         'lastSeen',
         Date.now().toString(),
@@ -190,7 +192,7 @@ export class TelemetryService {
         },
       }));
 
-      await kafkaService.sendBatch('telemetry.device.raw', kafkaMessages);
+      await this.kafkaService.sendBatch('telemetry.device.raw', kafkaMessages);
     } catch (error) {
       console.error('Failed to publish batch to Kafka:', error);
     }
@@ -287,7 +289,7 @@ export class TelemetryService {
     // ============ NEW: REDIS CACHE CHECK ============
     // Try to get from Redis first (much faster!)
     try {
-      const cached = await redisService.hgetall(
+      const cached = await this.redisService.hgetall(
         `device:${deviceId}:telemetry:latest`,
       );
 
@@ -319,14 +321,14 @@ export class TelemetryService {
     // ============ NEW: CACHE THE RESULT ============
     // Cache the result for next time
     try {
-      await redisService.hmset(`device:${deviceId}:telemetry:latest`, {
+      await this.redisService.hmset(`device:${deviceId}:telemetry:latest`, {
         temperature: telemetry.temperature?.toString() || '',
         humidity: telemetry.humidity?.toString() || '',
         pressure: telemetry.pressure?.toString() || '',
         batteryLevel: telemetry.batteryLevel?.toString() || '',
         timestamp: telemetry.timestamp.getTime().toString(),
       });
-      await redisService.expire(`device:${deviceId}:telemetry:latest`, 300); // 5 min
+      await this.redisService.expire(`device:${deviceId}:telemetry:latest`, 300); // 5 min
     } catch (error) {
       console.error('Failed to cache result:', error);
     }

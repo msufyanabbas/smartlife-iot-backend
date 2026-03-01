@@ -1,64 +1,76 @@
 // src/modules/device-commands/device-commands.controller.ts
-
 import {
   Controller,
   Post,
   Get,
   Param,
   Body,
-  UseGuards,
-  Request,
   Query,
   Delete,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { DeviceCommandsService } from './device-commands.service';
 import { CreateCommandDto } from './dto/create-command.dto';
-import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
+import { User } from '@modules/index.entities';
+import { TenantOrCustomerAdmin } from '@common/decorators/access-control.decorator';
+import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 
-@Controller('api/v1/device-commands')
-@UseGuards(JwtAuthGuard)
+@ApiTags('Device Commands')
+@Controller('device-commands')
+@ApiBearerAuth()
 export class DeviceCommandsController {
   constructor(private readonly commandsService: DeviceCommandsService) {}
 
-  /**
-   * Send command to device
-   * POST /api/v1/device-commands
-   *
-   * Example:
-   * {
-   *   "deviceId": "uuid",
-   *   "commandType": "turnOn",
-   *   "params": { "brightness": 80 },
-   *   "priority": "NORMAL"
-   * }
-   */
+  // ══════════════════════════════════════════════════════════════════════════
+  // CREATE COMMAND
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Post()
+  @TenantOrCustomerAdmin()
+  @ApiOperation({ summary: 'Send command to device' })
+  @ApiResponse({ status: 201, description: 'Command sent successfully' })
+  @ApiResponse({ status: 404, description: 'Device not found' })
   async createCommand(
+    @CurrentUser() user: User,
     @Body() createCommandDto: CreateCommandDto,
-    @Request() req,
   ) {
     const command = await this.commandsService.createCommand(
       createCommandDto,
-      req.user.id,
-      req.user.tenantId,
+      user.id,
+      user.tenantId,
     );
 
     return {
       success: true,
-      data: command,
       message: 'Command sent successfully',
+      data: command,
     };
   }
 
-  /**
-   * Get command status
-   * GET /api/v1/device-commands/:id
-   */
+  // ══════════════════════════════════════════════════════════════════════════
+  // GET COMMAND STATUS
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Get(':id')
-  async getCommandStatus(@Param('id') commandId: string, @Request() req) {
+  @TenantOrCustomerAdmin()
+  @ApiOperation({ summary: 'Get command status' })
+  @ApiResponse({ status: 200, description: 'Command status retrieved' })
+  @ApiResponse({ status: 404, description: 'Command not found' })
+  async getCommandStatus(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) commandId: string,
+  ) {
     const command = await this.commandsService.getCommandStatus(
       commandId,
-      req.user.tenantId,
+      user.tenantId,
     );
 
     return {
@@ -67,19 +79,22 @@ export class DeviceCommandsController {
     };
   }
 
-  /**
-   * Get device command history
-   * GET /api/v1/device-commands/device/:deviceId?limit=50
-   */
+  // ══════════════════════════════════════════════════════════════════════════
+  // GET DEVICE COMMAND HISTORY
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Get('device/:deviceId')
+  @TenantOrCustomerAdmin()
+  @ApiOperation({ summary: 'Get device command history' })
+  @ApiResponse({ status: 200, description: 'Command history retrieved' })
   async getDeviceCommands(
-    @Param('deviceId') deviceId: string,
+    @CurrentUser() user: User,
+    @Param('deviceId', ParseIdPipe) deviceId: string,
     @Query('limit') limit: number = 50,
-    @Request() req,
   ) {
     const commands = await this.commandsService.getDeviceCommands(
       deviceId,
-      req.user.tenantId,
+      user.tenantId,
       limit,
     );
 
@@ -90,15 +105,21 @@ export class DeviceCommandsController {
     };
   }
 
-  /**
-   * Get user's command history
-   * GET /api/v1/device-commands/my-commands?limit=100
-   */
+  // ══════════════════════════════════════════════════════════════════════════
+  // GET USER COMMAND HISTORY
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Get('my-commands')
-  async getMyCommands(@Query('limit') limit: number = 100, @Request() req) {
+  @TenantOrCustomerAdmin()
+  @ApiOperation({ summary: 'Get your command history' })
+  @ApiResponse({ status: 200, description: 'Command history retrieved' })
+  async getMyCommands(
+    @CurrentUser() user: User,
+    @Query('limit') limit: number = 100,
+  ) {
     const commands = await this.commandsService.getUserCommands(
-      req.user.id,
-      req.user.tenantId,
+      user.id,
+      user.tenantId,
       limit,
     );
 
@@ -109,21 +130,29 @@ export class DeviceCommandsController {
     };
   }
 
-  /**
-   * Cancel pending command
-   * DELETE /api/v1/device-commands/:id
-   */
+  // ══════════════════════════════════════════════════════════════════════════
+  // CANCEL COMMAND
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Delete(':id')
-  async cancelCommand(@Param('id') commandId: string, @Request() req) {
+  @TenantOrCustomerAdmin()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cancel pending command' })
+  @ApiResponse({ status: 200, description: 'Command cancelled' })
+  @ApiResponse({ status: 400, description: 'Cannot cancel command in current status' })
+  async cancelCommand(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) commandId: string,
+  ) {
     const command = await this.commandsService.cancelCommand(
       commandId,
-      req.user.tenantId,
+      user.tenantId,
     );
 
     return {
       success: true,
+      message: 'Command cancelled successfully',
       data: command,
-      message: 'Command cancelled',
     };
   }
 }

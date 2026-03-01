@@ -1,35 +1,53 @@
-import { User } from "@modules/index.entities";
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from "@nestjs/common";
-import { UserRole } from "@common/enums/index.enum";
+// src/common/guards/tenant-isolation.guard.ts
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+} from '@nestjs/common';
+import { User } from '@modules/index.entities';
+import { UserRole } from '@common/enums/index.enum';
 
-// Ensures users only access their tenant's data
 @Injectable()
 export class TenantIsolationGuard implements CanActivate {
-  async canActivate(context: ExecutionContext): Promise<boolean> {
+  canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();
     const user: User = request.user;
-    
-    // Super admins bypass isolation
-    if (user.role === UserRole.SUPER_ADMIN) {
-      return true;
+
+    if (!user) throw new ForbiddenException('User not authenticated');
+
+    // Super admin bypasses tenant isolation — can access any tenant's data
+    if (user.role === UserRole.SUPER_ADMIN) return true;
+
+    // Every non-super-admin must belong to a tenant
+    if (!user.tenantId) {
+      throw new ForbiddenException('User is not associated with a tenant');
     }
-    
-    // Extract tenantId from request (params, query, or body)
-    const requestedTenantId = request.params.tenantId 
-      || request.query.tenantId 
-      || request.body.tenantId;
-    
-    // If no tenant specified, auto-inject user's tenant
+
+    // ── Extract requested tenantId from safe sources only ────────────────────
+    //     NEVER read tenantId from request.body — a user could inject any tenant ID.
+    //     Only route params and query string are acceptable, and only when the
+    //     route explicitly exposes them (e.g. super admin routes).
+    //     For all other routes, tenantId comes exclusively from the JWT (user.tenantId).
+    const requestedTenantId: string | undefined =
+      request.params?.tenantId ||   // e.g. GET /tenants/:tenantId/devices
+      request.query?.tenantId;      // e.g. GET /devices?tenantId=xxx (admin routes only)
+
     if (!requestedTenantId) {
+      // No explicit tenant in URL — auto-inject user's tenant into the request
+      // Services read this to scope their queries automatically
       request.tenantFilter = { tenantId: user.tenantId };
       return true;
     }
-    
-    // If tenant specified, verify it matches user's tenant
+
+    // ── Explicit tenant in URL — verify it matches user's own tenant ──────────
     if (requestedTenantId !== user.tenantId) {
-      throw new ForbiddenException('Access denied to this tenant');
+      throw new ForbiddenException(
+        'Access denied: you cannot access another tenant\'s data',
+      );
     }
-    
+
+    request.tenantFilter = { tenantId: user.tenantId };
     return true;
   }
 }

@@ -6,7 +6,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
-import { Dashboard, DashboardVisibility } from './entities/dashboard.entity';
+import { Dashboard } from './entities/dashboard.entity';
+import { DashboardVisibility } from '@common/enums/index.enum';
 import {
   CreateDashboardDto,
   UpdateDashboardDto,

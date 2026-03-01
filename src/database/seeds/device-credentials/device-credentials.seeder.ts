@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Device, DeviceType } from '@modules/devices/entities/device.entity';
+import { Device } from '@modules/devices/entities/device.entity';
+import { DeviceType } from '@/common/enums/device.enum';
 import {
   DeviceCredentials,
   CredentialsType,

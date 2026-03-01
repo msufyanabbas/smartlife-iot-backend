@@ -16,6 +16,7 @@ export {CustomersModule} from './customers/customers.module';
 export {UserSettingsModule} from './user-settings/user-settings.module';
 export { RolesModule } from './roles/roles.module';
 export { PermissionsModule } from './permissions/permissions.module';
+export { GuardsModule } from '../common/guards/guards.module';
 
 // ============================================
 // FEATURE MODULES (application modules)
@@ -108,11 +109,19 @@ import { CodecModule } from './devices/codecs/codec.module';
 import { AutomationModule } from './automation/automation.module';
 import { RolesModule } from './roles/roles.module';
 import { PermissionsModule } from './permissions/permissions.module';
+import { GuardsModule } from '../common/guards/guards.module';
+import { KafkaModule } from '@/lib/kafka/kafka.module';
+import { RedisModule } from '@/lib/redis/redis.module';
+import { MQTTModule } from '@/lib/mqtt/mqtt.module';
 
 // ============================================
 // FEATURE MODULES ARRAY (for spreading in app.module.ts)
 // ============================================
 export const featureModules = [
+  MQTTModule,
+  KafkaModule, 
+  RedisModule,
+  GuardsModule,
   PermissionsModule,
   CodecModule,
   CustomerUsersModule,
