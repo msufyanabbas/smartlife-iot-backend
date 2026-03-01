@@ -9,9 +9,9 @@ import {
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
-import { NotificationsService } from '@/modules/notifications/notifications.service';
+import { NotificationsService } from '@modules/notifications/notifications.service';
 import { NOTIFY_KEY, NotifyMetadata } from '@common/decorators/notify.decorator';
-import { NotificationChannel, NotificationPriority } from '@common/enums/index.enum';
+import { NotificationPriority, UserRole } from '@common/enums/index.enum';
 
 @Injectable()
 export class NotificationInterceptor implements NestInterceptor {
@@ -26,18 +26,15 @@ export class NotificationInterceptor implements NestInterceptor {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
 
-    // Get notification metadata from decorator
     const notifyMetadata = this.reflector.get<NotifyMetadata>(
       NOTIFY_KEY,
       context.getHandler(),
     );
 
-    // If no @Notify decorator, skip
     if (!notifyMetadata) {
       return next.handle();
     }
 
-    // Check if user is authenticated
     if (!user) {
       this.logger.warn('Cannot send notification: No authenticated user');
       return next.handle();
@@ -48,7 +45,9 @@ export class NotificationInterceptor implements NestInterceptor {
         // Only send on success if condition allows
         if (
           notifyMetadata.condition === 'failure' ||
-          (notifyMetadata.condition && notifyMetadata.condition !== 'success' && notifyMetadata.condition !== 'always')
+          (notifyMetadata.condition &&
+            notifyMetadata.condition !== 'success' &&
+            notifyMetadata.condition !== 'always')
         ) {
           return;
         }
@@ -67,7 +66,7 @@ export class NotificationInterceptor implements NestInterceptor {
           }
         };
 
-        // Send async or sync based on metadata
+        // Send async by default
         if (notifyMetadata.async !== false) {
           setImmediate(() => sendNotification());
         } else {
@@ -78,7 +77,9 @@ export class NotificationInterceptor implements NestInterceptor {
         // Only send on failure if condition allows
         if (
           notifyMetadata.condition === 'success' ||
-          (notifyMetadata.condition && notifyMetadata.condition !== 'failure' && notifyMetadata.condition !== 'always')
+          (notifyMetadata.condition &&
+            notifyMetadata.condition !== 'failure' &&
+            notifyMetadata.condition !== 'always')
         ) {
           throw error;
         }
@@ -111,7 +112,6 @@ export class NotificationInterceptor implements NestInterceptor {
     success: boolean,
     error?: any,
   ): Promise<void> {
-    // Extract entity information
     const entityId = request.params?.id || response?.data?.id || response?.id;
     const entityName =
       response?.data?.name ||
@@ -120,7 +120,6 @@ export class NotificationInterceptor implements NestInterceptor {
       response?.name ||
       'Unknown';
 
-    // Replace placeholders in title and message
     const title = this.replacePlaceholders(metadata.title, {
       entityName,
       entityId,
@@ -138,7 +137,6 @@ export class NotificationInterceptor implements NestInterceptor {
       error: error?.message || '',
     });
 
-    // Generate action URL if provided
     let action: any = undefined;
     if (metadata.action && entityId) {
       action = {
@@ -148,7 +146,7 @@ export class NotificationInterceptor implements NestInterceptor {
       };
     }
 
-    // Determine recipients
+    // Resolve recipients — delegated to service instead of private DB access
     const recipients = await this.getRecipients(
       metadata.recipients,
       user,
@@ -165,7 +163,6 @@ export class NotificationInterceptor implements NestInterceptor {
     // Send notification through each channel
     for (const channel of metadata.channels) {
       try {
-        // For bulk recipients, use sendBulk
         if (recipients.length > 1) {
           await this.notificationsService.sendBulk({
             userIds: recipients,
@@ -189,7 +186,6 @@ export class NotificationInterceptor implements NestInterceptor {
             },
           });
         } else {
-          // Single recipient
           await this.notificationsService.create(
             {
               userId: recipients[0],
@@ -251,37 +247,31 @@ export class NotificationInterceptor implements NestInterceptor {
         return [user.id];
 
       case 'tenant':
-        // Get all users in tenant
-        const tenantUsers = await this.notificationsService['getUsersByTenant'](
+        // NotificationsService must expose this method publicly
+        const tenantUsers = await this.notificationsService.getUsersByTenant(
           user.tenantId,
         );
         return tenantUsers.map((u) => u.id);
 
       case 'customer':
-        // Get all users in customer
         if (!user.customerId) {
           this.logger.warn('User has no customerId, cannot notify customer');
           return [];
         }
         const customerUsers =
-          await this.notificationsService['getUsersByCustomer'](
-            user.customerId,
-          );
+          await this.notificationsService.getUsersByCustomer(user.customerId);
         return customerUsers.map((u) => u.id);
 
       case 'admins':
-        // Get tenant admin + super admins
-        const admins = await this.notificationsService['getUsersByTenant'](
+        // Filter by enum, not hardcoded strings
+        const admins = await this.notificationsService.getUsersByTenant(
           user.tenantId,
         );
         return admins
-          .filter(
-            (u) => u.role === 'tenant_admin' || u.role === 'super_admin',
-          )
+          .filter((u) => u.role === UserRole.TENANT_ADMIN || u.role === UserRole.SUPER_ADMIN)
           .map((u) => u.id);
 
       case 'related':
-        // Extract user IDs from response
         const relatedUserIds =
           response?.data?.userIds ||
           response?.userIds ||

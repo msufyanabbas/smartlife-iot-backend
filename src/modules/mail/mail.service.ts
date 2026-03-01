@@ -4,7 +4,7 @@ import * as nodemailer from 'nodemailer';
 import { Transporter } from 'nodemailer';
 import { EmailOptions } from './interfaces/mail.interface';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
-import { EmailTemplateType } from '../email-templates/entities/email-template.entity';
+import { EmailTemplateType } from '@common/enums/index.enum';
 
 @Injectable()
 export class MailService {
@@ -30,7 +30,7 @@ export class MailService {
     if (!smtpHost || !smtpPort || !smtpUser || !smtpPass) {
       this.logger.warn(
         '⚠️  SMTP not configured. Email functionality is disabled. ' +
-          'Add SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASS to your .env file to enable emails.',
+        'Add SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASS to your .env file to enable emails.',
       );
       this.emailEnabled = false;
       return;
@@ -40,7 +40,7 @@ export class MailService {
     if (!smtpFrom || !smtpFrom.includes('@')) {
       this.logger.error(
         '❌ SMTP_FROM is missing or invalid. Must be a valid email address (e.g., noreply@yourdomain.com). ' +
-          'Email functionality is disabled.',
+        'Email functionality is disabled.',
       );
       this.emailEnabled = false;
       return;
@@ -98,7 +98,7 @@ export class MailService {
     if (!this.isEmailEnabled()) {
       this.logger.warn(
         `📧 Email not sent to ${options.to} (SMTP not configured). ` +
-          `Subject: "${options.subject}"`,
+        `Subject: "${options.subject}"`,
       );
       return false;
     }
@@ -114,7 +114,7 @@ export class MailService {
       if (!smtpFrom || !smtpFrom.includes('@')) {
         this.logger.error(
           `❌ Cannot send email: SMTP_FROM is invalid or missing. ` +
-            `Current value: "${smtpFrom}". Must be a valid email address.`,
+          `Current value: "${smtpFrom}". Must be a valid email address.`,
         );
         return false;
       }

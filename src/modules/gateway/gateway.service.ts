@@ -15,6 +15,8 @@ import { MqttClient } from 'mqtt';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import mqttConfig from '../../config/mqtt.config';
 import { DevicesService } from '../devices/devices.service';
+import { UserRole } from '@/common/enums/user.enum';
+import { User } from '../index.entities';
 
 export interface DeviceMessage {
   deviceKey: string;
@@ -22,6 +24,8 @@ export interface DeviceMessage {
   data: Record<string, any> | string;
   messageType: 'telemetry' | 'attributes' | 'rpc_request' | 'rpc_response' | 'status' | 'alerts';
 }
+
+
 
 export interface DeviceCommand {
   deviceKey: string;
@@ -38,6 +42,13 @@ interface VerifiedConnection {
 
 @Injectable()
 export class GatewayService implements OnModuleInit, OnModuleDestroy {
+
+  private readonly systemUser = {
+    role: UserRole.SUPER_ADMIN,
+    tenantId: null,
+    customerId: null,
+  } as any as User;
+
   private readonly logger = new Logger(GatewayService.name);
   private client: MqttClient;
   private isConnected = false;
@@ -48,7 +59,7 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
     private config: ConfigType<typeof mqttConfig>,
     private eventEmitter: EventEmitter2,
     private devicesService: DevicesService,
-  ) {}
+  ) { }
 
   async onModuleInit() {
     await this.connectToBroker();
@@ -118,15 +129,15 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
       'devices/+/attributes',
       'devices/+/status',
       'devices/+/alerts',
-      
+
       // Milesight LoRaWAN topics
       'application/+/device/+/rx',
       'application/+/device/+/event/+',
-      
+
       // ChirpStack topics
       'application/+/device/+/event/up',
       'application/+/device/+/event/+',
-      
+
       // ThingsBoard style topics
       'v1/devices/+/telemetry',
       'v1/devices/+/attributes',
@@ -152,7 +163,7 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
     this.client.on('message', async (topic, payload, packet) => {
       try {
         const message = payload.toString();
-        
+
         this.logger.debug(`📨 Message received`);
         this.logger.debug(`  Topic: ${topic}`);
         this.logger.debug(`  Payload: ${message.substring(0, 200)}...`);
@@ -236,12 +247,12 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
       // Extract credentials from packet properties (if available)
       // In MQTT, credentials are usually in the CONNECT packet, not in each PUBLISH
       // So we'll verify based on deviceKey/devEUI lookup
-      
+
       let device;
-      
+
       // Try to find device by deviceKey first
       if (deviceIdentifier.startsWith('dev_')) {
-        device = await this.devicesService.findByDeviceKey(deviceIdentifier);
+        device = await this.devicesService.findByDeviceKey(deviceIdentifier, this.systemUser);
       } else {
         // For LoRaWAN devices, deviceIdentifier is devEUI
         // We need to find device by metadata.devEUI
@@ -249,16 +260,16 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
           { role: 'SUPER_ADMIN' } as any,
           { page: 1, limit: 1000 } as any,
         );
-        
+
         const matchingDevice = devices.data.find(
           (d) => d.metadata?.devEUI === deviceIdentifier,
         );
-        
+
         if (!matchingDevice) {
           this.logger.warn(`Device not found for identifier: ${deviceIdentifier}`);
           return null;
         }
-        
+
         device = matchingDevice;
       }
 
@@ -342,8 +353,8 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Get device to determine correct topic
-    const device = await this.devicesService.findByDeviceKey(deviceKey);
-    
+    const device = await this.devicesService.findByDeviceKey(deviceKey, this.systemUser);
+
     // Determine command topic based on device type
     let topic: string;
     let payload: any;
@@ -483,7 +494,7 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
   private startConnectionCleanup(): void {
     setInterval(() => {
       const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-      
+
       for (const [key, verification] of this.verifiedConnections.entries()) {
         if (verification.verifiedAt < tenMinutesAgo) {
           this.verifiedConnections.delete(key);

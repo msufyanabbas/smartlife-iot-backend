@@ -35,7 +35,8 @@ import {
   SearchUsersDto,
   UpdateStatusDto,
 } from './dto/users.dto';
-import { JwtAuthGuard, RolesGuard, RequireSubscriptionLimit, ResourceType, SubscriptionLimitGuard } from '@common/guards/index.guards';
+import { JwtAuthGuard, RolesGuard, ResourceType, SubscriptionLimitGuard } from '@common/guards/index.guards';
+import { RequireSubscriptionLimit } from '@common/decorators/index.decorator';
 import { Roles, Audit } from '@common/decorators/index.decorator';
 import { UserRole, UserStatus, AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 import { AuditInterceptor } from '@/common/interceptors/index.interceptor';
@@ -45,7 +46,7 @@ import { AuditInterceptor } from '@/common/interceptors/index.interceptor';
 @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionLimitGuard)
 // @UseInterceptors(AuditInterceptor)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) { }
 
   /**
    * Create a new user
@@ -54,8 +55,8 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequireSubscriptionLimit({
-    resource: ResourceType.USER,
-    operation: 'create',
+    resource: 'users',
+    // operation: 'create',
   })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a new user' })
@@ -86,14 +87,14 @@ export class UsersController {
   async findAll(
     @Query() queryDto: QueryUsersDto
   ) {
-      const result = await this.usersService.findAll({
-    page: queryDto.page,
-    limit: queryDto.limit,
-    search: queryDto.search,
-    role: queryDto.role,
-    status: queryDto.status,
-    tenantId: queryDto.tenantId,
-  });
+    const result = await this.usersService.findAll({
+      page: queryDto.page,
+      limit: queryDto.limit,
+      search: queryDto.search,
+      role: queryDto.role,
+      status: queryDto.status,
+      tenantId: queryDto.tenantId,
+    });
     return {
       message: 'Users retrieved successfully',
       data: result.users,

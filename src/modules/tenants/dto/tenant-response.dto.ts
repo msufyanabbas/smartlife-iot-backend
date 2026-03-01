@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TenantStatus } from '../entities/tenant.entity';
+import { TenantStatus } from '@/common/enums/index.enum';
 
 // ==================== TENANT RESPONSE DTO ====================
 

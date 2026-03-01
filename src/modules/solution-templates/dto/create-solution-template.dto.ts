@@ -8,7 +8,7 @@ import {
   IsObject,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { TemplateCategory } from '../entities/solution-template.entity';
+import { SolutionTemplateCategory as TemplateCategory } from '@common/enums/index.enum';
 
 export class CreateSolutionTemplateDto {
   @ApiProperty({ example: 'Smart Factory Solution' })

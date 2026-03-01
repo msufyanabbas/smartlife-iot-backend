@@ -7,7 +7,7 @@ import {
   IsBoolean,
   IsObject,
 } from 'class-validator';
-import { EmailTemplateType } from '../entities/email-template.entity';
+import { EmailTemplateType } from '@common/enums/index.enum';
 
 export class CreateEmailTemplateDto {
   @ApiProperty({

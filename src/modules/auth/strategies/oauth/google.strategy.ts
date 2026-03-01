@@ -1,3 +1,4 @@
+// src/modules/auth/strategies/oauth/google.strategy.ts
 import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { Strategy, Profile } from 'passport-google-oauth20';
@@ -9,8 +10,8 @@ export interface GoogleProfile {
   name: string;
   picture?: string;
   emailVerified: boolean;
-  accessToken?: string; // ✅ Add for storing
-  refreshToken?: string; // ✅ Add for storing
+  accessToken?: string;
+  refreshToken?: string;
 }
 
 @Injectable()

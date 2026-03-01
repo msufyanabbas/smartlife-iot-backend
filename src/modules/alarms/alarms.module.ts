@@ -7,10 +7,11 @@ import { Alarm } from './entities/alarm.entity';
 import { AlarmsRepository } from './repositories/alarms.repository';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { Device, Tenant } from '../index.entities';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Alarm]),
+    TypeOrmModule.forFeature([Alarm, Device, Tenant]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -26,4 +27,4 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
   providers: [AlarmsService, AlarmsGateway, AlarmsRepository],
   exports: [AlarmsService, AlarmsGateway],
 })
-export class AlarmsModule {}
+export class AlarmsModule { }

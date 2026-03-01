@@ -5,7 +5,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Integration, IntegrationStatus } from './entities/integration.entity';
+import { Integration } from './entities/integration.entity';
+import { IntegrationStatus } from '@common/enums/index.enum'
 import { CreateIntegrationDto } from './dto/create-integration.dto';
 import { UpdateIntegrationDto } from './dto/update-integration.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -15,7 +16,7 @@ export class IntegrationsService {
   constructor(
     @InjectRepository(Integration)
     private readonly integrationRepository: Repository<Integration>,
-  ) {}
+  ) { }
 
   async create(
     userId: string,

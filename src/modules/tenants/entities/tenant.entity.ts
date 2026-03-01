@@ -4,25 +4,14 @@ import {
   Column,
   Index,
   OneToMany,
-  ManyToOne,
-  JoinColumn,
   OneToOne,
 } from 'typeorm';
-import { BaseEntity } from '../../../common/entities/base.entity';
-import { User } from '../../users/entities/user.entity';
-import { Customer } from '../../customers/entities/customers.entity';
-import { Subscription } from '@/modules/index.entities';
-
-export enum TenantStatus {
-  ACTIVE = 'active',
-  INACTIVE = 'inactive',
-  SUSPENDED = 'suspended',
-}
+import { BaseEntity } from '@common/entities/base.entity';
+import { User, Customer, Subscription } from '@modules/index.entities';
+import { TenantStatus } from '@/common/enums/index.enum';
 
 @Entity('tenants')
-@Index(['status'])
-@Index(['email'])
-@Index(['name'])
+@Index(['email', 'status'])
 export class Tenant extends BaseEntity {
   @Column({ unique: true })
   name: string;
@@ -33,11 +22,28 @@ export class Tenant extends BaseEntity {
   @Column({ nullable: true })
   phone?: string;
 
-  @Column({
-    type: 'enum',
-    enum: TenantStatus,
-    default: TenantStatus.ACTIVE,
-  })
+  @Column({ nullable: true })
+  logo?: string;
+
+  @Column({ nullable: true })
+  website?: string;
+
+  @Column({ nullable: true })
+  country?: string;
+
+  @Column({ nullable: true })
+  state?: string;
+
+  @Column({ nullable: true })
+  city?: string;
+
+  @Column({ nullable: true })
+  address?: string;
+
+  @Column({ nullable: true })
+  zip?: string;
+
+  @Column({ type: 'enum', enum: TenantStatus, default: TenantStatus.ACTIVE })
   status: TenantStatus;
 
   // ✅ Relations
@@ -52,14 +58,9 @@ export class Tenant extends BaseEntity {
 
   @Column({ type: 'jsonb', default: '{}' })
   configuration: {
-    maxDevices?: number;
-    maxUsers?: number;
-    maxCustomers?: number;
-    maxAssets?: number;
-    maxDashboards?: number;
-    maxRuleChains?: number;
-    dataRetentionDays?: number;
-    features?: string[];
+    timezone?: string;
+    language?: string;
+    theme?: string;
   };
 
   // ✅ Helper methods
@@ -67,26 +68,7 @@ export class Tenant extends BaseEntity {
     return this.status === TenantStatus.ACTIVE;
   }
 
-  // ✅ Check if tenant has reached limits
-  hasReachedDeviceLimit(currentCount: number): boolean {
-    return (
-      this.configuration?.maxDevices !== undefined &&
-      currentCount >= this.configuration.maxDevices
-    );
-  }
-
-  hasReachedUserLimit(currentCount: number): boolean {
-    return (
-      this.configuration?.maxUsers !== undefined &&
-      currentCount >= this.configuration.maxUsers
-    );
-  }
-
-  hasReachedCustomerLimit(currentCount: number): boolean {
-    // Assuming you might want this
-    return (
-      this.configuration?.maxCustomers !== undefined &&
-      currentCount >= this.configuration.maxCustomers
-    );
+  isSuspended(): boolean {
+    return this.status === TenantStatus.SUSPENDED;
   }
 }

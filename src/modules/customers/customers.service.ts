@@ -323,7 +323,6 @@ export class CustomersService {
     return await this.customerRepository.find({
       where: {
         tenantId,
-        isPublic: true,
         status: CustomerStatus.ACTIVE,
       },
       order: { name: 'ASC' },

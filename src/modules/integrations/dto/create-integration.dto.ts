@@ -6,7 +6,7 @@ import {
   IsObject,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { IntegrationType } from '../entities/integration.entity';
+import { IntegrationType } from '@common/enums/index.enum';
 
 export class CreateIntegrationDto {
   @ApiProperty({ example: 'AWS IoT Core', description: 'Integration name' })
@@ -47,6 +47,6 @@ export class CreateIntegrationDto {
     apiKey?: string;
     topic?: string;
     headers?: Record<string, string>;
-    method?: string;
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   };
 }

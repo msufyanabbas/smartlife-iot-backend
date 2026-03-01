@@ -1,3 +1,4 @@
+// src/modules/devices/devices.controller.ts
 import {
   Controller,
   Get,
@@ -21,54 +22,72 @@ import {
 import { DevicesService } from './devices.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { User } from '../users/entities/user.entity';
-import { UserRole } from '@common/enums/index.enum';
-import { PaginationDto } from '../../common/dto/pagination.dto';
-import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
-import { DeviceStatus } from './entities/device.entity';
-import { Roles } from '@/common/decorators/roles.decorator';
-import { RolesGuard, RequireSubscriptionLimit, ResourceType, SubscriptionLimitGuard } from '@common/guards/index.guards';
-import { SubscriptionsService } from '../subscriptions/subscriptions.service';
-import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
-import { Notify } from '@/common/decorators/notify.decorator';
+import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
+import { User } from '@modules/users/entities/user.entity';
+import { AuditAction, AuditEntityType, UserRole } from '@common/enums/index.enum';
+import { PaginationDto } from '@common/dto/pagination.dto';
+import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
+import { DeviceStatus } from '@common/enums/index.enum'
+import { Roles } from '@common/decorators/roles.decorator';
+import { RolesGuard, SubscriptionLimitGuard } from '@common/guards/index.guards';
+import { RequireSubscriptionLimit } from '@common/decorators/subscription.decorator';
+import { ResourceType } from '@common/guards/subscription-limit.guard';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { CustomerAccessGuard } from '@common/guards/customer-access.guard';
+import { Notify } from '@common/decorators/notify.decorator';
 import { NotificationChannel, NotificationPriority, NotificationType } from '@common/enums/index.enum';
+import { Audit } from '@common/decorators/audit.decorator';
+import { MQTTAdapter } from '@modules/protocols/adapters/mqtt.adapter';
+
+// ══════════════════════════════════════════════════════════════════════════
+// DEVICE COMMAND DTO (moved from gateway)
+// ══════════════════════════════════════════════════════════════════════════
+
+export interface DeviceCommand {
+  method: string;
+  params?: Record<string, any>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DEVICES CONTROLLER
+// ══════════════════════════════════════════════════════════════════════════
 
 @ApiTags('devices')
 @Controller('devices')
-@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionLimitGuard) // ✅ Global guards
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionLimitGuard)
 @ApiBearerAuth()
 export class DevicesController {
   constructor(
     private readonly devicesService: DevicesService,
-    private readonly subscriptionsService: SubscriptionsService, // ✅ Inject service
-  ) {}
+    private readonly subscriptionsService: SubscriptionsService,
+    private readonly mqttAdapter: MQTTAdapter,  // ← Inject MQTT adapter
+  ) { }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DEVICE MANAGEMENT
+  // ══════════════════════════════════════════════════════════════════════════
 
   /**
-   * ============================================
-   * CREATE DEVICE - With Limit Check
-   * ============================================
+   * Create new device
    */
   @Post()
   @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER_ADMIN)
+  @Audit({ action: AuditAction.CREATE, entityType: AuditEntityType.DEVICE })
   @Notify({
-  type: NotificationType.DEVICE,
-  channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
-  priority: NotificationPriority.NORMAL,
-  title: 'Device Created',
-  message: 'Device "{entityName}" has been created successfully',
-  recipients: 'self',
-  entityType: 'device',
-  action: {
-    label: 'View Device',
-    urlTemplate: '/devices/{entityId}',
-  },
-})
-  @RequireSubscriptionLimit({
-    resource: ResourceType.DEVICE,
-    operation: 'create',
-  }) // ✅ Guard checks limit BEFORE creation
+    type: NotificationType.DEVICE,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+    priority: NotificationPriority.NORMAL,
+    title: 'Device Created',
+    message: 'Device "{entityName}" has been created successfully',
+    recipients: 'self',
+    entityType: 'device',
+    action: {
+      label: 'View Device',
+      urlTemplate: '/devices/{entityId}',
+    },
+  })
+  @RequireSubscriptionLimit({ resource: ResourceType.DEVICE })
   @ApiOperation({ summary: 'Create a new device' })
   @ApiResponse({ status: 201, description: 'Device created successfully' })
   @ApiResponse({ status: 403, description: 'Device limit reached' })
@@ -77,9 +96,7 @@ export class DevicesController {
     @CurrentUser() user: User,
     @Body() createDeviceDto: CreateDeviceDto,
   ) {
-    // ✅ Guard already checked limit - safe to create
     const device = await this.devicesService.create(user, createDeviceDto);
-
     return {
       message: 'Device created successfully',
       data: device,
@@ -87,9 +104,7 @@ export class DevicesController {
   }
 
   /**
-   * ============================================
-   * GET ALL DEVICES
-   * ============================================
+   * Get all devices
    */
   @Get()
   @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER_ADMIN)
@@ -100,9 +115,7 @@ export class DevicesController {
   }
 
   /**
-   * ============================================
-   * GET DEVICE STATISTICS
-   * ============================================
+   * Get device statistics
    */
   @Get('statistics')
   @ApiOperation({ summary: 'Get device statistics' })
@@ -112,9 +125,7 @@ export class DevicesController {
   }
 
   /**
-   * ============================================
-   * GET DEVICE BY ID
-   * ============================================
+   * Get device by ID
    */
   @Get(':id')
   @ApiOperation({ summary: 'Get device by ID' })
@@ -125,9 +136,7 @@ export class DevicesController {
   }
 
   /**
-   * ============================================
-   * UPDATE DEVICE
-   * ============================================
+   * Update device
    */
   @Patch(':id')
   @ApiOperation({ summary: 'Update device' })
@@ -142,9 +151,7 @@ export class DevicesController {
   }
 
   /**
-   * ============================================
-   * ACTIVATE DEVICE
-   * ============================================
+   * Activate device
    */
   @Post(':id/activate')
   @HttpCode(HttpStatus.OK)
@@ -156,9 +163,7 @@ export class DevicesController {
   }
 
   /**
-   * ============================================
-   * DEACTIVATE DEVICE
-   * ============================================
+   * Deactivate device
    */
   @Post(':id/deactivate')
   @HttpCode(HttpStatus.OK)
@@ -169,16 +174,11 @@ export class DevicesController {
   }
 
   /**
-   * ============================================
-   * GET DEVICE CREDENTIALS
-   * ============================================
+   * Get device credentials
    */
   @Get(':id/credentials')
   @ApiOperation({ summary: 'Get device MQTT credentials' })
-  @ApiResponse({
-    status: 200,
-    description: 'Device credentials retrieved',
-  })
+  @ApiResponse({ status: 200, description: 'Device credentials retrieved' })
   @ApiResponse({ status: 404, description: 'Device not found' })
   getCredentials(
     @CurrentUser() user: User,
@@ -188,9 +188,7 @@ export class DevicesController {
   }
 
   /**
-   * ============================================
-   * REGENERATE CREDENTIALS
-   * ============================================
+   * Regenerate credentials
    */
   @Post(':id/regenerate-credentials')
   @HttpCode(HttpStatus.OK)
@@ -204,9 +202,7 @@ export class DevicesController {
   }
 
   /**
-   * ============================================
-   * DELETE DEVICE - With Usage Decrement
-   * ============================================
+   * Delete device
    */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -214,22 +210,21 @@ export class DevicesController {
   @ApiResponse({ status: 204, description: 'Device deleted' })
   @ApiResponse({ status: 404, description: 'Device not found' })
   async remove(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    // ✅ Delete device first
     await this.devicesService.remove(id, user);
-    // No content response
     return;
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // BULK OPERATIONS
+  // ══════════════════════════════════════════════════════════════════════════
+
   /**
-   * ============================================
-   * BULK UPDATE STATUS
-   * Only Professional+ plans
-   * ============================================
+   * Bulk update device status (Professional plan required)
    */
   @Post('bulk/status')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Bulk update device status (Professional plan required)',
     description: 'Requires Professional or Enterprise plan'
   })
@@ -239,14 +234,15 @@ export class DevicesController {
     @CurrentUser() user: User,
     @Body() body: { deviceIds: string[]; status: DeviceStatus },
   ) {
-    // ✅ Check if user has bulk operations feature (Professional+)
     const hasFeature = await this.subscriptionsService.hasFeature(
       user.id,
-      'bulkOperations', // You'd need to add this to your features
+      'bulkOperations',
     );
 
     if (!hasFeature) {
-      if (!hasFeature) { throw new ForbiddenException('Bulk operations require Professional plan or higher');}
+      throw new ForbiddenException(
+        'Bulk operations require Professional plan or higher'
+      );
     }
 
     const result = await this.devicesService.bulkUpdateStatus(
@@ -261,11 +257,9 @@ export class DevicesController {
     };
   }
 
-  /**
-   * ============================================
-   * CUSTOMER-SPECIFIC ENDPOINTS
-   * ============================================
-   */
+  // ══════════════════════════════════════════════════════════════════════════
+  // CUSTOMER-SPECIFIC ENDPOINTS
+  // ══════════════════════════════════════════════════════════════════════════
 
   /**
    * Get devices by customer ID
@@ -296,7 +290,7 @@ export class DevicesController {
   @ApiResponse({ status: 200, description: 'Device assigned to customer' })
   async assignToCustomer(
     @CurrentUser() user: User,
-    @Param('id') deviceId: string,
+    @Param('id', ParseIdPipe) deviceId: string,
     @Body('customerId') customerId: string,
   ) {
     const device = await this.devicesService.assignToCustomer(
@@ -320,15 +314,147 @@ export class DevicesController {
   @ApiResponse({ status: 200, description: 'Device unassigned from customer' })
   async unassignFromCustomer(
     @CurrentUser() user: User,
-    @Param('id') deviceId: string,
+    @Param('id', ParseIdPipe) deviceId: string,
   ) {
-    const device = await this.devicesService.unassignFromCustomer(
-      deviceId,
-      user,
-    );
+    const device = await this.devicesService.unassignFromCustomer(deviceId, user);
     return {
       message: 'Device unassigned from customer successfully',
       data: device,
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DEVICE CONTROL (Migrated from Gateway Module)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Send command to device via MQTT
+   */
+  @Post(':deviceKey/command')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Send command to device',
+    description: 'Send a command to a device via MQTT'
+  })
+  @ApiResponse({ status: 200, description: 'Command sent successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid command' })
+  @ApiResponse({ status: 404, description: 'Device not found' })
+  async sendCommand(
+    @CurrentUser() user: User,
+    @Param('deviceKey') deviceKey: string,
+    @Body() command: DeviceCommand,
+  ) {
+    // Verify user has access to this device
+    await this.devicesService.findByDeviceKey(deviceKey, user);
+
+    // Send command via MQTT adapter
+    await this.mqttAdapter.sendCommand(deviceKey, command);
+
+    return {
+      success: true,
+      message: 'Command sent to device',
+      deviceKey,
+      command: command.method,
+    };
+  }
+
+  /**
+   * Send RPC request to device
+   */
+  @Post(':deviceKey/rpc')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Send RPC request to device',
+    description: 'Send a remote procedure call to a device'
+  })
+  @ApiResponse({ status: 200, description: 'RPC request sent' })
+  @ApiResponse({ status: 404, description: 'Device not found' })
+  async sendRpcRequest(
+    @CurrentUser() user: User,
+    @Param('deviceKey') deviceKey: string,
+    @Body() body: { method: string; params?: Record<string, any> },
+  ) {
+    // Verify user has access to this device
+    await this.devicesService.findByDeviceKey(deviceKey, user);
+
+    // Send RPC via MQTT adapter
+    await this.mqttAdapter.sendCommand(deviceKey, {
+      method: body.method,
+      params: body.params,
+    });
+
+    return {
+      success: true,
+      message: 'RPC request sent',
+      deviceKey,
+      method: body.method,
+    };
+  }
+
+  /**
+   * Update device attributes via MQTT
+   */
+  @Post(':deviceKey/attributes')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update device attributes',
+    description: 'Update device attributes via MQTT'
+  })
+  @ApiResponse({ status: 200, description: 'Attributes updated' })
+  @ApiResponse({ status: 404, description: 'Device not found' })
+  async updateAttributes(
+    @CurrentUser() user: User,
+    @Param('deviceKey') deviceKey: string,
+    @Body() attributes: Record<string, any>,
+  ) {
+    // Verify user has access to this device
+    await this.devicesService.findByDeviceKey(deviceKey, user);
+
+    // Update via device service (stores in DB)
+    const device = await this.devicesService.findByDeviceKey(deviceKey, user);
+    await this.devicesService.update(device.id, user, {
+      metadata: {
+        ...device.metadata,
+        ...attributes,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Attributes updated',
+      deviceKey,
+    };
+  }
+
+  /**
+   * Publish test telemetry (for testing/debugging)
+   */
+  @Post(':deviceKey/telemetry')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Publish telemetry (for testing)',
+    description: 'Manually publish telemetry data for a device (testing only)'
+  })
+  @ApiResponse({ status: 200, description: 'Telemetry published' })
+  @ApiResponse({ status: 404, description: 'Device not found' })
+  async publishTelemetry(
+    @CurrentUser() user: User,
+    @Param('deviceKey') deviceKey: string,
+    @Body() telemetry: Record<string, any>,
+  ) {
+    // Verify user has access to this device
+    await this.devicesService.findByDeviceKey(deviceKey, user);
+
+    // Publish via MQTT adapter
+    await this.mqttAdapter.sendCommand(deviceKey, {
+      method: 'test_telemetry',
+      params: telemetry,
+    });
+
+    return {
+      success: true,
+      message: 'Telemetry published',
+      deviceKey,
     };
   }
 }

@@ -5,7 +5,9 @@ import { UserRole, UserStatus } from '@common/enums/index.enum';
 import {
   User,
   Tenant,
-  Customer
+  Customer,
+  Role,
+  Permission
 } from '@modules/index.entities';
 import { ISeeder } from '../seeder.interface';
 
@@ -20,16 +22,22 @@ export class UserSeeder implements ISeeder {
     private readonly tenantRepository: Repository<Tenant>,
     @InjectRepository(Customer)
     private readonly customerRepository: Repository<Customer>,
-  ) {}
+    @InjectRepository(Role)
+    private readonly roleRepository: Repository<Role>,
+    @InjectRepository(Permission)
+    private readonly permissionRepository: Repository<Permission>,
+  ) { }
 
   async seed(): Promise<void> {
     this.logger.log('🌱 Starting user seeding...');
 
     // ========================================
-    // FETCH EXISTING TENANTS AND CUSTOMERS
+    // FETCH EXISTING TENANTS, CUSTOMERS, ROLES, PERMISSIONS
     // ========================================
     const tenants = await this.tenantRepository.find({ take: 10 });
     const customers = await this.customerRepository.find({ take: 20 });
+    const allRoles = await this.roleRepository.find();
+    const allPermissions = await this.permissionRepository.find();
 
     if (tenants.length === 0) {
       this.logger.warn(
@@ -69,6 +77,7 @@ export class UserSeeder implements ISeeder {
         emailVerified: true,
         phone: '+966501234567',
         // Super admin has no tenantId or customerId
+        preferences: { theme: 'dark', language: 'en' },
       },
 
       // ========================================
@@ -329,6 +338,7 @@ export class UserSeeder implements ISeeder {
 
     for (const userData of users) {
       try {
+        const { role: userRoleEnum, ...restData } = userData;
         const existing = await this.userRepository.findOne({
           where: { email: userData.email },
         });
@@ -361,7 +371,48 @@ export class UserSeeder implements ISeeder {
             }
           }
 
-          const user = this.userRepository.create(userData);
+          // ========================================
+          // MAP ROLES
+          // ========================================
+          const assignedRoles: Role[] = [];
+
+          // Helper to find role by name and scope
+          const findRole = (name: string, tenantId?: string) => {
+            return allRoles.find(r => r.name === name && (r.tenantId === tenantId || r.tenantId === null));
+          };
+
+          if (userRoleEnum === UserRole.SUPER_ADMIN) {
+            const superAdminRole = findRole('Super Administrator');
+            if (superAdminRole) assignedRoles.push(superAdminRole);
+          } else if (userRoleEnum === UserRole.TENANT_ADMIN) {
+            const tenantAdminRole = findRole('Tenant Administrator', userData.tenantId);
+            if (tenantAdminRole) assignedRoles.push(tenantAdminRole);
+          } else if (userRoleEnum === UserRole.CUSTOMER_ADMIN) {
+            const customerAdminRole = findRole('Customer Administrator', userData.tenantId);
+            if (customerAdminRole) assignedRoles.push(customerAdminRole);
+          } else if (userRoleEnum === UserRole.CUSTOMER_USER) {
+            const customerUserRole = findRole('Customer User', userData.tenantId);
+            if (customerUserRole) assignedRoles.push(customerUserRole);
+          } else if (userRoleEnum === UserRole.USER) {
+            const viewerRole = findRole('Read-Only Viewer');
+            if (viewerRole) assignedRoles.push(viewerRole);
+          }
+
+          // ========================================
+          // ASSIGN DIRECT PERMISSIONS (Sample)
+          // ========================================
+          const assignedDirectPermissions: Permission[] = [];
+          if (userRoleEnum === UserRole.CUSTOMER_USER && userData.email.includes('david')) {
+            // Give David direct export permission for devices
+            const exportPermission = allPermissions.find(p => p.resource === 'devices' && p.action === 'export');
+            if (exportPermission) assignedDirectPermissions.push(exportPermission);
+          }
+
+          const user = this.userRepository.create({
+            ...userData,
+            roles: assignedRoles,
+            directPermissions: assignedDirectPermissions,
+          });
           await this.userRepository.save(user);
 
           const roleDisplay = this.getRoleDisplay(userData.role);

@@ -7,7 +7,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { WidgetType, WidgetTypeCategory } from './entities/widget-type.entity';
+import { WidgetType } from './entities/widget-type.entity';
+import { WidgetTypeCategory } from '@/common/enums/widget-type.enum';
 import {
   CreateWidgetTypeDto,
   UpdateWidgetTypeDto,
@@ -20,7 +21,7 @@ export class WidgetTypesService {
     @InjectRepository(WidgetType)
     private widgetTypeRepository: Repository<WidgetType>,
     private eventEmitter: EventEmitter2,
-  ) {}
+  ) { }
 
   /**
    * Create a new widget type

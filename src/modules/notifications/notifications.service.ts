@@ -41,7 +41,7 @@ export class NotificationsService {
     private emailChannel: EmailChannel,
     private smsChannel: SmsChannel,
     private pushChannel: PushChannel,
-  ) {}
+  ) { }
 
   /**
    * ✅ ENHANCED: Create notification with tenant/customer context
@@ -219,7 +219,7 @@ export class NotificationsService {
     }
 
     // Check access
-    if (!notification.canBeAccessedBy(user)) {
+    if (!notification.canBeAccessedBy(user.tenantId)) {
       throw new ForbiddenException(
         'You do not have permission to access this notification',
       );
@@ -258,7 +258,7 @@ export class NotificationsService {
 
     // Filter by access
     const accessibleNotifications = notifications.filter((n) =>
-      n.canBeAccessedBy(user),
+      n.canBeAccessedBy(user.tenantId),
     );
 
     for (const notification of accessibleNotifications) {
@@ -718,15 +718,15 @@ export class NotificationsService {
   }
 
   // ✅ Helper methods
-  private async getUserById(userId: string): Promise<User> {
+  async getUserById(userId: string): Promise<User> {
     return this.userService.findOne(userId);
   }
 
-  private async getUsersByTenant(tenantId: string): Promise<User[]> {
+  async getUsersByTenant(tenantId: string): Promise<User[]> {
     return this.userService.findByTenant(tenantId);
   }
 
-  private async getUsersByCustomer(customerId: string): Promise<User[]> {
+  getUsersByCustomer(customerId: string): Promise<User[]> {
     return this.userService.findByCustomer(customerId);
   }
 }

@@ -8,10 +8,10 @@ import {
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import {
-  ResourceType,
   ShareType,
   AccessLevel,
-} from '../entities/sharing.entity';
+  ShareResourceType as ResourceType
+} from '@common/enums/index.enum';
 
 export class CreateShareDto {
   @ApiProperty({ enum: ResourceType, example: ResourceType.DASHBOARD })

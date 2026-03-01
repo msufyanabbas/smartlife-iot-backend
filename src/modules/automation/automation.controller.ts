@@ -1,3 +1,4 @@
+// src/modules/automations/automation.controller.ts
 import {
   Controller,
   Get,
@@ -6,114 +7,163 @@ import {
   Patch,
   Param,
   Delete,
-  UseGuards,
   Query,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AutomationService } from './automation.service';
 import { CreateAutomationDto } from './dto/create-automation.dto';
 import { UpdateAutomationDto } from './dto/update-automation.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { User } from '../users/entities/user.entity';
-import { PaginationDto } from '../../common/dto/pagination.dto';
-import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
-import { CheckFeatureLimit } from '@/common/guards/feature-limit.guard';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
+import { PaginationDto } from '@common/dto/pagination.dto';
+import { 
+  TenantOrCustomerAdmin, 
+  SwaggerAuth 
+} from '@common/decorators/access-control.decorator';
+import { RequireFeature } from '@common/decorators/feature.decorator';
+import { RequireSubscriptionLimit } from '@common/decorators/subscription.decorator';
+import { UserRole } from '@common/enums/index.enum';
 
-@ApiTags('automation')
-@Controller('automation')
-@UseGuards(JwtAuthGuard)
-@ApiBearerAuth()
+@ApiTags('Automations')
+@Controller('automations')
 export class AutomationController {
   constructor(private readonly automationService: AutomationService) {}
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // CREATE
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Post()
-  @CheckFeatureLimit('automation')
-  @ApiOperation({ summary: 'Create a new automation rule' })
-  @ApiResponse({ status: 201, description: 'Automation created successfully' })
-  @ApiResponse({ status: 409, description: 'Automation already exists' })
+  @TenantOrCustomerAdmin()  // ← Sets @Roles(TENANT_ADMIN, CUSTOMER_ADMIN)
+  @RequireFeature('automations')  // ← Check if automations feature is enabled
+  @RequireSubscriptionLimit({ resource: 'automations' })  // ← Check quota
+  @SwaggerAuth('Create a new automation', 'Automation created')
   create(
-    @CurrentUser() user: User,
-    @Body() createAutomationDto: CreateAutomationDto,
+    @CurrentUser('id') userId: string,  // ← Now works!
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @Body() dto: CreateAutomationDto,
   ) {
-    return this.automationService.create(user.id, createAutomationDto);
+    return this.automationService.create(userId, tenantId, customerId, dto);
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // READ
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Get()
-  @ApiOperation({ summary: 'Get all automations with pagination' })
-  @ApiResponse({ status: 200, description: 'List of automations' })
-  findAll(@CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
-    return this.automationService.findAll(user.id, paginationDto);
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Get all automations', 'List of automations')
+  findAll(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @CurrentUser('role') role: UserRole,
+    @Query() pagination: PaginationDto,
+  ) {
+    return this.automationService.findAll(tenantId, customerId, role, pagination);
   }
 
   @Get('statistics')
-  @ApiOperation({ summary: 'Get automation statistics' })
-  @ApiResponse({ status: 200, description: 'Automation statistics' })
-  getStatistics(@CurrentUser() user: User) {
-    return this.automationService.getStatistics(user.id);
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Get automation statistics')
+  getStatistics(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @CurrentUser('role') role: UserRole,
+  ) {
+    return this.automationService.getStatistics(tenantId, customerId, role);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get automation by ID' })
-  @ApiResponse({ status: 200, description: 'Automation details' })
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Get automation by ID')
   @ApiResponse({ status: 404, description: 'Automation not found' })
-  findOne(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.automationService.findOne(id, user.id);
+  findOne(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @CurrentUser('role') role: UserRole,
+    @Param('id') id: string,
+  ) {
+    return this.automationService.findOne(id, tenantId, customerId, role);
   }
 
   @Get(':id/logs')
-  @ApiOperation({ summary: 'Get automation execution logs' })
-  @ApiResponse({ status: 200, description: 'Execution logs' })
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Get automation execution logs')
   getExecutionLogs(
-    @CurrentUser() user: User,
-    @Param('id', ParseIdPipe) id: string,
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id') id: string,
     @Query('limit') limit?: number,
   ) {
-    return this.automationService.getExecutionLogs(id, user.id, limit);
+    return this.automationService.getExecutionLogs(id, tenantId, limit);
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // UPDATE
+  // ══════════════════════════════════════════════════════════════════════════
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update automation' })
-  @ApiResponse({ status: 200, description: 'Automation updated successfully' })
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Update automation', 'Automation updated')
   @ApiResponse({ status: 404, description: 'Automation not found' })
   update(
-    @CurrentUser() user: User,
-    @Param('id', ParseIdPipe) id: string,
-    @Body() updateAutomationDto: UpdateAutomationDto,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @CurrentUser('role') role: UserRole,
+    @Param('id') id: string,
+    @Body() dto: UpdateAutomationDto,
   ) {
-    return this.automationService.update(id, user.id, updateAutomationDto);
-  }
-
-  @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete automation' })
-  @ApiResponse({ status: 204, description: 'Automation deleted successfully' })
-  @ApiResponse({ status: 404, description: 'Automation not found' })
-  remove(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.automationService.remove(id, user.id);
+    return this.automationService.update(id, userId, tenantId, customerId, role, dto);
   }
 
   @Post(':id/toggle')
-  @ApiOperation({ summary: 'Toggle automation status (enable/disable)' })
-  @ApiResponse({ status: 200, description: 'Status toggled successfully' })
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Toggle automation on/off', 'Toggled successfully')
   @ApiResponse({ status: 404, description: 'Automation not found' })
-  toggle(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.automationService.toggle(id, user.id);
+  toggle(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @CurrentUser('role') role: UserRole,
+    @Param('id') id: string,
+  ) {
+    return this.automationService.toggle(id, tenantId, customerId, role);
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // DELETE
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Delete(':id')
+  @TenantOrCustomerAdmin()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @SwaggerAuth('Delete automation', 'Deleted successfully')
+  @ApiResponse({ status: 404, description: 'Automation not found' })
+  remove(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @CurrentUser('role') role: UserRole,
+    @Param('id') id: string,
+  ) {
+    return this.automationService.remove(id, tenantId, customerId, role);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // MANUAL EXECUTION (For Testing)
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Post(':id/execute')
-  @ApiOperation({ summary: 'Manually execute automation' })
-  @ApiResponse({ status: 200, description: 'Automation executed successfully' })
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Manually execute automation', 'Executed successfully')
   @ApiResponse({ status: 404, description: 'Automation not found' })
   @ApiResponse({ status: 409, description: 'Automation is disabled' })
-  execute(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.automationService.execute(id, user.id);
+  execute(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @CurrentUser('role') role: UserRole,
+    @Param('id') id: string,
+  ) {
+    return this.automationService.executeManually(id, tenantId, customerId, role);
   }
 }

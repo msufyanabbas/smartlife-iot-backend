@@ -12,8 +12,12 @@ import { SubscriptionsService } from '@modules/subscriptions/subscriptions.servi
 import { User } from '@modules/users/entities/user.entity';
 
 /**
- * Interceptor to track API calls usage
- * Apply this globally or to specific controllers
+ * Tracks API call usage for subscription quota enforcement.
+ * Apply globally in main.ts or selectively on specific controllers.
+ *
+ * Increments the tenant's apiCalls counter in subscription.usage.
+ * Works in conjunction with @RequireSubscriptionLimit({ resource: 'apiCalls' })
+ * which enforces the quota BEFORE the request executes.
  */
 @Injectable()
 export class UsageTrackingInterceptor implements NestInterceptor {
@@ -23,10 +27,10 @@ export class UsageTrackingInterceptor implements NestInterceptor {
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest();
-    const user: User = request.user;
+    const user: User | undefined = request.user;
 
-    // Only track for authenticated requests
-    if (!user || !user.tenantId) {
+    // Only track authenticated requests from users with a tenantId
+    if (!user?.tenantId) {
       return next.handle();
     }
 
@@ -36,11 +40,12 @@ export class UsageTrackingInterceptor implements NestInterceptor {
       tap({
         next: async () => {
           const duration = Date.now() - startTime;
-          
+
           try {
-            // Increment API call count for tenant
+            // Increment API call count for tenant (not user)
+            // The usage key is 'apiCalls' — the limit key is 'apiCallsPerMonth'
             await this.subscriptionsService.incrementTenantUsage(
-              user.tenantId as any,
+              user.tenantId,
               'apiCalls',
               1,
             );
@@ -55,13 +60,17 @@ export class UsageTrackingInterceptor implements NestInterceptor {
             );
           }
         },
-        error: (error) => {
-          // Still track failed requests
-          this.subscriptionsService
-            .incrementTenantUsage(user.tenantId as any, 'apiCalls', 1)
-            .catch((err) =>
-              this.logger.error('Failed to track failed API call:', err),
+        error: async (error) => {
+          // Track failed requests too — they still consume API quota
+          try {
+            await this.subscriptionsService.incrementTenantUsage(
+              user.tenantId!,
+              'apiCalls',
+              1,
             );
+          } catch (err) {
+            this.logger.error('Failed to track failed API call:', err);
+          }
         },
       }),
     );

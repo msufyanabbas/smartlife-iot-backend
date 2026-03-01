@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import {
   DeviceProfile
 } from '@modules/profiles/entities/device-profile.entity';
-import { DeviceProvisionType, DeviceTransportType } from '@/modules/profiles/enums/device-profile.enum';
+import { DeviceProvisionType, DeviceTransportType } from '@common/enums/index.enum';
 import { Tenant } from '../../../modules/tenants/entities/tenant.entity';
 import { ISeeder } from '../seeder.interface';
 
@@ -15,7 +15,7 @@ export class DeviceProfileSeeder implements ISeeder {
     private readonly deviceProfileRepository: Repository<DeviceProfile>,
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
-  ) {}
+  ) { }
 
   async seed(): Promise<void> {
     // Fetch tenants for referential integrity
@@ -25,11 +25,6 @@ export class DeviceProfileSeeder implements ISeeder {
       console.log('⚠️  No tenants found. Please seed tenants first.');
       return;
     }
-
-    // Helper functions
-    const getRandomItem = <T>(array: T[]): T => {
-      return array[Math.floor(Math.random() * array.length)];
-    };
 
     const deviceProfiles: Partial<DeviceProfile>[] = [
       // Default Temperature & Humidity Sensor Profile
@@ -48,57 +43,6 @@ export class DeviceProfileSeeder implements ISeeder {
             deviceAttributesTopic: 'v1/devices/me/attributes',
             sparkplug: false,
           },
-        },
-        profileData: {
-          configuration: {
-            type: 'DEFAULT',
-          },
-          alarms: [
-            {
-              id: 'high-temp-alarm',
-              alarmType: 'High Temperature',
-              createRules: {
-                condition: {
-                  spec: {
-                    type: 'SIMPLE',
-                  },
-                  condition: [
-                    {
-                      key: { key: 'temperature', type: 'TIME_SERIES' },
-                      valueType: 'NUMERIC',
-                      predicate: {
-                        operation: 'GREATER',
-                        value: { defaultValue: 30 },
-                      },
-                    },
-                  ],
-                },
-              },
-              propagate: true,
-            },
-            {
-              id: 'low-temp-alarm',
-              alarmType: 'Low Temperature',
-              createRules: {
-                condition: {
-                  spec: {
-                    type: 'SIMPLE',
-                  },
-                  condition: [
-                    {
-                      key: { key: 'temperature', type: 'TIME_SERIES' },
-                      valueType: 'NUMERIC',
-                      predicate: {
-                        operation: 'LESS',
-                        value: { defaultValue: 10 },
-                      },
-                    },
-                  ],
-                },
-              },
-              propagate: true,
-            },
-          ],
         },
         telemetryConfig: {
           keys: [
@@ -125,6 +69,44 @@ export class DeviceProfileSeeder implements ISeeder {
         },
         alarmRules: [
           {
+            id: 'high-temp-alarm',
+            alarmType: 'High Temperature',
+            severity: 'WARNING',
+            createCondition: {
+              condition: [
+                {
+                  key: { key: 'temperature', type: 'TIME_SERIES' },
+                  valueType: 'NUMERIC',
+                  predicate: {
+                    operation: 'GREATER',
+                    value: 30,
+                  },
+                },
+              ],
+              spec: { type: 'SIMPLE' },
+            },
+            propagate: true,
+          },
+          {
+            id: 'low-temp-alarm',
+            alarmType: 'Low Temperature',
+            severity: 'WARNING',
+            createCondition: {
+              condition: [
+                {
+                  key: { key: 'temperature', type: 'TIME_SERIES' },
+                  valueType: 'NUMERIC',
+                  predicate: {
+                    operation: 'LESS',
+                    value: 10,
+                  },
+                },
+              ],
+              spec: { type: 'SIMPLE' },
+            },
+            propagate: true,
+          },
+          {
             id: 'critical-temp-alarm',
             alarmType: 'Critical Temperature',
             severity: 'CRITICAL',
@@ -139,9 +121,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
             propagateRelationTypes: ['Contains', 'Manages'],
@@ -178,35 +158,6 @@ export class DeviceProfileSeeder implements ISeeder {
             deviceAttributesTopic: 'v1/gateway/attributes',
             sparkplug: true,
           },
-        },
-        profileData: {
-          configuration: {
-            type: 'DEFAULT',
-          },
-          alarms: [
-            {
-              id: 'gateway-offline',
-              alarmType: 'Gateway Offline',
-              createRules: {
-                condition: {
-                  spec: {
-                    type: 'DURATION',
-                  },
-                  condition: [
-                    {
-                      key: { key: 'active', type: 'ATTRIBUTE' },
-                      valueType: 'BOOLEAN',
-                      predicate: {
-                        operation: 'EQUAL',
-                        value: { defaultValue: false },
-                      },
-                    },
-                  ],
-                },
-              },
-              propagate: true,
-            },
-          ],
         },
         telemetryConfig: {
           keys: [
@@ -246,6 +197,25 @@ export class DeviceProfileSeeder implements ISeeder {
         },
         alarmRules: [
           {
+            id: 'gateway-offline',
+            alarmType: 'Gateway Offline',
+            severity: 'CRITICAL',
+            createCondition: {
+              condition: [
+                {
+                  key: { key: 'active', type: 'ATTRIBUTE' },
+                  valueType: 'BOOLEAN',
+                  predicate: {
+                    operation: 'EQUAL',
+                    value: false,
+                  },
+                },
+              ],
+              spec: { type: 'DURATION' },
+            },
+            propagate: true,
+          },
+          {
             id: 'high-cpu-alarm',
             alarmType: 'High CPU Usage',
             severity: 'WARNING',
@@ -260,9 +230,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: false,
           },
@@ -297,11 +265,6 @@ export class DeviceProfileSeeder implements ISeeder {
           http: {
             baseUrl: 'https://api.example.com/devices',
             authMethod: 'bearer',
-          },
-        },
-        profileData: {
-          configuration: {
-            type: 'DEFAULT',
           },
         },
         telemetryConfig: {
@@ -343,9 +306,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
             propagateRelationTypes: ['Contains'],
@@ -365,13 +326,14 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: false,
           },
         ],
+        provisionConfiguration: {
+          type: 'ALLOW_CREATE_NEW_DEVICES',
+        },
         defaultQueueName: 'Main',
         image: 'https://cdn.example.com/profiles/pressure-sensor.png',
         additionalInfo: {
@@ -394,11 +356,6 @@ export class DeviceProfileSeeder implements ISeeder {
           coap: {
             powerMode: 'PSM',
             edrxCycle: 20480,
-          },
-        },
-        profileData: {
-          configuration: {
-            type: 'DEFAULT',
           },
         },
         telemetryConfig: {
@@ -459,9 +416,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
@@ -480,9 +435,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
@@ -584,9 +537,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
@@ -605,9 +556,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
@@ -701,9 +650,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
@@ -722,13 +669,14 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: false,
           },
         ],
+        provisionConfiguration: {
+          type: 'ALLOW_CREATE_NEW_DEVICES',
+        },
         defaultQueueName: 'Main',
         image: 'https://cdn.example.com/profiles/water-quality.png',
         additionalInfo: {
@@ -812,9 +760,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: false,
           },
@@ -842,7 +788,7 @@ export class DeviceProfileSeeder implements ISeeder {
         transportConfiguration: {
           http: {
             baseUrl: 'https://camera.example.com/api',
-            authMethod: 'digest',
+            authMethod: 'bearer',
           },
         },
         telemetryConfig: {
@@ -893,9 +839,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
@@ -914,13 +858,14 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: false,
           },
         ],
+        provisionConfiguration: {
+          type: 'CHECK_PRE_PROVISIONED_DEVICES',
+        },
         defaultQueueName: 'Main',
         image: 'https://cdn.example.com/profiles/camera.png',
         additionalInfo: {
@@ -997,9 +942,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
@@ -1018,13 +961,14 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
         ],
+        provisionConfiguration: {
+          type: 'ALLOW_CREATE_NEW_DEVICES',
+        },
         firmwareConfiguration: {
           firmwareUpdateStrategy: 'scheduled',
         },
@@ -1046,11 +990,7 @@ export class DeviceProfileSeeder implements ISeeder {
         type: 'network_device',
         transportType: DeviceTransportType.SNMP,
         provisionType: DeviceProvisionType.CHECK_PRE_PROVISIONED,
-        transportConfiguration: {
-          mqtt: undefined,
-          http: undefined,
-          coap: undefined,
-        },
+        transportConfiguration: {},
         telemetryConfig: {
           keys: [
             {
@@ -1111,9 +1051,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
@@ -1132,9 +1070,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'DURATION',
-              },
+              spec: { type: 'DURATION' },
             },
             propagate: true,
           },
@@ -1230,9 +1166,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
             propagateRelationTypes: ['Contains', 'Manages'],
@@ -1252,9 +1186,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
             propagateRelationTypes: ['Contains', 'Manages'],
@@ -1335,13 +1267,14 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: false,
           },
         ],
+        provisionConfiguration: {
+          type: 'ALLOW_CREATE_NEW_DEVICES',
+        },
         firmwareConfiguration: {
           firmwareUpdateStrategy: 'on_connect',
         },
@@ -1457,9 +1390,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
@@ -1478,9 +1409,7 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
@@ -1499,13 +1428,14 @@ export class DeviceProfileSeeder implements ISeeder {
                   },
                 },
               ],
-              spec: {
-                type: 'SIMPLE',
-              },
+              spec: { type: 'SIMPLE' },
             },
             propagate: true,
           },
         ],
+        provisionConfiguration: {
+          type: 'ALLOW_CREATE_NEW_DEVICES',
+        },
         defaultQueueName: 'HighPriority',
         image: 'https://cdn.example.com/profiles/air-quality.png',
         additionalInfo: {

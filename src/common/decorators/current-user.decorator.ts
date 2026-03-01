@@ -1,50 +1,66 @@
+// src/common/decorators/current-user.decorator.ts
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 import { User } from '@modules/index.entities';
-import { Request } from 'express';
 
-/**
- * Augment Express Request type to include user property
- */
+// Augment Express Request type
 declare global {
   namespace Express {
     interface Request {
       user?: User;
+      tenantFilter?: { tenantId: string };
+      customerFilter?: { tenantId: string; customerId?: string };
+      subscription?: import('@modules/subscriptions/entities/subscription.entity').Subscription;
+      effectivePermissions?: Set<string>;
     }
   }
 }
 
 /**
- * CurrentUser Decorator
- * Extracts the current authenticated user from the request
- * 
- * @param data - Optional property name to extract from user object
- * @returns The user object or a specific property
+ * @CurrentUser()
+ * Extract authenticated user or specific properties
  * 
  * @example
- * // Get entire user object
- * @Get('profile')
- * getProfile(@CurrentUser() user: User) {
- *   return user;
- * }
+ * // Get full user object
+ * @CurrentUser() user: User
  * 
- * @example
- * // Get specific user property
- * @Get('email')
- * getEmail(@CurrentUser('email') email: string) {
- *   return email;
- * }
+ * // Get specific property
+ * @CurrentUser('id') userId: string
+ * @CurrentUser('tenantId') tenantId: string
+ * @CurrentUser('role') role: UserRole
  */
 export const CurrentUser = createParamDecorator(
-  (data: keyof User | undefined, ctx: ExecutionContext): User | unknown => {
-    const request = ctx.switchToHttp().getRequest<Request>();
-    const user = request.user;
+  (data: keyof User | undefined, ctx: ExecutionContext): User | any => {
+    const request = ctx.switchToHttp().getRequest();
+    const user: User = request.user;
 
-    if (!user) {
-      return undefined;
+    if (!user) return undefined;
+
+    // If property specified, return that property
+    if (data) {
+      return user[data];
     }
 
-    // If a specific property is requested, return it
-    // Otherwise return the entire user object
-    return data ? user[data] : user;
+    // Otherwise return full user object
+    return user;
+  },
+);
+
+/**
+ * @ResolvedTenantId()
+ * Shorthand for @CurrentUser('tenantId')
+ */
+export const ResolvedTenantId = createParamDecorator(
+  (_data: unknown, ctx: ExecutionContext): string | undefined => {
+    return ctx.switchToHttp().getRequest().user?.tenantId;
+  },
+);
+
+/**
+ * @ResolvedCustomerId()
+ * Shorthand for @CurrentUser('customerId')
+ */
+export const ResolvedCustomerId = createParamDecorator(
+  (_data: unknown, ctx: ExecutionContext): string | undefined => {
+    return ctx.switchToHttp().getRequest().user?.customerId;
   },
 );

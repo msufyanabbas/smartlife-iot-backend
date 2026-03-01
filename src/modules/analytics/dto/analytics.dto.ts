@@ -1,6 +1,6 @@
 import { IsEnum, IsOptional, IsDateString, IsString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { AnalyticsType, AnalyticsPeriod } from '../entities/analytics.entity';
+import { AnalyticsType, AnalyticsPeriod } from '@common/enums/index.enum';
 
 export class CreateAnalyticsDto {
   @ApiProperty({ enum: AnalyticsType })

@@ -40,7 +40,7 @@ export class UserSettings {
   id: string;
 
   @Column({ unique: true })
-  @Index()
+
   userId: string;
 
   @OneToOne(() => User)

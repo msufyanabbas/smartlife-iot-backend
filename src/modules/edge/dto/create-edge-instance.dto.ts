@@ -25,6 +25,6 @@ export class CreateEdgeInstanceDto {
     cpu: number;
     memory: number;
     storage: number;
-    uptime: string;
+    uptime: number;
   };
 }

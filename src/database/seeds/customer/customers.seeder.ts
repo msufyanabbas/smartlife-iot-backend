@@ -335,7 +335,6 @@ export class CustomerSeeder implements ISeeder {
             state: location.state,
             city: location.city,
             address: `${buildingNumber} ${streetName}`,
-            address2: `Floor ${floor}, Unit ${unitNumber}`,
             zip: `${getRandomInt(10000, 99999)}`,
             phone: phoneNumber,
             email: email,
@@ -348,8 +347,6 @@ export class CustomerSeeder implements ISeeder {
               'Pioneer in automation and monitoring systems.',
               'Trusted partner for advanced technology solutions.',
             ])}`,
-            additionalInfo: additionalInfo,
-            isPublic: isPublic,
           });
         }
       }
@@ -364,7 +361,6 @@ export class CustomerSeeder implements ISeeder {
           state: 'Tabuk Region',
           city: 'NEOM',
           address: 'NEOM Development Area',
-          address2: 'Smart City District',
           zip: '71491',
           phone: '+966505000001',
           email: 'iot@neom.sa',
@@ -372,20 +368,6 @@ export class CustomerSeeder implements ISeeder {
           tenantId: tenants[0].id,
           description:
             'Flagship smart city project implementing cutting-edge IoT solutions across the entire urban development. Part of Saudi Vision 2030.',
-          additionalInfo: {
-            customerType: 'Government',
-            industrySegment: 'Smart City',
-            projectScope: 'Full city automation',
-            priorityLevel: 'Critical',
-            slaLevel: 'Enterprise',
-            contractType: 'Multi-Year',
-            contractValue: 'Enterprise',
-            employeeCount: '500+',
-            accountManager: 'Mohammed Al-Rasheed',
-            taxId: '3999999999',
-            commercialRegistration: '1099999999',
-          },
-          isPublic: true,
         },
         {
           name: 'King Abdullah Financial District',
@@ -393,7 +375,6 @@ export class CustomerSeeder implements ISeeder {
           state: 'Riyadh Region',
           city: 'Riyadh',
           address: 'King Fahd Road',
-          address2: 'KAFD Complex',
           zip: '12382',
           phone: '+966505000002',
           email: 'tech@kafd.sa',
@@ -401,16 +382,6 @@ export class CustomerSeeder implements ISeeder {
           tenantId: tenants[0].id,
           description:
             'Major financial district requiring comprehensive building automation and smart office solutions for 50+ buildings.',
-          additionalInfo: {
-            customerType: 'Commercial',
-            industrySegment: 'Financial Services',
-            buildingCount: 50,
-            priorityLevel: 'Critical',
-            slaLevel: 'Enterprise',
-            employeeCount: '500+',
-            accountManager: 'Fatima Al-Zahrani',
-          },
-          isPublic: false,
         },
         {
           name: 'Saudi Aramco Industrial Park',
@@ -418,7 +389,6 @@ export class CustomerSeeder implements ISeeder {
           state: 'Eastern Province',
           city: 'Dhahran',
           address: 'Saudi Aramco Headquarters',
-          address2: 'Industrial Automation Division',
           zip: '31311',
           phone: '+966505000003',
           email: 'automation@aramco.com',
@@ -426,17 +396,7 @@ export class CustomerSeeder implements ISeeder {
           tenantId: tenants[0].id,
           description:
             'Leading energy company implementing industrial IoT solutions for enhanced operational efficiency, safety, and predictive maintenance.',
-          additionalInfo: {
-            customerType: 'Industrial',
-            industrySegment: 'Energy',
-            facilityCount: 100,
-            priorityLevel: 'Critical',
-            slaLevel: 'Enterprise',
-            securityLevel: 'Maximum',
-            employeeCount: '500+',
-            accountManager: 'Abdullah Al-Qahtani',
-          },
-          isPublic: false,
+        
         },
         {
           name: 'Riyadh Metro Smart Stations',
@@ -444,7 +404,6 @@ export class CustomerSeeder implements ISeeder {
           state: 'Riyadh Region',
           city: 'Riyadh',
           address: 'Metro Operations Center',
-          address2: 'Central Control',
           zip: '11564',
           phone: '+966505000004',
           email: 'smartstations@riyadhmetro.sa',
@@ -452,15 +411,6 @@ export class CustomerSeeder implements ISeeder {
           tenantId: tenants[0].id,
           description:
             'Smart metro system with IoT-enabled stations for passenger management, environmental monitoring, and facility automation.',
-          additionalInfo: {
-            customerType: 'Government',
-            industrySegment: 'Transportation',
-            stationCount: 85,
-            priorityLevel: 'High',
-            slaLevel: 'Premium',
-            accountManager: 'Omar Al-Harbi',
-          },
-          isPublic: true,
         },
         {
           name: 'King Abdulaziz University Smart Campus',
@@ -468,7 +418,6 @@ export class CustomerSeeder implements ISeeder {
           state: 'Makkah Region',
           city: 'Jeddah',
           address: 'University Main Campus',
-          address2: 'IT & Innovation Center',
           zip: '21589',
           phone: '+966505000005',
           email: 'smartcampus@kau.edu.sa',
@@ -476,16 +425,6 @@ export class CustomerSeeder implements ISeeder {
           tenantId: tenants.length > 1 ? tenants[1].id : tenants[0].id,
           description:
             'Leading university implementing smart campus solutions including energy management, security, and facility automation.',
-          additionalInfo: {
-            customerType: 'Educational',
-            industrySegment: 'Education',
-            buildingCount: 150,
-            studentCount: '80000+',
-            priorityLevel: 'High',
-            slaLevel: 'Premium',
-            accountManager: 'Sara Al-Ghamdi',
-          },
-          isPublic: true,
         },
         {
           name: 'Red Sea Development Company',
@@ -493,7 +432,6 @@ export class CustomerSeeder implements ISeeder {
           state: 'Tabuk Region',
           city: 'Red Sea Coast',
           address: 'Red Sea Project Site',
-          address2: 'Development Office',
           zip: '71491',
           phone: '+966505000006',
           email: 'iot@theredsea.sa',
@@ -501,16 +439,6 @@ export class CustomerSeeder implements ISeeder {
           tenantId: tenants.length > 2 ? tenants[2].id : tenants[0].id,
           description:
             'Luxury tourism destination with comprehensive smart infrastructure for resorts, facilities, and environmental monitoring.',
-          additionalInfo: {
-            customerType: 'Hospitality',
-            industrySegment: 'Tourism',
-            resortCount: 50,
-            priorityLevel: 'Critical',
-            slaLevel: 'Enterprise',
-            sustainabilityFocus: true,
-            accountManager: 'Khalid Al-Otaibi',
-          },
-          isPublic: false,
         },
       ];
 
@@ -556,8 +484,6 @@ export class CustomerSeeder implements ISeeder {
         byCity: {} as Record<string, number>,
         byCustomerType: {} as Record<string, number>,
         byIndustry: {} as Record<string, number>,
-        publicCustomers: customers.filter((c) => c.isPublic).length,
-        privateCustomers: customers.filter((c) => !c.isPublic).length,
       };
 
       for (const customer of customers) {
@@ -571,16 +497,7 @@ export class CustomerSeeder implements ISeeder {
             (stats.byCity[customer.city] || 0) + 1;
         }
 
-        // Customer type distribution
-        const custType =
-          customer.additionalInfo?.customerType || 'Unknown';
-        stats.byCustomerType[custType] =
-          (stats.byCustomerType[custType] || 0) + 1;
 
-        // Industry distribution
-        const industry =
-          customer.additionalInfo?.industrySegment || 'Unknown';
-        stats.byIndustry[industry] = (stats.byIndustry[industry] || 0) + 1;
       }
 
       // ========================================
@@ -591,8 +508,6 @@ export class CustomerSeeder implements ISeeder {
       this.logger.log('');
       this.logger.log('📊 Customer Statistics:');
       this.logger.log(`   Total Customers: ${stats.total}`);
-      this.logger.log(`   Public Customers: ${stats.publicCustomers}`);
-      this.logger.log(`   Private Customers: ${stats.privateCustomers}`);
       this.logger.log('');
       this.logger.log('📈 Status Distribution:');
       Object.entries(stats.byStatus)

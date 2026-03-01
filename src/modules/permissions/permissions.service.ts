@@ -14,7 +14,7 @@ export class PermissionsService {
   constructor(
     @InjectRepository(Permission)
     private readonly permissionRepository: Repository<Permission>,
-  ) {}
+  ) { }
 
   /**
    * Create a new permission
@@ -41,8 +41,12 @@ export class PermissionsService {
   /**
    * Get all permissions
    */
-  async findAll(): Promise<Permission[]> {
+  async findAll(tenantId: string | undefined): Promise<Permission[]> {
     return await this.permissionRepository.find({
+      where: {
+        isSystem: true,
+        tenantId
+      },
       order: {
         resource: 'ASC',
         action: 'ASC',

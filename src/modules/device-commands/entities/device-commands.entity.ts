@@ -1,6 +1,4 @@
-// src/modules/device-commands/device-commands.entity.ts
-// FIXED - With proper User foreign key relationship
-
+// src/modules/device-commands/entities/device-command.entity.ts
 import {
   Entity,
   Column,
@@ -9,94 +7,106 @@ import {
   UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
-import { Device } from '@modules/devices/entities/device.entity';
-import { User } from '@modules/users/entities/user.entity';
+import { Device, User, Tenant } from '@modules/index.entities';
 
-@Entity('device_command')
+@Entity('device_commands')
+@Index(['deviceId', 'status'])
+@Index(['userId', 'createdAt'])
+@Index(['tenantId', 'status'])
+@Index(['scheduledFor'])
 export class DeviceCommand {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  // ============================================
-  // Device Relationship (Foreign Key)
-  // ============================================
+  // ══════════════════════════════════════════════════════════════════════════
+  // TENANT SCOPING (REQUIRED)
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Column()
+
+  tenantId: string;
+
+  @ManyToOne(() => Tenant)
+  @JoinColumn({ name: 'tenantId' })
+  tenant: Tenant;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RELATIONSHIPS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column()
+
   deviceId: string;
 
   @ManyToOne(() => Device, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'deviceId' })
   device: Device;
 
-  // ============================================
-  // User Relationship (Foreign Key) - FIXED!
-  // ============================================
   @Column()
+
   userId: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
   user: User;
 
-  // ============================================
-  // Tenant (for multi-tenancy)
-  // ============================================
+  // ══════════════════════════════════════════════════════════════════════════
+  // COMMAND DETAILS
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Column()
-  tenantId: string;
+  commandType: string;  // 'turnOn', 'turnOff', 'setBrightness', 'setColor'
 
-  // ============================================
-  // Command Details
-  // ============================================
-  @Column()
-  commandType: string; // 'turnOn', 'turnOff', 'setBrightness', 'setColor', etc.
+  @Column({ type: 'jsonb', default: {} })
+  params: Record<string, any>;
 
-  @Column('jsonb', { default: {} })
-  params: Record<string, any>; // Command parameters (e.g., {brightness: 80, color: '#FF0000'})
-
-  @Column({ default: 'NORMAL' })
+  @Column({ type: 'enum', enum: ['LOW', 'NORMAL', 'HIGH', 'URGENT'], default: 'NORMAL' })
   priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
 
-  // ============================================
-  // Status Tracking
-  // ============================================
-  @Column({ default: 'PENDING' })
-  status:
-    | 'PENDING' // Just created, waiting to be sent
-    | 'QUEUED' // Device offline, queued for later
-    | 'SENDING' // Being sent to device
-    | 'DELIVERED' // Sent to device successfully
-    | 'COMPLETED' // Device acknowledged completion
-    | 'FAILED' // Failed to send or execute
-    | 'RETRYING' // Retrying after failure
-    | 'SCHEDULED' // Scheduled for future execution
-    | 'CANCELLED'; // Cancelled by user
+  // ══════════════════════════════════════════════════════════════════════════
+  // STATUS TRACKING
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({
+    type: 'enum',
+    enum: ['PENDING', 'QUEUED', 'SENDING', 'DELIVERED', 'COMPLETED', 'FAILED', 'RETRYING', 'SCHEDULED', 'CANCELLED'],
+    default: 'PENDING',
+  })
+
+  status: 'PENDING' | 'QUEUED' | 'SENDING' | 'DELIVERED' | 'COMPLETED' | 'FAILED' | 'RETRYING' | 'SCHEDULED' | 'CANCELLED';
 
   @Column({ type: 'text', nullable: true })
-  statusMessage: string; // Additional status information
+  statusMessage?: string;
 
-  // ============================================
-  // Execution Settings
-  // ============================================
+  // ══════════════════════════════════════════════════════════════════════════
+  // EXECUTION SETTINGS
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Column({ type: 'int', default: 30000 })
-  timeout: number; // Timeout in milliseconds (30 seconds default)
+  timeout: number;  // milliseconds
 
   @Column({ type: 'int', default: 3 })
-  retries: number; // Number of retry attempts remaining
+  retries: number;
 
-  // ============================================
-  // Scheduling
-  // ============================================
-  @Column({ type: 'timestamp', nullable: true })
-  scheduledFor: Date; // Execute command at this time (optional)
-
-  // ============================================
-  // Timestamps
-  // ============================================
-  @Column({ type: 'timestamp', nullable: true })
-  deliveredAt: Date; // When command was delivered to device
+  // ══════════════════════════════════════════════════════════════════════════
+  // SCHEDULING
+  // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'timestamp', nullable: true })
-  completedAt: Date; // When device acknowledged completion
+
+  scheduledFor?: Date;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // TIMESTAMPS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ type: 'timestamp', nullable: true })
+  deliveredAt?: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  completedAt?: Date;
 
   @CreateDateColumn()
   createdAt: Date;
@@ -104,9 +114,30 @@ export class DeviceCommand {
   @UpdateDateColumn()
   updatedAt: Date;
 
-  // ============================================
-  // Metadata (optional)
-  // ============================================
-  @Column('jsonb', { default: {}, nullable: true })
-  metadata: Record<string, any>; // Additional metadata (response from device, etc.)
+  // ══════════════════════════════════════════════════════════════════════════
+  // METADATA
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ type: 'jsonb', nullable: true })
+  metadata?: Record<string, any>;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HELPER METHODS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  isPending(): boolean {
+    return ['PENDING', 'QUEUED', 'SENDING', 'RETRYING'].includes(this.status);
+  }
+
+  isCompleted(): boolean {
+    return ['COMPLETED', 'DELIVERED', 'FAILED', 'CANCELLED'].includes(this.status);
+  }
+
+  canCancel(): boolean {
+    return ['PENDING', 'QUEUED', 'SCHEDULED'].includes(this.status);
+  }
+
+  canRetry(): boolean {
+    return this.status === 'FAILED' && this.retries > 0;
+  }
 }

@@ -2,8 +2,8 @@
 // FIXED - Alarm Consumer - Compatible with your KafkaService and RedisService
 
 import { Pool } from 'pg';
-import { kafkaService } from '@/lib/kafka/kafka.service';
-import { redisService } from '@/lib/redis/redis.service';
+import { KafkaService } from '@/lib/kafka/kafka.service';
+import { RedisService } from '@/lib/redis/redis.service';
 import { EachMessagePayload } from 'kafkajs';
 
 export interface AlarmMessage {
@@ -35,16 +35,19 @@ export class AlarmConsumer {
   ];
 
   constructor(
+    private kafkaService: KafkaService,
+    private redisService: RedisService,
     private db: Pool,
     // Mail service is optional - can be undefined
     private mailService?: any,
+
   ) {}
 
   async start(): Promise<void> {
     console.log('🚨 Starting Alarm Consumer...');
 
     // Use your kafkaService.createConsumer method
-    await kafkaService.createConsumer(
+    await this.kafkaService.createConsumer(
       this.groupId,
       this.topics,
       async (payload: EachMessagePayload) => {
@@ -131,7 +134,7 @@ export class AlarmConsumer {
     );
 
     // Update cache - remove from active alarms
-    await redisService.hdel(`tenant:${alarm.tenantId}:active_alarms`, alarm.id);
+    await this.redisService.hdel(`tenant:${alarm.tenantId}:active_alarms`, alarm.id);
 
     // Notify relevant users
     await this.notifyAcknowledgment(alarm);
@@ -156,7 +159,7 @@ export class AlarmConsumer {
     );
 
     // Remove from active alarms
-    await redisService.hdel(`tenant:${alarm.tenantId}:active_alarms`, alarm.id);
+    await this.redisService.hdel(`tenant:${alarm.tenantId}:active_alarms`, alarm.id);
 
     // Send clearance notification
     await this.sendClearanceNotification(alarm);
@@ -221,9 +224,9 @@ export class AlarmConsumer {
     try {
       // Count by severity
       const severityKey = `stats:alarms:${today}`;
-      await redisService.hset(severityKey, alarm.severity, '0'); // Initialize if not exists
-      const currentCount = await redisService.hget(severityKey, alarm.severity);
-      await redisService.hset(
+      await this.redisService.hset(severityKey, alarm.severity, '0'); // Initialize if not exists
+      const currentCount = await this.redisService.hget(severityKey, alarm.severity);
+      await this.redisService.hset(
         severityKey,
         alarm.severity,
         String(parseInt(currentCount || '0') + 1),
@@ -231,9 +234,9 @@ export class AlarmConsumer {
 
       // Count by device
       const deviceKey = `stats:device:${alarm.deviceId}:alarms`;
-      await redisService.hset(deviceKey, alarm.severity, '0');
-      const deviceCount = await redisService.hget(deviceKey, alarm.severity);
-      await redisService.hset(
+      await this.redisService.hset(deviceKey, alarm.severity, '0');
+      const deviceCount = await this.redisService.hget(deviceKey, alarm.severity);
+      await this.redisService.hset(
         deviceKey,
         alarm.severity,
         String(parseInt(deviceCount || '0') + 1),
@@ -248,7 +251,7 @@ export class AlarmConsumer {
    */
   private async cacheActiveAlarm(alarm: AlarmMessage): Promise<void> {
     try {
-      await redisService.hset(
+      await this.redisService.hset(
         `tenant:${alarm.tenantId}:active_alarms`,
         alarm.id,
         JSON.stringify({
@@ -258,7 +261,7 @@ export class AlarmConsumer {
       );
 
       // Set expiry (7 days)
-      await redisService.expire(
+      await this.redisService.expire(
         `tenant:${alarm.tenantId}:active_alarms`,
         7 * 24 * 60 * 60,
       );
@@ -388,7 +391,7 @@ export class AlarmConsumer {
     severity: string,
   ): Promise<any> {
     // Check cache first
-    const cached = await redisService.get(
+    const cached = await this.redisService.get(
       `tenant:${tenantId}:notification_prefs`,
     );
     if (cached) {
@@ -413,7 +416,7 @@ export class AlarmConsumer {
     };
 
     // Cache for 5 minutes
-    await redisService.set(
+    await this.redisService.set(
       `tenant:${tenantId}:notification_prefs`,
       JSON.stringify(prefs),
       300,
@@ -435,7 +438,7 @@ export class AlarmConsumer {
           if (status === 'ACTIVE') {
             console.log('📢 Escalating alarm due to no acknowledgment...');
 
-            await kafkaService.sendMessage('alarms.escalated', {
+            await this.kafkaService.sendMessage('alarms.escalated', {
               ...alarm,
               escalatedAt: Date.now(),
             });

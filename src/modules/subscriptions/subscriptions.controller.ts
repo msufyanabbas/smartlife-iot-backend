@@ -32,7 +32,12 @@ import {
   UpgradeValidationResponseDto,
   InvoicesListResponseDto,
 } from './dto/subscription-response.dto';
-import { Subscription } from 'rxjs';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE: All methods receive user.id from the JWT (@CurrentUser()).
+// The service resolves tenantId from userId internally.
+// Controller never handles tenantId directly.
+// ─────────────────────────────────────────────────────────────────────────────
 
 @ApiTags('subscriptions')
 @Controller('subscriptions')
@@ -56,7 +61,7 @@ export class SubscriptionsController {
     @CurrentUser() user: User,
     @Body() createSubscriptionDto: CreateSubscriptionDto,
   ) {
-    return this.subscriptionsService.create(user.id, createSubscriptionDto);
+    return this.subscriptionsService.create(user.tenantId, createSubscriptionDto);
   }
 
   @Get()
@@ -64,7 +69,7 @@ export class SubscriptionsController {
   @ApiResponse({ status: 200, description: 'Current subscription details', type: SubscriptionResponseDto })
   @ApiResponse({ status: 404, description: 'No subscription found' })
   findCurrent(@CurrentUser() user: User) {
-    return this.subscriptionsService.findCurrent(user.id);
+    return this.subscriptionsService.findCurrent(user.tenantId);
   }
 
   @Get('plans')
@@ -210,19 +215,7 @@ export class SubscriptionsController {
   })
   @ApiResponse({ status: 404, description: 'No scheduled downgrade found' })
   async cancelScheduledDowngrade(@CurrentUser() user: User) {
-    const subscription = await this.subscriptionsService.findCurrent(user.id);
-    
-    if (!subscription.metadata?.scheduledDowngrade) {
-      throw new NotFoundException('No scheduled downgrade found');
-    }
-
-    subscription.metadata = {
-      ...subscription.metadata,
-      scheduledDowngrade: undefined,
-    };
-
-    // Save through service (you may want to add a dedicated method)
-    return subscription;
+   return this.subscriptionsService.cancelScheduledDowngrade(user.id);
   }
 
   @Post('cancel')

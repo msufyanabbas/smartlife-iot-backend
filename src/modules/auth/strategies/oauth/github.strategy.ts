@@ -1,3 +1,4 @@
+// src/modules/auth/strategies/oauth/github.strategy.ts
 import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { Strategy, Profile } from 'passport-github2';

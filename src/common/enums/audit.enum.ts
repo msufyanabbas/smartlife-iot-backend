@@ -14,6 +14,7 @@ export enum AuditAction {
   STATUS_CHANGE = 'status_change',
   ROLE_CHANGE = 'role_change',
   PERMISSION_CHANGE = 'permission_change',
+  PERMISSION_DENIED = 'permission_denied',
   DEVICE_CONNECT = 'device_connect',
   DEVICE_DISCONNECT = 'device_disconnect',
   DEVICE_COMMAND = 'device_command',
@@ -62,4 +63,10 @@ export enum AuditSeverity {
   WARNING = 'warning',
   ERROR = 'error',
   CRITICAL = 'critical',
+}
+
+export enum AuditStatus {
+  SUCCESS = 'SUCCESS',
+  FAILED = 'FAILED',
+  PENDING = 'PENDING',
 }

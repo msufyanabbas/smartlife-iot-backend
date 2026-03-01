@@ -2,9 +2,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { FloorPlansModule } from '../floor-plans.module';
-import { FloorPlan, FloorPlanStatus } from '../entities/floor-plan.entity';
+import { FloorPlan } from '../entities/floor-plan.entity';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -181,12 +181,12 @@ describe('Floor Plans E2E Tests', () => {
       // Create a mock DWG file for testing
       const testFilesDir = path.join(__dirname, 'test-files');
       const mockDWGPath = path.join(testFilesDir, 'test-floor.dwg');
-      
+
       // If mock file doesn't exist, create a dummy one
       if (!fs.existsSync(testFilesDir)) {
         fs.mkdirSync(testFilesDir, { recursive: true });
       }
-      
+
       if (!fs.existsSync(mockDWGPath)) {
         fs.writeFileSync(mockDWGPath, Buffer.from('Mock DWG content'));
       }
@@ -205,11 +205,11 @@ describe('Floor Plans E2E Tests', () => {
     it('should fail with invalid file type', async () => {
       const testFilesDir = path.join(__dirname, 'test-files');
       const mockTxtPath = path.join(testFilesDir, 'test.txt');
-      
+
       if (!fs.existsSync(testFilesDir)) {
         fs.mkdirSync(testFilesDir, { recursive: true });
       }
-      
+
       fs.writeFileSync(mockTxtPath, 'Not a DWG file');
 
       await request(app.getHttpServer())
@@ -499,7 +499,7 @@ describe('Floor Plans E2E Tests', () => {
       expect(response.body).toHaveProperty('assetId');
       expect(response.body).toHaveProperty('building');
       expect(response.body).toHaveProperty('floors');
-      
+
       expect(response.body.building.buildingName).toBe('Multi-Floor Building');
       expect(response.body.building.totalFloors).toBe(3);
       expect(response.body.floors).toHaveLength(3);

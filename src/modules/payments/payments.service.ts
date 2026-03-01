@@ -13,10 +13,10 @@ import { Repository, DataSource } from 'typeorm';
 import { ConfigService, SubscriptionsService } from '@modules/index.service';
 import * as crypto from 'crypto';
 import { Payment } from '@modules/index.entities';
-import { 
-  PaymentStatus, 
-  PaymentProvider 
-} from './entities/payment.entity';
+import {
+  PaymentStatus,
+  PaymentProvider
+} from '@common/enums/index.enum';
 import {
   CreatePaymentIntentDto,
   RefundPaymentDto,
@@ -39,14 +39,14 @@ export class PaymentsService {
   ) {
     const apiKey = this.configService.get<string>('MOYASAR_API_KEY');
     const webhookSecret = this.configService.get<string>('MOYASAR_WEBHOOK_SECRET');
-    
+
     if (!apiKey) {
       throw new Error('MOYASAR_API_KEY must be configured in environment variables');
     }
-    
+
     this.moyasarApiKey = apiKey;
     this.moyasarWebhookSecret = webhookSecret || '';
-    
+
     if (!this.moyasarWebhookSecret) {
       this.logger.warn('⚠️ MOYASAR_WEBHOOK_SECRET not set - webhook signature verification disabled');
     }
@@ -114,7 +114,7 @@ export class PaymentsService {
 
       if (existingPending) {
         this.logger.warn(`Reusing existing pending payment: ${existingPending.paymentIntentId}`);
-        
+
         // Fetch the invoice URL from Moyasar
         try {
           const response = await axios.get(
@@ -160,7 +160,7 @@ export class PaymentsService {
       const callbackUrl = `${frontendUrl}`;
       const backUrl = `${frontendUrl}/subscription-plans`;
       const successUrl = `${frontendUrl}/payment-status`;
-      
+
 
       // Create invoice payload
       const invoicePayload = {
@@ -171,8 +171,8 @@ export class PaymentsService {
         back_url: backUrl,
         success_url: successUrl,
         logo_url: 'https://dev.smart-life.sa/assets/smartlife-text-black-THaafVXq.png',
-        
-        
+
+
         metadata: {
           user_id: userId,
           subscription_id: subscription.id,
@@ -236,7 +236,7 @@ export class PaymentsService {
       if (axios.isAxiosError(error)) {
         const errorData = error.response?.data;
         this.logger.error(`Moyasar API Error: ${JSON.stringify(errorData)}`);
-        
+
         throw new BadRequestException(
           errorData?.message || 'Failed to create payment',
         );
@@ -301,11 +301,11 @@ export class PaymentsService {
       return payment;
     } catch (error) {
       this.logger.error(`❌ Verification failed: ${error.message}`, error.stack);
-      
+
       if (error instanceof NotFoundException) {
         throw error;
       }
-      
+
       throw new InternalServerErrorException('Failed to verify payment');
     }
   }
@@ -357,7 +357,7 @@ export class PaymentsService {
 
       // Commit transaction
       await queryRunner.commitTransaction();
-      
+
       this.logger.log(`✅ Transaction committed successfully for payment ${payment.id}`);
 
       return updatedPayment;
@@ -365,7 +365,7 @@ export class PaymentsService {
     } catch (error) {
       // Rollback transaction on error
       await queryRunner.rollbackTransaction();
-      
+
       this.logger.error(
         `❌ Transaction rolled back: ${error.message}`,
         error.stack,
@@ -380,9 +380,9 @@ export class PaymentsService {
         requiresManualReview: true,
         errorTimestamp: new Date().toISOString(),
       };
-      
+
       await this.paymentRepository.save(payment);
-      
+
       this.logger.error(
         `🚨 CRITICAL: Payment ${payment.id} succeeded but subscription update failed! ` +
         `Marked for manual review.`
@@ -403,12 +403,12 @@ export class PaymentsService {
    */
   private async processFailedPayment(payment: Payment, invoice: any): Promise<Payment> {
     this.logger.warn(`❌ Payment ${payment.paymentIntentId} is ${invoice.status.toUpperCase()}`);
-    
+
     payment.status = PaymentStatus.CANCELLED;
     payment.failureReason = `Invoice ${invoice.status}`;
-    
+
     await this.paymentRepository.save(payment);
-    
+
     return payment;
   }
 
@@ -438,7 +438,7 @@ export class PaymentsService {
       if (payload.type === 'invoice_paid' || payload.type === 'payment_paid') {
         // Extract invoice ID from payload
         const invoiceId = payload.data?.invoice_id;
-        
+
         if (!invoiceId) {
           this.logger.error('❌ Webhook missing invoice ID');
           return { received: false, message: 'Missing invoice ID' };
@@ -450,7 +450,7 @@ export class PaymentsService {
         await this.verifyPayment(invoiceId);
 
         this.logger.log(`✅ Webhook processed successfully for: ${invoiceId}`);
-        
+
         return { received: true, message: 'Payment processed' };
       } else {
         this.logger.log(`ℹ️ Unhandled webhook type: ${payload.type}`);
@@ -461,7 +461,7 @@ export class PaymentsService {
         `❌ Webhook processing failed: ${error.message}`,
         error.stack,
       );
-      
+
       // Return success to Moyasar to prevent retries for permanent errors
       // But log for manual investigation
       return { received: true, message: `Error: ${error.message}` };
@@ -478,7 +478,7 @@ export class PaymentsService {
         .createHmac('sha256', this.moyasarWebhookSecret)
         .update(payloadString)
         .digest('hex');
-      
+
       return hmac === signature;
     } catch (error) {
       this.logger.error(`Signature verification error: ${error.message}`);
@@ -601,12 +601,12 @@ export class PaymentsService {
       if (axios.isAxiosError(error)) {
         const errorData = error.response?.data;
         this.logger.error(`Moyasar refund error: ${JSON.stringify(errorData)}`);
-        
+
         throw new BadRequestException(
           errorData?.message || 'Failed to process refund',
         );
       }
-      
+
       this.logger.error(`Refund failed: ${error.message}`, error.stack);
       throw new InternalServerErrorException('Failed to process refund');
     } finally {
@@ -678,7 +678,7 @@ export class PaymentsService {
       return payment;
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      
+
       this.logger.error(`Failed to retry subscription update: ${error.message}`);
       throw new InternalServerErrorException('Failed to retry subscription update');
     } finally {

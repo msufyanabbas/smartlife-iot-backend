@@ -1,4 +1,5 @@
-import { DatabaseConfig } from '@/common/interfaces/common.interface';
+// src/config/database.config.ts
+import { DatabaseConfig } from '@common/interfaces/common.interface';
 import { registerAs } from '@nestjs/config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 
@@ -9,29 +10,36 @@ export default registerAs(
 
     return {
       type: 'postgres',
-      host: process.env.DB_HOST,
+      host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT || '5432', 10),
-      username: process.env.DB_USERNAME,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_DATABASE,
+      username: process.env.DB_USERNAME || 'smartlife',
+      password: process.env.DB_PASSWORD || 'smartlife123',
+      database: process.env.DB_DATABASE || 'smartlife_iot',
 
-      // Auto-create tables (disable in production)
-      synchronize: process.env.DB_SYNCHRONIZE === 'true',
+      ssl: sslEnabled
+        ? {
+            rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
+          }
+        : false,
 
-      // Enable SQL query logs
+      // ⚠️  IMPORTANT: Set to false in production, use migrations instead
+      synchronize: process.env.NODE_ENV === 'development' && process.env.DB_SYNCHRONIZE === 'true',
+
+      // SQL query logs (disable in production)
       logging: process.env.DB_LOGGING === 'true',
 
-      // SSL connection options
-      ssl: false,
-
-      // Retry strategy for DB connection
+      // Retry strategy
       retryAttempts: parseInt(process.env.DB_RETRY_ATTEMPTS || '10', 10),
       retryDelay: parseInt(process.env.DB_RETRY_DELAY || '3000', 10),
 
-      // Automatically load entities from modules
+      // Auto-load entities
       autoLoadEntities: true,
 
-      // Connection pool options
+      // ✅ Added: Migrations directory
+      migrations: ['dist/database/migrations/*.js'],
+      migrationsRun: process.env.DB_RUN_MIGRATIONS === 'true',
+
+      // Connection pool
       extra: {
         max: parseInt(process.env.DB_POOL_SIZE || '10', 10),
         connectionTimeoutMillis: 5000,

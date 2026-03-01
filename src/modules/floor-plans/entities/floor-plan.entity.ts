@@ -1,179 +1,136 @@
+// src/modules/floor-plans/entities/floor-plan.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
-import { BaseEntity } from '../../../common/entities/base.entity';
-
-export enum FloorPlanStatus {
-  ACTIVE = 'active',
-  DRAFT = 'draft',
-  ARCHIVED = 'archived',
-  PROCESSING = 'processing', // For DWG parsing
-  FAILED = 'failed',
-}
-
-export enum DeviceAnimationType {
-  SMOKE = 'smoke',
-  DOOR_OPEN_CLOSE = 'door_open_close',
-  LIGHT_PULSE = 'light_pulse',
-  WATER_LEAK = 'water_leak',
-  TEMPERATURE_GRADIENT = 'temperature_gradient',
-  MOTION_WAVE = 'motion_wave',
-  ALARM_FLASH = 'alarm_flash',
-  NONE = 'none',
-}
-
-export interface FloorPlanSettings {
-  measurementUnit: 'metric' | 'imperial';
-  autoSave: boolean;
-  gridSettings: {
-    showGrid: boolean;
-    snapToGrid: boolean;
-    gridSize: number;
-  };
-  defaultColors: {
-    gateways: string;
-    sensorsToGateway: string;
-    zones: string;
-    sensorsToGrid: string;
-  };
-}
-
-export interface DWGGeometry {
-  walls: Array<{
-    id: string;
-    points: Array<{ x: number; y: number; z?: number }>;
-    thickness: number;
-    height: number;
-    material?: string;
-  }>;
-  doors: Array<{
-    id: string;
-    position: { x: number; y: number; z?: number };
-    width: number;
-    height: number;
-    rotation: number;
-    type: 'single' | 'double' | 'sliding';
-  }>;
-  windows: Array<{
-    id: string;
-    position: { x: number; y: number; z?: number };
-    width: number;
-    height: number;
-    rotation: number;
-  }>;
-  rooms: Array<{
-    id: string;
-    name: string;
-    boundaries: Array<{ x: number; y: number }>;
-    area: number;
-    floor: string;
-  }>;
-  stairs: Array<{
-    id: string;
-    points: Array<{ x: number; y: number; z?: number }>;
-    width: number;
-    steps: number;
-  }>;
-  furniture?: Array<{
-    id: string;
-    type: string;
-    position: { x: number; y: number; z?: number };
-    rotation: number;
-    dimensions: { width: number; height: number; depth: number };
-  }>;
-}
-
-export interface Device3DData {
-  deviceId: string;
-  name: string;
-  type: string;
-  position: { x: number; y: number; z: number };
-  rotation?: { x: number; y: number; z: number };
-  scale?: { x: number; y: number; z: number };
-  model3DUrl?: string; // URL to 3D model file (GLB/GLTF)
-  animationType: DeviceAnimationType;
-  animationConfig?: {
-    intensity?: number;
-    speed?: number;
-    color?: string;
-    particleCount?: number;
-    radius?: number;
-  };
-  telemetryBindings?: {
-    [telemetryKey: string]: {
-      animationProperty: string; // e.g., 'intensity', 'speed', 'color'
-      min: number;
-      max: number;
-    };
-  };
-  status?: 'online' | 'offline' | 'alarm';
-}
-
-export interface Building3DMetadata {
-  buildingName: string;
-  totalFloors: number;
-  floorHeight: number; // Height of each floor in meters
-  buildingDimensions: {
-    width: number;
-    length: number;
-    height: number;
-  };
-  exteriorModel?: string; // URL to building exterior 3D model
-  floorOrder: string[]; // Array of floor identifiers in order (bottom to top)
-}
+import { BaseEntity } from '@common/entities/base.entity';
+import { Tenant, Customer, User, Asset } from '@modules/index.entities';
+import {
+  FloorPlanStatus,
+  DeviceAnimationType
+} from '@common/enums/index.enum';
+import type {
+  FloorPlanSettings,
+  DWGGeometry,
+  Device3DData,
+  Building3DMetadata,
+} from '@common/interfaces/index.interface';
 
 @Entity('floor_plans')
-@Index(['userId', 'status'])
-// @Index(['assetId'])
+@Index(['tenantId', 'status'])
+@Index(['tenantId', 'userId'])
+@Index(['tenantId', 'customerId'])
+@Index(['tenantId', 'assetId'])
+@Index(['tenantId', 'building', 'floor'])
 export class FloorPlan extends BaseEntity {
-  @Column()
-  name: string;
+  // ══════════════════════════════════════════════════════════════════════════
+  // TENANT SCOPING (REQUIRED)
+  // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  building: string;
+
+  tenantId: string;
+
+  @ManyToOne(() => Tenant)
+  @JoinColumn({ name: 'tenantId' })
+  tenant: Tenant;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // CUSTOMER SCOPING (OPTIONAL)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ nullable: true })
+
+  customerId?: string;
+
+  @ManyToOne(() => Customer, { nullable: true })
+  @JoinColumn({ name: 'customerId' })
+  customer?: Customer;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // OWNERSHIP
+  // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  floor: string;
 
-  @Column({ name: 'floor_number', type: 'int', nullable: true })
-  floorNumber?: number; // Numeric order for floor selection
+  userId: string;
 
-  // Asset Association
-  @Column({ name: 'asset_id' })
-  @Index()
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'userId' })
+  user: User;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ASSET ASSOCIATION
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column()
+
   assetId: string;
 
-  // DWG File Storage
-  @Column({ name: 'dwg_file_url', nullable: true })
-  dwgFileUrl?: string;
+  @ManyToOne(() => Asset)
+  @JoinColumn({ name: 'assetId' })
+  asset: Asset;
 
-  @Column({ name: 'dwg_file_size', type: 'bigint', nullable: true })
-  dwgFileSizeBytes?: number;
-
-  @Column({ name: 'dwg_uploaded_at', type: 'timestamp', nullable: true })
-  dwgUploadedAt?: Date;
-
-  // Parsed DWG Data
-  @Column({ type: 'jsonb', nullable: true })
-  parsedGeometry?: DWGGeometry;
-
-  @Column({ name: 'parsing_error', type: 'text', nullable: true })
-  parsingError?: string;
-
-  // Preview/Thumbnail
-  @Column({ name: 'thumbnail_url', nullable: true })
-  thumbnailUrl?: string;
-
-  @Column({ name: 'image_url', nullable: true })
-  imageUrl?: string;
+  // ══════════════════════════════════════════════════════════════════════════
+  // BASIC INFO
+  // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  category: string;
+  name: string;  // "Main Office Floor Plan"
 
-  @Column({
-    type: 'enum',
-    enum: FloorPlanStatus,
-    default: FloorPlanStatus.DRAFT,
-  })
+  @Column()
+  building: string;  // "Building A"
+
+  @Column()
+  floor: string;  // "Floor 3", "Ground Floor"
+
+  @Column({ type: 'int', nullable: true })
+  floorNumber?: number;  // 3, 1, 0 (for ordering)
+
+  @Column({ nullable: true })
+  category?: string;  // "office", "warehouse", "factory"
+
+  @Column({ type: 'text', nullable: true })
+  description?: string;
+
+  @Column({ type: 'enum', enum: FloorPlanStatus, default: FloorPlanStatus.DRAFT })
+
   status: FloorPlanStatus;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DWG FILE STORAGE
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ nullable: true })
+  dwgFileUrl?: string;  // "https://storage.../floor-plan.dwg"
+
+  @Column({ type: 'bigint', nullable: true })
+  dwgFileSizeBytes?: number;
+
+  @Column({ type: 'timestamp', nullable: true })
+  dwgUploadedAt?: Date;
+
+  @Column({ type: 'text', nullable: true })
+  parsingError?: string;  // Error message if DWG parsing failed
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PARSED DWG GEOMETRY
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ type: 'jsonb', nullable: true })
+  parsedGeometry?: DWGGeometry;
+  // Contains: walls, doors, windows, rooms, stairs, furniture
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PREVIEW IMAGES
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ nullable: true })
+  thumbnailUrl?: string;  // Small preview (200x200)
+
+  @Column({ nullable: true })
+  imageUrl?: string;  // Full-size 2D render
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DIMENSIONS & SCALE
+  // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'jsonb' })
   dimensions: {
@@ -181,40 +138,102 @@ export class FloorPlan extends BaseEntity {
     height: number;
     unit?: 'meters' | 'feet';
   };
+  // Example: { width: 50, height: 30, unit: 'meters' }
 
   @Column({ nullable: true })
-  scale?: string;
+  scale?: string;  // "1:100", "1:50"
 
-  // 3D Devices with animation data
-  @Column({ type: 'jsonb', default: '[]' })
+  // ══════════════════════════════════════════════════════════════════════════
+  // 3D DEVICES (With animations and telemetry bindings)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ type: 'jsonb', default: [] })
   devices: Device3DData[];
+  // Example:
+  // devices: [
+  //   {
+  //     deviceId: 'device-123',
+  //     name: 'Temperature Sensor 1',
+  //     type: 'temperature_sensor',
+  //     position: { x: 10, y: 5, z: 2.5 },
+  //     rotation: { x: 0, y: 0, z: 0 },
+  //     scale: { x: 1, y: 1, z: 1 },
+  //     model3DUrl: 'https://storage.../sensor.glb',
+  //     animationType: 'temperature_gradient',
+  //     animationConfig: {
+  //       intensity: 0.5,
+  //       speed: 1.0,
+  //       color: '#FF5733'
+  //     },
+  //     telemetryBindings: {
+  //       temperature: {
+  //         animationProperty: 'intensity',
+  //         min: 0,
+  //         max: 50
+  //       }
+  //     },
+  //     status: 'online'
+  //   }
+  // ]
 
-  // Zones for grouping areas
-  @Column({ type: 'jsonb', default: '[]' })
+  // ══════════════════════════════════════════════════════════════════════════
+  // ZONES (Grouping areas on floor plan)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ type: 'jsonb', default: [] })
   zones: Array<{
     id: string;
     name: string;
     color: string;
     boundaries: Array<{ x: number; y: number }>;
     floor?: string;
-    deviceIds?: string[]; // Devices in this zone
+    deviceIds?: string[];
+    area?: number;  // Square meters/feet
   }>;
+  // Example:
+  // zones: [
+  //   {
+  //     id: 'zone-1',
+  //     name: 'Office Area',
+  //     color: '#3b82f6',
+  //     boundaries: [
+  //       { x: 0, y: 0 },
+  //       { x: 20, y: 0 },
+  //       { x: 20, y: 15 },
+  //       { x: 0, y: 15 }
+  //     ],
+  //     floor: 'Floor 3',
+  //     deviceIds: ['device-1', 'device-2'],
+  //     area: 300
+  //   }
+  // ]
 
-  // Building-level 3D metadata (shared across floors of same building)
+  // ══════════════════════════════════════════════════════════════════════════
+  // BUILDING 3D METADATA (Shared across floors)
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Column({ type: 'jsonb', nullable: true })
   building3DMetadata?: Building3DMetadata;
+  // Example:
+  // building3DMetadata: {
+  //   buildingName: 'Smart Tower',
+  //   totalFloors: 10,
+  //   floorHeight: 3.5,
+  //   buildingDimensions: {
+  //     width: 50,
+  //     length: 40,
+  //     height: 35
+  //   },
+  //   exteriorModel: 'https://storage.../building.glb',
+  //   floorOrder: ['Ground', 'Floor 1', 'Floor 2', ..., 'Floor 9']
+  // }
 
-  @Column({ name: 'user_id' })
-  @Index()
-  userId: string;
-
-  @Column({ name: 'tenant_id', nullable: true })
-  @Index()
-  tenantId?: string;
+  // ══════════════════════════════════════════════════════════════════════════
+  // SETTINGS
+  // ══════════════════════════════════════════════════════════════════════════
 
   @Column({
     type: 'jsonb',
-    nullable: true,
     default: {
       measurementUnit: 'metric',
       autoSave: true,
@@ -232,4 +251,121 @@ export class FloorPlan extends BaseEntity {
     },
   })
   settings: FloorPlanSettings;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // METADATA
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ type: 'simple-array', nullable: true })
+  tags?: string[];  // ['3d-enabled', 'hvac', 'security']
+
+  @Column({ type: 'jsonb', nullable: true })
+  additionalInfo?: Record<string, any>;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HELPER METHODS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Check if floor plan is active
+   */
+  isActive(): boolean {
+    return this.status === FloorPlanStatus.ACTIVE;
+  }
+
+  /**
+   * Check if floor plan is processing DWG
+   */
+  isProcessing(): boolean {
+    return this.status === FloorPlanStatus.PROCESSING;
+  }
+
+  /**
+   * Check if DWG parsing failed
+   */
+  hasFailed(): boolean {
+    return this.status === FloorPlanStatus.FAILED;
+  }
+
+  /**
+   * Get device by ID
+   */
+  getDevice(deviceId: string): Device3DData | undefined {
+    return this.devices.find(d => d.deviceId === deviceId);
+  }
+
+  /**
+   * Add device to floor plan
+   */
+  addDevice(device: Device3DData): void {
+    if (!this.devices) {
+      this.devices = [];
+    }
+    this.devices.push(device);
+  }
+
+  /**
+   * Remove device from floor plan
+   */
+  removeDevice(deviceId: string): void {
+    if (this.devices) {
+      this.devices = this.devices.filter(d => d.deviceId !== deviceId);
+    }
+  }
+
+  /**
+   * Update device position
+   */
+  updateDevicePosition(
+    deviceId: string,
+    position: { x: number; y: number; z: number },
+  ): void {
+    const device = this.getDevice(deviceId);
+    if (device) {
+      device.position = position;
+    }
+  }
+
+  /**
+   * Get all devices in a zone
+   */
+  getDevicesInZone(zoneId: string): Device3DData[] {
+    const zone = this.zones.find(z => z.id === zoneId);
+    if (!zone?.deviceIds) return [];
+
+    return this.devices.filter(d => zone.deviceIds?.includes(d.deviceId));
+  }
+
+  /**
+   * Add zone
+   */
+  addZone(zone: FloorPlan['zones'][0]): void {
+    if (!this.zones) {
+      this.zones = [];
+    }
+    this.zones.push(zone);
+  }
+
+  /**
+   * Remove zone
+   */
+  removeZone(zoneId: string): void {
+    if (this.zones) {
+      this.zones = this.zones.filter(z => z.id !== zoneId);
+    }
+  }
+
+  /**
+   * Get total floor area
+   */
+  getTotalArea(): number {
+    return this.dimensions.width * this.dimensions.height;
+  }
+
+  /**
+   * Check if has 3D data
+   */
+  has3DData(): boolean {
+    return this.devices.length > 0 && this.devices.some(d => d.model3DUrl);
+  }
 }

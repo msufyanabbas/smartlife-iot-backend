@@ -1,3 +1,4 @@
+// src/modules/subscriptions/subscriptions.service.ts
 import {
   Injectable,
   NotFoundException,
@@ -9,7 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, QueryRunner, DataSource } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { SubscriptionPlan, SubscriptionStatus, BillingPeriod, SupportLevel } from '@common/enums/index.enum';
-import { SubscriptionFeatures, SubscriptionLimits } from '@common/interfaces/index.interface';
+import { SubscriptionFeatures, SubscriptionLimits, SubscriptionUsage, EMPTY_USAGE } from '@common/interfaces/index.interface';
 import { Subscription, Customer, Device, Tenant, User } from '@modules/index.entities';
 import {
   CreateSubscriptionDto,
@@ -17,375 +18,235 @@ import {
 } from './dto/create-subscription.dto';
 import { UsersService } from '@modules/index.service';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan Configuration
+//
+// SYNC RULE: when you add a field to SubscriptionLimits or SubscriptionFeatures
+// in subscription.entity.ts, add it to EVERY plan config below.
+// TypeScript will error here if you miss one (the Record type enforces it).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PLAN_PRICING: Record<SubscriptionPlan, Record<BillingPeriod, number>> = {
+  [SubscriptionPlan.FREE]: { [BillingPeriod.MONTHLY]: 0, [BillingPeriod.YEARLY]: 0 },
+  [SubscriptionPlan.STARTER]: { [BillingPeriod.MONTHLY]: 199, [BillingPeriod.YEARLY]: 1990 },
+  [SubscriptionPlan.PROFESSIONAL]: { [BillingPeriod.MONTHLY]: 499, [BillingPeriod.YEARLY]: 4990 },
+  [SubscriptionPlan.ENTERPRISE]: { [BillingPeriod.MONTHLY]: 0, [BillingPeriod.YEARLY]: 0 },
+};
+
+// Plan trial periods in days (0 = no trial)
+const PLAN_TRIAL_DAYS: Record<SubscriptionPlan, number> = {
+  [SubscriptionPlan.FREE]: 0,
+  [SubscriptionPlan.STARTER]: 14,
+  [SubscriptionPlan.PROFESSIONAL]: 14,
+  [SubscriptionPlan.ENTERPRISE]: 30,
+};
+
+// These must match SubscriptionLimits exactly — TypeScript enforces it
+const PLAN_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> = {
+  [SubscriptionPlan.FREE]: {
+    devices: 5,
+    dashboards: 1,
+    assets: 10,
+    floorPlans: 0,
+    automations: 0,
+    users: 2,
+    customers: 1,
+    apiCallsPerMonth: 10_000,
+    storageGB: 1,
+    smsNotificationsPerMonth: 0,
+  },
+  [SubscriptionPlan.STARTER]: {
+    devices: 50,
+    dashboards: 5,
+    assets: 100,
+    floorPlans: 5,
+    automations: 10,
+    users: 5,
+    customers: 5,
+    apiCallsPerMonth: 100_000,
+    storageGB: 10,
+    smsNotificationsPerMonth: 100,
+  },
+  [SubscriptionPlan.PROFESSIONAL]: {
+    devices: 200,
+    dashboards: 20,
+    assets: 500,
+    floorPlans: 20,
+    automations: -1,  // unlimited
+    users: 20,
+    customers: 20,
+    apiCallsPerMonth: 500_000,
+    storageGB: 50,
+    smsNotificationsPerMonth: 500,
+  },
+  [SubscriptionPlan.ENTERPRISE]: {
+    devices: -1,
+    dashboards: -1,
+    assets: -1,
+    floorPlans: -1,
+    automations: -1,
+    users: -1,
+    customers: -1,
+    apiCallsPerMonth: -1,
+    storageGB: 500,
+    smsNotificationsPerMonth: -1,
+  },
+};
+
+// These must match SubscriptionFeatures exactly — TypeScript enforces it
+const PLAN_FEATURES: Record<SubscriptionPlan, SubscriptionFeatures> = {
+  [SubscriptionPlan.FREE]: {
+    devices: true,
+    dashboards: true,
+    assets: true,
+    floorPlans: false,
+    automations: false,
+    apiAccess: true,
+    smsNotifications: false,
+    whiteLabel: false,
+    auditLogs: false,
+  },
+  [SubscriptionPlan.STARTER]: {
+    devices: true,
+    dashboards: true,
+    assets: true,
+    floorPlans: true,
+    automations: true,
+    apiAccess: true,
+    smsNotifications: true,
+    whiteLabel: false,
+    auditLogs: true,
+  },
+  [SubscriptionPlan.PROFESSIONAL]: {
+    devices: true,
+    dashboards: true,
+    assets: true,
+    floorPlans: true,
+    automations: true,
+    apiAccess: true,
+    smsNotifications: true,
+    whiteLabel: true,
+    auditLogs: true,
+  },
+  [SubscriptionPlan.ENTERPRISE]: {
+    devices: true,
+    dashboards: true,
+    assets: true,
+    floorPlans: true,
+    automations: true,
+    apiAccess: true,
+    smsNotifications: true,
+    whiteLabel: true,
+    auditLogs: true,
+  },
+};
+
+const PLAN_ORDER: SubscriptionPlan[] = [
+  SubscriptionPlan.FREE,
+  SubscriptionPlan.STARTER,
+  SubscriptionPlan.PROFESSIONAL,
+  SubscriptionPlan.ENTERPRISE,
+];
+
+const PLAN_DISPLAY_NAMES: Record<SubscriptionPlan, string> = {
+  [SubscriptionPlan.FREE]: 'Free',
+  [SubscriptionPlan.STARTER]: 'Starter',
+  [SubscriptionPlan.PROFESSIONAL]: 'Professional',
+  [SubscriptionPlan.ENTERPRISE]: 'Enterprise',
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Service
+// ─────────────────────────────────────────────────────────────────────────────
+
 @Injectable()
 export class SubscriptionsService {
   private readonly logger = new Logger(SubscriptionsService.name);
 
-  // ✅ Plan pricing configuration (SAR)
-  private readonly planPricing = {
-    [SubscriptionPlan.FREE]: { monthly: 0, yearly: 0 },
-    [SubscriptionPlan.STARTER]: { monthly: 199, yearly: 1990 },
-    [SubscriptionPlan.PROFESSIONAL]: { monthly: 499, yearly: 4990 },
-    [SubscriptionPlan.ENTERPRISE]: { monthly: 0, yearly: 0 }, // Custom pricing
-  };
-
-  // ✅ Plan limits configuration based on Smart Life Excel
-  private readonly planLimits: Record<SubscriptionPlan, SubscriptionLimits> = {
-    [SubscriptionPlan.FREE]: {
-      devices: 5,
-      users: 2,
-      customers: 1,
-      apiCallsPerMonth: 10000,
-      dataRetentionDays: 7,
-      storageGB: 1,
-      dashboardTemplates: 3,
-      customDashboards: 1,
-      customIntegrations: 0,
-      webhooks: 0,
-      apiRateLimitPerMin: 100,
-      concurrentConnections: 10,
-      smsNotificationsPerMonth: 0,
-      historicalDataQueryDays: 7,
-      trainingSessions: 0,
-    },
-    [SubscriptionPlan.STARTER]: {
-      devices: 50,
-      users: 5,
-      customers: 5,
-      apiCallsPerMonth: 100000,
-      dataRetentionDays: 30,
-      storageGB: 10,
-      dashboardTemplates: 10,
-      customDashboards: 5,
-      customIntegrations: 3,
-      webhooks: 5,
-      apiRateLimitPerMin: 500,
-      concurrentConnections: 50,
-      smsNotificationsPerMonth: 100,
-      historicalDataQueryDays: 30,
-      trainingSessions: 0,
-    },
-    [SubscriptionPlan.PROFESSIONAL]: {
-      devices: 200,
-      users: 20,
-      customers: 20,
-      apiCallsPerMonth: 500000,
-      dataRetentionDays: 90,
-      storageGB: 50,
-      dashboardTemplates: -1, // unlimited
-      customDashboards: 20,
-      customIntegrations: -1, // unlimited
-      webhooks: -1, // unlimited
-      apiRateLimitPerMin: 1000,
-      concurrentConnections: 200,
-      smsNotificationsPerMonth: 500,
-      historicalDataQueryDays: 90,
-      trainingSessions: 1,
-    },
-    [SubscriptionPlan.ENTERPRISE]: {
-      devices: -1, // unlimited
-      users: -1, // unlimited
-      customers: -1, // unlimited
-      apiCallsPerMonth: -1, // unlimited
-      dataRetentionDays: 365,
-      storageGB: 500,
-      dashboardTemplates: -1, // unlimited
-      customDashboards: -1, // unlimited
-      customIntegrations: -1, // unlimited
-      webhooks: -1, // unlimited
-      apiRateLimitPerMin: -1, // unlimited
-      concurrentConnections: -1, // unlimited
-      smsNotificationsPerMonth: -1, // unlimited
-      historicalDataQueryDays: 365,
-      trainingSessions: -1, // unlimited
-    },
-  };
-
-  // ✅ Plan features configuration based on Smart Life Excel
-  private readonly planFeatures: Record<SubscriptionPlan, SubscriptionFeatures> = {
-    [SubscriptionPlan.FREE]: {
-      realtimeAnalytics: false,
-      advancedAutomation: false,
-      ruleEngine: 'basic',
-      restApiAccess: true,
-      mqttAccess: true,
-      customIntegrations: false,
-      whiteLabelBranding: false,
-      brandingLevel: 'none',
-      emailNotifications: true,
-      smsNotifications: false,
-      mobileAppAccess: true,
-      widgetLibrary: 'basic',
-      alarmManagement: 'basic',
-      advancedAlarms: false,
-      dataExport: 'csv',
-      scheduledReports: 'none',
-      supportLevel: SupportLevel.COMMUNITY,
-      slaGuarantee: false,
-      slaPercentage: 0,
-      onboardingSupport: 'none',
-      floorMapping: 0,
-      customDevelopment: false,
-      multiTenancy: false,
-      customerManagement: false,
-      roleBasedAccess: false,
-      auditLogs: false,
-      backupRecovery: false,
-      otaUpdates: 'manual',
-      deviceGroups: true,
-      assetManagement: 'none',
-      geofencing: false,
-      customAttributes: false,
-      rpcCommands: false,
-      dataAggregation: false,
-    },
-    [SubscriptionPlan.STARTER]: {
-      realtimeAnalytics: true,
-      advancedAutomation: true,
-      ruleEngine: 'advanced',
-      restApiAccess: true,
-      mqttAccess: true,
-      customIntegrations: true,
-      whiteLabelBranding: false,
-      brandingLevel: 'none',
-      emailNotifications: true,
-      smsNotifications: true,
-      mobileAppAccess: true,
-      widgetLibrary: 'standard',
-      alarmManagement: 'advanced',
-      advancedAlarms: false,
-      dataExport: 'csv-json-excel',
-      scheduledReports: 'monthly',
-      supportLevel: SupportLevel.EMAIL,
-      slaGuarantee: true,
-      slaPercentage: 95,
-      onboardingSupport: 'basic',
-      floorMapping: 5,
-      customDevelopment: false,
-      multiTenancy: false,
-      customerManagement: false,
-      roleBasedAccess: true,
-      auditLogs: true,
-      backupRecovery: true,
-      otaUpdates: 'automatic',
-      deviceGroups: true,
-      assetManagement: 'basic',
-      geofencing: true,
-      customAttributes: true,
-      rpcCommands: true,
-      dataAggregation: false,
-    },
-    [SubscriptionPlan.PROFESSIONAL]: {
-      realtimeAnalytics: true,
-      advancedAutomation: true,
-      ruleEngine: 'advanced',
-      restApiAccess: true,
-      mqttAccess: true,
-      customIntegrations: true,
-      whiteLabelBranding: true,
-      brandingLevel: 'partial',
-      emailNotifications: true,
-      smsNotifications: true,
-      mobileAppAccess: true,
-      widgetLibrary: 'advanced',
-      alarmManagement: 'advanced',
-      advancedAlarms: true,
-      dataExport: 'all-formats',
-      scheduledReports: 'weekly',
-      supportLevel: SupportLevel.PRIORITY,
-      slaGuarantee: true,
-      slaPercentage: 99,
-      onboardingSupport: 'standard',
-      floorMapping: 20,
-      customDevelopment: false,
-      multiTenancy: true,
-      customerManagement: true,
-      roleBasedAccess: true,
-      auditLogs: true,
-      backupRecovery: true,
-      otaUpdates: 'automatic',
-      deviceGroups: true,
-      assetManagement: 'advanced',
-      geofencing: true,
-      customAttributes: true,
-      rpcCommands: true,
-      dataAggregation: true,
-    },
-    [SubscriptionPlan.ENTERPRISE]: {
-      realtimeAnalytics: true,
-      advancedAutomation: true,
-      ruleEngine: 'premium',
-      restApiAccess: true,
-      mqttAccess: true,
-      customIntegrations: true,
-      whiteLabelBranding: true,
-      brandingLevel: 'full',
-      emailNotifications: true,
-      smsNotifications: true,
-      mobileAppAccess: true,
-      widgetLibrary: 'advanced',
-      alarmManagement: 'advanced',
-      advancedAlarms: true,
-      dataExport: 'all-formats',
-      scheduledReports: 'realtime',
-      supportLevel: SupportLevel.DEDICATED,
-      slaGuarantee: true,
-      slaPercentage: 99.9,
-      onboardingSupport: 'premium',
-      floorMapping: -1, // unlimited
-      customDevelopment: true,
-      multiTenancy: true,
-      customerManagement: true,
-      roleBasedAccess: true,
-      auditLogs: true,
-      backupRecovery: true,
-      otaUpdates: 'automatic',
-      deviceGroups: true,
-      assetManagement: 'advanced',
-      geofencing: true,
-      customAttributes: true,
-      rpcCommands: true,
-      dataAggregation: true,
-    },
-  };
-
-  // Plan hierarchy for validation
-  private readonly planOrder = [
-    SubscriptionPlan.FREE,
-    SubscriptionPlan.STARTER,
-    SubscriptionPlan.PROFESSIONAL,
-    SubscriptionPlan.ENTERPRISE,
-  ];
-
   constructor(
     @InjectRepository(Subscription)
     private readonly subscriptionRepository: Repository<Subscription>,
-    @InjectRepository(User)
-    private readonly userRepository: Repository<User>,
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
-    private readonly dataSource: DataSource,
-    private usersService: UsersService,
-  ) {}
+    private readonly dataSource: DataSource
+  ) { }
 
   /**
-   * ✅ Get tenant-wide usage statistics
-   */
-  async getTenantUsage(tenantId: string): Promise<{
-    devices: number;
-    users: number;
-    customers: number;
-    apiCalls: number;
-    storage: number;
-    smsNotifications: number;
-  }> {
-    // Count users in tenant
-    const usersCount = await this.userRepository.count({
+  * Returns tenant-wide usage from the cached subscription counters.
+  * Much cheaper than counting rows — O(1) not O(n).
+  */
+  async getTenantUsage(tenantId: string): Promise<SubscriptionUsage> {
+    const subscription = await this.subscriptionRepository.findOne({
       where: { tenantId },
     });
 
-    // Count customers in tenant
-    const customersCount = await this.dataSource
-      .getRepository(Customer)
-      .count({
-        where: { tenantId },
-      });
-
-    // Count devices in tenant
-    const devicesCount = await this.getDeviceCountForTenant(tenantId);
-
-    // Get API calls and storage from tenant admin's subscription
-    const tenant = await this.tenantRepository.findOne({
-      where: { id: tenantId },
-    });
-
-    if (!tenant) {
-      return {
-        devices: devicesCount,
-        users: usersCount,
-        customers: customersCount,
-        apiCalls: 0,
-        storage: 0,
-        smsNotifications: 0,
-      };
+    if (!subscription) {
+      return { ...EMPTY_USAGE };
     }
-
-    const subscription = await this.subscriptionRepository.findOne({
-      where: { userId: tenant.id },
-    });
-
-    return {
-      devices: devicesCount,
-      users: usersCount,
-      customers: customersCount,
-      apiCalls: subscription?.usage.apiCalls || 0,
-      storage: subscription?.usage.storage || 0,
-      smsNotifications: subscription?.usage.smsNotifications || 0,
-    };
+    return subscription.usage;
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LIMIT & FEATURE CHECKS
+  // ═══════════════════════════════════════════════════════════════════════════
+
   /**
-   * ✅ Check if tenant can perform action based on limits
+   * Returns true if the tenant can still create/assign this resource type.
+   * Reads from cached usage counters — no live COUNT queries.
    */
   async canTenantPerformAction(
     tenantId: string,
-    resource: 'devices' | 'users' | 'customers' | 'apiCalls' | 'storage' | 'smsNotifications',
+    resource: keyof SubscriptionUsage,
   ): Promise<boolean> {
-    const tenant = await this.tenantRepository.findOne({
-      where: { id: tenantId },
+    const subscription = await this.subscriptionRepository.findOne({
+      where: { tenantId },
     });
-
-    if (!tenant) {
-      this.logger.warn(`Tenant ${tenantId} has no admin - denying access`);
-      return false;
-    }
-
-    return this.canPerformAction(tenant.id, resource);
+    if (!subscription || !subscription.isActive()) return false;
+    if (subscription.isTrialExpired()) return false;
+    return !subscription.isLimitReached(resource);
   }
 
   /**
    * Create subscription
    */
   async create(
-    userId: string,
+    tenantId: string | undefined,
     createSubscriptionDto: CreateSubscriptionDto,
   ): Promise<Subscription> {
     const existing = await this.subscriptionRepository.findOne({
-      where: { userId },
+      where: { tenantId },
     });
 
     if (existing) {
-      throw new ConflictException('User already has a subscription');
+      throw new ConflictException('Tenant already has a subscription');
     }
 
     const { plan, billingPeriod = BillingPeriod.MONTHLY } = createSubscriptionDto;
-    const price = this.planPricing[plan][billingPeriod];
-    const limits = this.planLimits[plan];
-    const features = this.planFeatures[plan];
-
-    // Get trial period based on plan
-    const trialDays = this.getTrialPeriod(plan);
-
+    const trialDays = PLAN_TRIAL_DAYS[plan];
     const subscription = this.subscriptionRepository.create({
       plan,
       billingPeriod,
-      price,
-      limits,
-      features,
+      price: PLAN_PRICING[plan][billingPeriod],
+      limits: PLAN_LIMITS[plan],
+      features: PLAN_FEATURES[plan],
       usage: {
-        devices: 0,
-        users: 1, // Creator counts as 1 user
-        customers: 0,
-        apiCalls: 0,
-        storage: 0,
-        smsNotifications: 0,
+        ...EMPTY_USAGE,
+        users: 1,
+        // devices: 0,
+        // users: 1, // Creator counts as 1 user
+        // customers: 0,
+        // apiCalls: 0,
+        // storage: 0,
+        // smsNotifications: 0,
       },
-      userId,
-      createdBy: userId,
+      tenantId,
+      createdBy: tenantId,
       status:
         plan === SubscriptionPlan.FREE
           ? SubscriptionStatus.ACTIVE
-          : SubscriptionStatus.TRIAL,
+          : trialDays > 0
+            ? SubscriptionStatus.TRIAL
+            : SubscriptionStatus.ACTIVE,
       nextBillingDate: this.calculateNextBillingDate(billingPeriod),
       trialEndsAt:
         plan !== SubscriptionPlan.FREE && trialDays > 0
@@ -402,13 +263,13 @@ export class SubscriptionsService {
   /**
    * Get or create free subscription
    */
-  async getOrCreateFreeSubscription(userId: string): Promise<Subscription> {
+  async getOrCreateFreeSubscription(tenantId: string): Promise<Subscription> {
     try {
-      return await this.findCurrent(userId);
+      return await this.findByTenantId(tenantId);
     } catch (error) {
       if (error instanceof NotFoundException) {
-        this.logger.log(`Creating free subscription for new user: ${userId}`);
-        return await this.create(userId, {
+        this.logger.log(`Creating free subscription for tenant: ${tenantId}`);
+        return await this.create(tenantId, {
           plan: SubscriptionPlan.FREE,
           billingPeriod: BillingPeriod.MONTHLY,
         });
@@ -417,59 +278,72 @@ export class SubscriptionsService {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // READ
+  // ═══════════════════════════════════════════════════════════════════════════
+
   /**
-   * Find current subscription
+   * Primary lookup — by tenantId.
+   * Used internally and by guards.
    */
-  async findCurrent(userId: string): Promise<Subscription> {
-    
-    const user: any = await this.usersService.findByTenant(userId);
-
+  async findByTenantId(tenantId: string): Promise<Subscription> {
     const subscription = await this.subscriptionRepository.findOne({
-      where: { userId: user.id },
+      where: { tenantId },
     });
-
     if (!subscription) {
-      throw new NotFoundException('No active subscription found');
+      throw new NotFoundException('No subscription found for this tenant');
     }
-
     return subscription;
   }
 
   /**
-   * Get all available plans with pricing and features
+   * Find current subscription
+   */
+  async findCurrent(userId: string | undefined): Promise<Subscription> {
+
+    // userId from the controller — look up the user to get their tenantId
+    const user = await this.dataSource
+      .getRepository('users')
+      .findOne({ where: { id: userId }, select: ['id', 'tenantId', 'role'] });
+
+    if (!user) throw new NotFoundException('User not found');
+
+    // Super admin has no tenant and no subscription
+    if (!user.tenantId) {
+      throw new NotFoundException('No subscription associated with this account');
+    }
+
+    return this.findByTenantId(user.tenantId);
+  }
+
+  /**
+   * Get all available plans — used by GET /subscriptions/plans
    */
   async getPlans() {
-    return this.planOrder.map((plan) => ({
+    return PLAN_ORDER.map((plan) => ({
       plan,
-      name: this.getPlanDisplayName(plan),
-      monthlyPrice: this.planPricing[plan].monthly,
-      yearlyPrice: this.planPricing[plan].yearly,
-      limits: this.planLimits[plan],
-      features: this.planFeatures[plan],
-      trialPeriodDays: this.getTrialPeriod(plan),
+      name: PLAN_DISPLAY_NAMES[plan],
+      monthlyPrice: PLAN_PRICING[plan][BillingPeriod.MONTHLY],
+      yearlyPrice: PLAN_PRICING[plan][BillingPeriod.YEARLY],
+      limits: PLAN_LIMITS[plan],
+      features: PLAN_FEATURES[plan],
+      trialPeriodDays: PLAN_TRIAL_DAYS[plan],
       popular: plan === SubscriptionPlan.PROFESSIONAL,
     }));
   }
 
   /**
-   * Get usage statistics
+   * Get usage statistics vs limits — used by GET /subscriptions/usage
+   * Reads from cached usage counters — no COUNT(*) queries.
    */
   async getUsage(userId: string) {
     const subscription = await this.findCurrent(userId);
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-
-    if (!user || !user.tenantId) {
-      throw new BadRequestException('User has no tenant');
-    }
-
-    // Get actual tenant-wide usage
-    const tenantUsage = await this.getTenantUsage(user.tenantId);
 
     return {
-      current: tenantUsage,
+      current: subscription.usage,
       limits: subscription.limits,
-      percentage: this.calculateUsagePercentages(tenantUsage, subscription.limits),
-      warnings: this.generateUsageWarnings(tenantUsage, subscription.limits),
+      percentage: this.calculateUsagePercentages(subscription.usage, subscription.limits),
+      warnings: this.generateUsageWarnings(subscription.usage, subscription.limits),
     };
   }
 
@@ -477,25 +351,26 @@ export class SubscriptionsService {
    * Calculate usage percentages
    */
   private calculateUsagePercentages(
-    usage: any,
+    usage: SubscriptionUsage,
     limits: SubscriptionLimits,
   ): Record<string, number> {
-    const calculatePercentage = (used: number, limit: number): number => {
-      if (limit === -1) return 0; // unlimited
+    const pct = (used: number, limit: number | undefined): number => {
+      if (limit === -1) return 0;  // unlimited — show 0%
       if (limit === 0) return 100;
-      return Math.round((used / limit) * 100);
+      return Math.min(100, Math.round((used / (limit ? limit : 0)) * 100));
     };
 
     return {
-      devices: calculatePercentage(usage.devices, limits.devices),
-      users: calculatePercentage(usage.users, limits.users),
-      customers: calculatePercentage(usage.customers, limits.customers),
-      apiCalls: calculatePercentage(usage.apiCalls, limits.apiCallsPerMonth),
-      storage: calculatePercentage(usage.storage, limits.storageGB),
-      smsNotifications: calculatePercentage(
-        usage.smsNotifications,
-        limits.smsNotificationsPerMonth,
-      ),
+      devices: pct(usage.devices, limits.devices),
+      dashboards: pct(usage.dashboards, limits.dashboards),
+      assets: pct(usage.assets, limits.assets),
+      floorPlans: pct(usage.floorPlans, limits.floorPlans),
+      automations: pct(usage.automations, limits.automations),
+      users: pct(usage.users, limits.users),
+      customers: pct(usage.customers, limits.customers),
+      apiCalls: pct(usage.apiCalls, limits.apiCallsPerMonth),
+      storageGB: pct(usage.storageGB, limits.storageGB),
+      smsNotifications: pct(usage.smsNotifications, limits.smsNotificationsPerMonth),
     };
   }
 
@@ -503,62 +378,45 @@ export class SubscriptionsService {
    * Generate usage warnings
    */
   private generateUsageWarnings(
-    usage: any,
+    usage: SubscriptionUsage,
     limits: SubscriptionLimits,
   ): string[] {
     const warnings: string[] = [];
-    const threshold = 80; // Warn at 80%
+    const WARN_THRESHOLD = 80;
 
-    const checkLimit = (
-      resource: string,
-      used: number,
-      limit: number,
-      displayName: string,
-    ) => {
-      if (limit === -1) return; // unlimited
-      const percentage = (used / limit) * 100;
-      if (percentage >= 100) {
-        warnings.push(`${displayName} limit reached (${used}/${limit})`);
-      } else if (percentage >= threshold) {
-        warnings.push(
-          `${displayName} usage is at ${Math.round(percentage)}% (${used}/${limit})`,
-        );
+    const check = (label: string, used: number, limit: number | undefined) => {
+      if (limit === -1 || limit === 0) return;
+      const pct = (used / (limit ? limit : 1)) * 100;
+      if (pct >= 100) {
+        warnings.push(`${label} limit reached (${used}/${limit})`);
+      } else if (pct >= WARN_THRESHOLD) {
+        warnings.push(`${label} usage at ${Math.round(pct)}% (${used}/${limit})`);
       }
     };
 
-    checkLimit('devices', usage.devices, limits.devices, 'Device');
-    checkLimit('users', usage.users, limits.users, 'User');
-    checkLimit('customers', usage.customers, limits.customers, 'Customer');
-    checkLimit(
-      'apiCalls',
-      usage.apiCalls,
-      limits.apiCallsPerMonth,
-      'API Calls',
-    );
-    checkLimit('storage', usage.storage, limits.storageGB, 'Storage');
-    checkLimit(
-      'smsNotifications',
-      usage.smsNotifications,
-      limits.smsNotificationsPerMonth,
-      'SMS Notifications',
-    );
+    check('Devices', usage.devices, limits.devices);
+    check('Dashboards', usage.dashboards, limits.dashboards);
+    check('Assets', usage.assets, limits.assets);
+    check('Floor Plans', usage.floorPlans, limits.floorPlans);
+    check('Automations', usage.automations, limits.automations);
+    check('Users', usage.users, limits.users);
+    check('Customers', usage.customers, limits.customers);
+    check('API Calls', usage.apiCalls, limits.apiCallsPerMonth);
+    check('Storage', usage.storageGB, limits.storageGB);
+    check('SMS Notifications', usage.smsNotifications, limits.smsNotificationsPerMonth);
 
     return warnings;
   }
 
-  /**
-   * Validate if upgrade is allowed
-   */
-  validateUpgrade(
-    currentPlan: SubscriptionPlan,
-    targetPlan: SubscriptionPlan,
-  ): void {
-    const currentPlanIndex = this.planOrder.indexOf(currentPlan);
-    const targetPlanIndex = this.planOrder.indexOf(targetPlan);
-
-    if (targetPlanIndex <= currentPlanIndex) {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PRIVATE HELPERS
+  // ═══════════════════════════════════════════════════════════════════════════
+  validateUpgrade(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): void {
+    const currentIndex = PLAN_ORDER.indexOf(currentPlan);
+    const targetIndex = PLAN_ORDER.indexOf(targetPlan);
+    if (targetIndex <= currentIndex) {
       throw new BadRequestException(
-        `Cannot downgrade from ${currentPlan} to ${targetPlan}. Use schedule downgrade instead.`,
+        `Cannot upgrade from ${currentPlan} to ${targetPlan}. Use schedule downgrade instead.`,
       );
     }
   }
@@ -566,20 +424,15 @@ export class SubscriptionsService {
   /**
    * Check if plan change is an upgrade
    */
-  isUpgrade(
-    currentPlan: SubscriptionPlan,
-    targetPlan: SubscriptionPlan,
-  ): boolean {
-    const currentPlanIndex = this.planOrder.indexOf(currentPlan);
-    const targetPlanIndex = this.planOrder.indexOf(targetPlan);
-    return targetPlanIndex > currentPlanIndex;
+  isUpgrade(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): boolean {
+    return PLAN_ORDER.indexOf(targetPlan) > PLAN_ORDER.indexOf(currentPlan);
   }
 
   /**
    * Upgrade subscription - called after payment
    */
   async upgradeAfterPayment(
-    userId: string,
+    tenantId: string,
     plan: SubscriptionPlan,
     billingPeriod: BillingPeriod,
     paymentAmount: number,
@@ -591,8 +444,8 @@ export class SubscriptionsService {
       : this.subscriptionRepository;
 
     const subscription = await repository.findOne({
-      where: { userId },
-      lock: useTransaction ? { mode: 'pessimistic_write' } : undefined,
+      where: { tenantId },
+      lock: { mode: 'pessimistic_write' }
     });
 
     if (!subscription) {
@@ -601,23 +454,22 @@ export class SubscriptionsService {
 
     this.validateUpgrade(subscription.plan, plan);
 
-    const expectedAmount = this.planPricing[plan][billingPeriod];
-    if (Math.abs(paymentAmount - expectedAmount) > 0.01) {
+    if (Math.abs(paymentAmount - PLAN_PRICING[plan][billingPeriod]) > 0.01) {
       throw new BadRequestException(
-        `Payment amount ${paymentAmount} does not match plan price ${expectedAmount}`,
+        `Payment amount ${paymentAmount} does not match plan price ${PLAN_PRICING[plan][billingPeriod]}`,
       );
     }
 
     subscription.plan = plan;
     subscription.billingPeriod = billingPeriod;
-    subscription.price = expectedAmount;
-    subscription.limits = this.planLimits[plan];
-    subscription.features = this.planFeatures[plan];
+    subscription.price = PLAN_PRICING[plan][billingPeriod];
+    subscription.limits = PLAN_LIMITS[plan];
+    subscription.features = PLAN_FEATURES[plan];
     subscription.status = SubscriptionStatus.ACTIVE;
     subscription.nextBillingDate = this.calculateNextBillingDate(billingPeriod);
     subscription.trialEndsAt = undefined;
     subscription.cancelledAt = undefined;
-    subscription.updatedBy = userId;
+    subscription.updatedBy = tenantId;
 
     if (subscription.metadata?.scheduledDowngrade) {
       subscription.metadata = {
@@ -629,17 +481,18 @@ export class SubscriptionsService {
     const updated = await repository.save(subscription);
 
     this.logger.log(
-      `✅ Subscription upgraded: ${subscription.plan} → ${plan} (User: ${userId})`,
+      `✅ Subscription upgraded: ${subscription.plan} → ${plan} (User: ${tenantId})`,
     );
 
     return updated;
   }
 
   /**
-   * Renew subscription after payment
+   * Executes plan renewal after successful payment confirmation.
+   * Called by PaymentsService — never directly by the controller.
    */
   async renewAfterPayment(
-    userId: string,
+    tenantId: string,
     billingPeriod: BillingPeriod,
     paymentAmount: number,
     queryRunner?: QueryRunner,
@@ -650,67 +503,72 @@ export class SubscriptionsService {
       : this.subscriptionRepository;
 
     const subscription = await repository.findOne({
-      where: { userId },
-      lock: useTransaction ? { mode: 'pessimistic_write' } : undefined,
+      where: { tenantId },
+      lock: { mode: 'pessimistic_write' }
     });
 
     if (!subscription) {
       throw new NotFoundException('No subscription found');
     }
 
-    const expectedAmount = this.planPricing[subscription.plan][billingPeriod];
+    this.validatePaymentAmount(paymentAmount, subscription.plan, billingPeriod)
+
+    const expectedAmount = PLAN_PRICING[subscription.plan][billingPeriod];
     if (Math.abs(paymentAmount - expectedAmount) > 0.01) {
       throw new BadRequestException(
         `Payment amount ${paymentAmount} does not match plan price ${expectedAmount}`,
       );
     }
+    // Extend from the current next billing date if in the future, otherwise from now
+    const baseDate = subscription.nextBillingDate && subscription.nextBillingDate > new Date()
+      ? new Date(subscription.nextBillingDate)
+      : new Date();
 
-    const currentNextBilling = subscription.nextBillingDate || new Date();
-    const today = new Date();
-    const baseDate = currentNextBilling > today ? currentNextBilling : today;
+    subscription.nextBillingDate = billingPeriod === BillingPeriod.MONTHLY
+      ? new Date(baseDate.setMonth(baseDate.getMonth() + 1))
+      : new Date(baseDate.setFullYear(baseDate.getFullYear() + 1));
 
-    subscription.nextBillingDate =
-      billingPeriod === BillingPeriod.MONTHLY
-        ? new Date(baseDate.setMonth(baseDate.getMonth() + 1))
-        : new Date(baseDate.setFullYear(baseDate.getFullYear() + 1));
     subscription.billingPeriod = billingPeriod;
     subscription.status = SubscriptionStatus.ACTIVE;
     subscription.cancelledAt = undefined;
     subscription.trialEndsAt = undefined;
-    subscription.updatedBy = userId;
+    subscription.updatedBy = tenantId;
 
     await repository.save(subscription);
 
     this.logger.log(
-      `✅ Subscription renewed (User: ${userId}, Next billing: ${subscription.nextBillingDate})`,
+      `✅ Subscription renewed (User: ${tenantId}, Next billing: ${subscription.nextBillingDate})`,
     );
 
     return subscription;
   }
 
   /**
-   * Process subscription change after payment
-   */
+  * Routes payment webhook to upgrade or renewal based on the plan change.
+  * Called by PaymentsService after payment confirmation.
+  */
   async processSubscriptionAfterPayment(
-    userId: string,
+    tenantId: string,
     targetPlan: SubscriptionPlan,
     billingPeriod: BillingPeriod,
     paymentAmount: number,
     queryRunner?: QueryRunner,
   ): Promise<Subscription> {
-    const subscription = await this.findCurrent(userId);
+    const subscription = await this.findByTenantId(tenantId);
 
     if (this.isUpgrade(subscription.plan, targetPlan)) {
       return await this.upgradeAfterPayment(
-        userId,
+        tenantId,
         targetPlan,
         billingPeriod,
         paymentAmount,
         queryRunner,
       );
-    } else if (subscription.plan === targetPlan) {
-      return await this.renewAfterPayment(
-        userId,
+    }
+
+    if (this.isRenewal(subscription.plan, targetPlan)) {
+      return this.renewAfterPayment(
+        tenantId,
         billingPeriod,
         paymentAmount,
         queryRunner,
@@ -740,30 +598,29 @@ export class SubscriptionsService {
 
     this.validateUpgrade(subscription.plan, plan);
 
-    const amount = this.planPricing[plan][billingPeriod];
-
     return {
       requiresPayment: true,
       message: 'Please complete payment to upgrade your subscription',
       plan,
       billingPeriod,
-      amount,
+      amount: PLAN_PRICING[plan][billingPeriod],
     };
   }
 
   /**
-   * Schedule downgrade
-   */
+ * Schedules a downgrade at end of current billing period.
+ * Used by POST /subscriptions/downgrade/schedule
+ */
   async scheduleDowngrade(
     userId: string,
     targetPlan: SubscriptionPlan,
   ): Promise<Subscription> {
     const subscription = await this.findCurrent(userId);
 
-    const currentPlanIndex = this.planOrder.indexOf(subscription.plan);
-    const newPlanIndex = this.planOrder.indexOf(targetPlan);
+    const currentPlanIndex = PLAN_ORDER.indexOf(subscription.plan);
+    const targetIndex = PLAN_ORDER.indexOf(targetPlan);
 
-    if (newPlanIndex >= currentPlanIndex) {
+    if (targetIndex >= currentPlanIndex) {
       throw new ConflictException(
         'Target plan must be lower than current plan',
       );
@@ -773,7 +630,7 @@ export class SubscriptionsService {
       ...subscription.metadata,
       scheduledDowngrade: {
         plan: targetPlan,
-        effectiveDate: subscription.nextBillingDate,
+        effectiveDate: subscription.nextBillingDate!,
       },
     };
     subscription.updatedBy = userId;
@@ -785,6 +642,21 @@ export class SubscriptionsService {
     );
 
     return subscription;
+  }
+
+  /**
+ * Cancels a scheduled downgrade.
+ * Used by POST /subscriptions/downgrade/cancel
+ */
+  async cancelScheduledDowngrade(userId: string): Promise<Subscription> {
+    const subscription = await this.findCurrent(userId);
+
+    if (!subscription.metadata?.scheduledDowngrade) {
+      throw new NotFoundException('No scheduled downgrade found');
+    }
+
+    subscription.metadata = { ...subscription.metadata, scheduledDowngrade: undefined };
+    return this.subscriptionRepository.save(subscription);
   }
 
   /**
@@ -806,9 +678,9 @@ export class SubscriptionsService {
     if (effectiveDate && new Date(effectiveDate) <= now) {
       subscription.plan = targetPlan;
       subscription.price =
-        this.planPricing[targetPlan][subscription.billingPeriod];
-      subscription.limits = this.planLimits[targetPlan];
-      subscription.features = this.planFeatures[targetPlan];
+        PLAN_PRICING[targetPlan][subscription.billingPeriod];
+      subscription.limits = PLAN_LIMITS[targetPlan];
+      subscription.features = PLAN_FEATURES[targetPlan];
 
       subscription.metadata = {
         ...subscription.metadata,
@@ -828,8 +700,9 @@ export class SubscriptionsService {
   }
 
   /**
-   * Cancel subscription
-   */
+  * Cancels the subscription immediately.
+  * Used by POST /subscriptions/cancel
+  */
   async cancel(userId: string): Promise<Subscription> {
     const subscription = await this.findCurrent(userId);
 
@@ -845,102 +718,99 @@ export class SubscriptionsService {
   }
 
   /**
-   * Increment usage
+   * @deprecated — use incrementTenantUsage() instead.
+   * Kept for backward compatibility with any existing callers.
    */
   async incrementUsage(
     userId: string,
-    resource: 'devices' | 'users' | 'customers' | 'apiCalls' | 'storage' | 'smsNotifications',
-    amount: number = 1,
+    resource: keyof SubscriptionUsage,
+    amount = 1,
   ): Promise<void> {
     const subscription = await this.findCurrent(userId);
-    subscription.usage[resource] = (subscription.usage[resource] || 0) + amount;
-    await this.subscriptionRepository.save(subscription);
+    await this.incrementTenantUsage(subscription.tenantId, resource, amount);
   }
 
   /**
-   * Decrement usage
+   * @deprecated — use decrementTenantUsage() instead.
    */
   async decrementUsage(
     userId: string,
-    resource: 'devices' | 'users' | 'customers' | 'apiCalls' | 'storage' | 'smsNotifications',
-    amount: number = 1,
+    resource: keyof SubscriptionUsage,
+    amount = 1,
   ): Promise<void> {
     const subscription = await this.findCurrent(userId);
-    subscription.usage[resource] = Math.max(
-      0,
-      (subscription.usage[resource] || 0) - amount,
-    );
-    await this.subscriptionRepository.save(subscription);
+    await this.decrementTenantUsage(subscription.tenantId, resource, amount);
   }
 
   /**
    * Check if user can perform action
    */
-  async canPerformAction(
-    userId: string,
-    resource: 'devices' | 'users' | 'customers' | 'apiCalls' | 'storage' | 'smsNotifications',
-  ): Promise<boolean> {
-    const subscription = await this.findCurrent(userId);
-    const user = await this.userRepository.findOne({ where: { id: userId } });
+  // async canPerformAction(
+  //   userId: string,
+  //   resource: 'devices' | 'users' | 'customers' | 'apiCalls' | 'storage' | 'smsNotifications',
+  // ): Promise<boolean> {
+  //   const subscription = await this.findCurrent(userId);
+  //   const user = await this.userRepository.findOne({ where: { id: userId } });
 
-    if (!user || !user.tenantId) {
-      return false;
-    }
+  //   if (!user || !user.tenantId) {
+  //     return false;
+  //   }
 
-    // Get limit based on resource
-    let limit: number;
-    switch (resource) {
-      case 'devices':
-        limit = subscription.limits.devices;
-        break;
-      case 'users':
-        limit = subscription.limits.users;
-        break;
-      case 'customers':
-        limit = subscription.limits.customers;
-        break;
-      case 'apiCalls':
-        limit = subscription.limits.apiCallsPerMonth;
-        break;
-      case 'storage':
-        limit = subscription.limits.storageGB;
-        break;
-      case 'smsNotifications':
-        limit = subscription.limits.smsNotificationsPerMonth;
-        break;
-      default:
-        return false;
-    }
+  //   // Get limit based on resource
+  //   let limit: number | undefined;
+  //   switch (resource) {
+  //     case 'devices':
+  //       limit = subscription.limits.devices;
+  //       break;
+  //     case 'users':
+  //       limit = subscription.limits.users;
+  //       break;
+  //     case 'customers':
+  //       limit = subscription.limits.customers;
+  //       break;
+  //     case 'apiCalls':
+  //       limit = subscription.limits.apiCallsPerMonth;
+  //       break;
+  //     case 'storage':
+  //       limit = subscription.limits.storageGB;
+  //       break;
+  //     case 'smsNotifications':
+  //       limit = subscription.limits.smsNotificationsPerMonth;
+  //       break;
+  //     default:
+  //       return false;
+  //   }
 
-    if (limit === -1) return true; // unlimited
+  //   if (limit === -1) return true; // unlimited
 
-    const tenantUsage = await this.getTenantUsage(user.tenantId);
-    const currentUsage = tenantUsage[resource] || 0;
+  //   const tenantUsage = await this.getTenantUsage(user.tenantId);
+  //   const currentUsage = tenantUsage[resource] || 0;
 
-    this.logger.debug(
-      `Checking ${resource} for tenant ${user.tenantId}: ${currentUsage}/${limit}`,
-    );
+  //   this.logger.debug(
+  //     `Checking ${resource} for tenant ${user.tenantId}: ${currentUsage}/${limit}`,
+  //   );
 
-    return currentUsage < limit;
-  }
+  //   return currentUsage < (limit ? limit : 0);
+  // }
 
   /**
    * Increment tenant usage
    */
   async incrementTenantUsage(
-    tenantId: string,
-    resource: 'devices' | 'users' | 'customers' | 'apiCalls' | 'storage' | 'smsNotifications',
+    tenantId: string | undefined,
+    resource: keyof SubscriptionUsage,
     amount: number = 1,
   ): Promise<void> {
-    const tenant = await this.tenantRepository.findOne({
-      where: { id: tenantId },
-    });
-
-        if (!tenant || !tenant.id) {
-      throw new NotFoundException('Tenant admin not found');
-    }
-
-    await this.incrementUsage(tenant.id, resource, amount);
+    await this.dataSource.query(
+      `UPDATE subscriptions
+       SET usage = jsonb_set(
+         usage,
+         '{${resource}}',
+         (COALESCE(usage->>'${resource}', '0')::int + $1)::text::jsonb
+       )
+       WHERE "tenantId" = $2`,
+      [amount, tenantId],
+    );
   }
 
   /**
@@ -948,33 +818,34 @@ export class SubscriptionsService {
    */
   async decrementTenantUsage(
     tenantId: string,
-    resource: 'devices' | 'users' | 'customers' | 'apiCalls' | 'storage' | 'smsNotifications',
+    resource: keyof SubscriptionUsage,
     amount: number = 1,
   ): Promise<void> {
-    const tenant = await this.tenantRepository.findOne({
-      where: { id: tenantId },
-    });
-
-    if (!tenant || !tenant.id) {
-      throw new NotFoundException('Tenant admin not found');
-    }
-
-    await this.decrementUsage(tenant.id, resource, amount);
+    await this.dataSource.query(
+      `UPDATE subscriptions
+       SET usage = jsonb_set(
+         usage,
+         '{${resource}}',
+         GREATEST(0, (COALESCE(usage->>'${resource}', '0')::int - $1))::text::jsonb
+       )
+       WHERE "tenantId" = $2`,
+      [amount, tenantId],
+    );
   }
 
   /**
-   * Check if feature is available
+   * Returns true if a feature is enabled in the tenant's current plan.
    */
-  async hasFeature(userId: string, feature: string): Promise<boolean> {
+  async hasFeature(userId: string, feature: keyof SubscriptionFeatures): Promise<boolean> {
     const subscription = await this.findCurrent(userId);
-    return subscription.features?.[feature] === true;
+    return subscription.hasFeature(feature);
   }
 
   /**
-   * Get pricing for a plan
-   */
+  * Pricing helper used by PaymentsService.
+  */
   getPlanPricing(plan: SubscriptionPlan, billingPeriod: BillingPeriod): number {
-    return this.planPricing[plan][billingPeriod];
+    return PLAN_PRICING[plan][billingPeriod];
   }
 
   /**
@@ -1033,55 +904,85 @@ export class SubscriptionsService {
     return names[plan];
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CRON JOBS
+  // ═══════════════════════════════════════════════════════════════════════════
+
   /**
-   * Cron: Reset monthly usage counters
+   * Reset monthly usage counters for all active subscriptions.
+   * Runs at midnight on the 1st of every month.
+   * Uses a single bulk SQL UPDATE instead of loading + looping in JS.
    */
   @Cron(CronExpression.EVERY_1ST_DAY_OF_MONTH_AT_MIDNIGHT)
   async resetMonthlyUsage(): Promise<void> {
     this.logger.log('🔄 Starting monthly usage reset...');
 
-    const subscriptions = await this.subscriptionRepository.find({
-      where: { status: SubscriptionStatus.ACTIVE },
-    });
-
-    for (const subscription of subscriptions) {
-      subscription.usage.apiCalls = 0;
-      subscription.usage.smsNotifications = 0;
-      subscription.metadata = {
-        ...subscription.metadata,
-        lastUsageReset: new Date(),
-      };
-      await this.subscriptionRepository.save(subscription);
-    }
+    const result = await this.dataSource.query(
+      `UPDATE subscriptions
+       SET
+         usage = jsonb_set(jsonb_set(
+           usage,
+           '{apiCalls}', '0'::jsonb
+         ), '{smsNotifications}', '0'::jsonb),
+         metadata = jsonb_set(
+           COALESCE(metadata, '{}'),
+           '{lastUsageReset}',
+           to_jsonb(now()::text)
+         )
+       WHERE status IN ('active', 'trial')`,
+    );
 
     this.logger.log(
-      `✅ Monthly usage reset complete for ${subscriptions.length} subscriptions`,
+      `✅ Monthly usage reset complete for ${result.rowCount} subscriptions`,
     );
   }
 
   /**
-   * Cron: Process scheduled downgrades
-   */
+    * Execute scheduled downgrades when their effective date has passed.
+    * Runs every day at midnight.
+    */
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async processScheduledDowngrades(): Promise<void> {
-    this.logger.log('🔄 Processing scheduled downgrades...');
+    this.logger.log('Processing scheduled downgrades...');
 
+    // Find subscriptions with a pending downgrade whose date has passed
     const subscriptions = await this.subscriptionRepository
-      .createQueryBuilder('subscription')
-      .where("subscription.metadata->>'scheduledDowngrade' IS NOT NULL")
+      .createQueryBuilder('s')
+      .where(`s.metadata->>'scheduledDowngrade' IS NOT NULL`)
+      .andWhere(
+        `(s.metadata->'scheduledDowngrade'->>'effectiveDate')::timestamptz <= NOW()`,
+      )
       .getMany();
 
     let processed = 0;
     for (const subscription of subscriptions) {
-      const result = await this.executeScheduledDowngrade(subscription.userId);
-      if (result) processed++;
+      try {
+        const { plan: targetPlan } = subscription.metadata!.scheduledDowngrade!;
+
+        subscription.plan = targetPlan;
+        subscription.price = PLAN_PRICING[targetPlan][subscription.billingPeriod];
+        subscription.limits = PLAN_LIMITS[targetPlan];
+        subscription.features = PLAN_FEATURES[targetPlan];
+        subscription.metadata = { ...subscription.metadata, scheduledDowngrade: undefined };
+
+        await this.subscriptionRepository.save(subscription);
+        processed++;
+
+        this.logger.log(`Executed downgrade to ${targetPlan} for tenant ${subscription.tenantId}`);
+      } catch (err) {
+        this.logger.error(`Failed to execute downgrade for tenant ${subscription.tenantId}`, err);
+      }
     }
 
-    this.logger.log(`✅ Processed ${processed} scheduled downgrades`);
+    this.logger.log(`Processed ${processed} scheduled downgrades`);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // INVOICES
+  // ═══════════════════════════════════════════════════════════════════════════
+
   async getInvoices(userId: string) {
-    // TODO: Implement invoice retrieval
+    // TODO: query payments table filtered by tenantId
     return { invoices: [], total: 0 };
   }
 
@@ -1090,5 +991,18 @@ export class SubscriptionsService {
    */
   isRenewal(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): boolean {
     return currentPlan === targetPlan;
+  }
+
+  private validatePaymentAmount(
+    paymentAmount: number,
+    plan: SubscriptionPlan,
+    billingPeriod: BillingPeriod,
+  ): void {
+    const expected = PLAN_PRICING[plan][billingPeriod];
+    if (Math.abs(paymentAmount - expected) > 0.01) {
+      throw new BadRequestException(
+        `Payment amount ${paymentAmount} does not match plan price ${expected} SAR`,
+      );
+    }
   }
 }

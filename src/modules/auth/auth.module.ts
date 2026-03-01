@@ -4,23 +4,17 @@ import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthController } from './auth.controller';
-import { AuthService } from './auth.service';
+import { AuthService } from '@modules/index.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
-import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
-import { LocalStrategy } from './strategies/local.strategy';
-import { User } from '../users/entities/user.entity';
-import { RefreshToken } from './entities/refresh-token.entity';
+import { User, RefreshToken, OAuthAccount, Customer, Invitation, Subscription, Tenant, TokenBlacklist, TwoFactorAuth } from '@modules/index.entities';
 import { MailModule } from '../mail/mail.module';
-import { OAuthAccount } from './entities/oauth-account.entity';
 import { GoogleStrategy } from './strategies/oauth/google.strategy';
 import { GitHubStrategy } from './strategies/oauth/github.strategy';
 import { AppleStrategy } from './strategies/oauth/apple.strategy';
-import { Customer, Invitation, Subscription, Tenant, TokenBlacklist } from '../index.entities';
-import { redisService } from '@/lib/redis/redis.service';
+import { RedisService } from '@/lib/redis/redis.service';
 import { SubscriptionsModule } from '../index.module';
 import { SessionService } from './session/session.service';
 import { TwoFactorAuthModule } from '../two-factor/two-factor-auth.module';
-import { TwoFactorAuth, TwoFactorMethod } from '../two-factor/entities/two-factor-auth.entity';
 
 @Module({
   imports: [
@@ -32,19 +26,20 @@ import { TwoFactorAuth, TwoFactorMethod } from '../two-factor/entities/two-facto
       TokenBlacklist,
       Invitation,
       Tenant,
-      Customer, 
-      TwoFactorAuth
+      Customer
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => ({
-        secret:
-          configService.get<string>('JWT_SECRET') ||
-          'your-super-secret-jwt-key-change-this-in-production',
+        secret: (() => {
+        const secret = configService.get<string>('jwt.secret');
+        if (!secret) throw new Error('JWT_SECRET environment variable is required');
+        return secret;
+          })(),
         signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRATION', '7d') as any, // 👈 cast
+          expiresIn: configService.get<string>('jwt.expiration', '7d') as any,
         },
       }),
     }),
@@ -57,14 +52,12 @@ import { TwoFactorAuth, TwoFactorMethod } from '../two-factor/entities/two-facto
     AuthService,
     SessionService,
     JwtStrategy,
-    JwtRefreshStrategy,
-    LocalStrategy,
     GoogleStrategy,
     GitHubStrategy,
     AppleStrategy,
     {
       provide: 'REDIS_SERVICE',
-      useValue: redisService 
+      useClass: RedisService
     }
   ],
   exports: [AuthService, JwtModule, PassportModule],

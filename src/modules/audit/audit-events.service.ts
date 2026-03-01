@@ -17,12 +17,14 @@ export class AuditEventsService {
     user: any;
     createdBy?: any;
     tenantId: string;
+    customerId?: string;
   }) {
     await this.auditService.logAction({
       userId: payload.createdBy?.id,
       userName: payload.createdBy?.name,
       userEmail: payload.createdBy?.email,
       tenantId: payload.tenantId,
+      customerId: payload.customerId,  // ✅ Added customerId
       action: AuditAction.CREATE,
       entityType: AuditEntityType.USER,
       entityId: payload.user.id,
@@ -41,6 +43,7 @@ export class AuditEventsService {
     user: any;
     updatedBy?: any;
     tenantId: string;
+    customerId?: string;
     changes?: any;
   }) {
     await this.auditService.logAction({
@@ -48,6 +51,7 @@ export class AuditEventsService {
       userName: payload.updatedBy?.name,
       userEmail: payload.updatedBy?.email,
       tenantId: payload.tenantId,
+      customerId: payload.customerId,
       action: AuditAction.UPDATE,
       entityType: AuditEntityType.USER,
       entityId: payload.user.id,
@@ -64,12 +68,14 @@ export class AuditEventsService {
     userEmail: string;
     deletedBy?: any;
     tenantId: string;
+    customerId?: string;
   }) {
     await this.auditService.logAction({
       userId: payload.deletedBy?.id,
       userName: payload.deletedBy?.name,
       userEmail: payload.deletedBy?.email,
       tenantId: payload.tenantId,
+      customerId: payload.customerId,
       action: AuditAction.DELETE,
       entityType: AuditEntityType.USER,
       entityId: payload.userId,
@@ -81,15 +87,19 @@ export class AuditEventsService {
   @OnEvent('user.login')
   async handleUserLogin(payload: {
     userId: string;
+    userName?: string;
     email: string;
     tenantId: string;
+    customerId?: string;
     ipAddress?: string;
     userAgent?: string;
   }) {
     await this.auditService.logAction({
       userId: payload.userId,
+      userName: payload.userName,
       userEmail: payload.email,
       tenantId: payload.tenantId,
+      customerId: payload.customerId,
       action: AuditAction.LOGIN,
       entityType: AuditEntityType.USER,
       entityId: payload.userId,
@@ -105,6 +115,7 @@ export class AuditEventsService {
     email: string;
     tenantId?: string;
     ipAddress?: string;
+    userAgent?: string;
     reason?: string;
   }) {
     await this.auditService.logAction({
@@ -114,6 +125,7 @@ export class AuditEventsService {
       entityType: AuditEntityType.USER,
       description: `Failed login attempt for '${payload.email}'${payload.reason ? `: ${payload.reason}` : ''}`,
       ipAddress: payload.ipAddress,
+      userAgent: payload.userAgent,
       severity: AuditSeverity.WARNING,
       success: false,
       errorMessage: payload.reason,
@@ -123,13 +135,17 @@ export class AuditEventsService {
   @OnEvent('user.logout')
   async handleUserLogout(payload: {
     userId: string;
+    userName?: string;
     email: string;
     tenantId: string;
+    customerId?: string;
   }) {
     await this.auditService.logAction({
       userId: payload.userId,
+      userName: payload.userName,
       userEmail: payload.email,
       tenantId: payload.tenantId,
+      customerId: payload.customerId,
       action: AuditAction.LOGOUT,
       entityType: AuditEntityType.USER,
       entityId: payload.userId,
@@ -141,13 +157,17 @@ export class AuditEventsService {
   @OnEvent('user.password.changed')
   async handlePasswordChanged(payload: {
     userId: string;
+    userName?: string;
     email: string;
     tenantId: string;
+    customerId?: string;
   }) {
     await this.auditService.logAction({
       userId: payload.userId,
+      userName: payload.userName,
       userEmail: payload.email,
       tenantId: payload.tenantId,
+      customerId: payload.customerId,
       action: AuditAction.PASSWORD_CHANGE,
       entityType: AuditEntityType.USER,
       entityId: payload.userId,
@@ -159,8 +179,10 @@ export class AuditEventsService {
   @OnEvent('user.role.changed')
   async handleRoleChanged(payload: {
     userId: string;
+    userName?: string;
     email: string;
     tenantId: string;
+    customerId?: string;
     oldRole: string;
     newRole: string;
     changedBy?: any;
@@ -170,6 +192,7 @@ export class AuditEventsService {
       userName: payload.changedBy?.name,
       userEmail: payload.changedBy?.email,
       tenantId: payload.tenantId,
+      customerId: payload.customerId,
       action: AuditAction.ROLE_CHANGE,
       entityType: AuditEntityType.USER,
       entityId: payload.userId,
@@ -192,12 +215,14 @@ export class AuditEventsService {
     device: any;
     createdBy?: any;
     tenantId: string;
+    customerId?: string;
   }) {
     await this.auditService.logAction({
       userId: payload.createdBy?.id,
       userName: payload.createdBy?.name,
       userEmail: payload.createdBy?.email,
       tenantId: payload.tenantId,
+      customerId: payload.customerId || payload.device.customerId,
       action: AuditAction.CREATE,
       entityType: AuditEntityType.DEVICE,
       entityId: payload.device.id,
@@ -216,6 +241,7 @@ export class AuditEventsService {
     device: any;
     updatedBy?: any;
     tenantId: string;
+    customerId?: string;
     changes?: any;
   }) {
     await this.auditService.logAction({
@@ -223,6 +249,7 @@ export class AuditEventsService {
       userName: payload.updatedBy?.name,
       userEmail: payload.updatedBy?.email,
       tenantId: payload.tenantId,
+      customerId: payload.customerId || payload.device.customerId,
       action: AuditAction.UPDATE,
       entityType: AuditEntityType.DEVICE,
       entityId: payload.device.id,
@@ -239,12 +266,14 @@ export class AuditEventsService {
     deviceName: string;
     deletedBy?: any;
     tenantId: string;
+    customerId?: string;
   }) {
     await this.auditService.logAction({
       userId: payload.deletedBy?.id,
       userName: payload.deletedBy?.name,
       userEmail: payload.deletedBy?.email,
       tenantId: payload.tenantId,
+      customerId: payload.customerId,
       action: AuditAction.DELETE,
       entityType: AuditEntityType.DEVICE,
       entityId: payload.deviceId,
@@ -259,9 +288,11 @@ export class AuditEventsService {
     deviceId: string;
     deviceName: string;
     tenantId: string;
+    customerId?: string;
   }) {
     await this.auditService.logAction({
       tenantId: payload.tenantId,
+      customerId: payload.customerId,
       action: AuditAction.DEVICE_CONNECT,
       entityType: AuditEntityType.DEVICE,
       entityId: payload.deviceId,
@@ -276,9 +307,11 @@ export class AuditEventsService {
     deviceId: string;
     deviceName: string;
     tenantId: string;
+    customerId?: string;
   }) {
     await this.auditService.logAction({
       tenantId: payload.tenantId,
+      customerId: payload.customerId,
       action: AuditAction.DEVICE_DISCONNECT,
       entityType: AuditEntityType.DEVICE,
       entityId: payload.deviceId,
@@ -293,6 +326,7 @@ export class AuditEventsService {
     deviceId: string;
     deviceName: string;
     tenantId: string;
+    customerId?: string;
     command: string;
     sentBy?: any;
   }) {
@@ -301,6 +335,7 @@ export class AuditEventsService {
       userName: payload.sentBy?.name,
       userEmail: payload.sentBy?.email,
       tenantId: payload.tenantId,
+      customerId: payload.customerId,
       action: AuditAction.DEVICE_COMMAND,
       entityType: AuditEntityType.DEVICE,
       entityId: payload.deviceId,
@@ -319,10 +354,12 @@ export class AuditEventsService {
   async handleAlarmCreated(payload: {
     alarm: any;
     tenantId: string;
+    customerId?: string;
   }) {
     await this.auditService.logAction({
       tenantId: payload.tenantId,
-      action: AuditAction.ALARM_CREATE,
+      customerId: payload.customerId || payload.alarm.customerId,
+      action: AuditAction.CREATE,
       entityType: AuditEntityType.ALARM,
       entityId: payload.alarm.id,
       entityName: payload.alarm.name,
@@ -337,45 +374,62 @@ export class AuditEventsService {
 
   @OnEvent('alarm.acknowledged')
   async handleAlarmAcknowledged(payload: {
-    alarmId: string;
-    alarmName: string;
+    alarm: any;
     tenantId: string;
-    acknowledgedBy: any;
+    customerId?: string;
+    userId: string;
   }) {
     await this.auditService.logAction({
-      userId: payload.acknowledgedBy?.id,
-      userName: payload.acknowledgedBy?.name,
-      userEmail: payload.acknowledgedBy?.email,
+      userId: payload.userId,
       tenantId: payload.tenantId,
-      action: AuditAction.ALARM_ACKNOWLEDGE,
+      customerId: payload.customerId || payload.alarm.customerId,
+      action: AuditAction.UPDATE,
       entityType: AuditEntityType.ALARM,
-      entityId: payload.alarmId,
-      entityName: payload.alarmName,
-      description: `Alarm '${payload.alarmName}' acknowledged`,
+      entityId: payload.alarm.id,
+      entityName: payload.alarm.name,
+      description: `Alarm '${payload.alarm.name}' acknowledged`,
       severity: AuditSeverity.INFO,
     });
   }
 
   @OnEvent('alarm.cleared')
   async handleAlarmCleared(payload: {
-    alarmId: string;
-    alarmName: string;
+    alarm: any;
     tenantId: string;
-    clearedBy?: any;
+    customerId?: string;
   }) {
     await this.auditService.logAction({
-      userId: payload.clearedBy?.id,
-      userName: payload.clearedBy?.name,
-      userEmail: payload.clearedBy?.email,
       tenantId: payload.tenantId,
-      action: AuditAction.ALARM_CLEAR,
+      customerId: payload.customerId || payload.alarm.customerId,
+      action: AuditAction.UPDATE,
       entityType: AuditEntityType.ALARM,
-      entityId: payload.alarmId,
-      entityName: payload.alarmName,
-      description: `Alarm '${payload.alarmName}' cleared`,
+      entityId: payload.alarm.id,
+      entityName: payload.alarm.name,
+      description: `Alarm '${payload.alarm.name}' cleared`,
       severity: AuditSeverity.INFO,
     });
   }
 
-  // Add more event handlers for other modules (Assets, Dashboards, Customers, etc.)
+  @OnEvent('alarm.resolved')
+  async handleAlarmResolved(payload: {
+    alarm: any;
+    tenantId: string;
+    customerId?: string;
+    userId: string;
+  }) {
+    await this.auditService.logAction({
+      userId: payload.userId,
+      tenantId: payload.tenantId,
+      customerId: payload.customerId || payload.alarm.customerId,
+      action: AuditAction.UPDATE,
+      entityType: AuditEntityType.ALARM,
+      entityId: payload.alarm.id,
+      entityName: payload.alarm.name,
+      description: `Alarm '${payload.alarm.name}' resolved`,
+      metadata: { resolutionNote: payload.alarm.resolutionNote },
+      severity: AuditSeverity.INFO,
+    });
+  }
+
+  // Add more event handlers for Assets, Dashboards, Customers, etc.
 }

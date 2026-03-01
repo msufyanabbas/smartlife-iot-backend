@@ -1,29 +1,22 @@
-import { ApiProperty } from '@nestjs/swagger';
+// src/modules/auth/dto/login.dto.ts
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class LoginDto {
-  @ApiProperty({
-    example: 'user@example.com',
-    description: 'User email address',
-  })
+  @ApiProperty({ example: 'user@example.com' })
   @IsEmail({}, { message: 'Please provide a valid email address' })
   @IsNotEmpty({ message: 'Email is required' })
+  @Transform(({ value }) => value?.toLowerCase().trim())
   email: string;
 
-  @ApiProperty({
-    example: 'Password123!',
-    description: 'User password',
-    minLength: 8,
-  })
+  @ApiProperty({ example: 'Password123!', minLength: 8 })
   @IsString()
   @IsNotEmpty({ message: 'Password is required' })
-  @MinLength(8, { message: 'Password must be at least 8 characters long' })
+  @MinLength(8, { message: 'Password must be at least 8 characters' })
   password: string;
 
-   @ApiProperty({
-    example: '123456',
-    description: 'Two-factor authentication code (if enabled)',
-  })
+  @ApiPropertyOptional({ example: '123456', description: '2FA code (if enabled)' })
   @IsString()
   @IsOptional()
   twoFactorCode?: string;

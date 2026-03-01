@@ -11,7 +11,8 @@ import * as speakeasy from 'speakeasy';
 import * as QRCode from 'qrcode';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
-import { TwoFactorAuth, TwoFactorMethod } from './entities/two-factor-auth.entity';
+import { TwoFactorAuth } from './entities/two-factor-auth.entity';
+import { TwoFactorMethod } from '@/common/enums/index.enum';
 import { User } from '../users/entities/user.entity';
 import { MailService } from '../mail/mail.service';
 import { ConfigService } from '@nestjs/config';
@@ -27,7 +28,7 @@ export class TwoFactorAuthService {
     private userRepository: Repository<User>,
     private mailService: MailService,
     private configService: ConfigService,
-  ) {}
+  ) { }
 
   /**
    * Get or create 2FA record for user
@@ -213,7 +214,7 @@ export class TwoFactorAuthService {
     // TODO: Integrate with SMS provider (Twilio, AWS SNS, etc.)
     // For now, log the code (REMOVE IN PRODUCTION)
     this.logger.warn(`SMS code for user ${userId}: ${code}`);
-    
+
     // In production, send via SMS:
     // await this.smsService.send(twoFactor.phoneNumber, `Your verification code is: ${code}`);
 

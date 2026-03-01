@@ -7,7 +7,7 @@ import {
   IsNumber,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { WidgetTypeCategory } from '../entities/widget-type.entity';
+import { WidgetTypeCategory } from '@/common/enums/widget-type.enum';
 
 // Widget Type DTOs
 export class CreateWidgetTypeDto {
@@ -66,7 +66,7 @@ export class CreateWidgetTypeDto {
   additionalInfo?: Record<string, any>;
 }
 
-export class UpdateWidgetTypeDto extends PartialType(CreateWidgetTypeDto) {}
+export class UpdateWidgetTypeDto extends PartialType(CreateWidgetTypeDto) { }
 
 export class QueryWidgetTypesDto {
   @ApiPropertyOptional()
@@ -144,7 +144,7 @@ export class CreateWidgetBundleDto {
   additionalInfo?: Record<string, any>;
 }
 
-export class UpdateWidgetBundleDto extends PartialType(CreateWidgetBundleDto) {}
+export class UpdateWidgetBundleDto extends PartialType(CreateWidgetBundleDto) { }
 
 export class QueryWidgetBundlesDto {
   @ApiPropertyOptional()

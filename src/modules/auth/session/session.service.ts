@@ -1,13 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
-import type { redisService } from '@/lib/redis/redis.service';
+import { RedisService } from '@/lib/redis/redis.service';
 
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger(SessionService.name);
 
   constructor(
-    @Inject('REDIS_SERVICE') private readonly redis: typeof redisService,
+    @Inject('REDIS_SERVICE') private readonly redis: RedisService,
   ) {}
 
   /**

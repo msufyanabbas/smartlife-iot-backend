@@ -1,3 +1,4 @@
+// src/modules/analytics/controllers/analytics.controller.ts
 import {
   Controller,
   Get,
@@ -22,10 +23,12 @@ import {
   DeviceAnalyticsDto,
   TelemetryStatQueryDto,
 } from './dto/analytics.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole } from '@common/enums/index.enum'
+import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
+import { RolesGuard } from '@common/guards/roles.guard';
+import { Roles } from '@common/decorators/roles.decorator';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
+import { User } from '@modules/users/entities/user.entity';
+import { UserRole } from '@common/enums/index.enum';
 
 @ApiTags('Analytics')
 @Controller('analytics')
@@ -36,11 +39,18 @@ export class AnalyticsController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Create analytics record' })
   @ApiResponse({ status: 201, description: 'Analytics created' })
-  async create(@Body() createAnalyticsDto: CreateAnalyticsDto) {
-    const analytics = await this.analyticsService.create(createAnalyticsDto);
+  async create(
+    @CurrentUser() user: User,
+    @Body() createAnalyticsDto: CreateAnalyticsDto,
+  ) {
+    const analytics = await this.analyticsService.create(
+      user.tenantId,
+      user.customerId,
+      createAnalyticsDto,
+    );
     return {
       message: 'Analytics created successfully',
       data: analytics,
@@ -50,8 +60,15 @@ export class AnalyticsController {
   @Get()
   @ApiOperation({ summary: 'Query analytics' })
   @ApiResponse({ status: 200, description: 'Analytics retrieved' })
-  async findAll(@Query() queryDto: QueryAnalyticsDto) {
-    const result = await this.analyticsService.findAll(queryDto);
+  async findAll(
+    @CurrentUser() user: User,
+    @Query() queryDto: QueryAnalyticsDto,
+  ) {
+    const result = await this.analyticsService.findAll(
+      user.tenantId,
+      queryDto,
+      user.customerId,
+    );
     return {
       message: 'Analytics retrieved successfully',
       data: result.data,
@@ -59,6 +76,7 @@ export class AnalyticsController {
         total: result.total,
         page: result.page,
         limit: result.limit,
+        totalPages: result.totalPages,
       },
     };
   }
@@ -66,8 +84,11 @@ export class AnalyticsController {
   @Get('overview')
   @ApiOperation({ summary: 'Get system overview' })
   @ApiResponse({ status: 200, description: 'Overview retrieved' })
-  async getOverview() {
-    const overview = await this.analyticsService.getSystemOverview();
+  async getOverview(@CurrentUser() user: User) {
+    const overview = await this.analyticsService.getSystemOverview(
+      user.tenantId,
+      user.customerId,
+    );
     return {
       message: 'System overview retrieved successfully',
       data: overview,
@@ -77,8 +98,15 @@ export class AnalyticsController {
   @Get('devices')
   @ApiOperation({ summary: 'Get device analytics' })
   @ApiResponse({ status: 200, description: 'Device analytics retrieved' })
-  async getDeviceAnalytics(@Query() dto: DeviceAnalyticsDto) {
-    const analytics = await this.analyticsService.getDeviceAnalytics(dto);
+  async getDeviceAnalytics(
+    @CurrentUser() user: User,
+    @Query() dto: DeviceAnalyticsDto,
+  ) {
+    const analytics = await this.analyticsService.getDeviceAnalytics(
+      user.tenantId,
+      dto,
+      user.customerId,
+    );
     return {
       message: 'Device analytics retrieved successfully',
       data: analytics,
@@ -91,11 +119,14 @@ export class AnalyticsController {
   @ApiQuery({ name: 'endDate', required: false })
   @ApiResponse({ status: 200, description: 'Telemetry stats retrieved' })
   async getTelemetryStats(
-    @Query() queryDto: TelemetryStatQueryDto
+    @CurrentUser() user: User,
+    @Query() queryDto: TelemetryStatQueryDto,
   ) {
     const stats = await this.analyticsService.getTelemetryStats(
+      user.tenantId,
       queryDto.startDate ? new Date(queryDto.startDate) : undefined,
       queryDto.endDate ? new Date(queryDto.endDate) : undefined,
+      user.customerId,
     );
     return {
       message: 'Telemetry statistics retrieved successfully',
@@ -109,11 +140,14 @@ export class AnalyticsController {
   @ApiQuery({ name: 'endDate', required: false })
   @ApiResponse({ status: 200, description: 'Alarm analytics retrieved' })
   async getAlarmAnalytics(
-    @Query() queryDto: TelemetryStatQueryDto
+    @CurrentUser() user: User,
+    @Query() queryDto: TelemetryStatQueryDto,
   ) {
     const analytics = await this.analyticsService.getAlarmAnalytics(
+      user.tenantId,
       queryDto.startDate ? new Date(queryDto.startDate) : undefined,
       queryDto.endDate ? new Date(queryDto.endDate) : undefined,
+      user.customerId,
     );
     return {
       message: 'Alarm analytics retrieved successfully',
@@ -129,9 +163,11 @@ export class AnalyticsController {
   @ApiQuery({ name: 'endDate', required: false })
   @ApiResponse({ status: 200, description: 'User analytics retrieved' })
   async getUserActivity(
-    @Query() queryDto: TelemetryStatQueryDto
+    @CurrentUser() user: User,
+    @Query() queryDto: TelemetryStatQueryDto,
   ) {
     const analytics = await this.analyticsService.getUserActivity(
+      user.tenantId,
       queryDto.startDate ? new Date(queryDto.startDate) : undefined,
       queryDto.endDate ? new Date(queryDto.endDate) : undefined,
     );
@@ -146,7 +182,7 @@ export class AnalyticsController {
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Manually generate daily analytics' })
   @ApiResponse({ status: 200, description: 'Analytics generated' })
-  async generateAnalytics() {
+  async generateAnalytics(@CurrentUser() user: User) {
     await this.analyticsService.generateDailyAnalytics();
     return {
       message: 'Analytics generation started',
@@ -158,8 +194,14 @@ export class AnalyticsController {
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Delete old analytics' })
   @ApiResponse({ status: 200, description: 'Old analytics deleted' })
-  async deleteOld(@Param('days') days: number) {
-    const deleted = await this.analyticsService.deleteOld(+days);
+  async deleteOld(
+    @CurrentUser() user: User,
+    @Param('days') days: number,
+  ) {
+    const deleted = await this.analyticsService.deleteOld(
+      user.tenantId,
+      +days,
+    );
     return {
       message: `Deleted ${deleted} old analytics records`,
       data: { deleted },

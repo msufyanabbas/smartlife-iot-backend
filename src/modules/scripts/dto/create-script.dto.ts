@@ -1,6 +1,6 @@
 import { IsString, IsEnum, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { ScriptType } from '../entities/script.entity';
+import { ScriptType } from '@common/enums/index.enum';
 
 export class CreateScriptDto {
   @ApiProperty({ example: 'Temperature Converter' })

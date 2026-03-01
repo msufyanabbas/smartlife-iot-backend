@@ -1,4 +1,4 @@
-import { WidgetTypeCategory } from '../entities/widget-type.entity';
+import { WidgetTypeCategory } from '@/common/enums/widget-type.enum';
 
 /**
  * System widgets seed data

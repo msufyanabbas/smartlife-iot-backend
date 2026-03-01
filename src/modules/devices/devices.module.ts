@@ -15,11 +15,13 @@ import { TenantsService } from '../tenants/tenants.service';
 import { UsersService } from '../users/users.service';
 import { MailService } from '../mail/mail.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
+import { ProtocolsModule } from '../protocols/protocols.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Device, DeviceCredentials, User, Tenant, EmailTemplate]),
     SubscriptionsModule,
+    ProtocolsModule
   ],
   controllers: [DevicesController],
   providers: [DevicesService, DeviceCredentialsService, TenantsService, UsersService, MailService, EmailTemplatesService],

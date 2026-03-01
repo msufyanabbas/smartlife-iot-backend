@@ -1,15 +1,11 @@
-// src/modules/audit/audit.service.ts
+// src/modules/audit/services/audit.service.ts
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, LessThan, In, Brackets } from 'typeorm';
+import { Repository, Between, LessThan, Brackets } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
-import {
-  AuditLog,
-} from '@modules/index.entities';
+import { AuditAction, AuditEntityType, AuditSeverity, UserRole } from '@common/enums/index.enum';
+import { AuditLog, User, Customer } from '@modules/index.entities';
 import { CreateAuditLogDto, QueryAuditLogsDto } from './dto/audit.dto';
-import { User, Customer } from '@modules/index.entities';
-import { UserRole } from '@common/enums/index.enum';
 
 export interface AuditContext {
   user: User;
@@ -27,6 +23,8 @@ export class AuditService {
     private auditRepository: Repository<AuditLog>,
     @InjectRepository(Customer)
     private customerRepository: Repository<Customer>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
     private eventEmitter: EventEmitter2,
   ) {}
 
@@ -51,10 +49,7 @@ export class AuditService {
         break;
 
       case UserRole.TENANT_ADMIN:
-        // Tenant admin can see:
-        // - All logs in their tenant
-        // - All logs from customers in their tenant
-        // - All users in their tenant
+        // Tenant admin can see all logs in their tenant
         if (!user.tenantId) {
           throw new ForbiddenException('Tenant admin must have a tenant');
         }
@@ -71,42 +66,39 @@ export class AuditService {
         break;
 
       case UserRole.CUSTOMER_ADMIN:
-        // Customer admin can see:
-        // - All logs in their customer
-        // - All users in their customer
-        // - NOT tenant admin activities
+        // Customer admin can see all logs in their customer
         if (!user.customerId) {
           throw new ForbiddenException('Customer admin must belong to a customer');
         }
+        if (!user.tenantId) {
+          throw new ForbiddenException('Customer admin must have a tenant');
+        }
+        
+        context.allowedTenantIds = [user.tenantId];
         context.allowedCustomerIds = [user.customerId];
         context.canSeeCustomerLogs = true;
-        
-        if (user.tenantId) {
-          context.allowedTenantIds = [user.tenantId];
-        }
         break;
 
       case UserRole.CUSTOMER_USER:
-        // Customer user can see:
-        // - Only their own logs
-        // - Activities in their customer context
+        // Customer user can only see their own logs
         if (!user.customerId) {
           throw new ForbiddenException('Customer user must belong to a customer');
         }
+        if (!user.tenantId) {
+          throw new ForbiddenException('Customer user must have a tenant');
+        }
+        
+        context.allowedTenantIds = [user.tenantId];
         context.allowedCustomerIds = [user.customerId];
         context.canSeeOwnLogsOnly = true;
-        
-        if (user.tenantId) {
-          context.allowedTenantIds = [user.tenantId];
-        }
         break;
 
       case UserRole.USER:
         // Regular user can only see their own logs
-        context.canSeeOwnLogsOnly = true;
         if (user.tenantId) {
           context.allowedTenantIds = [user.tenantId];
         }
+        context.canSeeOwnLogsOnly = true;
         break;
 
       default:
@@ -123,24 +115,25 @@ export class AuditService {
     queryBuilder: any,
     context: AuditContext,
   ): void {
-    if (context.canSeeAllTenantLogs) {
-      // Super admin or tenant admin - no additional filters needed except tenant scope
-      if (context.allowedTenantIds.length > 0) {
-        queryBuilder.andWhere('audit.tenantId IN (:...tenantIds)', {
-          tenantIds: context.allowedTenantIds,
-        });
-      }
-      // If super admin with no tenant filter, they see everything
+    // Super admin - see everything (no filters)
+    if (context.canSeeAllTenantLogs && context.allowedTenantIds.length === 0) {
       return;
     }
 
+    // Tenant admin or filtered super admin - filter by tenant
+    if (context.canSeeAllTenantLogs && context.allowedTenantIds.length > 0) {
+      queryBuilder.andWhere('audit.tenantId IN (:...tenantIds)', {
+        tenantIds: context.allowedTenantIds,
+      });
+      return;
+    }
+
+    // Own logs only (CUSTOMER_USER or USER)
     if (context.canSeeOwnLogsOnly) {
-      // User or customer user - only their own logs
       queryBuilder.andWhere('audit.userId = :userId', {
         userId: context.user.id,
       });
       
-      // Also filter by their tenant/customer if applicable
       if (context.allowedTenantIds.length > 0) {
         queryBuilder.andWhere('audit.tenantId IN (:...tenantIds)', {
           tenantIds: context.allowedTenantIds,
@@ -155,29 +148,15 @@ export class AuditService {
       return;
     }
 
-    if (context.canSeeCustomerLogs) {
-      // Customer admin - see customer logs but NOT tenant admin activities
-      queryBuilder.andWhere(
-        new Brackets(qb => {
-          qb.where('audit.customerId IN (:...customerIds)', {
-            customerIds: context.allowedCustomerIds,
-          })
-          // Exclude tenant admin actions unless they're about this customer
-          .andWhere(
-            new Brackets(qb2 => {
-              qb2.where('audit.userId != :tenantAdminId', {
-                tenantAdminId: context.user.tenantId, // This would need the actual tenant admin ID
-              })
-              .orWhere('audit.entityType = :customerEntityType', {
-                customerEntityType: AuditEntityType.CUSTOMER,
-              })
-              .orWhere('audit.customerId IN (:...customerIds)', {
-                customerIds: context.allowedCustomerIds,
-              });
-            })
-          );
-        })
-      );
+    // Customer admin - see customer logs only
+    if (context.canSeeCustomerLogs && !context.canSeeAllTenantLogs) {
+      queryBuilder.andWhere('audit.tenantId IN (:...tenantIds)', {
+        tenantIds: context.allowedTenantIds,
+      });
+      
+      queryBuilder.andWhere('audit.customerId IN (:...customerIds)', {
+        customerIds: context.allowedCustomerIds,
+      });
     }
   }
 
@@ -268,7 +247,8 @@ export class AuditService {
     const queryBuilder = this.auditRepository
       .createQueryBuilder('audit')
       .leftJoinAndSelect('audit.user', 'user')
-      .leftJoinAndSelect('audit.tenant', 'tenant');
+      .leftJoinAndSelect('audit.tenant', 'tenant')
+      .leftJoinAndSelect('audit.customer', 'customer');
 
     // Apply automatic role-based filters
     this.applyRoleBasedFilters(queryBuilder, context);
@@ -355,7 +335,12 @@ export class AuditService {
         ...options,
         entityType: AuditEntityType.USER,
         entityId: userId,
-      },
+        page: options?.page,
+        limit: options?.limit,
+        startDate: options?.startDate,
+        endDate: options?.endDate,
+        search: options?.search,
+      } as QueryAuditLogsDto,
       currentUser,
     );
   }
@@ -370,7 +355,12 @@ export class AuditService {
         ...options,
         entityType: AuditEntityType.DEVICE,
         entityId: deviceId,
-      },
+        page: options?.page,
+        limit: options?.limit,
+        startDate: options?.startDate,
+        endDate: options?.endDate,
+        search: options?.search,
+      } as QueryAuditLogsDto,
       currentUser,
     );
   }
@@ -385,7 +375,11 @@ export class AuditService {
         ...options,
         entityType: AuditEntityType.ALARM,
         entityId: alarmId,
-      },
+        page: options?.page,
+        limit: options?.limit,
+        startDate: options?.startDate,
+        endDate: options?.endDate,
+      } as QueryAuditLogsDto,
       currentUser,
     );
   }
@@ -400,7 +394,11 @@ export class AuditService {
         ...options,
         entityType: AuditEntityType.DEVICE_PROFILE,
         entityId: profileId,
-      },
+        page: options?.page,
+        limit: options?.limit,
+        startDate: options?.startDate,
+        endDate: options?.endDate,
+      } as QueryAuditLogsDto,
       currentUser,
     );
   }
@@ -415,7 +413,11 @@ export class AuditService {
         ...options,
         entityType: AuditEntityType.ASSET,
         entityId: assetId,
-      },
+        page: options?.page,
+        limit: options?.limit,
+        startDate: options?.startDate,
+        endDate: options?.endDate,
+      } as QueryAuditLogsDto,
       currentUser,
     );
   }
@@ -430,7 +432,11 @@ export class AuditService {
         ...options,
         entityType: AuditEntityType.DASHBOARD,
         entityId: dashboardId,
-      },
+        page: options?.page,
+        limit: options?.limit,
+        startDate: options?.startDate,
+        endDate: options?.endDate,
+      } as QueryAuditLogsDto,
       currentUser,
     );
   }
@@ -445,7 +451,11 @@ export class AuditService {
         ...options,
         entityType: AuditEntityType.CUSTOMER,
         entityId: customerId,
-      },
+        page: options?.page,
+        limit: options?.limit,
+        startDate: options?.startDate,
+        endDate: options?.endDate,
+      } as QueryAuditLogsDto,
       currentUser,
     );
   }
@@ -460,6 +470,7 @@ export class AuditService {
       .createQueryBuilder('audit')
       .leftJoinAndSelect('audit.user', 'user')
       .leftJoinAndSelect('audit.tenant', 'tenant')
+      .leftJoinAndSelect('audit.customer', 'customer')
       .where('audit.id = :id', { id });
 
     // Apply role-based filters
@@ -489,10 +500,9 @@ export class AuditService {
     const queryBuilder = this.auditRepository
       .createQueryBuilder('audit')
       .leftJoinAndSelect('audit.user', 'user')
-      .where('audit.timestamp BETWEEN :start AND :end', {
-        start: since,
-        end: new Date(),
-      });
+      .leftJoinAndSelect('audit.tenant', 'tenant')
+      .leftJoinAndSelect('audit.customer', 'customer')
+      .where('audit.timestamp >= :since', { since });
 
     this.applyRoleBasedFilters(queryBuilder, context);
 
@@ -514,6 +524,8 @@ export class AuditService {
     const queryBuilder = this.auditRepository
       .createQueryBuilder('audit')
       .leftJoinAndSelect('audit.user', 'user')
+      .leftJoinAndSelect('audit.tenant', 'tenant')
+      .leftJoinAndSelect('audit.customer', 'customer')
       .where('audit.success = :success', { success: false });
 
     this.applyRoleBasedFilters(queryBuilder, context);
@@ -554,16 +566,79 @@ export class AuditService {
 
     const total = await queryBuilder.getCount();
 
-    // Continue with statistics aggregation...
-    // (Rest of the statistics logic remains the same)
+    // Get counts by action
+    const byActionQuery = queryBuilder.clone();
+    const actionResults = await byActionQuery
+      .select('audit.action', 'action')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('audit.action')
+      .getRawMany();
+
+    const byAction: Record<string, number> = {};
+    actionResults.forEach((row) => {
+      byAction[row.action] = parseInt(row.count);
+    });
+
+    // Get counts by entity type
+    const byEntityTypeQuery = queryBuilder.clone();
+    const entityTypeResults = await byEntityTypeQuery
+      .select('audit.entityType', 'entityType')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('audit.entityType')
+      .getRawMany();
+
+    const byEntityType: Record<string, number> = {};
+    entityTypeResults.forEach((row) => {
+      byEntityType[row.entityType] = parseInt(row.count);
+    });
+
+    // Get counts by severity
+    const bySeverityQuery = queryBuilder.clone();
+    const severityResults = await bySeverityQuery
+      .select('audit.severity', 'severity')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('audit.severity')
+      .getRawMany();
+
+    const bySeverity: Record<string, number> = {};
+    severityResults.forEach((row) => {
+      bySeverity[row.severity] = parseInt(row.count);
+    });
+
+    // Calculate success rate
+    const successQuery = queryBuilder.clone();
+    const successCount = await successQuery
+      .andWhere('audit.success = :success', { success: true })
+      .getCount();
+
+    const successRate = total > 0 ? (successCount / total) * 100 : 0;
+
+    // Get top users
+    const topUsersQuery = queryBuilder.clone();
+    const topUsersResults = await topUsersQuery
+      .select('audit.userId', 'userId')
+      .addSelect('audit.userName', 'userName')
+      .addSelect('COUNT(*)', 'count')
+      .where('audit.userId IS NOT NULL')
+      .groupBy('audit.userId')
+      .addGroupBy('audit.userName')
+      .orderBy('count', 'DESC')
+      .limit(10)
+      .getRawMany();
+
+    const topUsers = topUsersResults.map((row) => ({
+      userId: row.userId,
+      userName: row.userName || 'Unknown',
+      count: parseInt(row.count),
+    }));
 
     return {
       total,
-      byAction: {},
-      byEntityType: {},
-      bySeverity: {},
-      successRate: 0,
-      topUsers: [],
+      byAction,
+      byEntityType,
+      bySeverity,
+      successRate,
+      topUsers,
     };
   }
 
@@ -578,25 +653,31 @@ export class AuditService {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysOld);
 
-    const where: any = {
+    const result = await this.auditRepository.delete({
       timestamp: LessThan(cutoffDate),
-    };
+    });
 
-    const result = await this.auditRepository.delete(where);
     return result.affected || 0;
   }
 
   /**
    * Export audit logs to CSV with role-based filtering
    */
-  async exportToCSV(queryDto: QueryAuditLogsDto, currentUser: User): Promise<string> {
-    const { logs } = await this.findAll({ ...queryDto, limit: 10000 }, currentUser);
+  async exportToCSV(
+    queryDto: QueryAuditLogsDto,
+    currentUser: User,
+  ): Promise<string> {
+    const { logs } = await this.findAll(
+      { ...queryDto, limit: 10000 },
+      currentUser,
+    );
 
     const headers = [
       'Timestamp',
       'Tenant ID',
       'Customer ID',
-      'User',
+      'User ID',
+      'User Name',
       'Email',
       'Action',
       'Entity Type',
@@ -606,24 +687,27 @@ export class AuditService {
       'Severity',
       'Success',
       'IP Address',
+      'User Agent',
       'Error Message',
     ];
 
     const rows = logs.map((log) => [
       log.timestamp.toISOString(),
-      log.tenantId,
+      log.tenantId || 'N/A',
       log.customerId || 'N/A',
+      log.userId || 'N/A',
       log.userName || 'N/A',
       log.userEmail || 'N/A',
       log.action,
       log.entityType,
       log.entityId || 'N/A',
       log.entityName || 'N/A',
-      log.description || 'N/A',
+      (log.description || 'N/A').replace(/"/g, '""'), // Escape quotes
       log.severity,
       log.success ? 'Yes' : 'No',
       log.ipAddress || 'N/A',
-      log.errorMessage || 'N/A',
+      (log.userAgent || 'N/A').replace(/"/g, '""'), // Escape quotes
+      (log.errorMessage || 'N/A').replace(/"/g, '""'), // Escape quotes
     ]);
 
     const csv = [headers, ...rows]

@@ -6,7 +6,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
-import { Share, ShareType } from './entities/sharing.entity';
+import { ShareType } from '@common/enums/index.enum';
+import { Share } from '../index.entities';
 import { CreateShareDto } from './dto/create-sharing.dto';
 import { UpdateShareDto } from './dto/update-sharing.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -17,7 +18,7 @@ export class SharingService {
   constructor(
     @InjectRepository(Share)
     private readonly shareRepository: Repository<Share>,
-  ) {}
+  ) { }
 
   async create(userId: string, createShareDto: CreateShareDto): Promise<Share> {
     // Validate share type and required fields
@@ -32,7 +33,6 @@ export class SharingService {
 
     const share = this.shareRepository.create({
       ...createShareDto,
-      userId,
       sharedBy: userId,
       createdBy: userId,
       token:

@@ -1,2 +1,1 @@
-export * from './logger.middleware';
-export * from './tenant.middleware';
+export * from './request-id.middleware';

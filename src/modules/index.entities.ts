@@ -1,13 +1,18 @@
 import e from 'express';
-import { UserRole } from './user_roles/entities/user_roles.entity';
+import { CustomerUserLimit } from './customers/entities/customer-user-limit.entity';
 
 // User & Auth entities
 export { User } from './users/entities/user.entity';
 export { RefreshToken } from './auth/entities/refresh-token.entity';
 export { Role } from './roles/entities/roles.entity';
 export { Permission } from './permissions/entities/permissions.entity';
-export { RolePermission } from './role_permissions/entities/role_permissions.entity';
-export { UserRole } from './user_roles/entities/user_roles.entity';
+export { CustomerUserLimit } from './customers/entities/customer-user-limit.entity';
+export {
+  CustomerDevice, CustomerDashboard, CustomerAsset,
+  CustomerFloorPlan, CustomerAutomation,
+  UserDevice, UserDashboard, UserAsset,
+  UserFloorPlan, UserAutomation,
+} from './assignments/entities/resource-assignment.entities';
 
 // Device & IoT entities
 export { Device } from './devices/entities/device.entity';
@@ -18,6 +23,7 @@ export { EdgeInstance } from './edge/entities/edge-instance.entity';
 // Profile entities
 export { DeviceProfile } from './profiles/entities/device-profile.entity';
 export { AssetProfile } from './profiles/entities/asset-profile.entity';
+export { RuleChain } from './rules/entities/rule-chain.entity';
 
 // Dashboard & Visualization entities
 export { Dashboard } from './dashboards/entities/dashboard.entity';

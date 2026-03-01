@@ -1,5 +1,5 @@
-// src/database/seeders/notification.seeder.ts
-import { Injectable } from '@nestjs/common';
+// src/database/seeds/notification/notification.seeder.ts
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -8,33 +8,49 @@ import {
   NotificationPriority,
   NotificationStatus,
 } from '@common/enums/index.enum';
-import { Notification, User } from '@modules/index.entities';
+import { Notification, User, Tenant } from '@modules/index.entities';
 import { ISeeder } from '../seeder.interface';
 
 @Injectable()
 export class NotificationSeeder implements ISeeder {
+  private readonly logger = new Logger(NotificationSeeder.name);
+
   constructor(
     @InjectRepository(Notification)
     private readonly notificationRepository: Repository<Notification>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-  ) {}
+    @InjectRepository(Tenant)
+    private readonly tenantRepository: Repository<Tenant>,
+  ) { }
 
   async seed(): Promise<void> {
-    // ✅ Fetch users with tenant and customer information
-    const users = await this.userRepository.find({
-      take: 10,
-      relations: ['tenant', 'customer'], // Load relations
-    });
+    this.logger.log('🌱 Starting notification seeding...');
 
-    if (users.length === 0) {
-      console.log('⚠️  No users found. Please seed users first.');
+    // Check if notifications already exist
+    const existingNotifications = await this.notificationRepository.count();
+    if (existingNotifications > 0) {
+      this.logger.log(
+        `⏭️  Notifications already seeded (${existingNotifications} records). Skipping...`,
+      );
       return;
     }
 
-    console.log(`📧 Seeding notifications for ${users.length} users...`);
+    // Fetch users and tenants
+    const users = await this.userRepository.find({ take: 10 });
+    const tenants = await this.tenantRepository.find({ take: 5 });
 
-    // Helper functions
+    if (users.length === 0 || tenants.length === 0) {
+      this.logger.warn('⚠️  No users or tenants found. Please seed them first.');
+      return;
+    }
+
+    this.logger.log(`📧 Seeding notifications for ${users.length} users...`);
+
+    // ════════════════════════════════════════════════════════════════
+    // HELPER FUNCTIONS
+    // ════════════════════════════════════════════════════════════════
+
     const getRandomItem = <T>(array: T[]): T => {
       return array[Math.floor(Math.random() * array.length)];
     };
@@ -45,26 +61,24 @@ export class NotificationSeeder implements ISeeder {
       return date;
     };
 
-    // ✅ Organize users by role for better testing
-    const tenantAdmins = users.filter((u) => u.role === 'tenant_admin');
-    const customerAdmins = users.filter((u) => u.role === 'customer_admin');
-    const customerUsers = users.filter((u) => u.role === 'customer_user');
-    const regularUsers = users.filter(
-      (u) => u.role === 'user' || u.role === 'tenant_admin',
-    );
+    const generateFutureDate = (hoursFromNow: number): Date => {
+      const date = new Date();
+      date.setHours(date.getHours() + hoursFromNow);
+      return date;
+    };
 
-    console.log(
-      `👥 User distribution: ${tenantAdmins.length} tenant admins, ${customerAdmins.length} customer admins, ${customerUsers.length} customer users`,
-    );
+    // ════════════════════════════════════════════════════════════════
+    // NOTIFICATION DATA
+    // ════════════════════════════════════════════════════════════════
 
-    const notifications = [
-      // ============================================
-      // CRITICAL ALARMS - Multiple users
-      // ============================================
+    const notifications: Partial<Notification>[] = [
+      // ════════════════════════════════════════════════════════════════
+      // 1. CRITICAL ALARM - Temperature Alert
+      // ════════════════════════════════════════════════════════════════
       {
         userId: users[0].id,
-        tenantId: users[0].tenantId, // ✅ Required
-        customerId: users[0].customerId, // ✅ Can be null
+        tenantId: users[0].tenantId || tenants[0].id,
+        customerId: users[0].customerId,
         type: NotificationType.ALARM,
         channel: NotificationChannel.EMAIL,
         priority: NotificationPriority.URGENT,
@@ -103,9 +117,13 @@ export class NotificationSeeder implements ISeeder {
         retryCount: 0,
         maxRetries: 3,
       },
+
+      // ════════════════════════════════════════════════════════════════
+      // 2. DEVICE OFFLINE - Push Notification
+      // ════════════════════════════════════════════════════════════════
       {
         userId: users[0].id,
-        tenantId: users[0].tenantId,
+        tenantId: users[0].tenantId || tenants[0].id,
         customerId: users[0].customerId,
         type: NotificationType.DEVICE,
         channel: NotificationChannel.PUSH,
@@ -122,7 +140,7 @@ export class NotificationSeeder implements ISeeder {
         },
         metadata: {
           deviceId: 'device-a-205',
-          lastSeen: generatePastDate(0.33),
+          lastSeen: generatePastDate(0.33).toISOString(),
           location: 'Warehouse A',
         },
         recipientDeviceToken: 'fcm-token-user1-device1',
@@ -132,9 +150,13 @@ export class NotificationSeeder implements ISeeder {
         retryCount: 0,
         maxRetries: 3,
       },
+
+      // ════════════════════════════════════════════════════════════════
+      // 3. LOW BATTERY - SMS
+      // ════════════════════════════════════════════════════════════════
       {
         userId: users[1]?.id || users[0].id,
-        tenantId: users[1]?.tenantId || users[0].tenantId,
+        tenantId: users[1]?.tenantId || users[0].tenantId || tenants[0].id,
         customerId: users[1]?.customerId || users[0].customerId,
         type: NotificationType.ALARM,
         channel: NotificationChannel.SMS,
@@ -156,12 +178,12 @@ export class NotificationSeeder implements ISeeder {
         maxRetries: 3,
       },
 
-      // ============================================
-      // SYSTEM NOTIFICATIONS
-      // ============================================
+      // ════════════════════════════════════════════════════════════════
+      // 4. SYSTEM MAINTENANCE - In-App
+      // ════════════════════════════════════════════════════════════════
       {
         userId: users[0].id,
-        tenantId: users[0].tenantId,
+        tenantId: users[0].tenantId || tenants[0].id,
         customerId: users[0].customerId,
         type: NotificationType.SYSTEM,
         channel: NotificationChannel.IN_APP,
@@ -194,12 +216,12 @@ export class NotificationSeeder implements ISeeder {
         maxRetries: 3,
       },
 
-      // ============================================
-      // REPORTS
-      // ============================================
+      // ════════════════════════════════════════════════════════════════
+      // 5. WEEKLY REPORT - Email
+      // ════════════════════════════════════════════════════════════════
       {
         userId: users[0].id,
-        tenantId: users[0].tenantId,
+        tenantId: users[0].tenantId || tenants[0].id,
         customerId: users[0].customerId,
         type: NotificationType.REPORT,
         channel: NotificationChannel.EMAIL,
@@ -210,7 +232,7 @@ export class NotificationSeeder implements ISeeder {
         htmlContent: `
           <div style="font-family: Arial, sans-serif;">
             <h2>Weekly Performance Report</h2>
-            <p>Hi ${users[0].name},</p>
+            <p>Hi ${users[0].name || 'User'},</p>
             <p>Your weekly device performance report for October 28 - November 3, 2025 is now available.</p>
             <h3>Summary:</h3>
             <ul>
@@ -240,12 +262,12 @@ export class NotificationSeeder implements ISeeder {
         maxRetries: 3,
       },
 
-      // ============================================
-      // USER NOTIFICATIONS
-      // ============================================
+      // ════════════════════════════════════════════════════════════════
+      // 6. USER NOTIFICATION - Team Member Added
+      // ════════════════════════════════════════════════════════════════
       {
         userId: users[1]?.id || users[0].id,
-        tenantId: users[1]?.tenantId || users[0].tenantId,
+        tenantId: users[1]?.tenantId || users[0].tenantId || tenants[0].id,
         customerId: users[1]?.customerId || users[0].customerId,
         type: NotificationType.USER,
         channel: NotificationChannel.IN_APP,
@@ -270,12 +292,12 @@ export class NotificationSeeder implements ISeeder {
         maxRetries: 3,
       },
 
-      // ============================================
-      // WEBHOOK NOTIFICATIONS
-      // ============================================
+      // ════════════════════════════════════════════════════════════════
+      // 7. WEBHOOK NOTIFICATION - Humidity Alert
+      // ════════════════════════════════════════════════════════════════
       {
         userId: users[0].id,
-        tenantId: users[0].tenantId,
+        tenantId: users[0].tenantId || tenants[0].id,
         customerId: users[0].customerId,
         type: NotificationType.ALARM,
         channel: NotificationChannel.WEBHOOK,
@@ -299,13 +321,13 @@ export class NotificationSeeder implements ISeeder {
         maxRetries: 3,
       },
 
-      // ============================================
-      // FAILED NOTIFICATION (for testing retry)
-      // ============================================
+      // ════════════════════════════════════════════════════════════════
+      // 8. FAILED NOTIFICATION (for testing retry)
+      // ════════════════════════════════════════════════════════════════
       {
-        userId: getRandomItem(users).id,
-        tenantId: getRandomItem(users).tenantId,
-        customerId: getRandomItem(users).customerId,
+        userId: users[2]?.id || users[0].id,
+        tenantId: users[2]?.tenantId || users[0].tenantId || tenants[0].id,
+        customerId: users[2]?.customerId || users[0].customerId,
         type: NotificationType.ALARM,
         channel: NotificationChannel.EMAIL,
         priority: NotificationPriority.HIGH,
@@ -321,17 +343,17 @@ export class NotificationSeeder implements ISeeder {
         sentAt: generatePastDate(4),
         failedAt: generatePastDate(4),
         errorMessage: 'SMTP error: Recipient email address not found',
-        retryCount: 1, // ✅ Has retries remaining
+        retryCount: 1,
         maxRetries: 3,
       },
 
-      // ============================================
-      // SCHEDULED NOTIFICATION (future)
-      // ============================================
+      // ════════════════════════════════════════════════════════════════
+      // 9. SCHEDULED NOTIFICATION (future)
+      // ════════════════════════════════════════════════════════════════
       {
-        userId: getRandomItem(users).id,
-        tenantId: getRandomItem(users).tenantId,
-        customerId: getRandomItem(users).customerId,
+        userId: users[1]?.id || users[0].id,
+        tenantId: users[1]?.tenantId || users[0].tenantId || tenants[0].id,
+        customerId: users[1]?.customerId || users[0].customerId,
         type: NotificationType.DEVICE,
         channel: NotificationChannel.IN_APP,
         priority: NotificationPriority.NORMAL,
@@ -347,86 +369,121 @@ export class NotificationSeeder implements ISeeder {
           type: 'link' as const,
         },
         isRead: false,
-        scheduledFor: new Date(Date.now() + 3600000), // 1 hour from now
+        scheduledFor: generateFutureDate(1), // 1 hour from now
+        retryCount: 0,
+        maxRetries: 3,
+      },
+
+      // ════════════════════════════════════════════════════════════════
+      // 10. EXPIRING NOTIFICATION (for cleanup testing)
+      // ════════════════════════════════════════════════════════════════
+      {
+        userId: users[0].id,
+        tenantId: users[0].tenantId || tenants[0].id,
+        customerId: users[0].customerId,
+        type: NotificationType.SYSTEM,
+        channel: NotificationChannel.IN_APP,
+        priority: NotificationPriority.LOW,
+        status: NotificationStatus.DELIVERED,
+        title: 'Temporary Notification',
+        message: 'This notification will expire in 24 hours',
+        isRead: false,
+        sentAt: generatePastDate(1),
+        deliveredAt: generatePastDate(1),
+        expiresAt: generateFutureDate(24), // Expires in 24 hours
         retryCount: 0,
         maxRetries: 3,
       },
     ];
 
-    // ✅ Generate random notifications for remaining users
-    const additionalNotifications: any = [];
-    
-    for (let i = 0; i < Math.min(10, users.length); i++) {
-      const user = getRandomItem(users);
-      
-      additionalNotifications.push({
-        userId: user.id,
-        tenantId: user.tenantId,
-        customerId: user.customerId,
-        type: getRandomItem(Object.values(NotificationType)),
-        channel: NotificationChannel.IN_APP,
-        priority: getRandomItem(Object.values(NotificationPriority)),
-        status: getRandomItem([
-          NotificationStatus.DELIVERED,
-          NotificationStatus.READ,
-        ]),
-        title: `Random Notification ${i + 1}`,
-        message: `This is a test notification for ${user.name}`,
-        isRead: Math.random() > 0.5,
-        readAt: Math.random() > 0.5 ? generatePastDate(24) : null,
-        sentAt: generatePastDate(Math.floor(Math.random() * 72)),
-        deliveredAt: generatePastDate(Math.floor(Math.random() * 72)),
-        retryCount: 0,
-        maxRetries: 3,
-      });
-    }
+    // ════════════════════════════════════════════════════════════════
+    // SAVE ALL NOTIFICATIONS
+    // ════════════════════════════════════════════════════════════════
 
-    const allNotifications = [...notifications, ...additionalNotifications];
+    let createdCount = 0;
 
-    // ✅ Save all notifications
-    let created = 0;
-    for (const notificationData of allNotifications) {
+    for (const notificationData of notifications) {
       try {
-        const notification =
-          this.notificationRepository.create(notificationData);
+        const notification = this.notificationRepository.create(notificationData);
         await this.notificationRepository.save(notification);
-        created++;
-        
-        if (created % 5 === 0) {
-          console.log(`   📧 Created ${created}/${allNotifications.length} notifications...`);
-        }
+
+        const statusTag =
+          notification.status === NotificationStatus.READ
+            ? '✅ READ'
+            : notification.status === NotificationStatus.FAILED
+              ? '❌ FAILED'
+              : notification.status === NotificationStatus.PENDING
+                ? '⏳ PENDING'
+                : '📧 SENT';
+
+        const priorityTag =
+          notification.priority === NotificationPriority.URGENT
+            ? '🚨 URGENT'
+            : notification.priority === NotificationPriority.HIGH
+              ? '⚠️  HIGH'
+              : '📌 NORMAL';
+
+        this.logger.log(
+          `✅ Created: ${notification.title.substring(0, 40).padEnd(42)} | ${notification.channel.padEnd(8)} | ${priorityTag} | ${statusTag}`,
+        );
+        createdCount++;
       } catch (error) {
-        console.error(
-          `❌ Failed to create notification: ${notificationData.title}`,
-          error.message,
+        this.logger.error(
+          `❌ Failed to seed notification '${notificationData.title}': ${error.message}`,
         );
       }
     }
 
-    console.log(`\n✅ Successfully created ${created} notifications!`);
-    console.log(`\n📊 Notification Breakdown:`);
-    
-    // Print statistics
-    const stats = {
-      total: created,
-      unread: allNotifications.filter((n) => !n.isRead).length,
+    // ════════════════════════════════════════════════════════════════
+    // SUMMARY STATISTICS
+    // ════════════════════════════════════════════════════════════════
+
+    const summary = {
+      total: createdCount,
+      unread: notifications.filter((n) => !n.isRead).length,
       byType: {} as Record<string, number>,
       byChannel: {} as Record<string, number>,
       byStatus: {} as Record<string, number>,
+      byPriority: {} as Record<string, number>,
     };
 
-    allNotifications.forEach((n) => {
-      stats.byType[n.type] = (stats.byType[n.type] || 0) + 1;
-      stats.byChannel[n.channel] = (stats.byChannel[n.channel] || 0) + 1;
-      stats.byStatus[n.status] = (stats.byStatus[n.status] || 0) + 1;
+    notifications.forEach((n) => {
+      if (n.type) summary.byType[n.type] = (summary.byType[n.type] || 0) + 1;
+      if (n.channel)
+        summary.byChannel[n.channel] = (summary.byChannel[n.channel] || 0) + 1;
+      if (n.status)
+        summary.byStatus[n.status] = (summary.byStatus[n.status] || 0) + 1;
+      if (n.priority)
+        summary.byPriority[n.priority] = (summary.byPriority[n.priority] || 0) + 1;
     });
 
-    console.log(`   Total: ${stats.total}`);
-    console.log(`   Unread: ${stats.unread}`);
-    console.log(`   By Type:`, stats.byType);
-    console.log(`   By Channel:`, stats.byChannel);
-    console.log(`   By Status:`, stats.byStatus);
-    
-    console.log('\n🎉 Notification seeding completed!');
+    this.logger.log('');
+    this.logger.log(
+      `🎉 Notification seeding complete! Created ${createdCount}/${notifications.length} notifications.`,
+    );
+    this.logger.log('');
+    this.logger.log('📊 Notification Summary:');
+    this.logger.log(`   Total: ${summary.total}`);
+    this.logger.log(`   Unread: ${summary.unread}`);
+    this.logger.log('');
+    this.logger.log('   By Type:');
+    Object.entries(summary.byType).forEach(([type, count]) =>
+      this.logger.log(`     - ${type.padEnd(15)}: ${count}`),
+    );
+    this.logger.log('');
+    this.logger.log('   By Channel:');
+    Object.entries(summary.byChannel).forEach(([channel, count]) =>
+      this.logger.log(`     - ${channel.padEnd(15)}: ${count}`),
+    );
+    this.logger.log('');
+    this.logger.log('   By Status:');
+    Object.entries(summary.byStatus).forEach(([status, count]) =>
+      this.logger.log(`     - ${status.padEnd(15)}: ${count}`),
+    );
+    this.logger.log('');
+    this.logger.log('   By Priority:');
+    Object.entries(summary.byPriority).forEach(([priority, count]) =>
+      this.logger.log(`     - ${priority.padEnd(15)}: ${count}`),
+    );
   }
 }

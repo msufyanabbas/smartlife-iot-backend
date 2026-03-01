@@ -11,27 +11,19 @@ import {
   MetricsModule
 } from '@modules/index.module';
 import { ConfigService } from '@modules/index.service';
-import * as redisStore from 'cache-manager-redis-store';
+import { redisStore } from 'cache-manager-redis-yet';
 import { configModules } from './config';
-import { CustomThrottlerGuard } from '@common/guards/throttle.guard';
-import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppDataSource } from './database/data-source';
 import { AppController } from './app.controller';
-import { AuditInterceptor, MetricsInterceptor } from './common/interceptors/index.interceptor';
-import { Audit } from './common/decorators/audit.decorator';
-import { SubscriptionLimitGuard } from './common/guards/subscription-limit.guard';
-import { UsageTrackingInterceptor } from './common/interceptors/usage-tracking.interceptor';
+import { GuardsModule } from '@common/guards/guards.module';
+import { InterceptorsModule } from './common/interceptors/interceptor.module';
+import { MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { RequestIdMiddleware } from '@common/middleware/request-id.middleware';
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60000, // Time window in milliseconds (1 minute)
-        limit: 100, // Max requests per window
-      },
-    ]),
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
 
-    // Configuration
     ConfigModule.forRoot({
       isGlobal: true,
       load: configModules,
@@ -40,25 +32,25 @@ import { UsageTrackingInterceptor } from './common/interceptors/usage-tracking.i
       cache: true,
     }),
 
-    // Database (PostgreSQL)
     TypeOrmModule.forRoot(AppDataSource.options),
 
-    // Cache (Redis)
     CacheModule.registerAsync({
       isGlobal: true,
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        store: redisStore,
-        host: configService.get('REDIS_HOST'),
-        port: configService.get('REDIS_PORT'),
-        password: configService.get('REDIS_PASSWORD'),
-        db: configService.get('REDIS_DB', 0),
-        ttl: 60 * 60, // 1 hour default
+      useFactory: async (configService: ConfigService) => ({
+        store: await redisStore({
+          socket: {
+            host: configService.get('REDIS_HOST'),
+            port: configService.get('REDIS_PORT'),
+          },
+          password: configService.get('REDIS_PASSWORD'),
+          database: configService.get('REDIS_DB', 0),
+          ttl: 60 * 60 * 1000,
+        }),
       }),
     }),
 
-    // Queue (Bull)
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -71,40 +63,20 @@ import { UsageTrackingInterceptor } from './common/interceptors/usage-tracking.i
       }),
     }),
 
-    // Event Emitter
     EventEmitterModule.forRoot(),
-
-    // Scheduler
     ScheduleModule.forRoot(),
-
-    // Metrics Module ← ADD THIS
     MetricsModule,
 
-    // Feature Modules
+    GuardsModule,         // ✅ registers all APP_GUARD tokens
+    InterceptorsModule,   // ✅ registers all APP_INTERCEPTOR tokens — in imports, not providers
+
     ...featureModules,
   ],
   controllers: [AppController],
-  providers: [
-    {
-      provide: APP_GUARD,
-      useClass: CustomThrottlerGuard,
-    },
-    {
-      provide: APP_INTERCEPTOR,
-      useClass: MetricsInterceptor
-    },
-    {
-      provide: APP_INTERCEPTOR,
-      useClass: AuditInterceptor,
-    }, 
-    // {
-    //   provide: APP_GUARD,
-    //   useClass: SubscriptionLimitGuard
-    // },
-    {
-      provide: APP_INTERCEPTOR,
-      useClass: UsageTrackingInterceptor
-    }
-  ],
+  providers: [],          // ✅ empty — guards and interceptors are owned by their modules
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestIdMiddleware).forRoutes('*');
+  }
+}

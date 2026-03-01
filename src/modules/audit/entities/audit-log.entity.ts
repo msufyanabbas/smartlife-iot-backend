@@ -1,23 +1,53 @@
 // src/modules/audit/entities/audit-log.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { User, Tenant } from '@modules/index.entities';
+import { User, Tenant, Customer } from '@modules/index.entities';
 import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
+
 @Entity('audit_logs')
 @Index(['tenantId', 'timestamp'])
-@Index(['userId', 'timestamp'])
-@Index(['entityType', 'entityId'])
-@Index(['action', 'timestamp'])
-@Index(['severity', 'timestamp'])
+@Index(['tenantId', 'userId', 'timestamp'])
+@Index(['tenantId', 'customerId', 'timestamp'])
+@Index(['tenantId', 'entityType', 'entityId'])
+@Index(['tenantId', 'action', 'timestamp'])
+@Index(['tenantId', 'severity', 'timestamp'])
+@Index(['success'])
 export class AuditLog extends BaseEntity {
-  // User who performed the action
+  // ══════════════════════════════════════════════════════════════════════════
+  // TENANT SCOPING (REQUIRED)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column()
+
+  tenantId: string;
+
+  @ManyToOne(() => Tenant)
+  @JoinColumn({ name: 'tenantId' })
+  tenant: Tenant;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // CUSTOMER SCOPING (OPTIONAL)
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Column({ nullable: true })
-  @Index()
+
+  customerId?: string;
+
+  @ManyToOne(() => Customer, { nullable: true })
+  @JoinColumn({ name: 'customerId' })
+  customer?: Customer;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // USER CONTEXT (Who performed the action?)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ nullable: true })
+
   userId?: string;
 
   @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user?: User;
 
   @Column({ nullable: true })
   userName?: string;
@@ -25,37 +55,20 @@ export class AuditLog extends BaseEntity {
   @Column({ nullable: true })
   userEmail?: string;
 
-  // Tenant context
-  @Column()
-  @Index()
-  tenantId: string;
+  // ══════════════════════════════════════════════════════════════════════════
+  // ACTION DETAILS
+  // ══════════════════════════════════════════════════════════════════════════
 
-  @ManyToOne(() => Tenant, { nullable:                     false, onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  @Column({ type: 'enum', enum: AuditAction })
 
-  // Customer context (optional - for customer-level isolation)
-  @Column({ nullable: true })
-  @Index()
-  customerId?: string;
-
-  // Action details
-  @Column({
-    type: 'enum',
-    enum: AuditAction,
-  })
-  @Index()
   action: AuditAction;
 
-  @Column({
-    type: 'enum',
-    enum: AuditEntityType,
-  })
-  @Index()
+  @Column({ type: 'enum', enum: AuditEntityType })
+
   entityType: AuditEntityType;
 
   @Column({ nullable: true })
-  @Index()
+
   entityId?: string;
 
   @Column({ nullable: true })
@@ -64,7 +77,10 @@ export class AuditLog extends BaseEntity {
   @Column({ type: 'text', nullable: true })
   description?: string;
 
-  // Change tracking
+  // ══════════════════════════════════════════════════════════════════════════
+  // CHANGE TRACKING
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, any>;
 
@@ -74,36 +90,66 @@ export class AuditLog extends BaseEntity {
     after?: Record<string, any>;
   };
 
-  // Request context
+  // ══════════════════════════════════════════════════════════════════════════
+  // REQUEST CONTEXT
+  // ══════════════════════════════════════════════════════════════════════════
+
   @Column({ nullable: true })
   ipAddress?: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'text', nullable: true })
   userAgent?: string;
 
   @Column({ nullable: true })
   requestId?: string;
 
-  // Severity and status
-  @Column({
-    type: 'enum',
-    enum: AuditSeverity,
-    default: AuditSeverity.INFO,
-  })
-  @Index()
+  // ══════════════════════════════════════════════════════════════════════════
+  // SEVERITY & STATUS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ type: 'enum', enum: AuditSeverity, default: AuditSeverity.INFO })
+
   severity: AuditSeverity;
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
-  @Index()
+
   timestamp: Date;
 
   @Column({ default: true })
+
   success: boolean;
 
   @Column({ type: 'text', nullable: true })
   errorMessage?: string;
 
-  // Additional context
-  @Column({ type: 'jsonb', nullable: true })
-  tags?: string[]; // For filtering/categorization
+  // ══════════════════════════════════════════════════════════════════════════
+  // ADDITIONAL CONTEXT
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ type: 'simple-array', nullable: true })
+  tags?: string[];
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HELPER METHODS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  isSuccess(): boolean {
+    return this.success === true;
+  }
+
+  isFailed(): boolean {
+    return this.success === false;
+  }
+
+  isCritical(): boolean {
+    return this.severity === AuditSeverity.CRITICAL;
+  }
+
+  isError(): boolean {
+    return this.severity === AuditSeverity.ERROR;
+  }
+
+  hasChanges(): boolean {
+    return !!this.changes && (!!this.changes.before || !!this.changes.after);
+  }
 }

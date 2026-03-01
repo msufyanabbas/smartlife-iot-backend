@@ -8,15 +8,14 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, IsNull } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Asset, AssetType } from './entities/asset.entity';
-import { Device } from '../devices/entities/device.entity';
+import { Asset, Device, User } from '@modules/index.entities';
+import { AssetType } from '@common/enums/index.enum';
 import {
   CreateAssetDto,
   UpdateAssetDto,
   QueryAssetsDto,
   UpdateAttributesDto,
 } from './dto/assets.dto';
-import { User } from '../index.entities';
 import { UserRole } from '@common/enums/index.enum';
 
 @Injectable()
@@ -36,7 +35,7 @@ export class AssetsService {
     // Check if parent asset exists
     if (createAssetDto.parentAssetId) {
       const parentAsset = await this.assetRepository.findOne({
-        where: { id: createAssetDto.parentAssetId },
+        where: { id: createAssetDto.parentAssetId, tenantId: user.tenantId },
       });
 
       if (!parentAsset) {
@@ -80,118 +79,119 @@ export class AssetsService {
   /**
    * Find all assets with filters and pagination
    */
-  async findAll(queryDto: QueryAssetsDto, user: User): Promise<{
-    assets: Asset[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
-    const page = queryDto.page || 1;
-    const limit = queryDto.limit || 10;
-    const skip = (page - 1) * limit;
+  /**
+ * Find all assets with filters and pagination
+ */
+async findAll(queryDto: QueryAssetsDto, user: User): Promise<{
+  assets: Asset[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}> {
+  const page = queryDto.page || 1;
+  const limit = queryDto.limit || 10;
+  const skip = (page - 1) * limit;
 
-    const queryBuilder = this.assetRepository.createQueryBuilder('asset');
+  const queryBuilder = this.assetRepository.createQueryBuilder('asset');
 
-     // ========================================
-    // CUSTOMER FILTERING LOGIC (if user provided)
-    // ========================================
-    if (user) {
-      if (user.role === UserRole.CUSTOMER_USER) {
-        // Customer users only see their customer's assets
-        if (!user.customerId) {
-          return {
-            assets: [],
-            total: 0,
-            page,
-            limit,
-            totalPages: 0,
-          };
-        }
-        queryBuilder.andWhere('asset.customerId = :customerId', {
-          customerId: user.customerId,
-        });
-      } else if (user.role === UserRole.TENANT_ADMIN) {
-        // Tenant admins see all assets in their tenant
-        queryBuilder.andWhere('asset.tenantId = :tenantId', {
-          tenantId: user.tenantId,
-        });
-      }
-      // SUPER_ADMIN sees everything (no filter)
+  // ========================================
+  // TENANT & CUSTOMER FILTERING LOGIC
+  // ========================================
+  
+  // Always filter by tenant first
+  queryBuilder.where('asset.tenantId = :tenantId', { tenantId: user.tenantId });
+
+  if (user.role === UserRole.CUSTOMER_USER) {
+    // Customer users only see their customer's assets
+    if (!user.customerId) {
+      return {
+        assets: [],
+        total: 0,
+        page,
+        limit,
+        totalPages: 0,
+      };
     }
-
-    // Apply filters
-    if (queryDto.search) {
-      queryBuilder.andWhere(
-        '(asset.name ILIKE :search OR asset.label ILIKE :search OR asset.description ILIKE :search)',
-        { search: `%${queryDto.search}%` },
-      );
-    }
-
-    if (queryDto.type) {
-      queryBuilder.andWhere('asset.type = :type', { type: queryDto.type });
-    }
-
-      if (queryDto.tenantId && user.role === UserRole.SUPER_ADMIN) {
-      queryBuilder.andWhere('asset.tenantId = :tenantId', {
-        tenantId: queryDto.tenantId,
-      });
-    }
-
-     if (queryDto.customerId) {
-      // Validate access
-      if (
-        user.role === UserRole.CUSTOMER_USER &&
-        user.customerId !== queryDto.customerId
-      ) {
-        throw new ForbiddenException('Access denied to this customer');
-      }
-      queryBuilder.andWhere('asset.customerId = :customerId', {
-        customerId: queryDto.customerId,
-      });
-    }
-
-    if (queryDto.assetProfileId) {
-      queryBuilder.andWhere('asset.assetProfileId = :assetProfileId', {
-        assetProfileId: queryDto.assetProfileId,
-      });
-    }
-
-    if (queryDto.parentAssetId) {
-      queryBuilder.andWhere('asset.parentAssetId = :parentAssetId', {
-        parentAssetId: queryDto.parentAssetId,
-      });
-    }
-
-    if (queryDto.active !== undefined) {
-      queryBuilder.andWhere('asset.active = :active', {
-        active: queryDto.active,
-      });
-    }
-
-    if (queryDto.tags && queryDto.tags.length > 0) {
-      queryBuilder.andWhere('asset.tags && :tags', { tags: queryDto.tags });
-    }
-
-    // Get total count
-    const total = await queryBuilder.getCount();
-
-    // Apply pagination
-    const assets = await queryBuilder
-      .leftJoinAndSelect('asset.parentAsset', 'parentAsset')
-      .skip(skip)
-      .take(limit)
-      .orderBy('asset.createdAt', 'DESC')
-      .getMany();
-
-    return {
-      assets,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    queryBuilder.andWhere('asset.customerId = :customerId', {
+      customerId: user.customerId,
+    });
   }
+  // TENANT_ADMIN sees all assets in their tenant (already filtered above)
+  // SUPER_ADMIN can optionally filter by tenantId in query (override above)
+  
+  if (queryDto.tenantId && user.role === UserRole.SUPER_ADMIN) {
+    queryBuilder.andWhere('asset.tenantId = :queryTenantId', {
+      queryTenantId: queryDto.tenantId,
+    });
+  }
+
+  // Apply other filters
+  if (queryDto.search) {
+    queryBuilder.andWhere(
+      '(asset.name ILIKE :search OR asset.label ILIKE :search OR asset.description ILIKE :search)',
+      { search: `%${queryDto.search}%` },
+    );
+  }
+
+  if (queryDto.type) {
+    queryBuilder.andWhere('asset.type = :type', { type: queryDto.type });
+  }
+
+  if (queryDto.customerId) {
+    // Validate access
+    if (
+      user.role === UserRole.CUSTOMER_USER &&
+      user.customerId !== queryDto.customerId
+    ) {
+      throw new ForbiddenException('Access denied to this customer');
+    }
+    queryBuilder.andWhere('asset.customerId = :customerId', {
+      customerId: queryDto.customerId,
+    });
+  }
+
+  if (queryDto.assetProfileId) {
+    queryBuilder.andWhere('asset.assetProfileId = :assetProfileId', {
+      assetProfileId: queryDto.assetProfileId,
+    });
+  }
+
+  if (queryDto.parentAssetId) {
+    queryBuilder.andWhere('asset.parentAssetId = :parentAssetId', {
+      parentAssetId: queryDto.parentAssetId,
+    });
+  }
+
+  if (queryDto.active !== undefined) {
+    queryBuilder.andWhere('asset.active = :active', {
+      active: queryDto.active,
+    });
+  }
+
+  if (queryDto.tags && queryDto.tags.length > 0) {
+    queryBuilder.andWhere('asset.tags && :tags', { tags: queryDto.tags });
+  }
+
+  // Get total count
+  const total = await queryBuilder.getCount();
+
+  // Apply pagination
+  const assets = await queryBuilder
+    .leftJoinAndSelect('asset.parentAsset', 'parentAsset')
+    .skip(skip)
+    .take(limit)
+    .orderBy('asset.createdAt', 'DESC')
+    .getMany();
+
+  return {
+    assets,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
+  };
+}
 
   /**
    * Find one asset by ID
@@ -774,32 +774,38 @@ export class AssetsService {
     return result;
   }
 
-  /**
-   * Private: Check if changing parent would create circular reference
-   */
-  private async wouldCreateCircularReference(
-    assetId: string | null,
-    newParentId: string,
-  ): Promise<boolean> {
-    if (!assetId) return false;
-    if (assetId === newParentId) return true;
+ /**
+ * Private: Check if changing parent would create circular reference
+ */
+private async wouldCreateCircularReference(
+  assetId: string | null,
+  newParentId: string,
+  tenantId?: string,  // ✅ Added tenant parameter
+): Promise<boolean> {
+  if (!assetId) return false;
+  if (assetId === newParentId) return true;
 
-    let currentParentId: string | null = newParentId;
+  let currentParentId: string | null = newParentId;
 
-    while (currentParentId) {
-      if (currentParentId === assetId) {
-        return true;
-      }
-
-      const parent = await this.assetRepository.findOne({
-        where: { id: currentParentId },
-      });
-
-      currentParentId = parent?.parentAssetId || null;
+  while (currentParentId) {
+    if (currentParentId === assetId) {
+      return true;
     }
 
-    return false;
+    const whereClause: any = { id: currentParentId };
+    if (tenantId) {
+      whereClause.tenantId = tenantId;  // ✅ Add tenant scoping
+    }
+
+    const parent = await this.assetRepository.findOne({
+      where: whereClause,
+    });
+
+    currentParentId = parent?.parentAssetId || null;
   }
+
+  return false;
+}
 
   /**
    * Private: Calculate distance between two coordinates (Haversine formula)

@@ -1,17 +1,18 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { EdgeInstance, EdgeStatus } from './entities/edge-instance.entity';
+import { EdgeInstance } from './entities/edge-instance.entity';
 import { CreateEdgeInstanceDto } from './dto/create-edge-instance.dto';
 import { UpdateEdgeInstanceDto } from './dto/update-edge-instance.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { EdgeStatus } from '@common/enums/index.enum';
 
 @Injectable()
 export class EdgeService {
   constructor(
     @InjectRepository(EdgeInstance)
     private readonly edgeRepository: Repository<EdgeInstance>,
-  ) {}
+  ) { }
 
   async create(
     userId: string,

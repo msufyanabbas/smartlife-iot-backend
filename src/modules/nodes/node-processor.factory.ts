@@ -4,7 +4,7 @@ import { TransformationNodeProcessor } from './transformation-node';
 import { EnrichmentNodeProcessor } from './enrichment-node';
 import { ActionNodeProcessor } from './action-node';
 import { INodeProcessor } from './nodes-processor.interface';
-import { NodeType } from './entities/node.entity';
+import { NodeType } from '@common/enums/index.enum';
 
 @Injectable()
 export class NodeProcessorFactory {
@@ -13,7 +13,7 @@ export class NodeProcessorFactory {
     private readonly transformationProcessor: TransformationNodeProcessor,
     private readonly enrichmentProcessor: EnrichmentNodeProcessor,
     private readonly actionProcessor: ActionNodeProcessor,
-  ) {}
+  ) { }
 
   getProcessor(nodeType: NodeType): INodeProcessor {
     switch (nodeType) {

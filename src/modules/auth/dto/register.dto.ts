@@ -1,65 +1,44 @@
+// src/modules/auth/dto/register.dto.ts
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsEmail,
-  IsNotEmpty,
-  IsString,
-  MinLength,
-  Matches,
-  IsOptional,
-} from 'class-validator';
-import { IsValidPhone } from '@decorators/phone-validator.decorator';
-import { transformPhoneNumber } from '@transformers/phone.transformer';
+import { IsEmail, IsNotEmpty, IsString, MinLength, Matches, IsOptional } from 'class-validator';
+import { IsValidPhone } from '@decorators/index.decorator';
+import { transformPhoneNumber } from '@transformers/index.transformer';
 import { Transform } from 'class-transformer';
 
 export class RegisterDto {
-  @ApiProperty({
-    example: 'John Doe',
-    description: 'Full name of the user',
-    minLength: 2,
-  })
+  @ApiProperty({ example: 'John Doe', minLength: 2 })
   @IsString()
   @IsNotEmpty({ message: 'Name is required' })
-  @MinLength(2, { message: 'Name must be at least 2 characters long' })
+  @MinLength(2, { message: 'Name must be at least 2 characters' })
   name: string;
 
-  @ApiProperty({
-    example: 'user@example.com',
-    description: 'User email address',
-  })
+  @ApiProperty({ example: 'user@example.com' })
   @IsEmail({}, { message: 'Please provide a valid email address' })
   @IsNotEmpty({ message: 'Email is required' })
+  @Transform(({ value }) => value?.toLowerCase().trim())
   email: string;
 
-  @ApiProperty({
-    example: 'Password123!',
-    description:
-      'User password (min 8 chars, must contain uppercase, lowercase, number)',
-    minLength: 8,
-  })
+  @ApiProperty({ example: 'Password123!', minLength: 8 })
   @IsString()
   @IsNotEmpty({ message: 'Password is required' })
-  @MinLength(8, { message: 'Password must be at least 8 characters long' })
+  @MinLength(8, { message: 'Password must be at least 8 characters' })
   @Matches(/((?=.*\d)|(?=.*\W+))(?![.\n])(?=.*[A-Z])(?=.*[a-z]).*$/, {
-    message:
-      'Password must contain uppercase, lowercase, and number/special character',
+    message: 'Password must contain uppercase, lowercase, and number/special character',
   })
   password: string;
 
-  @ApiProperty({
-    example: '+1234567890',
-    description: 'User phone number',
-    required: false,
-  })
+  @ApiPropertyOptional({ example: '+966501234567' })
   @IsOptional()
-  @IsString()
   @IsValidPhone()
   @Transform(({ value }) => transformPhoneNumber(value))
   phone?: string;
 
-   @ApiPropertyOptional({
+  // Providing companyName → creates new tenant, user becomes TENANT_ADMIN.
+  // companyName and invitationToken are mutually exclusive.
+  // Service throws BadRequestException if neither or both are provided.
+  @ApiPropertyOptional({
     example: 'Smart Life Solutions',
-    description:
-      'Company/Organization name - creates a new tenant (leave empty to join existing tenant via invitation)',
+    description: 'Creates a new tenant. Mutually exclusive with invitationToken.',
     minLength: 2,
   })
   @IsOptional()
@@ -68,9 +47,8 @@ export class RegisterDto {
   companyName?: string;
 
   @ApiPropertyOptional({
-    example: 'INVITE-TOKEN-12345',
-    description:
-      'Invitation token to join an existing tenant or customer (optional)',
+    example: 'a1b2c3d4...',
+    description: 'Joins an existing tenant. Mutually exclusive with companyName.',
   })
   @IsOptional()
   @IsString()

@@ -10,7 +10,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { AssetType } from '../entities/asset.entity';
+import { AssetType } from '@common/enums/index.enum';
 
 class LocationDto {
   @ApiPropertyOptional()
@@ -157,7 +157,7 @@ export class CreateAssetDto {
   maintenance?: MaintenanceDto;
 }
 
-export class UpdateAssetDto extends PartialType(CreateAssetDto) {}
+export class UpdateAssetDto extends PartialType(CreateAssetDto) { }
 
 export class SearchAssetQueryDto {
   @ApiProperty()

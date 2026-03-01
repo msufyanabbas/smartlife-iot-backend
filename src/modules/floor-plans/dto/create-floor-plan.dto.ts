@@ -11,7 +11,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { FloorPlanStatus, DeviceAnimationType } from '../entities/floor-plan.entity';
+import { FloorPlanStatus, DeviceAnimationType } from '@common/enums/index.enum';
 
 export class CreateFloorPlanDto {
   @ApiProperty({ example: 'Factory Floor - Production Area' })

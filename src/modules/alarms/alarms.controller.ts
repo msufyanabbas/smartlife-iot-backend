@@ -1,3 +1,4 @@
+// src/modules/alarms/controllers/alarms.controller.ts
 import {
   Controller,
   Get,
@@ -28,10 +29,10 @@ import {
   BulkAcknowledgeAlarmDto,
   BulkResolveAlarmDto,
 } from './dto/alarm.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { User } from '../users/entities/user.entity';
-import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
+import { User } from '@modules/users/entities/user.entity';
+import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 
 @ApiTags('alarms')
 @Controller('alarms')
@@ -44,28 +45,45 @@ export class AlarmsController {
   @ApiOperation({ summary: 'Create new alarm rule' })
   @ApiResponse({ status: 201, description: 'Alarm rule created successfully' })
   create(@CurrentUser() user: User, @Body() createDto: CreateAlarmDto) {
-    return this.alarmsService.create(user.id, createDto);
+    return this.alarmsService.create(user, createDto);
   }
 
   @Get()
   @ApiOperation({ summary: 'Get all alarm rules' })
   @ApiResponse({ status: 200, description: 'List of alarm rules' })
   findAll(@CurrentUser() user: User, @Query() query: AlarmQueryDto) {
-    return this.alarmsService.findAll(user.id, query);
+    return this.alarmsService.findAll(user.tenantId, query, user.customerId);
   }
 
   @Get('active')
   @ApiOperation({ summary: 'Get active alarms' })
   @ApiResponse({ status: 200, description: 'List of active alarms' })
   getActive(@CurrentUser() user: User) {
-    return this.alarmsService.getActive(user.id);
+    return this.alarmsService.getActive(user.tenantId, user.customerId);
   }
 
   @Get('statistics')
   @ApiOperation({ summary: 'Get alarm statistics' })
   @ApiResponse({ status: 200, description: 'Alarm statistics' })
   getStatistics(@CurrentUser() user: User) {
-    return this.alarmsService.getStatistics(user.id);
+    return this.alarmsService.getStatistics(user.tenantId, user.customerId);
+  }
+
+  @Get('critical')
+  @ApiOperation({ summary: 'Get critical unacknowledged alarms' })
+  @ApiResponse({ status: 200, description: 'Critical alarms' })
+  getCritical(@CurrentUser() user: User) {
+    return this.alarmsService.getCritical(user.tenantId, user.customerId);
+  }
+
+  @Get('device/:deviceId')
+  @ApiOperation({ summary: 'Get alarms for a specific device' })
+  @ApiResponse({ status: 200, description: 'Device alarms' })
+  getDeviceAlarms(
+    @CurrentUser() user: User,
+    @Param('deviceId', ParseIdPipe) deviceId: string,
+  ) {
+    return this.alarmsService.getDeviceAlarms(user.tenantId, deviceId);
   }
 
   @Get('device/:deviceId/history')
@@ -77,7 +95,7 @@ export class AlarmsController {
     @Query('days') days?: number,
   ) {
     return this.alarmsService.getDeviceHistory(
-      user.id,
+      user.tenantId,
       deviceId,
       days ? parseInt(days.toString()) : 7,
     );
@@ -88,7 +106,7 @@ export class AlarmsController {
   @ApiResponse({ status: 200, description: 'Alarm found' })
   @ApiResponse({ status: 404, description: 'Alarm not found' })
   findOne(@Param('id', ParseIdPipe) id: string, @CurrentUser() user: User) {
-    return this.alarmsService.findOne(id, user.id);
+    return this.alarmsService.findOne(id, user.tenantId);
   }
 
   @Patch(':id')
@@ -99,7 +117,7 @@ export class AlarmsController {
     @CurrentUser() user: User,
     @Body() updateDto: UpdateAlarmDto,
   ) {
-    return this.alarmsService.update(id, user.id, updateDto);
+    return this.alarmsService.update(id, user.tenantId, updateDto);
   }
 
   @Delete(':id')
@@ -107,7 +125,7 @@ export class AlarmsController {
   @ApiOperation({ summary: 'Delete alarm rule' })
   @ApiResponse({ status: 204, description: 'Alarm deleted' })
   remove(@Param('id', ParseIdPipe) id: string, @CurrentUser() user: User) {
-    return this.alarmsService.remove(id, user.id);
+    return this.alarmsService.remove(id, user.tenantId);
   }
 
   @Post(':id/acknowledge')
@@ -119,7 +137,7 @@ export class AlarmsController {
     @CurrentUser() user: User,
     @Body() acknowledgeDto?: AcknowledgeAlarmDto,
   ) {
-    return this.alarmsService.acknowledge(id, user.id, acknowledgeDto);
+    return this.alarmsService.acknowledge(id, user.tenantId, user.id, acknowledgeDto);
   }
 
   @Post(':id/clear')
@@ -127,7 +145,7 @@ export class AlarmsController {
   @ApiOperation({ summary: 'Clear alarm' })
   @ApiResponse({ status: 200, description: 'Alarm cleared' })
   clear(@Param('id', ParseIdPipe) id: string, @CurrentUser() user: User) {
-    return this.alarmsService.clear(id, user.id);
+    return this.alarmsService.clear(id, user.tenantId);
   }
 
   @Post(':id/resolve')
@@ -139,7 +157,7 @@ export class AlarmsController {
     @CurrentUser() user: User,
     @Body() resolveDto: ResolveAlarmDto,
   ) {
-    return this.alarmsService.resolve(id, user.id, resolveDto);
+    return this.alarmsService.resolve(id, user.tenantId, user.id, resolveDto);
   }
 
   @Post(':id/enable')
@@ -147,7 +165,7 @@ export class AlarmsController {
   @ApiOperation({ summary: 'Enable alarm rule' })
   @ApiResponse({ status: 200, description: 'Alarm enabled' })
   enable(@Param('id', ParseIdPipe) id: string, @CurrentUser() user: User) {
-    return this.alarmsService.enable(id, user.id);
+    return this.alarmsService.enable(id, user.tenantId);
   }
 
   @Post(':id/disable')
@@ -155,7 +173,7 @@ export class AlarmsController {
   @ApiOperation({ summary: 'Disable alarm rule' })
   @ApiResponse({ status: 200, description: 'Alarm disabled' })
   disable(@Param('id', ParseIdPipe) id: string, @CurrentUser() user: User) {
-    return this.alarmsService.disable(id, user.id);
+    return this.alarmsService.disable(id, user.tenantId);
   }
 
   @Post(':id/test')
@@ -167,7 +185,7 @@ export class AlarmsController {
     @CurrentUser() user: User,
     @Body() body: TestAlarmDto,
   ) {
-    return this.alarmsService.testAlarm(id, user.id, body.value);
+    return this.alarmsService.testAlarm(id, user.tenantId, body.value);
   }
 
   @Post('bulk/acknowledge')
@@ -178,7 +196,18 @@ export class AlarmsController {
     @CurrentUser() user: User,
     @Body() body: BulkAcknowledgeAlarmDto,
   ) {
-    return this.alarmsService.bulkAcknowledge(user.id, body.alarmIds);
+    return this.alarmsService.bulkAcknowledge(user.tenantId, user.id, body.alarmIds);
+  }
+
+  @Post('bulk/clear')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Bulk clear alarms' })
+  @ApiResponse({ status: 200, description: 'Alarms cleared' })
+  bulkClear(
+    @CurrentUser() user: User,
+    @Body() body: { alarmIds: string[] },
+  ) {
+    return this.alarmsService.bulkClear(user.tenantId, body.alarmIds);
   }
 
   @Post('bulk/resolve')
@@ -189,6 +218,6 @@ export class AlarmsController {
     @CurrentUser() user: User,
     @Body() body: BulkResolveAlarmDto,
   ) {
-    return this.alarmsService.bulkResolve(user.id, body.alarmIds, body.note);
+    return this.alarmsService.bulkResolve(user.tenantId, user.id, body.alarmIds, body.note);
   }
 }
