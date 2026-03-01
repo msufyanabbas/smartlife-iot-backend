@@ -23,7 +23,7 @@ import { UserRole, UserStatus } from '@common/enums/index.enum';
 @Index(['customerId'])
 export class User extends BaseEntity {
   @Column({ unique: true })
-  @Index()
+
   email: string;
 
   @Column()
@@ -39,21 +39,21 @@ export class User extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ROLE & STATUS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'enum', enum: UserRole, default: UserRole.CUSTOMER_USER })
-  @Index()
+
   role: UserRole;
 
   @Column({ type: 'enum', enum: UserStatus, default: UserStatus.ACTIVE })
-  @Index()
+
   status: UserStatus;
 
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPE
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   tenantId?: string;
 
   @ManyToOne(() => Tenant, (tenant) => tenant.users, {
@@ -66,9 +66,9 @@ export class User extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPE
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, (customer) => customer.users, {
@@ -81,7 +81,7 @@ export class User extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ROLE-BASED PERMISSIONS (ManyToMany with auto junction table)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @ManyToMany(() => Role, (role) => role.users, { eager: true })  // ← Add eager loading
   @JoinTable({
     name: 'user_roles',
@@ -93,7 +93,7 @@ export class User extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // DIRECT PERMISSIONS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @ManyToMany(() => Permission, (permission) => permission.users, { eager: true })
   @JoinTable({
     name: 'user_permissions',
@@ -105,7 +105,7 @@ export class User extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // AUTH FIELDS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'timestamp', nullable: true })
   lastLoginAt?: Date;
 
@@ -129,7 +129,7 @@ export class User extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // HOOKS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @BeforeInsert()
   @BeforeUpdate()
   async hashPassword() {
@@ -142,7 +142,7 @@ export class User extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // HELPER METHODS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   async comparePassword(attemptedPassword: string): Promise<boolean> {
     return bcrypt.compare(attemptedPassword, this.password);
   }
@@ -201,13 +201,13 @@ export class User extends BaseEntity {
   getEffectivePermissions(): Permission[] {
     const rolePermissions = this.roles?.flatMap(r => r.permissions || []) || [];
     const directPermissions = this.directPermissions || [];
-    
+
     // Combine and deduplicate by permission ID
     const allPermissions = [...rolePermissions, ...directPermissions];
     const uniquePermissions = Array.from(
       new Map(allPermissions.map(p => [p.id, p])).values()
     );
-    
+
     return uniquePermissions;
   }
 
@@ -216,7 +216,7 @@ export class User extends BaseEntity {
    */
   hasPermission(resource: string, action: string): boolean {
     const permissions = this.getEffectivePermissions();
-    return permissions.some(p => 
+    return permissions.some(p =>
       p.resource === resource && p.action === action
     );
   }

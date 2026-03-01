@@ -11,31 +11,31 @@ export class Script extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
   @JoinColumn({ name: 'tenantId' })
   tenant: Tenant;
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // OWNER
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User)
   @JoinColumn({ name: 'userId' })
   user: User;
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // SCRIPT INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;
 
@@ -46,16 +46,16 @@ export class Script extends BaseEntity {
     type: 'enum',
     enum: ScriptType,
   })
-  @Index()
+
   type: ScriptType;
 
   @Column({ default: 'javascript' })
-  language: string;  
+  language: string;
 
   // ══════════════════════════════════════════════════════════════════════════
   // SCRIPT CODE
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'text' })
   code: string;
 
@@ -64,11 +64,11 @@ export class Script extends BaseEntity {
 
   @Column({ default: 0 })
   lines: number;
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   lastModified: Date;
 
@@ -90,5 +90,5 @@ export class Script extends BaseEntity {
   incrementExecutionCount(): void {
     this.executionCount += 1;
     this.lastExecutedAt = new Date();
-  }  
+  }
 }

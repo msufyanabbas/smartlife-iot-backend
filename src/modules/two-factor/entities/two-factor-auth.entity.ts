@@ -18,9 +18,9 @@ export class TwoFactorAuth extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -30,9 +30,9 @@ export class TwoFactorAuth extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // USER RELATIONSHIP
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ unique: true })
-  @Index()
+
   userId: string;
 
   @OneToOne(() => User, { onDelete: 'CASCADE' })
@@ -42,7 +42,7 @@ export class TwoFactorAuth extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // 2FA SETTINGS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ default: false })
   isEnabled: boolean;
 
@@ -56,7 +56,7 @@ export class TwoFactorAuth extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // AUTHENTICATOR (TOTP)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true, select: false })
   secret?: string;  // Base32 encoded secret for TOTP (sensitive)
 
@@ -66,7 +66,7 @@ export class TwoFactorAuth extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // SMS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   phoneNumber?: string;
 
@@ -76,7 +76,7 @@ export class TwoFactorAuth extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TEMPORARY VERIFICATION CODES (SMS/Email)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true, select: false })
   tempCode?: string;
 
@@ -89,7 +89,7 @@ export class TwoFactorAuth extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'timestamp', nullable: true })
   lastVerifiedAt?: Date;
 

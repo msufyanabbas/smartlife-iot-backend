@@ -24,7 +24,7 @@ export class Notification extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -36,7 +36,7 @@ export class Notification extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -48,7 +48,7 @@ export class Notification extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
@@ -64,14 +64,14 @@ export class Notification extends BaseEntity {
     enum: NotificationType,
     default: NotificationType.SYSTEM,
   })
-  @Index()
+
   type: NotificationType;
 
   @Column({
     type: 'enum',
     enum: NotificationChannel,
   })
-  @Index()
+
   channel: NotificationChannel;
 
   @Column({
@@ -79,7 +79,7 @@ export class Notification extends BaseEntity {
     enum: NotificationPriority,
     default: NotificationPriority.NORMAL,
   })
-  @Index()
+
   priority: NotificationPriority;
 
   @Column({
@@ -87,7 +87,7 @@ export class Notification extends BaseEntity {
     enum: NotificationStatus,
     default: NotificationStatus.PENDING,
   })
-  @Index()
+
   status: NotificationStatus;
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -108,11 +108,11 @@ export class Notification extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  @Index()
+
   relatedEntityType?: string;
 
   @Column({ nullable: true })
-  @Index()
+
   relatedEntityId?: string;
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -150,7 +150,7 @@ export class Notification extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ default: false })
-  @Index()
+
   isRead: boolean;
 
   @Column({ type: 'timestamp', nullable: true })
@@ -187,7 +187,7 @@ export class Notification extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'timestamp', nullable: true })
-  @Index()
+
   scheduledFor?: Date;
 
   @Column({ type: 'timestamp', nullable: true })

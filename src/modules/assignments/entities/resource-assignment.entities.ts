@@ -43,7 +43,7 @@ import { Asset, Automation, Customer, Dashboard, Device, FloorPlan, User, Tenant
 // ─────────────────────────────────────────────────────────────────────────────
 abstract class CustomerResourceAssignment extends BaseEntity {
   @Column()
-  @Index()
+
   customerId: string;
 
   @ManyToOne(() => Customer, { onDelete: 'CASCADE' })
@@ -52,17 +52,17 @@ abstract class CustomerResourceAssignment extends BaseEntity {
 
   // Denormalized for fast tenant-scoped queries
   @Column()
-  @Index()
+
   tenantId: string;
 
   // When was this resource assigned to this customer
   @CreateDateColumn()
-  @Index()
+
   assignedAt: Date;
 
   // Who assigned it (tenant admin's userId)
   @Column({ nullable: true })
-  @Index()
+
   assignedBy?: string;
 
   @ManyToOne(() => User, { nullable: true })
@@ -75,7 +75,7 @@ abstract class CustomerResourceAssignment extends BaseEntity {
 // ─────────────────────────────────────────────────────────────────────────────
 abstract class UserResourceAssignment extends BaseEntity {
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
@@ -83,7 +83,7 @@ abstract class UserResourceAssignment extends BaseEntity {
   user: User;
 
   @Column()
-  @Index()
+
   customerId: string;
 
   @ManyToOne(() => Customer, { onDelete: 'CASCADE' })
@@ -92,23 +92,23 @@ abstract class UserResourceAssignment extends BaseEntity {
 
   // Denormalized for fast tenant-scoped queries
   @Column()
-  @Index()
+
   tenantId: string;
 
-  @ManyToOne(() => Tenant)  
+  @ManyToOne(() => Tenant)
   @JoinColumn({ name: 'tenantId' })
   tenant: Tenant;
 
   @CreateDateColumn()
-  @Index()
+
   assignedAt: Date;
 
   // Who assigned it (customer admin's userId)
   @Column({ nullable: true })
-  @Index()
+
   assignedBy?: string;
 
-  @ManyToOne(() => User, { nullable: true })  
+  @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'assignedBy' })
   assignor?: User;
 }
@@ -120,10 +120,10 @@ abstract class UserResourceAssignment extends BaseEntity {
 @Entity('customer_devices')
 @Unique(['customerId', 'deviceId'])
 @Index(['tenantId', 'customerId'])
-@Index(['tenantId', 'deviceId'])    
+@Index(['tenantId', 'deviceId'])
 export class CustomerDevice extends CustomerResourceAssignment {
   @Column()
-  @Index()
+
   deviceId: string;
 
   @ManyToOne(() => Device, { onDelete: 'CASCADE' })
@@ -133,12 +133,12 @@ export class CustomerDevice extends CustomerResourceAssignment {
 
 @Entity('user_devices')
 @Unique(['userId', 'deviceId'])
-@Index(['tenantId', 'customerId'])  
-@Index(['tenantId', 'userId'])      
-@Index(['customerId', 'deviceId'])  
+@Index(['tenantId', 'customerId'])
+@Index(['tenantId', 'userId'])
+@Index(['customerId', 'deviceId'])
 export class UserDevice extends UserResourceAssignment {
   @Column()
-  @Index()
+
   deviceId: string;
 
   @ManyToOne(() => Device, { onDelete: 'CASCADE' })
@@ -159,7 +159,7 @@ export class UserDevice extends UserResourceAssignment {
 @Index(['tenantId', 'dashboardId'])
 export class CustomerDashboard extends CustomerResourceAssignment {
   @Column()
-  @Index()
+
   dashboardId: string;
 
   @ManyToOne(() => Dashboard, { onDelete: 'CASCADE' })
@@ -174,7 +174,7 @@ export class CustomerDashboard extends CustomerResourceAssignment {
 @Index(['customerId', 'dashboardId'])
 export class UserDashboard extends UserResourceAssignment {
   @Column()
-  @Index()
+
   dashboardId: string;
 
   @ManyToOne(() => Dashboard, { onDelete: 'CASCADE' })
@@ -195,7 +195,7 @@ export class UserDashboard extends UserResourceAssignment {
 @Index(['tenantId', 'assetId'])
 export class CustomerAsset extends CustomerResourceAssignment {
   @Column()
-  @Index()
+
   assetId: string;
 
   @ManyToOne(() => Asset, { onDelete: 'CASCADE' })
@@ -210,7 +210,7 @@ export class CustomerAsset extends CustomerResourceAssignment {
 @Index(['customerId', 'assetId'])
 export class UserAsset extends UserResourceAssignment {
   @Column()
-  @Index()
+
   assetId: string;
 
   @ManyToOne(() => Asset, { onDelete: 'CASCADE' })
@@ -231,7 +231,7 @@ export class UserAsset extends UserResourceAssignment {
 @Index(['tenantId', 'floorPlanId'])
 export class CustomerFloorPlan extends CustomerResourceAssignment {
   @Column()
-  @Index()
+
   floorPlanId: string;
 
   @ManyToOne(() => FloorPlan, { onDelete: 'CASCADE' })
@@ -246,7 +246,7 @@ export class CustomerFloorPlan extends CustomerResourceAssignment {
 @Index(['customerId', 'floorPlanId'])
 export class UserFloorPlan extends UserResourceAssignment {
   @Column()
-  @Index()
+
   floorPlanId: string;
 
   @ManyToOne(() => FloorPlan, { onDelete: 'CASCADE' })
@@ -267,7 +267,7 @@ export class UserFloorPlan extends UserResourceAssignment {
 @Index(['tenantId', 'automationId'])
 export class CustomerAutomation extends CustomerResourceAssignment {
   @Column()
-  @Index()
+
   automationId: string;
 
   @ManyToOne(() => Automation, { onDelete: 'CASCADE' })
@@ -282,7 +282,7 @@ export class CustomerAutomation extends CustomerResourceAssignment {
 @Index(['customerId', 'automationId'])
 export class UserAutomation extends UserResourceAssignment {
   @Column()
-  @Index()
+
   automationId: string;
 
   @ManyToOne(() => Automation, { onDelete: 'CASCADE' })

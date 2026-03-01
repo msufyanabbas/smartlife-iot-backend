@@ -6,7 +6,7 @@ import { CustomerStatus } from '@common/enums/index.enum';
 @Entity('customers')
 @Index(['tenantId', 'status'])
 export class Customer extends BaseEntity {
-  @Column({ nullable: true})
+  @Column({ nullable: true })
   name: string;
 
   @Column({ unique: true })
@@ -37,7 +37,7 @@ export class Customer extends BaseEntity {
   status: CustomerStatus;
 
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant, (tenant) => tenant.customers, { onDelete: 'CASCADE' })

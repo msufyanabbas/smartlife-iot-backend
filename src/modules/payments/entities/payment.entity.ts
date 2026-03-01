@@ -16,7 +16,7 @@ export class Payment extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -26,36 +26,36 @@ export class Payment extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // USER & SUBSCRIPTION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User)
   @JoinColumn({ name: 'userId' })
-  user: User;  
+  user: User;
 
   @Column()
-  @Index()
+
   subscriptionId: string;
 
   @ManyToOne(() => Subscription)
   @JoinColumn({ name: 'subscriptionId' })
   subscription: Subscription;
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // PAYMENT PROVIDER
   // ══════════════════════════════════════════════════════════════════════════
-    
-  @Column({ 
-    type: 'enum', 
-    enum: PaymentProvider, 
-    default: PaymentProvider.MOYASAR 
+
+  @Column({
+    type: 'enum',
+    enum: PaymentProvider,
+    default: PaymentProvider.MOYASAR
   })
-  provider: PaymentProvider;  
+  provider: PaymentProvider;
 
   @Column({ unique: true })
-  @Index()
+
   paymentIntentId: string;  // Moyasar payment ID or Stripe payment intent ID
 
   @Column({ nullable: true })
@@ -64,7 +64,7 @@ export class Payment extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // PAYMENT DETAILS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   amount: number;
 
@@ -76,7 +76,7 @@ export class Payment extends BaseEntity {
     enum: PaymentStatus,
     default: PaymentStatus.PENDING,
   })
-  @Index()
+
   status: PaymentStatus;
 
   @Column({
@@ -92,7 +92,7 @@ export class Payment extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-    
+
   @Column({ type: 'jsonb', nullable: true })
   metadata?: {
     plan?: string;
@@ -101,12 +101,12 @@ export class Payment extends BaseEntity {
     refundId?: string;
     refundReason?: string;
     [key: string]: any;
-  }; 
+  };
 
   // ══════════════════════════════════════════════════════════════════════════
   // TIMESTAMPS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'timestamp', nullable: true })
   paidAt?: Date;
 

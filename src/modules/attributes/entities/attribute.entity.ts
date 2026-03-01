@@ -14,7 +14,7 @@ export class Attribute extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -26,7 +26,7 @@ export class Attribute extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;  // Denormalized from the entity for fast filtering
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -36,13 +36,13 @@ export class Attribute extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ENTITY REFERENCE (What does this attribute belong to?)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   entityType: string;  // 'device', 'asset', 'user', 'dashboard'
 
   @Column()
-  @Index()
+
   entityId: string;  // UUID of the device/asset/user/dashboard
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -50,11 +50,11 @@ export class Attribute extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   attributeKey: string;  // 'firmwareVersion', 'reportingInterval', 'rssi'
 
   @Column({ type: 'enum', enum: AttributeScope, default: AttributeScope.SERVER })
-  @Index()
+
   scope: AttributeScope;
   // SERVER = Read-only from device, server sets (e.g., firmware URL)
   // SHARED = Both server and device can read/write (e.g., reporting interval)
@@ -77,18 +77,18 @@ export class Attribute extends BaseEntity {
   booleanValue?: boolean;
 
   @Column({ type: 'jsonb', nullable: true })
-  jsonValue?: any;  
+  jsonValue?: any;
 
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'bigint' })
-  @Index()  // ✅ Added index for time-based queries
+  // ✅ Added index for time-based queries
   lastUpdateTs: number;  // Unix timestamp in milliseconds
 
   @Column()
-  @Index()
+
   userId: string;  // Who last updated this attribute
 
   @ManyToOne(() => User)  // ✅ Added relation

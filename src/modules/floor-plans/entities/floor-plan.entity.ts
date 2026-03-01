@@ -2,9 +2,9 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
 import { Tenant, Customer, User, Asset } from '@modules/index.entities';
-import { 
-  FloorPlanStatus, 
-  DeviceAnimationType 
+import {
+  FloorPlanStatus,
+  DeviceAnimationType
 } from '@common/enums/index.enum';
 import type {
   FloorPlanSettings,
@@ -23,9 +23,9 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -35,9 +35,9 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -47,9 +47,9 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // OWNERSHIP
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User)
@@ -59,9 +59,9 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ASSET ASSOCIATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   assetId: string;
 
   @ManyToOne(() => Asset)
@@ -71,7 +71,7 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;  // "Main Office Floor Plan"
 
@@ -91,13 +91,13 @@ export class FloorPlan extends BaseEntity {
   description?: string;
 
   @Column({ type: 'enum', enum: FloorPlanStatus, default: FloorPlanStatus.DRAFT })
-  @Index()
+
   status: FloorPlanStatus;
 
   // ══════════════════════════════════════════════════════════════════════════
   // DWG FILE STORAGE
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   dwgFileUrl?: string;  // "https://storage.../floor-plan.dwg"
 
@@ -113,7 +113,7 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // PARSED DWG GEOMETRY
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   parsedGeometry?: DWGGeometry;
   // Contains: walls, doors, windows, rooms, stairs, furniture
@@ -121,7 +121,7 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // PREVIEW IMAGES
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   thumbnailUrl?: string;  // Small preview (200x200)
 
@@ -131,7 +131,7 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // DIMENSIONS & SCALE
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb' })
   dimensions: {
     width: number;
@@ -146,7 +146,7 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // 3D DEVICES (With animations and telemetry bindings)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', default: [] })
   devices: Device3DData[];
   // Example:
@@ -179,7 +179,7 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ZONES (Grouping areas on floor plan)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', default: [] })
   zones: Array<{
     id: string;
@@ -211,7 +211,7 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BUILDING 3D METADATA (Shared across floors)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   building3DMetadata?: Building3DMetadata;
   // Example:
@@ -231,7 +231,7 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // SETTINGS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({
     type: 'jsonb',
     default: {
@@ -255,7 +255,7 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];  // ['3d-enabled', 'hvac', 'security']
 

@@ -12,21 +12,21 @@ export class SolutionTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (OPTIONAL - null for system templates)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   tenantId?: string;
 
   @ManyToOne(() => Tenant, { nullable: true })
   @JoinColumn({ name: 'tenantId' })
   tenant?: Tenant;
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // CREATOR (OPTIONAL - null for system templates)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   userId?: string;
 
   @ManyToOne(() => User, { nullable: true })
@@ -36,7 +36,7 @@ export class SolutionTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;
 
@@ -47,7 +47,7 @@ export class SolutionTemplate extends BaseEntity {
     type: 'enum',
     enum: SolutionTemplateCategory,
   })
-  @Index()
+
   category: SolutionTemplateCategory;
 
   @Column()
@@ -62,7 +62,7 @@ export class SolutionTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // STATISTICS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'decimal', precision: 3, scale: 2, default: 0 })
   rating: number;
 
@@ -78,7 +78,7 @@ export class SolutionTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TEMPLATE CONTENT
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', default: [] })
   features: string[];
 
@@ -105,13 +105,13 @@ export class SolutionTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // FLAGS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ default: false })
-  @Index()
+
   isPremium: boolean;
 
   @Column({ default: true })
-  @Index()
+
   isSystem: boolean;  // true = system template, false = user-created
 
   // ══════════════════════════════════════════════════════════════════════════

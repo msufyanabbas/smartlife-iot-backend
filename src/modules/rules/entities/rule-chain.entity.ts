@@ -12,9 +12,9 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -24,9 +24,9 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -36,9 +36,9 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // OWNERSHIP
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User)
@@ -48,7 +48,7 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;  // "Device Telemetry Processing", "Alarm Handler"
 
@@ -56,11 +56,11 @@ export class RuleChain extends BaseEntity {
   description?: string;
 
   @Column({ type: 'enum', enum: RuleChainStatus, default: RuleChainStatus.DRAFT })
-  @Index()
+
   status: RuleChainStatus;
 
   @Column({ default: false })
-  @Index()
+
   isRoot: boolean;  // Is this the root/entry rule chain?
 
   @Column({ default: true })
@@ -72,14 +72,14 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ROOT NODE (Entry point of the rule chain)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   rootNodeId?: string;  // First node to execute
 
   // ══════════════════════════════════════════════════════════════════════════
   // CONFIGURATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   configuration?: {
     messageTypes?: string[];      // ['TELEMETRY', 'ALARM', 'ATTRIBUTE']
@@ -101,7 +101,7 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // EXECUTION STATISTICS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'int', default: 0 })
   executionCount: number;
 
@@ -120,7 +120,7 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ERROR TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'text', nullable: true })
   lastError?: string;
 
@@ -134,7 +134,7 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];  // ['telemetry', 'critical', 'alarms']
 

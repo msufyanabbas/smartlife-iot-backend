@@ -11,7 +11,7 @@ export class AssetProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -21,16 +21,16 @@ export class AssetProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   name: string;
 
   @Column({ type: 'text', nullable: true })
   description?: string;
 
   @Column({ default: false })
-  @Index()
+
   default: boolean;
 
   @Column({ nullable: true })
@@ -39,7 +39,7 @@ export class AssetProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // HIERARCHY RULES (What can be parent/child of this asset type?)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   hierarchyConfig?: {
     allowChildren: boolean;            // Can this asset have children?
@@ -80,7 +80,7 @@ export class AssetProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // LOCATION RULES (Is location required? What format?)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   locationConfig?: {
     required: boolean;                 // Must asset have location?
@@ -115,7 +115,7 @@ export class AssetProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // MAP DISPLAY (How to show this asset on a map)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   mapConfig?: {
     icon?: string;                     // Icon name or URL
@@ -141,7 +141,7 @@ export class AssetProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // DEVICE ASSOCIATION RULES (Can devices be assigned?)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   deviceConfig?: {
     allowDevices: boolean;             // Can devices be assigned?
@@ -166,7 +166,7 @@ export class AssetProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ATTRIBUTES SCHEMA (What custom fields can assets of this profile have?)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   attributesSchema?: {
     required: Array<{
@@ -265,7 +265,7 @@ export class AssetProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // DASHBOARD & RULE CHAINS 
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   defaultDashboardId?: string;
 
@@ -281,7 +281,7 @@ export class AssetProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ALARM RULES (Templates - NOT actual alarms!)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   alarmRules?: Array<{
     id: string;
@@ -349,7 +349,7 @@ export class AssetProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   additionalInfo?: Record<string, any>;
   // Example:

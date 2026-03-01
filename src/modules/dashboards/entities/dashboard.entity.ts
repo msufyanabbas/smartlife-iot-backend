@@ -19,7 +19,7 @@ export class Dashboard extends BaseEntity {
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -29,9 +29,9 @@ export class Dashboard extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL - for B2B2C)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -41,9 +41,9 @@ export class Dashboard extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // OWNERSHIP
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   userId: string;  // Who created this dashboard
 
   @ManyToOne(() => User)
@@ -53,7 +53,7 @@ export class Dashboard extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;  // "Main Dashboard", "Production Overview"
 
@@ -61,13 +61,13 @@ export class Dashboard extends BaseEntity {
   description?: string;  // "Shows all production line metrics"
 
   @Column({ type: 'enum', enum: DashboardVisibility, default: DashboardVisibility.PRIVATE })
-  @Index()
+
   visibility: DashboardVisibility;
 
   // ══════════════════════════════════════════════════════════════════════════
   // WIDGETS (Stored as JSONB array)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', default: [] })
   widgets: WidgetConfig[];
   // Example:
@@ -119,7 +119,7 @@ export class Dashboard extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // LAYOUT SETTINGS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   layout?: {
     cols: number;                       // Number of columns (default: 12)
@@ -140,7 +140,7 @@ export class Dashboard extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // DASHBOARD SETTINGS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   settings?: {
     autoRefresh?: boolean;              // Auto-refresh all widgets?
@@ -162,7 +162,7 @@ export class Dashboard extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // GLOBAL FILTERS (Applied to all widgets)
   // ══════════════════════════════════════════════════════════════════════════
- 
+
   @Column({ type: 'jsonb', nullable: true })
   filters?: {
     dateRange?: {
@@ -173,13 +173,13 @@ export class Dashboard extends BaseEntity {
     assetIds?: string[];
     tags?: string[];
   };
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // FLAGS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ default: false })
-  @Index()
+
   isDefault: boolean;  // Is this the default dashboard for this user?
 
   @Column({ default: false })
@@ -188,7 +188,7 @@ export class Dashboard extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // SHARING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   sharedWith?: string[];  // User IDs who can view this dashboard
   // Example: ['user-uuid-1', 'user-uuid-2']
@@ -196,7 +196,7 @@ export class Dashboard extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // STATISTICS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'int', default: 0 })
   viewCount: number;  // How many times viewed
 
@@ -206,7 +206,7 @@ export class Dashboard extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];  // ['production', 'monitoring', 'hvac']
 
@@ -221,12 +221,12 @@ export class Dashboard extends BaseEntity {
     if (!this.widgets) {
       this.widgets = [];
     }
-    
+
     const widgetWithId: WidgetConfig = {
       ...widget,
       id: this.generateWidgetId(),
     };
-    
+
     this.widgets.push(widgetWithId);
   }
 
@@ -270,12 +270,12 @@ export class Dashboard extends BaseEntity {
    */
   getUsedDevices(): string[] {
     if (!this.widgets) return [];
-    
+
     const deviceIds = new Set<string>();
     this.widgets.forEach(widget => {
       widget.dataSource.deviceIds?.forEach(id => deviceIds.add(id));
     });
-    
+
     return Array.from(deviceIds);
   }
 
@@ -284,12 +284,12 @@ export class Dashboard extends BaseEntity {
    */
   getUsedAssets(): string[] {
     if (!this.widgets) return [];
-    
+
     const assetIds = new Set<string>();
     this.widgets.forEach(widget => {
       widget.dataSource.assetIds?.forEach(id => assetIds.add(id));
     });
-    
+
     return Array.from(assetIds);
   }
 

@@ -12,7 +12,7 @@ export class DeviceProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -22,16 +22,16 @@ export class DeviceProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   name: string;
 
   @Column({ type: 'text', nullable: true })
   description?: string;
 
   @Column({ default: false })
-  @Index()
+
   default: boolean;
 
   @Column({ nullable: true })
@@ -43,7 +43,7 @@ export class DeviceProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TRANSPORT & PROVISION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'enum', enum: DeviceTransportType, default: DeviceTransportType.MQTT })
   transportType: DeviceTransportType;
 
@@ -120,7 +120,7 @@ export class DeviceProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TELEMETRY CONFIGURATION (What data does this device send?)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   telemetryConfig?: {
     keys: Array<{
@@ -172,7 +172,7 @@ export class DeviceProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ATTRIBUTES CONFIGURATION (Device state/config management)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   attributesConfig?: {
     server: string[];   // Server sets, device reads (e.g., firmware URL)
@@ -206,7 +206,7 @@ export class DeviceProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ALARM RULES (Templates for creating Alarm entities)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   alarmRules?: Array<{
     id: string;
@@ -273,7 +273,7 @@ export class DeviceProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // PROVISIONING (How new devices register)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   provisionConfiguration?: {
     type?: 'DISABLED' | 'ALLOW_CREATE_NEW_DEVICES' | 'CHECK_PRE_PROVISIONED_DEVICES';
@@ -327,7 +327,7 @@ export class DeviceProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // RULE CHAINS & DASHBOARDS 
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   defaultRuleChainId?: string;
 
@@ -340,7 +340,7 @@ export class DeviceProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   additionalInfo?: Record<string, any>;
   // Example:

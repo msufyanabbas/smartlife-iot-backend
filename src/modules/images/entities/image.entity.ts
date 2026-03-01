@@ -12,9 +12,9 @@ export class Image extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -24,9 +24,9 @@ export class Image extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -36,9 +36,9 @@ export class Image extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // UPLOADER INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   userId: string;  // Who uploaded this image
 
   @ManyToOne(() => User)
@@ -51,7 +51,7 @@ export class Image extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // FILE INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;  // "profile-pic-2024.jpg" (stored filename)
 
@@ -67,7 +67,7 @@ export class Image extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // STORAGE LOCATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   url: string;  // "https://cdn.smartlife.sa/images/abc123.jpg"
 
@@ -83,7 +83,7 @@ export class Image extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // IMAGE METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   dimensions?: {
     width: number;
@@ -95,7 +95,7 @@ export class Image extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // THUMBNAILS & VARIANTS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   thumbnails?: {
     small?: { url: string; width: number; height: number };   // 150x150
@@ -112,13 +112,13 @@ export class Image extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ENTITY ASSOCIATION (What is this image for?)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   entityType?: string;  // "user", "device", "asset", "dashboard", "floor_plan"
 
   @Column({ nullable: true })
-  @Index()
+
   entityId?: string;  // ID of the associated entity
 
   @Column({ nullable: true })
@@ -136,7 +136,7 @@ export class Image extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // IMAGE PROPERTIES
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   alt?: string;  // Alt text for accessibility
 
@@ -149,7 +149,7 @@ export class Image extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // USAGE TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ default: false })
   isPublic: boolean;  // Is this image publicly accessible?
 
@@ -162,7 +162,7 @@ export class Image extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];  // ["profile", "avatar", "thumbnail"]
 

@@ -17,9 +17,9 @@ export class Role extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (OPTIONAL - null for system roles)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   tenantId?: string;
 
   @ManyToOne(() => Tenant, { nullable: true, onDelete: 'CASCADE' })
@@ -29,15 +29,15 @@ export class Role extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // FLAGS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ default: false })
-  @Index()
+
   isSystem: boolean;
 
   // ══════════════════════════════════════════════════════════════════════════
   // PERMISSIONS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @ManyToMany(() => Permission, (permission) => permission.roles, { eager: true })
   @JoinTable({
     name: 'role_permissions',
@@ -49,7 +49,7 @@ export class Role extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // INVERSE RELATIONSHIPS (NO @JoinTable!)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @ManyToMany(() => User, (user) => user.roles)
   users?: User[];
 

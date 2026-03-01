@@ -16,9 +16,9 @@ export class AuditLog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -28,9 +28,9 @@ export class AuditLog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -40,9 +40,9 @@ export class AuditLog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // USER CONTEXT (Who performed the action?)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   userId?: string;
 
   @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
@@ -58,17 +58,17 @@ export class AuditLog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ACTION DETAILS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'enum', enum: AuditAction })
-  @Index()
+
   action: AuditAction;
 
   @Column({ type: 'enum', enum: AuditEntityType })
-  @Index()
+
   entityType: AuditEntityType;
 
   @Column({ nullable: true })
-  @Index()
+
   entityId?: string;
 
   @Column({ nullable: true })
@@ -80,7 +80,7 @@ export class AuditLog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CHANGE TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, any>;
 
@@ -93,7 +93,7 @@ export class AuditLog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // REQUEST CONTEXT
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   ipAddress?: string;
 
@@ -106,17 +106,17 @@ export class AuditLog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // SEVERITY & STATUS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'enum', enum: AuditSeverity, default: AuditSeverity.INFO })
-  @Index()
+
   severity: AuditSeverity;
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
-  @Index()
+
   timestamp: Date;
 
   @Column({ default: true })
-  @Index()
+
   success: boolean;
 
   @Column({ type: 'text', nullable: true })
@@ -125,7 +125,7 @@ export class AuditLog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ADDITIONAL CONTEXT
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];
 

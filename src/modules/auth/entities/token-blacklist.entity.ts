@@ -38,7 +38,7 @@ export class TokenBlacklist extends BaseEntity {
   // Denormalized tenantId — allows purging all blacklisted tokens for a tenant
   // without joining through users (e.g. tenant account deletion)
   @Column({ nullable: true })
-  @Index()
+
   tenantId?: string;
 
   // When the original access token would have naturally expired.

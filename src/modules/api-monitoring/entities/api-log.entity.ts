@@ -14,9 +14,9 @@ export class APILog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED for authenticated requests)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })  // Nullable only for public endpoints (health, metrics)
-  @Index()
+
   tenantId?: string;
 
   @ManyToOne(() => Tenant, { nullable: true })
@@ -26,9 +26,9 @@ export class APILog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL - denormalized from user)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;  // Denormalized from user.customerId for fast filtering
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -38,9 +38,9 @@ export class APILog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // USER CONTEXT
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   userId?: string;  // Nullable for unauthenticated requests
 
   @ManyToOne(() => User, { nullable: true })
@@ -58,11 +58,11 @@ export class APILog extends BaseEntity {
   method: string;  // GET, POST, PUT, DELETE, PATCH
 
   @Column()
-  @Index()
+
   endpoint: string;  // /api/devices/:id
 
   @Column()
-  @Index()
+
   statusCode: number;  // 200, 201, 400, 401, 500
 
   @Column({ type: 'integer' })
@@ -103,7 +103,7 @@ export class APILog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ERROR TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'text', nullable: true })
   errorMessage?: string;  // Error message (sanitized)
 
@@ -113,9 +113,9 @@ export class APILog extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
-  @Index()
+
   timestamp: Date;
 
   @Column({ type: 'jsonb', nullable: true })

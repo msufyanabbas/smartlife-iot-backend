@@ -13,9 +13,9 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -25,9 +25,9 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -37,9 +37,9 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // OWNERSHIP
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User)
@@ -49,12 +49,12 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;  // "Slack Notifications", "Weather API"
 
   @Column({ type: 'enum', enum: IntegrationType })
-  @Index()
+
   type: IntegrationType;
 
   @Column()
@@ -64,47 +64,47 @@ export class Integration extends BaseEntity {
   description?: string;
 
   @Column({ type: 'enum', enum: IntegrationStatus, default: IntegrationStatus.INACTIVE })
-  @Index()
+
   status: IntegrationStatus;
 
   @Column({ default: true })
-  @Index()
+
   enabled: boolean;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CONFIGURATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb' })
   configuration: {
     // HTTP/HTTPS
     url?: string;
     method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
     headers?: Record<string, string>;
-    
+
     // MQTT
     broker?: string;
     port?: number;
     topic?: string;
     qos?: 0 | 1 | 2;
     clientId?: string;
-    
+
     // Authentication
     username?: string;
     password?: string;
     apiKey?: string;
     token?: string;
-    
+
     // SSL/TLS
     useTls?: boolean;
     tlsCert?: string;
     tlsKey?: string;
-    
+
     // Retry & Timeout
     timeout?: number;
     retryAttempts?: number;
     retryDelay?: number;
-    
+
     // Other
     customFields?: Record<string, any>;
   };
@@ -135,7 +135,7 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // AUTHENTICATION (Separate from config for security)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true, select: false })
   credentials?: {
     apiKey?: string;
@@ -155,7 +155,7 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // USAGE STATISTICS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'int', default: 0 })
   messagesProcessed: number;
 
@@ -177,7 +177,7 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ERROR TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'text', nullable: true })
   lastError?: string;
 
@@ -194,7 +194,7 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // RATE LIMITING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   rateLimiting?: {
     enabled: boolean;
@@ -215,7 +215,7 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];  // ['notifications', 'critical', 'external-api']
 
@@ -297,8 +297,8 @@ export class Integration extends BaseEntity {
     if (!this.rateLimiting?.enabled) return false;
 
     const now = Date.now();
-    const windowStart = this.rateLimiting.windowStart 
-      ? new Date(this.rateLimiting.windowStart).getTime() 
+    const windowStart = this.rateLimiting.windowStart
+      ? new Date(this.rateLimiting.windowStart).getTime()
       : 0;
     const windowMs = this.rateLimiting.windowSeconds * 1000;
 
@@ -320,8 +320,8 @@ export class Integration extends BaseEntity {
     if (!this.rateLimiting?.enabled) return;
 
     const now = Date.now();
-    const windowStart = this.rateLimiting.windowStart 
-      ? new Date(this.rateLimiting.windowStart).getTime() 
+    const windowStart = this.rateLimiting.windowStart
+      ? new Date(this.rateLimiting.windowStart).getTime()
       : 0;
     const windowMs = this.rateLimiting.windowSeconds * 1000;
 

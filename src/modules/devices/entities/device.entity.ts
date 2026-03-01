@@ -17,7 +17,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -29,7 +29,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -41,7 +41,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ unique: true })
-  @Index()
+
   deviceKey: string;  // Unique identifier (MAC address, IMEI, UUID)
 
   @Column()
@@ -54,7 +54,7 @@ export class Device extends BaseEntity {
   type: DeviceType;
 
   @Column({ type: 'enum', enum: DeviceStatus, default: DeviceStatus.INACTIVE })
-  @Index()
+
   status: DeviceStatus;
 
   @Column({ type: 'enum', enum: DeviceConnectionType, default: DeviceConnectionType.WIFI })
@@ -65,7 +65,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   userId: string;  // Who created this device
 
   @ManyToOne(() => User)
@@ -77,7 +77,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  @Index()
+
   deviceProfileId?: string;
 
   @ManyToOne(() => DeviceProfile, { nullable: true })
@@ -89,7 +89,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  @Index()
+
   assetId?: string;
 
   @ManyToOne(() => Asset, asset => asset.devices, { nullable: true })
@@ -187,7 +187,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'timestamp', nullable: true })
-  @Index()
+
   lastSeenAt?: Date;  // Last time device was seen (heartbeat)
 
   @OneToOne(() => DeviceCredentials, credentials => credentials.device, {

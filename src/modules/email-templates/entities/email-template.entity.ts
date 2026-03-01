@@ -12,9 +12,9 @@ export class EmailTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (OPTIONAL - null for system templates)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   tenantId?: string;  // null = system template, non-null = tenant-specific override
 
   @ManyToOne(() => Tenant, { nullable: true })
@@ -24,9 +24,9 @@ export class EmailTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TEMPLATE TYPE & INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'enum', enum: EmailTemplateType })
-  @Index()
+
   type: EmailTemplateType;
 
   @Column()
@@ -36,13 +36,13 @@ export class EmailTemplate extends BaseEntity {
   description?: string;  // "Sent when user registers"
 
   @Column({ default: true })
-  @Index()
+
   isActive: boolean;
 
   // ══════════════════════════════════════════════════════════════════════════
   // EMAIL CONTENT
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   subject: string;  // "Verify your email - {{companyName}}"
 
@@ -55,7 +55,7 @@ export class EmailTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TEMPLATE VARIABLES
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   variables?: {
     required?: string[];      // ['userName', 'verificationLink']
@@ -75,7 +75,7 @@ export class EmailTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // EMAIL SETTINGS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   settings?: {
     fromName?: string;        // "Smart Life Support"
@@ -100,7 +100,7 @@ export class EmailTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // LOCALIZATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ default: 'en' })
   locale: string;  // 'en', 'ar', 'fr'
 
@@ -127,7 +127,7 @@ export class EmailTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // USAGE TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'int', default: 0 })
   usageCount: number;  // How many times this template was used
 
@@ -137,7 +137,7 @@ export class EmailTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];  // ['user-management', 'security', 'notifications']
 

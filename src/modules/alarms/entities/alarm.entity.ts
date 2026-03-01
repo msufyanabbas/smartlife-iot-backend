@@ -15,9 +15,8 @@ export class Alarm extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -27,9 +26,8 @@ export class Alarm extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL - inherited from device)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
   customerId?: string;  // Denormalized from device.customerId for fast filtering
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -56,7 +54,7 @@ export class Alarm extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  @Index()
+
   deviceId?: string;
 
   @ManyToOne(() => Device, { nullable: true })
@@ -88,7 +86,7 @@ export class Alarm extends BaseEntity {
   message?: string;  // Auto-generated or custom message
 
   @Column({ type: 'timestamp', nullable: true })
-  @Index()
+
   triggeredAt?: Date;  // When alarm first triggered
 
   @Column({ type: 'timestamp', nullable: true })
@@ -135,7 +133,7 @@ export class Alarm extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ default: true })
-  @Index()
+
   isEnabled: boolean;  // Can disable without deleting
 
   @Column({ default: true })
@@ -144,7 +142,7 @@ export class Alarm extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // NOTIFICATIONS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   notifications?: {
     email?: boolean;

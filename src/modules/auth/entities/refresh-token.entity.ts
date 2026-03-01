@@ -15,7 +15,7 @@ export class RefreshToken extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -27,7 +27,7 @@ export class RefreshToken extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ unique: true })
-  @Index()
+
   token: string;
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -35,7 +35,7 @@ export class RefreshToken extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
@@ -47,11 +47,11 @@ export class RefreshToken extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'timestamp' })
-  @Index()
+
   expiresAt: Date;
 
   @Column({ default: false })
-  @Index()
+
   isRevoked: boolean;
 
   @Column({ type: 'timestamp', nullable: true })

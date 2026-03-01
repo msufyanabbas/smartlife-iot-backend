@@ -12,9 +12,8 @@ export class WidgetType extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (OPTIONAL - null for system widgets)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
   tenantId?: string;  // null = system widget, has value = tenant-specific widget
 
   @ManyToOne(() => Tenant, { nullable: true })
@@ -24,16 +23,14 @@ export class WidgetType extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ unique: true })
-  @Index()
   name: string;  // "Time-Series Line Chart", "Temperature Gauge"
 
   @Column({ type: 'text', nullable: true })
   description?: string;  // "Display time-series data as a line chart"
 
   @Column({ type: 'enum', enum: WidgetTypeCategory, default: WidgetTypeCategory.OTHER })
-  @Index()
   category: WidgetTypeCategory;
 
   @Column({ nullable: true })
@@ -48,7 +45,7 @@ export class WidgetType extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // WIDGET DESCRIPTOR (How to render this widget)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb' })
   descriptor: {
     // Widget data type
@@ -132,7 +129,7 @@ export class WidgetType extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // WIDGET SETTINGS TEMPLATE
   // ══════════════════════════════════════════════════════════════════════════
-   
+
   @Column({ type: 'jsonb', nullable: true })
   settingsTemplate?: {
     showTitle?: boolean;
@@ -145,7 +142,7 @@ export class WidgetType extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // FLAGS
   // ══════════════════════════════════════════════════════════════════════════
-   
+
   @Column({ default: false })
   system: boolean;  // System widgets can't be deleted
 
@@ -155,7 +152,7 @@ export class WidgetType extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];  // ['chart', 'temperature', 'analytics']
 

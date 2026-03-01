@@ -14,7 +14,7 @@ export class Analytics extends BaseEntity {
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
   @Column()
-  @Index()  // Critical for tenant isolation queries
+  // Critical for tenant isolation queries
   tenantId: string;  // ✅ Required, not nullable
 
   @ManyToOne(() => Tenant)
@@ -26,7 +26,7 @@ export class Analytics extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -36,9 +36,9 @@ export class Analytics extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ANALYTICS TYPE & PERIOD
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'enum', enum: AnalyticsType })
-  @Index()
+
   type: AnalyticsType;
 
   @Column({ type: 'enum', enum: AnalyticsPeriod })
@@ -49,7 +49,7 @@ export class Analytics extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  @Index()
+
   entityId?: string;  // Device ID, User ID, Asset ID, etc.
 
   @Column({ nullable: true })
@@ -85,15 +85,15 @@ export class Analytics extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TIMESTAMP
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'timestamp' })
-  @Index()
+
   timestamp: Date;  // The time bucket this analytics record represents
 
-    // ══════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   metadata?: {
     calculatedAt?: Date;      // When these analytics were computed
@@ -103,7 +103,7 @@ export class Analytics extends BaseEntity {
     [key: string]: any;
   };
 
-    // ══════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
   // HELPER METHODS
   // ══════════════════════════════════════════════════════════════════════════
 

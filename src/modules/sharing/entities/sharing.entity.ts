@@ -12,40 +12,40 @@ export class Share extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
   @JoinColumn({ name: 'tenantId' })
   tenant: Tenant;
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // OWNER
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   sharedBy: string;  // User ID who created the share
 
   @ManyToOne(() => User)
   @JoinColumn({ name: 'sharedBy' })
-  owner: User;  
+  owner: User;
 
   // ══════════════════════════════════════════════════════════════════════════
   // RESOURCE REFERENCE
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({
     type: 'enum',
     enum: ShareResourceType,
   })
-  @Index()
+
   resourceType: ShareResourceType;
 
   @Column()
-  @Index()
+
   resourceId: string;
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -68,17 +68,17 @@ export class Share extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // RECIPIENT (for email shares)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   sharedWith?: string;  // Email address  
 
   // ══════════════════════════════════════════════════════════════════════════
   // LINK SHARING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true, unique: true })
-  @Index()
+
   token?: string;  // For link shares
 
   @Column({ default: false })
@@ -90,7 +90,7 @@ export class Share extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // STATISTICS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ default: 0 })
   views: number;
 
@@ -100,7 +100,7 @@ export class Share extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   metadata?: {
     resourceName?: string;

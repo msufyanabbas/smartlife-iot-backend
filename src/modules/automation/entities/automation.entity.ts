@@ -12,7 +12,7 @@ export class Automation extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -22,9 +22,9 @@ export class Automation extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -34,9 +34,9 @@ export class Automation extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // OWNERSHIP (Who created this automation?)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User)
@@ -46,7 +46,7 @@ export class Automation extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;  // "Turn on motor when hot"
 
@@ -54,11 +54,11 @@ export class Automation extends BaseEntity {
   description?: string;  // "Activates cooling motor when temp exceeds 30°C"
 
   @Column({ default: true })
-  @Index()
+
   enabled: boolean;  // Can user turn automation on/off
 
   @Column({ type: 'enum', enum: AutomationStatus, default: AutomationStatus.INACTIVE })
-  @Index()
+
   status: AutomationStatus;
   // ACTIVE = Currently running
   // INACTIVE = Disabled by user
@@ -117,11 +117,11 @@ export class Automation extends BaseEntity {
   //   value2: 30                       // Max
   // }
   // → Triggers when temperature is between 20-30°C
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // ACTION (WHAT to do when triggered?)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb' })
   action: {
     type: ActionType;                  // What kind of action?
@@ -174,7 +174,7 @@ export class Automation extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // EXECUTION TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'int', default: 0 })
   executionCount: number;  // How many times has this automation run?
 
@@ -190,7 +190,7 @@ export class Automation extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ADVANCED SETTINGS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   settings?: {
     cooldown?: number;                 // Wait N seconds between executions
@@ -219,13 +219,13 @@ export class Automation extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];  // ['hvac', 'cooling', 'critical']
 
   @Column({ type: 'jsonb', nullable: true })
   additionalInfo?: Record<string, any>;
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // HELPER METHODS
   // ══════════════════════════════════════════════════════════════════════════
@@ -250,7 +250,7 @@ export class Automation extends BaseEntity {
       const hour = now.getHours();
       const minute = now.getMinutes();
       const currentTime = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-      
+
       if (currentTime < this.settings.activeHours.start || currentTime > this.settings.activeHours.end) {
         return false;
       }

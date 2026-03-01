@@ -13,9 +13,9 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -25,9 +25,9 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -37,9 +37,9 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // OWNERSHIP
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User)
@@ -49,9 +49,9 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // RULE CHAIN ASSOCIATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   ruleChainId?: string;
 
   @ManyToOne(() => RuleChain, { nullable: true })
@@ -61,7 +61,7 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;  // "Temperature Filter", "Send Email Action"
 
@@ -69,11 +69,11 @@ export class Node extends BaseEntity {
   description?: string;
 
   @Column({ type: 'enum', enum: NodeType })
-  @Index()
+
   type: NodeType;
 
   @Column({ default: true })
-  @Index()
+
   enabled: boolean;
 
   @Column({ default: false })
@@ -82,33 +82,33 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // NODE CONFIGURATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb' })
   configuration: {
     // Script-based nodes
     script?: string;              // JavaScript/Python code
     scriptLang?: 'javascript' | 'python' | 'groovy';
-    
+
     // Flow control
     successAction?: string;       // Node ID to go to on success
     failureAction?: string;       // Node ID to go to on failure
-    
+
     // Filters
     messageTypes?: string[];      // ['TELEMETRY', 'ALARM']
     originatorTypes?: string[];   // ['DEVICE', 'ASSET']
     relationTypes?: string[];     // ['Contains', 'Manages']
     dataKeys?: string[];          // ['temperature', 'humidity']
-    
+
     // Conditions
     condition?: {
       key: string;
       operator: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains';
       value: any;
     };
-    
+
     // Transformations
     mapping?: Record<string, string>;  // { 'temp': 'temperature' }
-    
+
     // Actions
     actionType?: 'email' | 'sms' | 'webhook' | 'mqtt' | 'log';
     actionConfig?: {
@@ -117,10 +117,10 @@ export class Node extends BaseEntity {
       webhookUrl?: string;
       mqttTopic?: string;
     };
-    
+
     // External integrations
     integrationId?: string;
-    
+
     // Metadata
     metadata?: Record<string, any>;
   };
@@ -156,7 +156,7 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CANVAS POSITION (For visual editor)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', default: { x: 0, y: 0 } })
   position: {
     x: number;
@@ -167,7 +167,7 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CONNECTIONS (Edges to other nodes)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', default: [] })
   connections: Array<{
     targetNodeId: string;
@@ -191,7 +191,7 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // EXECUTION STATISTICS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'int', default: 0 })
   executionCount: number;
 
@@ -210,7 +210,7 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ERROR TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'text', nullable: true })
   lastError?: string;
 
@@ -224,7 +224,7 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];  // ['critical', 'temperature', 'hvac']
 

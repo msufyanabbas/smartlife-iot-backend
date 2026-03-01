@@ -12,7 +12,7 @@ export class Telemetry extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -24,7 +24,7 @@ export class Telemetry extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   deviceId: string;
 
   @ManyToOne(() => Device)
@@ -32,21 +32,21 @@ export class Telemetry extends BaseEntity {
   device: Device;
 
   @Column()
-  @Index()
+
   deviceKey: string;  // Denormalized for fast queries
 
   // ══════════════════════════════════════════════════════════════════════════
   // TIMESTAMP (Time-series data)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'timestamp' })
-  @Index()
+
   timestamp: Date;
 
   // ══════════════════════════════════════════════════════════════════════════
   // TELEMETRY DATA (Flexible JSONB + Common Fields)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb' })
   data: Record<string, any>;
 
@@ -80,7 +80,7 @@ export class Telemetry extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // COMMON FIELDS (Denormalized for fast queries - duplicates from data JSONB)
   // ══════════════════════════════════════════════════════════════════════════
-    
+
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
   temperature?: number;
 
@@ -101,7 +101,7 @@ export class Telemetry extends BaseEntity {
 
   @Column({ type: 'int', nullable: true })
   signalStrength?: number;  // RSSI in dBm
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA (Info about the telemetry reading itself)
   // ══════════════════════════════════════════════════════════════════════════

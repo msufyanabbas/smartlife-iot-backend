@@ -13,9 +13,9 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -25,9 +25,9 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -37,9 +37,9 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // OWNERSHIP
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User)
@@ -49,7 +49,7 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;  // "Edge Gateway 1", "Factory Floor Edge"
 
@@ -60,7 +60,7 @@ export class EdgeInstance extends BaseEntity {
   location?: string;  // "Building A - Floor 3", "Warehouse 2"
 
   @Column({ type: 'enum', enum: EdgeStatus, default: EdgeStatus.OFFLINE })
-  @Index()
+
   status: EdgeStatus;
 
   @Column()
@@ -69,7 +69,7 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // NETWORK INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   ipAddress?: string;  // "192.168.1.100"
 
@@ -85,14 +85,14 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // DEVICE COUNT
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'int', default: 0 })
   deviceCount: number;  // How many devices connected to this edge
 
   // ══════════════════════════════════════════════════════════════════════════
   // SYSTEM METRICS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   metrics?: {
     cpu: number;              // Percentage (0-100)
@@ -117,7 +117,7 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // DATA SYNCHRONIZATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   dataSync?: {
     pending: number;          // Messages pending sync
@@ -138,7 +138,7 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CONFIGURATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   config?: {
     enabled: boolean;
@@ -161,7 +161,7 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];  // ['production', 'critical', 'factory-floor']
 
@@ -210,12 +210,12 @@ export class EdgeInstance extends BaseEntity {
    */
   getUptimeFormatted(): string {
     if (!this.metrics?.uptime) return 'N/A';
-    
+
     const seconds = this.metrics.uptime;
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
-    
+
     return `${days}d ${hours}h ${minutes}m`;
   }
 

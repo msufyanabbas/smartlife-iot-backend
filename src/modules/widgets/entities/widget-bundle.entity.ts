@@ -8,21 +8,19 @@ export class WidgetBundle extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (OPTIONAL - null for system bundles)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
   tenantId?: string;  // null = system bundle
 
   @ManyToOne(() => Tenant, { nullable: true })
   @JoinColumn({ name: 'tenantId' })
   tenant?: Tenant;
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ unique: true })
-  @Index()
   title: string;  // "Charts", "Gauges", "Controls"
 
   @Column({ type: 'text', nullable: true })

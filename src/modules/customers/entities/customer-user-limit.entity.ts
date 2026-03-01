@@ -50,7 +50,7 @@ export class CustomerUserLimit extends BaseEntity {
 
   // Denormalized for faster queries (avoids joining through customer every time)
   @Column()
-  @Index()
+
   tenantId: string;
 
   // ── Allocated Limits ──────────────────────────────────────────────────────

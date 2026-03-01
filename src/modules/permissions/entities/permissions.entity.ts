@@ -20,7 +20,7 @@ export class Permission extends BaseEntity {
    * - non-null = Custom permission (only for this tenant)
    */
   @Column({ nullable: true })
-  @Index()
+
   tenantId?: string | null;
 
   @ManyToOne(() => Tenant, { nullable: true, onDelete: 'CASCADE' })
@@ -37,7 +37,7 @@ export class Permission extends BaseEntity {
    * Examples: 'devices', 'dashboards', 'floor_plans', 'automations', 'assets'
    */
   @Column()
-  @Index()
+
   resource: string;
 
   /**
@@ -46,7 +46,7 @@ export class Permission extends BaseEntity {
    * Extended: 'assign' | 'export' | 'configure' | 'manage' | 'control' | 'share' | 'acknowledge'
    */
   @Column()
-  @Index()
+
   action: string;
 
   @Column({ type: 'text', nullable: true })
@@ -62,7 +62,7 @@ export class Permission extends BaseEntity {
    * Custom permissions have isSystem = false and tenantId set.
    */
   @Column({ default: true })
-  @Index()
+
   isSystem: boolean;
 
   // ══════════════════════════════════════════════════════════════════════════

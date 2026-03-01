@@ -13,9 +13,9 @@ export class Asset extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -25,9 +25,9 @@ export class Asset extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -37,7 +37,7 @@ export class Asset extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;
 
@@ -45,7 +45,7 @@ export class Asset extends BaseEntity {
   label?: string;
 
   @Column({ type: 'enum', enum: AssetType, default: AssetType.OTHER })
-  @Index()
+
   type: AssetType;
 
   @Column({ type: 'text', nullable: true })
@@ -55,15 +55,15 @@ export class Asset extends BaseEntity {
   imageUrl?: string;
 
   @Column({ default: true })
-  @Index()
+
   active: boolean;
 
   // ══════════════════════════════════════════════════════════════════════════
   // ASSET PROFILE (Template/Configuration)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   assetProfileId?: string;
 
   @ManyToOne(() => AssetProfile, { nullable: true })
@@ -73,9 +73,9 @@ export class Asset extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // HIERARCHICAL STRUCTURE (Building → Floor → Room)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
-  @Index()
+
   parentAssetId?: string;
 
   @ManyToOne(() => Asset, asset => asset.children, { nullable: true })
@@ -91,7 +91,7 @@ export class Asset extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // DEVICE ASSOCIATIONS (1 Asset → Many Devices)
   // ══════════════════════════════════════════════════════════════════════════
-   
+
   @OneToMany(() => Device, device => device.asset)
   devices: Device[];
 
@@ -101,7 +101,7 @@ export class Asset extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // LOCATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   location?: {
     address?: string;      // "123 King Fahd Road"
@@ -126,7 +126,7 @@ export class Asset extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // ATTRIBUTES (Static Metadata - Defined by AssetProfile)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   attributes?: Record<string, any>;
   // Example for a Floor asset:

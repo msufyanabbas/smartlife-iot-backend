@@ -12,9 +12,9 @@ export class Schedule extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -24,9 +24,9 @@ export class Schedule extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // OWNER
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User)
@@ -36,7 +36,7 @@ export class Schedule extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // SCHEDULE INFO
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   name: string;
 
@@ -47,24 +47,24 @@ export class Schedule extends BaseEntity {
     type: 'enum',
     enum: ScheduleType,
   })
-  @Index()
-  type: ScheduleType; 
-  
+
+  type: ScheduleType;
+
   // ══════════════════════════════════════════════════════════════════════════
   // CRON CONFIGURATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   schedule: string;  // cron expression (e.g., '0 0 * * *')
 
   @Column({ default: true })
-  @Index()
-  enabled: boolean;  
+
+  enabled: boolean;
 
   // ══════════════════════════════════════════════════════════════════════════
   // TASK CONFIGURATION
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb' })
   configuration: {
     reportType?: string;
@@ -77,12 +77,12 @@ export class Schedule extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // EXECUTION TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'timestamp', nullable: true })
   lastRun?: Date;
 
   @Column({ type: 'timestamp' })
-  @Index()
+
   nextRun: Date;
 
   @Column({ default: 0 })
@@ -106,7 +106,7 @@ export class Schedule extends BaseEntity {
   recordExecution(success: boolean, error?: string): void {
     this.lastRun = new Date();
     this.executionCount += 1;
-    
+
     if (!success) {
       this.failureCount += 1;
       this.lastError = error;

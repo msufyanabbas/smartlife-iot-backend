@@ -36,7 +36,7 @@ export class Invitation extends BaseEntity {
 
   // ── Tenant scope ───────────────────────────────────────────────────────────
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant, { onDelete: 'CASCADE' })
@@ -46,7 +46,7 @@ export class Invitation extends BaseEntity {
   // ── Customer scope (null for tenant-level invites) ─────────────────────────
   // Required when inviting a CUSTOMER_USER.
   @Column({ nullable: true })
-  @Index()
+
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true, onDelete: 'CASCADE' })

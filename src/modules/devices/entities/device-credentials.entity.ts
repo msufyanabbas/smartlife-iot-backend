@@ -17,7 +17,7 @@ export class DeviceCredentials extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()
+
   deviceId: string;
 
   @OneToOne(() => Device, device => device.credentials, { onDelete: 'CASCADE' })
@@ -33,7 +33,7 @@ export class DeviceCredentials extends BaseEntity {
     enum: CredentialsType,
     default: CredentialsType.ACCESS_TOKEN,
   })
-  @Index()
+
   credentialsType: CredentialsType;
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -47,7 +47,7 @@ export class DeviceCredentials extends BaseEntity {
    * - For X509: The certificate CN
    */
   @Column({ unique: true })
-  @Index()
+
   credentialsId: string;
 
   /**
@@ -70,7 +70,7 @@ export class DeviceCredentials extends BaseEntity {
   expiresAt?: Date;  // Optional expiration for tokens
 
   @Column({ default: true })
-  @Index()
+
   isActive: boolean;  // Can disable credentials without deleting
 
   // ══════════════════════════════════════════════════════════════════════════

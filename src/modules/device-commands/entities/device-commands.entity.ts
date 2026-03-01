@@ -23,9 +23,9 @@ export class DeviceCommand {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -35,9 +35,9 @@ export class DeviceCommand {
   // ══════════════════════════════════════════════════════════════════════════
   // RELATIONSHIPS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
-  @Index()
+
   deviceId: string;
 
   @ManyToOne(() => Device, { onDelete: 'CASCADE' })
@@ -45,7 +45,7 @@ export class DeviceCommand {
   device: Device;
 
   @Column()
-  @Index()
+
   userId: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
@@ -55,7 +55,7 @@ export class DeviceCommand {
   // ══════════════════════════════════════════════════════════════════════════
   // COMMAND DETAILS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   commandType: string;  // 'turnOn', 'turnOff', 'setBrightness', 'setColor'
 
@@ -68,13 +68,13 @@ export class DeviceCommand {
   // ══════════════════════════════════════════════════════════════════════════
   // STATUS TRACKING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({
     type: 'enum',
     enum: ['PENDING', 'QUEUED', 'SENDING', 'DELIVERED', 'COMPLETED', 'FAILED', 'RETRYING', 'SCHEDULED', 'CANCELLED'],
     default: 'PENDING',
   })
-  @Index()
+
   status: 'PENDING' | 'QUEUED' | 'SENDING' | 'DELIVERED' | 'COMPLETED' | 'FAILED' | 'RETRYING' | 'SCHEDULED' | 'CANCELLED';
 
   @Column({ type: 'text', nullable: true })
@@ -83,7 +83,7 @@ export class DeviceCommand {
   // ══════════════════════════════════════════════════════════════════════════
   // EXECUTION SETTINGS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'int', default: 30000 })
   timeout: number;  // milliseconds
 
@@ -93,15 +93,15 @@ export class DeviceCommand {
   // ══════════════════════════════════════════════════════════════════════════
   // SCHEDULING
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'timestamp', nullable: true })
-  @Index()
+
   scheduledFor?: Date;
 
   // ══════════════════════════════════════════════════════════════════════════
   // TIMESTAMPS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'timestamp', nullable: true })
   deliveredAt?: Date;
 
@@ -117,7 +117,7 @@ export class DeviceCommand {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, any>;
 
