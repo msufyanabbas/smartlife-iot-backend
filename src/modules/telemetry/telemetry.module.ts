@@ -6,14 +6,15 @@ import { TelemetryService } from './telemetry.service';
 import { TelemetryConsumer } from './telemetry.consumer';
 import { Telemetry } from './entities/telemetry.entity';
 import { KafkaModule } from '@/lib/kafka/kafka.module';
-import { AutomationModule } from '@modules/automation/automation.module';  
-import { WebsocketModule } from '@modules/index.module';
+import { AutomationModule } from '@modules/automation/automation.module';
+import { WebsocketModule } from '@modules/websocket/websocket.module';
+import { Device, Tenant } from '../index.entities';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Telemetry]),
+    TypeOrmModule.forFeature([Telemetry, Device, Tenant]),
     KafkaModule,
-    AutomationModule,  
+    AutomationModule,
     WebsocketModule
   ],
   controllers: [TelemetryController],
@@ -23,4 +24,4 @@ import { WebsocketModule } from '@modules/index.module';
   ],
   exports: [TelemetryService],
 })
-export class TelemetryModule {}
+export class TelemetryModule { }

@@ -63,11 +63,12 @@ import {
   DeviceCommand,
   Customer,
   Permission,
-  Role
+  Role,
+  RuleChain
 } from '@modules/index.entities';
 import { CustomerSeeder } from './customer/customers.seeder';
 import { RoleSeeder } from './roles/roles.seeder';
-
+import { RuleChainSeeder } from './rule-chain/rule-chain.seeder';
 export interface SeederConfig {
   name: string;
   seeder: any;
@@ -193,6 +194,12 @@ export const SEEDERS: SeederConfig[] = [
     seeder: IntegrationSeeder,
     emoji: '🔗',
     entity: Integration,
+  },
+  {
+    name: 'Rule Chains',
+    seeder: RuleChainSeeder,
+    emoji: '🔗',
+    entity: RuleChain,
   },
   {
     name: 'Nodes',

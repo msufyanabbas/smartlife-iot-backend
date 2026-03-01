@@ -9,19 +9,22 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ConfigService, SubscriptionsService, MailService, TwoFactorAuthService } from '@modules/index.service';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';               // ← direct path
+import { MailService } from '@modules/mail/mail.service';                                          // ← direct path
+import { TwoFactorAuthService } from '@modules/two-factor/two-factor-auth.service';               // ← direct path
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { Customer, Invitation, Tenant, User, InvitationStatus, RefreshToken, OAuthAccount, TokenBlacklist } from '@modules/index.entities';
-import { TenantStatus, SubscriptionPlan, UserRole, OAuthProviderEnum } from '@common/enums/index.enum';
+import { Customer, Invitation, Tenant, User, RefreshToken, OAuthAccount, TokenBlacklist } from '@modules/index.entities';
+import { TenantStatus, SubscriptionPlan, UserRole, OAuthProviderEnum, InvitationStatus } from '@common/enums/index.enum';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto, UserInfoDto } from './dto/auth-response.dto';
 import { TwoFactorChallengeDto } from '../two-factor/dto/two-factor-challenge.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
-import { GoogleProfile, AppleProfile, GitHubProfile} from './strategies/oauth/index.strategy';
+import { GoogleProfile, AppleProfile, GitHubProfile } from './strategies/oauth/index.strategy';
 import { Cron } from '@nestjs/schedule';
 import { SessionService } from './session/session.service';
 import { CreateInvitationDto } from './dto/invitation.dto';
@@ -53,7 +56,7 @@ export class AuthService {
     private mailService: MailService,
     private sessionService: SessionService,
     private twoFactorAuthService: TwoFactorAuthService,
-  ) {}
+  ) { }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Registration
@@ -208,20 +211,20 @@ export class AuthService {
 
     const savedUser = await this.userRepository.save(user);
 
-     if (role === UserRole.TENANT_ADMIN && tenant) {
+    if (role === UserRole.TENANT_ADMIN && tenant) {
       await this.tenantRepository.save(tenant);
     }
 
-    if(!invitationToken && tenantId) {
-    try {
-      await this.subscriptionsService.create(tenantId, {
-        plan: SubscriptionPlan.FREE,
-      });
-      this.logger.log(`FREE subscription created for user: ${email}`);
-    } catch (error) {
-      this.logger.error(`Failed to create subscription for ${email}:`, error);
+    if (!invitationToken && tenantId) {
+      try {
+        await this.subscriptionsService.create(tenantId, {
+          plan: SubscriptionPlan.FREE,
+        });
+        this.logger.log(`FREE subscription created for user: ${email}`);
+      } catch (error) {
+        this.logger.error(`Failed to create subscription for ${email}:`, error);
+      }
     }
-  }
 
     this.logger.log(`New user registered: ${email}`);
 
@@ -246,11 +249,11 @@ export class AuthService {
     };
   }
 
-   /**
-   * ✅ NEW: Create invitation
-   */
+  /**
+  * ✅ NEW: Create invitation
+  */
   async createInvitation(
-    callerId: string, callerTenantId: string, callerRole: UserRole, callerCustomerId: string,
+    callerId: string, callerTenantId: string | undefined, callerRole: UserRole, callerCustomerId: string,
     invitedBy: string,
     createInvitationDto: CreateInvitationDto,
   ): Promise<{ message: string; token: string }> {
@@ -258,8 +261,8 @@ export class AuthService {
 
     // ── Permission checks ──────────────────────────────────────────────────
     if (callerRole !== UserRole.SUPER_ADMIN) {
-      if(callerRole === UserRole.CUSTOMER_ADMIN) {
-        if(role !== UserRole.CUSTOMER_USER) {
+      if (callerRole === UserRole.CUSTOMER_ADMIN) {
+        if (role !== UserRole.CUSTOMER_USER) {
           throw new ForbiddenException(
             'Customer admins can only invite customer users',
           );
@@ -271,12 +274,12 @@ export class AuthService {
       if (callerRole === UserRole.TENANT_ADMIN && role === UserRole.SUPER_ADMIN) {
         throw new ForbiddenException('Cannot invite super admins');
       }
-       if (callerRole === UserRole.CUSTOMER_USER) {
+      if (callerRole === UserRole.CUSTOMER_USER) {
         throw new ForbiddenException('You do not have permission to invite users');
       }
-      }
+    }
 
-      // ── Customer-scoped role requires customerId ───────────────────────────
+    // ── Customer-scoped role requires customerId ───────────────────────────
     if ((role === UserRole.CUSTOMER_ADMIN || role === UserRole.CUSTOMER_USER) && !customerId) {
       throw new BadRequestException(
         `customerId is required when inviting a ${role}`,
@@ -313,10 +316,10 @@ export class AuthService {
       role,
       tenantId: callerTenantId,
       customerId,
-      invitedById: callerId,    
+      invitedById: callerId,
       inviteeName,
       status: InvitationStatus.PENDING,
-      metadata: {               
+      metadata: {
         message,
         roleIds,
         permissionIds,
@@ -370,7 +373,7 @@ export class AuthService {
    * ✅ NEW: List invitations (for admins)
    */
   // Takes tenantId + role directly — no redundant DB load
-  async listInvitations(tenantId: string, callerRole: UserRole, callerCustomerId?: string) {
+  async listInvitations(tenantId: string | undefined, callerRole: UserRole, callerCustomerId?: string) {
     const where: any = { tenantId };
     if (callerRole === UserRole.CUSTOMER_ADMIN) {
       where.customerId = callerCustomerId;
@@ -389,7 +392,7 @@ export class AuthService {
   // Takes tenantId + role directly — no redundant DB load
   async revokeInvitation(
     callerId: string,
-    callerTenantId: string,
+    callerTenantId: string | undefined,
     callerRole: UserRole,
     invitationId: string,
   ): Promise<void> {
@@ -708,15 +711,15 @@ export class AuthService {
         await this.userRepository.save(user);
 
         try {
-          await this.subscriptionsService.create(tenant.id, {plan: SubscriptionPlan.FREE});
-  await this.subscriptionsService.getOrCreateFreeSubscription(user.id);
-  this.logger.log(`FREE subscription ensured for OAuth user: ${email}`);
-} catch (error) {
-  this.logger.error(
-    `Failed to ensure subscription for OAuth user ${email}:`,
-    error,
-  );
-}
+          await this.subscriptionsService.create(tenant.id, { plan: SubscriptionPlan.FREE });
+          await this.subscriptionsService.getOrCreateFreeSubscription(user.id);
+          this.logger.log(`FREE subscription ensured for OAuth user: ${email}`);
+        } catch (error) {
+          this.logger.error(
+            `Failed to ensure subscription for OAuth user ${email}:`,
+            error,
+          );
+        }
         oauthAccount = this.oauthAccountRepository.create({
           userId: user.id,
           provider,
@@ -918,7 +921,7 @@ export class AuthService {
   // ═══════════════════════════════════════════════════════════════════════════
   // Token Management
   // ═══════════════════════════════════════════════════════════════════════════
-   async refreshTokens(
+  async refreshTokens(
     refreshTokenString: string,
     ipAddress?: string,
     userAgent?: string,
@@ -967,7 +970,7 @@ export class AuthService {
    * Logout user
    * ✅ Deletes session
    */
-   async logout(
+  async logout(
     refreshTokenString: string,
     userId: string,  // from @CurrentUser() — guard ensures authenticity
     accessToken?: string,
@@ -1130,7 +1133,7 @@ export class AuthService {
   /**
    * Generate authentication response with SPECIFIC session ID
    */
-   private async generateAuthResponseWithSessionId(
+  private async generateAuthResponseWithSessionId(
     user: User,
     sessionId: string,
     ipAddress?: string,
@@ -1205,7 +1208,7 @@ export class AuthService {
   /**
    * Generate random refresh token
    */
- private generateRefreshToken(): string {
+  private generateRefreshToken(): string {
     return crypto.randomBytes(64).toString('hex');
   }
   private generateSecureToken(): string {
@@ -1229,7 +1232,7 @@ export class AuthService {
   /**
    * Clean up expired and old refresh tokens
    */
-    private async cleanupExpiredTokens(userId: string): Promise<void> {
+  private async cleanupExpiredTokens(userId: string): Promise<void> {
     await this.refreshTokenRepository
       .createQueryBuilder()
       .delete()
@@ -1280,13 +1283,13 @@ export class AuthService {
   /**
    * Get current session info
    */
-   async getSessionInfo(userId: string) {
+  async getSessionInfo(userId: string) {
     return this.sessionService.getSession(userId);
   }
   /**
    * Cleanup cron - runs every hour
    */
-@Cron('0 * * * *') // every hour
+  @Cron('0 * * * *') // every hour
   async cleanupExpiredBlacklistedTokens(): Promise<void> {
     const result: any = await this.tokenBlacklistRepository
       .createQueryBuilder()
@@ -1307,54 +1310,54 @@ export class AuthService {
   // Profile
   // ═══════════════════════════════════════════════════════════════════════════
 
-async updateProfile(
-  userId: string,
-  updateProfileDto: UpdateProfileDto,
-): Promise<{ message: string; user: Partial<User> }> {
-  const { name, phone, preferences } = updateProfileDto;
+  async updateProfile(
+    userId: string,
+    updateProfileDto: UpdateProfileDto,
+  ): Promise<{ message: string; user: Partial<User> }> {
+    const { name, phone, preferences } = updateProfileDto;
 
-  // Validate that at least one field is provided
-  if (!name && !phone && !preferences) {
-    throw new BadRequestException('At least one field (name, phone, or preferences) must be provided');
-  }
+    // Validate that at least one field is provided
+    if (!name && !phone && !preferences) {
+      throw new BadRequestException('At least one field (name, phone, or preferences) must be provided');
+    }
 
-  const user = await this.userRepository.findOne({
-    where: { id: userId },
-  });
-
-  if (!user) {
-    throw new NotFoundException('User not found');
-  }
-
-  // Check if phone is being updated and if it's already taken by another user
-  if (phone && phone !== user.phone) {
-    const conflict = await this.userRepository.findOne({
-      where: { phone },
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
     });
-    if(conflict && conflict.id !== userId){
-      throw new ConflictException('This phone number is already registered to another user');
-    }
-    if (name) user.name = name.trim();
-    if (phone) user.phone = phone;
 
-    // Merge preferences — do not replace existing keys that weren't sent
-    if (preferences) {
-      user.preferences = { ...(user.preferences ?? {}), ...preferences };
+    if (!user) {
+      throw new NotFoundException('User not found');
     }
 
-     await this.userRepository.save(user);
-    this.logger.log(`Profile updated for user: ${user.email}`);
+    // Check if phone is being updated and if it's already taken by another user
+    if (phone && phone !== user.phone) {
+      const conflict = await this.userRepository.findOne({
+        where: { phone },
+      });
+      if (conflict && conflict.id !== userId) {
+        throw new ConflictException('This phone number is already registered to another user');
+      }
+      if (name) user.name = name.trim();
+      if (phone) user.phone = phone;
+
+      // Merge preferences — do not replace existing keys that weren't sent
+      if (preferences) {
+        user.preferences = { ...(user.preferences ?? {}), ...preferences };
+      }
+
+      await this.userRepository.save(user);
+      this.logger.log(`Profile updated for user: ${user.email}`);
+    }
+
+    return {
+      message: 'Profile updated successfully',
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+      },
+    };
   }
-
-  return {
-    message: 'Profile updated successfully',
-    user: {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      phone: user.phone,
-      role: user.role,
-    },
-  };
-}
 }

@@ -8,14 +8,15 @@ import { Device } from '../devices/entities/device.entity';
 import { Telemetry } from '../telemetry/entities/telemetry.entity';
 import { Alarm } from '../alarms/entities/alarm.entity';
 import { User } from '../users/entities/user.entity';
+import { Tenant } from '../index.entities';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Analytics, Device, Telemetry, Alarm, User]),
+    TypeOrmModule.forFeature([Analytics, Device, Telemetry, Alarm, User, Tenant]),
     ScheduleModule.forRoot(),
   ],
   controllers: [AnalyticsController],
   providers: [AnalyticsService],
   exports: [AnalyticsService],
 })
-export class AnalyticsModule {}
+export class AnalyticsModule { }

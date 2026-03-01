@@ -24,12 +24,14 @@ import {
   UpdatePermissionDto,
   PermissionResponseDto,
 } from './dto';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { User } from '../index.entities';
 
 @ApiTags('Permissions')
 @ApiBearerAuth()
 @Controller('permissions')
 export class PermissionsController {
-  constructor(private readonly permissionsService: PermissionsService) {}
+  constructor(private readonly permissionsService: PermissionsService) { }
 
   @Post()
   @ApiOperation({ summary: 'Create a new permission' })
@@ -78,11 +80,11 @@ export class PermissionsController {
     description: 'List of permissions retrieved successfully',
     type: [PermissionResponseDto],
   })
-  async findAll(@Query('resource') resource?: string) {
+  async findAll(@Query('resource') resource?: string, @CurrentUser() user?: User) {
     if (resource) {
       return await this.permissionsService.findByResource(resource);
     }
-    return await this.permissionsService.findAll();
+    return await this.permissionsService.findAll(user?.tenantId);
   }
 
   @Get('resources')

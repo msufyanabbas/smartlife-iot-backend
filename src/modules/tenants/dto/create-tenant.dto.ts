@@ -6,7 +6,7 @@ import {
   IsEnum,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { TenantStatus } from '../entities/tenant.entity';
+import { TenantStatus } from '@common/enums/index.enum';
 
 export class CreateTenantDto {
   @ApiProperty({ example: 'acme-corp' })
@@ -91,13 +91,9 @@ export class CreateTenantDto {
   @IsOptional()
   @IsObject()
   configuration?: {
-    maxDevices?: number;
-    maxUsers?: number;
-    maxAssets?: number;
-    maxDashboards?: number;
-    maxRuleChains?: number;
-    dataRetentionDays?: number;
-    features?: string[];
+    timezone?: string;
+    language?: string;
+    theme?: string;
   };
 
   @ApiProperty({ enum: TenantStatus, required: false })

@@ -22,14 +22,14 @@ import { EmailTemplatesService } from './email-templates.service';
 import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { EmailTemplateType } from './entities/email-template.entity';
+import { EmailTemplateType } from '@common/enums/index.enum';
 
 @ApiTags('Email Templates')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('email-templates')
 export class EmailTemplatesController {
-  constructor(private readonly emailTemplatesService: EmailTemplatesService) {}
+  constructor(private readonly emailTemplatesService: EmailTemplatesService) { }
 
   @Post()
   @ApiOperation({ summary: 'Create a new email template' })

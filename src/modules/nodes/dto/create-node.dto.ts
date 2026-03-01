@@ -6,7 +6,7 @@ import {
   IsObject,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { NodeType } from '../entities/node.entity';
+import { NodeType } from '@common/enums/index.enum';
 
 export class CreateNodeDto {
   @ApiProperty({ example: 'Message Type Filter' })
@@ -36,7 +36,7 @@ export class CreateNodeDto {
   @IsObject()
   configuration: {
     script?: string;
-    scriptLang?: string;
+    scriptLang?: 'javascript' | 'python' | 'groovy';
     successAction?: string;
     failureAction?: string;
     messageTypes?: string[];

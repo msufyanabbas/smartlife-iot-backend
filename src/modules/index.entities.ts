@@ -23,6 +23,7 @@ export { EdgeInstance } from './edge/entities/edge-instance.entity';
 // Profile entities
 export { DeviceProfile } from './profiles/entities/device-profile.entity';
 export { AssetProfile } from './profiles/entities/asset-profile.entity';
+export { RuleChain } from './rules/entities/rule-chain.entity';
 
 // Dashboard & Visualization entities
 export { Dashboard } from './dashboards/entities/dashboard.entity';
@@ -67,4 +68,3 @@ export { TwoFactorAuth } from './two-factor/entities/two-factor-auth.entity';
 export { Customer } from './customers/entities/customers.entity';
 export { Invitation } from './auth/entities/invitation.entity';
 export { UserSettings } from './user-settings/entities/user-settings.entity';
-export { RuleChain } from './rules/entities/rule-chain.entity';

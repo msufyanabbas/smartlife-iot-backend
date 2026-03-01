@@ -3,7 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Device } from '@modules/devices/entities/device.entity';
-import { DeviceStatus } from '@common/enums/index.enum';
+import { DeviceConnectionType, DeviceStatus, DeviceType } from '@common/enums/index.enum';
 import { StandardTelemetry } from '@common/interfaces/standard-telemetry.interface';
 import { CodecRegistryService } from '@modules/devices/codecs/codec-registry.service';
 import { KafkaService } from '@/lib/kafka/kafka.service';
@@ -17,7 +17,7 @@ export class DeviceListenerService {
     private deviceRepository: Repository<Device>,
     private codecRegistry: CodecRegistryService,
     private kafkaService: KafkaService,  // ← Publish to Kafka
-  ) {}
+  ) { }
 
   /**
    * UNIFIED ENTRY POINT
@@ -44,7 +44,7 @@ export class DeviceListenerService {
 
       // 2. Decode payload if needed (using codec)
       let decodedData = standardTelemetry.data;
-      
+
       if (device.metadata?.codecId || device.metadata?.manufacturer) {
         decodedData = this.codecRegistry.decode(
           standardTelemetry.data,
@@ -71,12 +71,12 @@ export class DeviceListenerService {
       device.lastSeenAt = new Date();
       device.lastActivityAt = new Date();
       device.messageCount = (device.messageCount || 0) + 1;
-      
+
       if (device.status === DeviceStatus.INACTIVE) {
         device.status = DeviceStatus.ACTIVE;
         device.activatedAt = new Date();
       }
-      
+
       await this.deviceRepository.save(device);
 
       // 5. Publish to Kafka (TelemetryConsumer will pick it up)
@@ -106,7 +106,7 @@ export class DeviceListenerService {
     const device = this.deviceRepository.create({
       deviceKey: telemetry.deviceKey,
       name: `${telemetry.protocol.toUpperCase()} ${telemetry.deviceKey}`,
-      type: 'SENSOR',
+      type: DeviceType.SENSOR,
       status: DeviceStatus.ACTIVE,
       connectionType: this.mapProtocolToConnection(telemetry.protocol),
       userId: 'system',
@@ -128,15 +128,15 @@ export class DeviceListenerService {
     return saved;
   }
 
-  private mapProtocolToConnection(protocol: string): string {
+  private mapProtocolToConnection(protocol: string): DeviceConnectionType {
     switch (protocol) {
-      case 'mqtt': return 'WIFI';
-      case 'http': return 'WIFI';
-      case 'lorawan': return 'LORA';
-      case 'zigbee': return 'ZIGBEE';
-      case 'bluetooth': return 'BLUETOOTH';
-      case 'modbus': return 'ETHERNET';
-      default: return 'WIFI';
+      case 'mqtt': return DeviceConnectionType.WIFI;
+      case 'http': return DeviceConnectionType.WIFI;
+      case 'lorawan': return DeviceConnectionType.LORA;
+      case 'zigbee': return DeviceConnectionType.ZIGBEE;
+      case 'bluetooth': return DeviceConnectionType.BLUETOOTH;
+      case 'modbus': return DeviceConnectionType.ETHERNET;
+      default: return DeviceConnectionType.WIFI;
     }
   }
 }

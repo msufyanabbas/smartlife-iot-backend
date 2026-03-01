@@ -1,8 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { PartialType } from '@nestjs/mapped-types';
-import { IsEnum, IsOptional } from 'class-validator';
+import { IsEnum, IsObject, IsOptional } from 'class-validator';
 import { CreateDeviceDto } from './create-device.dto';
-import { DeviceStatus } from '../entities/device.entity';
+import { DeviceStatus } from '@common/enums/index.enum';
 
 export class UpdateDeviceDto extends PartialType(CreateDeviceDto) {
   @ApiPropertyOptional({
@@ -13,4 +13,8 @@ export class UpdateDeviceDto extends PartialType(CreateDeviceDto) {
   @IsEnum(DeviceStatus)
   @IsOptional()
   status?: DeviceStatus;
+
+  @IsObject()
+  @IsOptional()
+  metadata?: Record<string, any>;
 }

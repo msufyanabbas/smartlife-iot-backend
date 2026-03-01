@@ -27,10 +27,10 @@ import { UsersService } from '@modules/index.service';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PLAN_PRICING: Record<SubscriptionPlan, Record<BillingPeriod, number>> = {
-  [SubscriptionPlan.FREE]:         { [BillingPeriod.MONTHLY]: 0,    [BillingPeriod.YEARLY]: 0 },
-  [SubscriptionPlan.STARTER]:      { [BillingPeriod.MONTHLY]: 199,  [BillingPeriod.YEARLY]: 1990 },
-  [SubscriptionPlan.PROFESSIONAL]: { [BillingPeriod.MONTHLY]: 499,  [BillingPeriod.YEARLY]: 4990 },
-  [SubscriptionPlan.ENTERPRISE]:   { [BillingPeriod.MONTHLY]: 0,    [BillingPeriod.YEARLY]: 0 },
+  [SubscriptionPlan.FREE]: { [BillingPeriod.MONTHLY]: 0, [BillingPeriod.YEARLY]: 0 },
+  [SubscriptionPlan.STARTER]: { [BillingPeriod.MONTHLY]: 199, [BillingPeriod.YEARLY]: 1990 },
+  [SubscriptionPlan.PROFESSIONAL]: { [BillingPeriod.MONTHLY]: 499, [BillingPeriod.YEARLY]: 4990 },
+  [SubscriptionPlan.ENTERPRISE]: { [BillingPeriod.MONTHLY]: 0, [BillingPeriod.YEARLY]: 0 },
 };
 
 // Plan trial periods in days (0 = no trial)
@@ -169,12 +169,12 @@ export class SubscriptionsService {
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
     private readonly dataSource: DataSource
-  ) {}
+  ) { }
 
-   /**
-   * Returns tenant-wide usage from the cached subscription counters.
-   * Much cheaper than counting rows — O(1) not O(n).
-   */
+  /**
+  * Returns tenant-wide usage from the cached subscription counters.
+  * Much cheaper than counting rows — O(1) not O(n).
+  */
   async getTenantUsage(tenantId: string): Promise<SubscriptionUsage> {
     const subscription = await this.subscriptionRepository.findOne({
       where: { tenantId },
@@ -210,7 +210,7 @@ export class SubscriptionsService {
    * Create subscription
    */
   async create(
-    tenantId: string,
+    tenantId: string | undefined,
     createSubscriptionDto: CreateSubscriptionDto,
   ): Promise<Subscription> {
     const existing = await this.subscriptionRepository.findOne({
@@ -242,7 +242,7 @@ export class SubscriptionsService {
       tenantId,
       createdBy: tenantId,
       status:
-      plan === SubscriptionPlan.FREE
+        plan === SubscriptionPlan.FREE
           ? SubscriptionStatus.ACTIVE
           : trialDays > 0
             ? SubscriptionStatus.TRIAL
@@ -299,9 +299,9 @@ export class SubscriptionsService {
   /**
    * Find current subscription
    */
-  async findCurrent(userId: string): Promise<Subscription> {
-    
-      // userId from the controller — look up the user to get their tenantId
+  async findCurrent(userId: string | undefined): Promise<Subscription> {
+
+    // userId from the controller — look up the user to get their tenantId
     const user = await this.dataSource
       .getRepository('users')
       .findOne({ where: { id: userId }, select: ['id', 'tenantId', 'role'] });
@@ -350,7 +350,7 @@ export class SubscriptionsService {
   /**
    * Calculate usage percentages
    */
-   private calculateUsagePercentages(
+  private calculateUsagePercentages(
     usage: SubscriptionUsage,
     limits: SubscriptionLimits,
   ): Record<string, number> {
@@ -361,16 +361,16 @@ export class SubscriptionsService {
     };
 
     return {
-      devices:          pct(usage.devices,          limits.devices),
-      dashboards:       pct(usage.dashboards,        limits.dashboards),
-      assets:           pct(usage.assets,            limits.assets),
-      floorPlans:       pct(usage.floorPlans,        limits.floorPlans),
-      automations:      pct(usage.automations,       limits.automations),
-      users:            pct(usage.users,             limits.users),
-      customers:        pct(usage.customers,         limits.customers),
-      apiCalls:         pct(usage.apiCalls,          limits.apiCallsPerMonth),
-      storageGB:        pct(usage.storageGB,         limits.storageGB),
-      smsNotifications: pct(usage.smsNotifications,  limits.smsNotificationsPerMonth),
+      devices: pct(usage.devices, limits.devices),
+      dashboards: pct(usage.dashboards, limits.dashboards),
+      assets: pct(usage.assets, limits.assets),
+      floorPlans: pct(usage.floorPlans, limits.floorPlans),
+      automations: pct(usage.automations, limits.automations),
+      users: pct(usage.users, limits.users),
+      customers: pct(usage.customers, limits.customers),
+      apiCalls: pct(usage.apiCalls, limits.apiCallsPerMonth),
+      storageGB: pct(usage.storageGB, limits.storageGB),
+      smsNotifications: pct(usage.smsNotifications, limits.smsNotificationsPerMonth),
     };
   }
 
@@ -394,21 +394,21 @@ export class SubscriptionsService {
       }
     };
 
-    check('Devices',           usage.devices,          limits.devices);
-    check('Dashboards',        usage.dashboards,        limits.dashboards);
-    check('Assets',            usage.assets,            limits.assets);
-    check('Floor Plans',       usage.floorPlans,        limits.floorPlans);
-    check('Automations',       usage.automations,       limits.automations);
-    check('Users',             usage.users,             limits.users);
-    check('Customers',         usage.customers,         limits.customers);
-    check('API Calls',         usage.apiCalls,          limits.apiCallsPerMonth);
-    check('Storage',           usage.storageGB,         limits.storageGB);
-    check('SMS Notifications', usage.smsNotifications,  limits.smsNotificationsPerMonth);
+    check('Devices', usage.devices, limits.devices);
+    check('Dashboards', usage.dashboards, limits.dashboards);
+    check('Assets', usage.assets, limits.assets);
+    check('Floor Plans', usage.floorPlans, limits.floorPlans);
+    check('Automations', usage.automations, limits.automations);
+    check('Users', usage.users, limits.users);
+    check('Customers', usage.customers, limits.customers);
+    check('API Calls', usage.apiCalls, limits.apiCallsPerMonth);
+    check('Storage', usage.storageGB, limits.storageGB);
+    check('SMS Notifications', usage.smsNotifications, limits.smsNotificationsPerMonth);
 
     return warnings;
   }
 
-   // ═══════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
   // PRIVATE HELPERS
   // ═══════════════════════════════════════════════════════════════════════════
   validateUpgrade(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): void {
@@ -424,7 +424,7 @@ export class SubscriptionsService {
   /**
    * Check if plan change is an upgrade
    */
-   isUpgrade(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): boolean {
+  isUpgrade(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): boolean {
     return PLAN_ORDER.indexOf(targetPlan) > PLAN_ORDER.indexOf(currentPlan);
   }
 
@@ -504,7 +504,7 @@ export class SubscriptionsService {
 
     const subscription = await repository.findOne({
       where: { tenantId },
-      lock: { mode: 'pessimistic_write' } 
+      lock: { mode: 'pessimistic_write' }
     });
 
     if (!subscription) {
@@ -524,10 +524,10 @@ export class SubscriptionsService {
       ? new Date(subscription.nextBillingDate)
       : new Date();
 
-       subscription.nextBillingDate = billingPeriod === BillingPeriod.MONTHLY
+    subscription.nextBillingDate = billingPeriod === BillingPeriod.MONTHLY
       ? new Date(baseDate.setMonth(baseDate.getMonth() + 1))
       : new Date(baseDate.setFullYear(baseDate.getFullYear() + 1));
-      
+
     subscription.billingPeriod = billingPeriod;
     subscription.status = SubscriptionStatus.ACTIVE;
     subscription.cancelledAt = undefined;
@@ -543,10 +543,10 @@ export class SubscriptionsService {
     return subscription;
   }
 
-   /**
-   * Routes payment webhook to upgrade or renewal based on the plan change.
-   * Called by PaymentsService after payment confirmation.
-   */
+  /**
+  * Routes payment webhook to upgrade or renewal based on the plan change.
+  * Called by PaymentsService after payment confirmation.
+  */
   async processSubscriptionAfterPayment(
     tenantId: string,
     targetPlan: SubscriptionPlan,
@@ -564,8 +564,8 @@ export class SubscriptionsService {
         paymentAmount,
         queryRunner,
       );
-    } 
-    
+    }
+
     if (this.isRenewal(subscription.plan, targetPlan)) {
       return this.renewAfterPayment(
         tenantId,
@@ -607,10 +607,10 @@ export class SubscriptionsService {
     };
   }
 
-    /**
-   * Schedules a downgrade at end of current billing period.
-   * Used by POST /subscriptions/downgrade/schedule
-   */
+  /**
+ * Schedules a downgrade at end of current billing period.
+ * Used by POST /subscriptions/downgrade/schedule
+ */
   async scheduleDowngrade(
     userId: string,
     targetPlan: SubscriptionPlan,
@@ -644,10 +644,10 @@ export class SubscriptionsService {
     return subscription;
   }
 
-    /**
-   * Cancels a scheduled downgrade.
-   * Used by POST /subscriptions/downgrade/cancel
-   */
+  /**
+ * Cancels a scheduled downgrade.
+ * Used by POST /subscriptions/downgrade/cancel
+ */
   async cancelScheduledDowngrade(userId: string): Promise<Subscription> {
     const subscription = await this.findCurrent(userId);
 
@@ -699,10 +699,10 @@ export class SubscriptionsService {
     return null;
   }
 
-   /**
-   * Cancels the subscription immediately.
-   * Used by POST /subscriptions/cancel
-   */
+  /**
+  * Cancels the subscription immediately.
+  * Used by POST /subscriptions/cancel
+  */
   async cancel(userId: string): Promise<Subscription> {
     const subscription = await this.findCurrent(userId);
 
@@ -797,11 +797,11 @@ export class SubscriptionsService {
    * Increment tenant usage
    */
   async incrementTenantUsage(
-    tenantId: string,
+    tenantId: string | undefined,
     resource: keyof SubscriptionUsage,
     amount: number = 1,
   ): Promise<void> {
-      await this.dataSource.query(
+    await this.dataSource.query(
       `UPDATE subscriptions
        SET usage = jsonb_set(
          usage,
@@ -821,7 +821,7 @@ export class SubscriptionsService {
     resource: keyof SubscriptionUsage,
     amount: number = 1,
   ): Promise<void> {
-      await this.dataSource.query(
+    await this.dataSource.query(
       `UPDATE subscriptions
        SET usage = jsonb_set(
          usage,
@@ -841,9 +841,9 @@ export class SubscriptionsService {
     return subscription.hasFeature(feature);
   }
 
-   /**
-   * Pricing helper used by PaymentsService.
-   */
+  /**
+  * Pricing helper used by PaymentsService.
+  */
   getPlanPricing(plan: SubscriptionPlan, billingPeriod: BillingPeriod): number {
     return PLAN_PRICING[plan][billingPeriod];
   }
@@ -863,7 +863,7 @@ export class SubscriptionsService {
   /**
    * Helper: Calculate next billing date
    */
- private calculateNextBillingDate(billingPeriod: BillingPeriod): Date {
+  private calculateNextBillingDate(billingPeriod: BillingPeriod): Date {
     const now = new Date();
     return billingPeriod === BillingPeriod.MONTHLY
       ? new Date(now.setMonth(now.getMonth() + 1))
@@ -917,7 +917,7 @@ export class SubscriptionsService {
   async resetMonthlyUsage(): Promise<void> {
     this.logger.log('🔄 Starting monthly usage reset...');
 
-      const result = await this.dataSource.query(
+    const result = await this.dataSource.query(
       `UPDATE subscriptions
        SET
          usage = jsonb_set(jsonb_set(
@@ -937,13 +937,13 @@ export class SubscriptionsService {
     );
   }
 
- /**
-   * Execute scheduled downgrades when their effective date has passed.
-   * Runs every day at midnight.
-   */
+  /**
+    * Execute scheduled downgrades when their effective date has passed.
+    * Runs every day at midnight.
+    */
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async processScheduledDowngrades(): Promise<void> {
-      this.logger.log('Processing scheduled downgrades...');
+    this.logger.log('Processing scheduled downgrades...');
 
     // Find subscriptions with a pending downgrade whose date has passed
     const subscriptions = await this.subscriptionRepository
@@ -989,7 +989,7 @@ export class SubscriptionsService {
   /**
    * Check if plan change is a renewal (same plan)
    */
-    isRenewal(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): boolean {
+  isRenewal(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): boolean {
     return currentPlan === targetPlan;
   }
 

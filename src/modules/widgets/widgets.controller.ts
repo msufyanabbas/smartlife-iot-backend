@@ -34,7 +34,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '@common/enums/index.enum'
-import { WidgetTypeCategory } from './entities/widget-type.entity';
+import { WidgetTypeCategory } from '@common/enums/index.enum';
 
 @ApiTags('Widgets')
 @Controller('widgets')
@@ -44,7 +44,7 @@ export class WidgetsController {
   constructor(
     private readonly widgetTypesService: WidgetTypesService,
     private readonly widgetBundlesService: WidgetBundlesService,
-  ) {}
+  ) { }
 
   // ==================== WIDGET TYPES ====================
 

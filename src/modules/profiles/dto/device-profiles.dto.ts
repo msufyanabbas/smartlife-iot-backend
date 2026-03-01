@@ -14,8 +14,8 @@ import { Type } from 'class-transformer';
 import {
   DeviceTransportType,
   DeviceProvisionType,
-} from '../enums/device-profile.enum';
-import { AlarmSeverity, ProcessingStrategy, QueueName, SubmitStrategy } from '../enums/asset-profile.enum';
+} from '@common/enums/index.enum';
+import { AlarmSeverity, ProcessingStrategy, QueueName, SubmitStrategy } from '@common/enums/index.enum';
 
 // Device Profile DTOs
 export class CreateDeviceProfileDto {
@@ -110,7 +110,7 @@ export class CreateDeviceProfileDto {
 
 export class UpdateDeviceProfileDto extends PartialType(
   CreateDeviceProfileDto,
-) {}
+) { }
 
 export class HierarchyConfigDto {
   @ApiProperty({ default: true })

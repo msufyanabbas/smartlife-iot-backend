@@ -11,11 +11,12 @@ import { DeviceListenerService } from './device-listener.service';  // ← MOVED
 import { Device, DeviceCredentials } from '@modules/index.entities';
 import { DevicesModule } from '@modules/devices/devices.module';  // For codec registry
 import { KafkaModule } from '@/lib/kafka/kafka.module';
+import { forwardRef } from '@nestjs/common';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Device, DeviceCredentials]),
-    DevicesModule,  // Provides CodecRegistryService
+    forwardRef(() => DevicesModule),  // Provides CodecRegistryService
     KafkaModule,    // Provides KafkaService
   ],
   providers: [
@@ -36,4 +37,4 @@ import { KafkaModule } from '@/lib/kafka/kafka.module';
     HTTPAdapter,
   ],
 })
-export class ProtocolsModule {}
+export class ProtocolsModule { }

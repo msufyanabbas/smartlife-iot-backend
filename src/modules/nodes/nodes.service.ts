@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Node, NodeType } from './entities/node.entity';
+import { Node } from './entities/node.entity';
+import { NodeType } from '@common/enums/index.enum';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -11,7 +12,7 @@ export class NodesService {
   constructor(
     @InjectRepository(Node)
     private readonly nodeRepository: Repository<Node>,
-  ) {}
+  ) { }
 
   async create(userId: string, createDto: CreateNodeDto): Promise<Node> {
     const node = this.nodeRepository.create({

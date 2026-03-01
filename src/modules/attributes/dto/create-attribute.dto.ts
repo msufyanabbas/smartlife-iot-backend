@@ -6,7 +6,7 @@ import {
   IsBoolean,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { AttributeScope, DataType } from '../entities/attribute.entity';
+import { AttributeScope, DataType } from '@common/enums/index.enum';
 
 export class CreateAttributeDto {
   @ApiProperty({ example: 'device' })

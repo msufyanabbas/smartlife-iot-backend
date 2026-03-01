@@ -62,7 +62,7 @@ export class DevicesController {
     private readonly devicesService: DevicesService,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly mqttAdapter: MQTTAdapter,  // ← Inject MQTT adapter
-  ) {}
+  ) { }
 
   // ══════════════════════════════════════════════════════════════════════════
   // DEVICE MANAGEMENT
@@ -224,7 +224,7 @@ export class DevicesController {
   @Post('bulk/status')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Bulk update device status (Professional plan required)',
     description: 'Requires Professional or Enterprise plan'
   })
@@ -332,7 +332,7 @@ export class DevicesController {
    */
   @Post(':deviceKey/command')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Send command to device',
     description: 'Send a command to a device via MQTT'
   })
@@ -363,7 +363,7 @@ export class DevicesController {
    */
   @Post(':deviceKey/rpc')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Send RPC request to device',
     description: 'Send a remote procedure call to a device'
   })
@@ -396,7 +396,7 @@ export class DevicesController {
    */
   @Post(':deviceKey/attributes')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Update device attributes',
     description: 'Update device attributes via MQTT'
   })
@@ -431,7 +431,7 @@ export class DevicesController {
    */
   @Post(':deviceKey/telemetry')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Publish telemetry (for testing)',
     description: 'Manually publish telemetry data for a device (testing only)'
   })

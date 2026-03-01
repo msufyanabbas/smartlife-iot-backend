@@ -1,10 +1,8 @@
+// src/database/seeds/role/role.seeder.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
-import { Role } from '@modules/roles/entities/roles.entity';
-import { Permission } from '@modules/permissions/entities/permissions.entity';
-import { Tenant } from '@modules/index.entities';
-import { Customer } from '@modules/customers/entities/customers.entity'; // adjust path
+import { Repository } from 'typeorm';
+import { Role, Permission, Tenant, Customer } from '@modules/index.entities';
 import { ISeeder } from '../seeder.interface';
 
 @Injectable()
@@ -20,10 +18,17 @@ export class RoleSeeder implements ISeeder {
     private readonly tenantRepository: Repository<Tenant>,
     @InjectRepository(Customer)
     private readonly customerRepository: Repository<Customer>,
-  ) {}
+  ) { }
 
   async seed(): Promise<void> {
     this.logger.log('🌱 Starting role seeding...');
+
+    // Check if roles already exist
+    const existingRoles = await this.roleRepository.count();
+    if (existingRoles > 0) {
+      this.logger.log(`⏭️  Roles already seeded (${existingRoles} records). Skipping...`);
+      return;
+    }
 
     // ========================================
     // FETCH EXISTING PERMISSIONS, TENANTS, CUSTOMERS
@@ -34,7 +39,7 @@ export class RoleSeeder implements ISeeder {
 
     if (allPermissions.length === 0) {
       this.logger.warn(
-        '⚠️ No permissions found. Please seed permissions first. Skipping role seeding.',
+        '⚠️  No permissions found. Please seed permissions first. Skipping role seeding.',
       );
       return;
     }
@@ -63,10 +68,6 @@ export class RoleSeeder implements ISeeder {
       );
     };
 
-    const getPermissionsByResources = (resources: string[]): Permission[] => {
-      return allPermissions.filter((p) => resources.includes(p.resource));
-    };
-
     const dedupePermissions = (permissions: Permission[]): Permission[] => {
       const seen = new Set<string>();
       return permissions.filter((p) => {
@@ -87,8 +88,7 @@ export class RoleSeeder implements ISeeder {
         name: 'Super Administrator',
         description: 'Full system access with all permissions',
         isSystem: true,
-        tenantId: null,
-        customerId: null,
+        tenantId: null, // ✅ System role - no tenant
         permissions: allPermissions,
       },
       // ========================================
@@ -100,7 +100,6 @@ export class RoleSeeder implements ISeeder {
           'Manages tenants, system settings, and platform-level operations',
         isSystem: true,
         tenantId: null,
-        customerId: null,
         permissions: allPermissions.filter((p) =>
           [
             'tenants',
@@ -122,7 +121,6 @@ export class RoleSeeder implements ISeeder {
           'Manages all device-related operations and configurations',
         isSystem: true,
         tenantId: null,
-        customerId: null,
         permissions: dedupePermissions([
           ...getPermissionsByResource('devices'),
           ...getPermissionsByResourceAndActions('dashboards', [
@@ -145,7 +143,6 @@ export class RoleSeeder implements ISeeder {
         description: 'Creates and manages dashboards and visualizations',
         isSystem: true,
         tenantId: null,
-        customerId: null,
         permissions: dedupePermissions([
           ...getPermissionsByResource('dashboards'),
           ...getPermissionsByResourceAndActions('devices', ['read', 'list']),
@@ -165,7 +162,6 @@ export class RoleSeeder implements ISeeder {
         description: 'Generates and analyzes reports and analytics',
         isSystem: true,
         tenantId: null,
-        customerId: null,
         permissions: dedupePermissions([
           ...getPermissionsByResource('reports'),
           ...getPermissionsByResource('analytics'),
@@ -183,7 +179,6 @@ export class RoleSeeder implements ISeeder {
           'Manages alerts, notifications, and incident responses',
         isSystem: true,
         tenantId: null,
-        customerId: null,
         permissions: dedupePermissions([
           ...getPermissionsByResource('alerts'),
           ...getPermissionsByResourceAndActions('devices', [
@@ -203,7 +198,6 @@ export class RoleSeeder implements ISeeder {
         description: 'Reviews audit logs and security-related activities',
         isSystem: true,
         tenantId: null,
-        customerId: null,
         permissions: dedupePermissions([
           ...getPermissionsByResource('audit-logs'),
           ...getPermissionsByResourceAndActions('users', ['read', 'list']),
@@ -220,7 +214,6 @@ export class RoleSeeder implements ISeeder {
         description: 'View-only access to dashboards, devices, and reports',
         isSystem: true,
         tenantId: null,
-        customerId: null,
         permissions: dedupePermissions([
           ...getPermissionsByAction('read'),
           ...getPermissionsByAction('list'),
@@ -243,9 +236,8 @@ export class RoleSeeder implements ISeeder {
         {
           name: 'Tenant Administrator',
           description: `Full administrative access for ${firstTenant.name || 'this tenant'}`,
-          isSystem: false,
-          tenantId: firstTenant.id,
-          customerId: null,
+          isSystem: false, // ✅ Not a system role
+          tenantId: firstTenant.id, // ✅ Scoped to tenant
           permissions: allPermissions.filter(
             (p) => !['tenants', 'billing'].includes(p.resource),
           ),
@@ -258,7 +250,6 @@ export class RoleSeeder implements ISeeder {
           description: 'Device operations for tenant users',
           isSystem: false,
           tenantId: firstTenant.id,
-          customerId: null,
           permissions: dedupePermissions([
             ...getPermissionsByResourceAndActions('devices', [
               'read',
@@ -276,12 +267,15 @@ export class RoleSeeder implements ISeeder {
     }
 
     // ========================================
-    // CUSTOMER ROLES (2 roles) — scoped to first customer
+    // CUSTOMER ROLES (2 roles)
+    // NOTE: Role entity does NOT have customerId field
+    // Customer roles are tenant-scoped, not customer-scoped
     // ========================================
     const customerRoles: any[] = [];
 
-    if (customers.length > 0) {
+    if (customers.length > 0 && tenants.length > 0) {
       const firstCustomer = customers[0];
+      const customerTenant = tenants.find(t => t.id === firstCustomer.tenantId) || tenants[0];
 
       customerRoles.push(
         // ========================================
@@ -289,18 +283,17 @@ export class RoleSeeder implements ISeeder {
         // ========================================
         {
           name: 'Customer Administrator',
-          description: `Administrative access for ${firstCustomer.name || 'this customer'} — manages users, devices, and dashboards within their account`,
+          description: `Administrative access for customers — manages users, devices, and dashboards within their account`,
           isSystem: false,
-          tenantId: firstCustomer.tenantId ?? null,
-          customerId: firstCustomer.id,
+          tenantId: customerTenant.id, // ✅ Use tenant, not customer
           permissions: dedupePermissions([
-            // Full CRUD on their own devices
+            // Full CRUD on devices
             ...getPermissionsByResource('devices'),
             // Full CRUD on dashboards
             ...getPermissionsByResource('dashboards'),
             // Full CRUD on alerts
             ...getPermissionsByResource('alerts'),
-            // Manage users within their customer scope
+            // Manage users
             ...getPermissionsByResourceAndActions('users', [
               'read',
               'list',
@@ -308,7 +301,7 @@ export class RoleSeeder implements ISeeder {
               'update',
               'delete',
             ]),
-            // Manage their own customer profile
+            // Manage customer profile
             ...getPermissionsByResourceAndActions('customers', [
               'read',
               'update',
@@ -323,7 +316,7 @@ export class RoleSeeder implements ISeeder {
               'read',
               'export',
             ]),
-            // View API keys (no system-level resources)
+            // Manage API keys
             ...getPermissionsByResourceAndActions('api-keys', [
               'read',
               'list',
@@ -345,21 +338,20 @@ export class RoleSeeder implements ISeeder {
           description:
             'Standard end-user access — monitors devices, views dashboards, and manages their own alerts',
           isSystem: false,
-          tenantId: firstCustomer.tenantId ?? null,
-          customerId: firstCustomer.id,
+          tenantId: customerTenant.id, // ✅ Use tenant, not customer
           permissions: dedupePermissions([
-            // Read & control their assigned devices (no create/delete)
+            // Read & control assigned devices
             ...getPermissionsByResourceAndActions('devices', [
               'read',
               'list',
               'control',
             ]),
-            // View dashboards only
+            // View dashboards
             ...getPermissionsByResourceAndActions('dashboards', [
               'read',
               'list',
             ]),
-            // Manage their own alerts (acknowledge, read)
+            // Manage own alerts
             ...getPermissionsByResourceAndActions('alerts', [
               'read',
               'list',
@@ -367,89 +359,7 @@ export class RoleSeeder implements ISeeder {
             ]),
             // View reports
             ...getPermissionsByResourceAndActions('reports', ['read', 'list']),
-            // Basic analytics read
-            ...getPermissionsByResourceAndActions('analytics', ['read']),
-          ]),
-        },
-      );
-    } else {
-      // ========================================
-      // FALLBACK: Seed customer roles without a customerId
-      // so they're available as role templates even before
-      // any customers exist.
-      // ========================================
-      this.logger.warn(
-        '⚠️ No customers found. Seeding customer role templates without customerId.',
-      );
-
-      customerRoles.push(
-        {
-          name: 'Customer Administrator',
-          description:
-            'Administrative access — manages users, devices, and dashboards within their account',
-          isSystem: true, // template — not scoped to a customer yet
-          tenantId: null,
-          customerId: null,
-          permissions: dedupePermissions([
-            ...getPermissionsByResource('devices'),
-            ...getPermissionsByResource('dashboards'),
-            ...getPermissionsByResource('alerts'),
-            ...getPermissionsByResourceAndActions('users', [
-              'read',
-              'list',
-              'create',
-              'update',
-              'delete',
-            ]),
-            ...getPermissionsByResourceAndActions('customers', [
-              'read',
-              'update',
-            ]),
-            ...getPermissionsByResourceAndActions('reports', [
-              'read',
-              'create',
-              'export',
-            ]),
-            ...getPermissionsByResourceAndActions('analytics', [
-              'read',
-              'export',
-            ]),
-            ...getPermissionsByResourceAndActions('api-keys', [
-              'read',
-              'list',
-              'create',
-              'delete',
-            ]),
-          ]).filter(
-            (p) =>
-              !['tenants', 'billing', 'settings', 'audit-logs'].includes(
-                p.resource,
-              ),
-          ),
-        },
-        {
-          name: 'Customer User',
-          description:
-            'Standard end-user access — monitors devices, views dashboards, and manages their own alerts',
-          isSystem: true, // template — not scoped to a customer yet
-          tenantId: null,
-          customerId: null,
-          permissions: dedupePermissions([
-            ...getPermissionsByResourceAndActions('devices', [
-              'read',
-              'list',
-              'control',
-            ]),
-            ...getPermissionsByResourceAndActions('dashboards', [
-              'read',
-              'list',
-            ]),
-            ...getPermissionsByResourceAndActions('alerts', [
-              'read',
-              'list',
-              'acknowledge',
-            ]),
-            ...getPermissionsByResourceAndActions('reports', ['read', 'list']),
+            // Basic analytics
             ...getPermissionsByResourceAndActions('analytics', ['read']),
           ]),
         },
@@ -470,7 +380,7 @@ export class RoleSeeder implements ISeeder {
         const existing = await this.roleRepository.findOne({
           where: {
             name: roleData.name,
-            tenantId: roleData.tenantId ?? null,
+            tenantId: roleData.tenantId ?? null, // ✅ Check both name AND tenantId
           },
         });
 
@@ -479,17 +389,15 @@ export class RoleSeeder implements ISeeder {
             name: roleData.name,
             description: roleData.description,
             isSystem: roleData.isSystem,
-            tenantId: roleData.tenantId,
+            tenantId: roleData.tenantId ?? null, // ✅ Use null for system roles
             permissions: roleData.permissions,
           });
 
           await this.roleRepository.save(role);
 
-          const scopeLabel = roleData.customerId
-            ? '👤 Customer'
-            : roleData.tenantId
-              ? '🏢 Tenant'
-              : '🔧 System';
+          const scopeLabel = roleData.tenantId
+            ? `🏢 Tenant (${roleData.tenantId.substring(0, 8)}...)`
+            : '🔧 System';
 
           this.logger.log(
             `✅ Created role: ${roleData.name.padEnd(35)} | ${scopeLabel} | ${roleData.permissions.length} permissions`,
@@ -501,7 +409,7 @@ export class RoleSeeder implements ISeeder {
         }
       } catch (error) {
         this.logger.error(
-          `❌ Failed to seed role ${roleData.name}: ${error.message}`,
+          `❌ Failed to seed role '${roleData.name}': ${error.message}`,
         );
         errorCount++;
       }
@@ -541,7 +449,7 @@ export class RoleSeeder implements ISeeder {
     }
     if (customerRoles.length > 0) {
       this.logger.log('');
-      this.logger.log('👤 Customer Roles:');
+      this.logger.log('👤 Customer Roles (Tenant-scoped):');
       customerRoles.forEach((r) =>
         this.logger.log(`   - ${r.name} (${r.permissions.length} permissions)`),
       );

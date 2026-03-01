@@ -5,20 +5,20 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Tenant, TenantStatus } from './entities/tenant.entity';
+import { Tenant } from './entities/tenant.entity';
+import { TenantStatus } from '@/common/enums/index.enum';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginationDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class TenantsService {
   constructor(
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
-  ) {}
+  ) { }
 
   async create(userId: string, createDto: CreateTenantDto): Promise<Tenant> {
-    // Check if tenant with same name or email exists
     const existing = await this.tenantRepository.findOne({
       where: [{ name: createDto.name }, { email: createDto.email }],
     });
@@ -33,14 +33,9 @@ export class TenantsService {
       ...createDto,
       createdBy: userId,
       configuration: {
-        maxDevices: 100,
-        maxUsers: 10,
-        maxAssets: 50,
-        maxDashboards: 10,
-        maxRuleChains: 5,
-        dataRetentionDays: 30,
-        features: [],
-        ...createDto.configuration,
+        timezone: createDto.configuration?.timezone,
+        language: createDto.configuration?.language,
+        theme: createDto.configuration?.theme,
       },
     });
 

@@ -37,10 +37,10 @@ export class DevicesService {
     private deviceRepository: Repository<Device>,
     private configService: ConfigService,
     private userService: UsersService,
-     private eventEmitter: EventEmitter2,
+    private eventEmitter: EventEmitter2,
     private credentialsService: DeviceCredentialsService,
     private subscriptionsService: SubscriptionsService,
-  ) {}
+  ) { }
 
   /**
    * Create a new device WITH credentials
@@ -179,29 +179,29 @@ export class DevicesService {
   /**
    * Find device by device key (used by MQTT gateway)
    */
-/**
- * Find device by deviceKey (with access control)
- */
-async findByDeviceKey(deviceKey: string, user: User): Promise<Device> {
-  const where: any = { deviceKey };
+  /**
+   * Find device by deviceKey (with access control)
+   */
+  async findByDeviceKey(deviceKey: string, user: User): Promise<Device> {
+    const where: any = { deviceKey };
 
-  // Apply tenant/customer filtering
-  if (user.role !== UserRole.SUPER_ADMIN) {
-    where.tenantId = user.tenantId;
+    // Apply tenant/customer filtering
+    if (user.role !== UserRole.SUPER_ADMIN) {
+      where.tenantId = user.tenantId;
+    }
+
+    if (user.role === UserRole.CUSTOMER_ADMIN || user.role === UserRole.CUSTOMER_USER) {
+      where.customerId = user.customerId;
+    }
+
+    const device = await this.deviceRepository.findOne({ where });
+
+    if (!device) {
+      throw new NotFoundException('Device not found');
+    }
+
+    return device;
   }
-
-  if (user.role === UserRole.CUSTOMER_ADMIN || user.role === UserRole.CUSTOMER_USER) {
-    where.customerId = user.customerId;
-  }
-
-  const device = await this.deviceRepository.findOne({ where });
-
-  if (!device) {
-    throw new NotFoundException('Device not found');
-  }
-
-  return device;
-}
 
   /**
    * Update device
@@ -248,10 +248,10 @@ async findByDeviceKey(deviceKey: string, user: User): Promise<Device> {
    */
   async remove(id: string, user: User): Promise<void> {
     const device = await this.findOne(id, user);
-    
+
     // Delete credentials first
     await this.credentialsService.deleteByDeviceId(device.id);
-    
+
     // Then delete device
     await this.deviceRepository.softRemove(device);
   }
@@ -485,67 +485,67 @@ async findByDeviceKey(deviceKey: string, user: User): Promise<Device> {
   /**
  * ✅ Handle device going offline
  */
-private async handleDeviceOffline(device: Device, user: User): Promise<void> {
-  this.eventEmitter.emit('device.offline', { device, user });
-  this.logger.warn(`Device ${device.name} (${device.id}) went offline`);
-}
-
-/**
- * ✅ Handle device coming online
- */
-private async handleDeviceOnline(device: Device, user: User): Promise<void> {
-  this.eventEmitter.emit('device.connected', { device, user });
-  this.logger.log(`Device ${device.name} (${device.id}) is now online`);
-}
-
-/**
- * ✅ Update updateLastSeen to emit events
- */
-async updateLastSeen(deviceKey: string): Promise<void> {
-  const device = await this.findByDeviceKey(deviceKey);
-  
-  const wasOffline = device.status === DeviceStatus.OFFLINE;
-  
-  await this.deviceRepository.update(
-    { deviceKey },
-    { 
-      lastSeenAt: new Date(),
-      status: DeviceStatus.ACTIVE 
-    },
-  );
-
-  if (wasOffline) {
-    const user = await this.userService.findOne(device.userId);
-    await this.handleDeviceOnline(device, user);
+  private async handleDeviceOffline(device: Device, user: User): Promise<void> {
+    this.eventEmitter.emit('device.offline', { device, user });
+    this.logger.warn(`Device ${device.name} (${device.id}) went offline`);
   }
-}
 
-/**
- * ✅ Add a cron job to check for offline devices
- */
-@Cron(CronExpression.EVERY_5_MINUTES)
-async checkOfflineDevices(): Promise<void> {
-  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-  
-  const devices = await this.deviceRepository.find({
-    where: {
-      status: DeviceStatus.ACTIVE,
-      lastSeenAt: LessThan(fiveMinutesAgo),
-    },
-  });
+  /**
+   * ✅ Handle device coming online
+   */
+  private async handleDeviceOnline(device: Device, user: User): Promise<void> {
+    this.eventEmitter.emit('device.connected', { device, user });
+    this.logger.log(`Device ${device.name} (${device.id}) is now online`);
+  }
 
-  for (const device of devices) {
-    device.status = DeviceStatus.OFFLINE;
-    await this.deviceRepository.save(device);
-    
-    const user = await this.userService.findOne(device.userId);
-    await this.handleDeviceOffline(device, user);
+  /**
+   * ✅ Update updateLastSeen to emit events
+   */
+  async updateLastSeen(deviceKey: string, user: User): Promise<void> {
+    const device = await this.findByDeviceKey(deviceKey, user);
+
+    const wasOffline = device.status === DeviceStatus.OFFLINE;
+
+    await this.deviceRepository.update(
+      { deviceKey },
+      {
+        lastSeenAt: new Date(),
+        status: DeviceStatus.ACTIVE
+      },
+    );
+
+    if (wasOffline) {
+      const user = await this.userService.findOne(device.userId);
+      await this.handleDeviceOnline(device, user);
+    }
   }
-  
-  if (devices.length > 0) {
-    this.logger.log(`Marked ${devices.length} devices as offline`);
+
+  /**
+   * ✅ Add a cron job to check for offline devices
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async checkOfflineDevices(): Promise<void> {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+
+    const devices = await this.deviceRepository.find({
+      where: {
+        status: DeviceStatus.ACTIVE,
+        lastSeenAt: LessThan(fiveMinutesAgo),
+      },
+    });
+
+    for (const device of devices) {
+      device.status = DeviceStatus.OFFLINE;
+      await this.deviceRepository.save(device);
+
+      const user = await this.userService.findOne(device.userId);
+      await this.handleDeviceOffline(device, user);
+    }
+
+    if (devices.length > 0) {
+      this.logger.log(`Marked ${devices.length} devices as offline`);
+    }
   }
-}
 
 
 }

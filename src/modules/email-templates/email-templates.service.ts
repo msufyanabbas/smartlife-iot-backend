@@ -8,8 +8,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
   EmailTemplate,
-  EmailTemplateType,
 } from './entities/email-template.entity';
+import { EmailTemplateType } from '@common/enums/index.enum';
 import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 
@@ -20,7 +20,7 @@ export class EmailTemplatesService {
   constructor(
     @InjectRepository(EmailTemplate)
     private emailTemplateRepository: Repository<EmailTemplate>,
-  ) {}
+  ) { }
 
   /**
    * Create a new email template
@@ -143,17 +143,17 @@ export class EmailTemplatesService {
     // Replace all {{variableName}} with actual values
     // This regex handles both {{variable}} and {{ variable }} (with spaces)
     const regex = /\{\{\s*(\w+)\s*\}\}/g;
-    
+
     rendered = rendered.replace(regex, (match, variableName) => {
       const value = variables[variableName];
-      
+
       if (value === undefined || value === null) {
         this.logger.warn(
           `Variable '${variableName}' not found in provided variables. Available: ${Object.keys(variables).join(', ')}`,
         );
         return match; // Keep the placeholder if variable not found
       }
-      
+
       return String(value);
     });
 

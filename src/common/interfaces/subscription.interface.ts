@@ -65,6 +65,7 @@ export interface SubscriptionFeatures {
   widgetLibrary?: 'basic' | 'standard' | 'advanced';
   alarmManagement?: 'basic' | 'standard' | 'advanced';
   advancedAlarms?: boolean;
+  bulkOperations?: boolean;
 
   // Data Management
   dataExport?: 'csv' | 'csv-json-excel' | 'all-formats';

@@ -1,7 +1,7 @@
 // src/modules/devices/entities/device.entity.ts
-import { Entity, Column, ManyToOne, OneToMany, JoinColumn, Index } from 'typeorm';
+import { Entity, Column, ManyToOne, OneToMany, JoinColumn, Index, OneToOne } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { User, Tenant, Customer, Asset, DeviceProfile } from '@modules/index.entities';
+import { User, Tenant, Customer, Asset, DeviceProfile, DeviceCredentials } from '@modules/index.entities';
 import { DeviceType, DeviceStatus, DeviceConnectionType } from '@common/enums/index.enum';
 
 
@@ -27,7 +27,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   @Index()
   customerId?: string;
@@ -63,7 +63,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // OWNERSHIP
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column()
   @Index()
   userId: string;  // Who created this device
@@ -75,7 +75,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // DEVICE PROFILE (Configuration Template)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   @Index()
   deviceProfileId?: string;
@@ -83,7 +83,7 @@ export class Device extends BaseEntity {
   @ManyToOne(() => DeviceProfile, { nullable: true })
   @JoinColumn({ name: 'deviceProfileId' })
   deviceProfile?: DeviceProfile;
-  
+
   // ══════════════════════════════════════════════════════════════════════════
   // ASSET ASSOCIATION (1 Device → 1 Asset)
   // ══════════════════════════════════════════════════════════════════════════
@@ -99,7 +99,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // NETWORK INFO (Physical connectivity)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ nullable: true })
   ipAddress?: string;  // Current IP: "192.168.1.42"
 
@@ -115,7 +115,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // LOCATION (GPS coordinates + human-readable)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
   latitude?: number;  // 24.7136
 
@@ -128,7 +128,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // CONFIGURATION (Device-specific settings)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   configuration?: Record<string, any>;
   // Example for Temperature Sensor:
@@ -159,7 +159,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA (Static info about the device)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, any>;
   // Example:
@@ -177,7 +177,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TAGS (For filtering/grouping)
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];
   // Example: ['critical', 'hvac', 'monitored', 'building-a', 'floor-3']
@@ -190,6 +190,12 @@ export class Device extends BaseEntity {
   @Index()
   lastSeenAt?: Date;  // Last time device was seen (heartbeat)
 
+  @OneToOne(() => DeviceCredentials, credentials => credentials.device, {
+    nullable: true,
+    cascade: true
+  })
+  credentials?: DeviceCredentials;
+
   @Column({ type: 'timestamp', nullable: true })
   lastActivityAt?: Date;  // Last time device sent data
 
@@ -199,7 +205,7 @@ export class Device extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // STATISTICS
   // ══════════════════════════════════════════════════════════════════════════
-  
+
   @Column({ type: 'int', default: 0 })
   messageCount: number;  // Total messages sent by device
 

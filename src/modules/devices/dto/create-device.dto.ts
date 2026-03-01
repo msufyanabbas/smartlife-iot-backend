@@ -14,7 +14,7 @@ import {
   IsArray,
   MinLength,
 } from 'class-validator';
-import { DeviceType, DeviceConnectionType } from '../entities/device.entity';
+import { DeviceType, DeviceConnectionType } from '@common/enums/index.enum';
 
 export class CreateDeviceDto {
   @ApiProperty({ example: 'Smart Sensor 001', description: 'Device name' })
@@ -78,8 +78,8 @@ export class CreateDeviceDto {
   location?: string;
 
   @ApiPropertyOptional({
-    example: { 
-      manufacturer: 'Milesight', 
+    example: {
+      manufacturer: 'Milesight',
       model: 'WS558',
       codecId: 'milesight-ws558', // 🆕 CODEC ID
       deviceType: 'lorawan-milesight',

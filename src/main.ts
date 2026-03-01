@@ -89,7 +89,6 @@ async function bootstrap() {
   // registered as APP_INTERCEPTOR in AppModule so they have DI access.
   // Only stateless interceptors (no constructor dependencies) can go here.
   app.useGlobalInterceptors(
-    new LoggingInterceptor(),           // logs all requests
     new TransformInterceptor(),         // wraps all responses
     new TimeoutInterceptor(configService), // enforces 30s timeout
   );

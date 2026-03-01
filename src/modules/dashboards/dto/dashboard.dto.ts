@@ -14,8 +14,8 @@ import {
 import { Type } from 'class-transformer';
 import {
   DashboardVisibility,
-  WidgetConfig,
-} from '../entities/dashboard.entity';
+} from '@common/enums/index.enum';
+import { WidgetConfig } from '@/common/interfaces/widget.interface';
 
 export class WidgetPositionDto {
   @ApiProperty()

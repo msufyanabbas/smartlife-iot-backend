@@ -8,10 +8,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
   FloorPlan,
-  FloorPlanStatus,
-  Device3DData,
-  DeviceAnimationType,
 } from './entities/floor-plan.entity';
+import { FloorPlanStatus, DeviceAnimationType } from '@common/enums/index.enum';
+import { Device3DData } from '@common/interfaces/index.interface';
 import {
   CreateFloorPlanDto,
   AddDeviceToFloorPlanDto,
@@ -136,7 +135,7 @@ export class FloorPlansService {
 
   async remove(id: string, userId: string): Promise<void> {
     const floorPlan = await this.findOne(id, userId);
-    
+
     // Clean up associated files
     if (floorPlan.dwgFileUrl) {
       await this.deleteFile(floorPlan.dwgFileUrl);
@@ -218,7 +217,7 @@ export class FloorPlansService {
       floorPlan.parsedGeometry = geometry;
       floorPlan.status = FloorPlanStatus.ACTIVE;
       floorPlan.parsingError = "";
-      
+
       // Update dimensions from parsed geometry
       if (geometry.rooms && geometry.rooms.length > 0) {
         const bounds = this.calculateBounds(geometry);
@@ -242,7 +241,7 @@ export class FloorPlansService {
       const floorPlan = await this.floorPlanRepository.findOne({
         where: { id: floorPlanId },
       });
-      
+
       if (floorPlan) {
         floorPlan.status = FloorPlanStatus.FAILED;
         floorPlan.parsingError = error.message;

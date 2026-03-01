@@ -3,7 +3,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { DWGGeometry } from './entities/floor-plan.entity';
+import { DWGGeometry } from '@common/interfaces/index.interface';
 
 const execAsync = promisify(exec);
 
@@ -88,7 +88,7 @@ export class DWGParserService {
       const geometry = this.extractGeometryFromJSON(dwgData);
 
       // Clean up temporary JSON file
-      await fs.unlink(jsonOutputPath).catch(() => {});
+      await fs.unlink(jsonOutputPath).catch(() => { });
 
       return geometry;
     } catch (error) {
@@ -148,7 +148,7 @@ export class DWGParserService {
 
   private extractWalls(entity: any, geometry: DWGGeometry): void {
     const points = this.getEntityPoints(entity);
-    
+
     if (points.length >= 2) {
       geometry.walls.push({
         id: entity.handle || this.generateId(),
@@ -204,10 +204,10 @@ export class DWGParserService {
 
   private extractRooms(entity: any, geometry: DWGGeometry): void {
     const boundaries = this.getEntityPoints(entity);
-    
+
     if (boundaries.length >= 3) {
       const area = this.calculatePolygonArea(boundaries);
-      
+
       geometry.rooms.push({
         id: entity.handle || this.generateId(),
         name: entity.layer || 'Room',
@@ -244,7 +244,7 @@ export class DWGParserService {
     // Get file size to simulate processing time
     const stats = await fs.stat(filePath);
     const fileSizeMB = stats.size / (1024 * 1024);
-    
+
     // Simulate parsing delay (100ms per MB)
     await new Promise(resolve => setTimeout(resolve, fileSizeMB * 100));
 
@@ -391,7 +391,7 @@ export class DWGParserService {
     // Advanced: Identify enclosed spaces from wall boundaries
     // This is a complex algorithm that would analyze wall intersections
     // to find closed polygons representing rooms
-    
+
     // For now, rooms are identified from HATCH entities
     // You can implement more sophisticated room detection here
   }

@@ -6,7 +6,7 @@ import {
   IsEnum,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { ScheduleType } from '../entities/schedule.entity';
+import { ScheduleType } from '@common/enums/index.enum';
 
 export class CreateScheduleDto {
   @ApiProperty({ example: 'Daily Device Report' })
