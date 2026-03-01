@@ -24,6 +24,7 @@
     "docker:clean": "docker system prune -a --volumes -f",
     "prod:migrate": "docker-compose -f docker-compose.prod.yml exec app npm run migration:run",
     "prod:seed": "docker-compose -f docker-compose.prod.yml exec app npm run seed",
+    "prod:db:reset": "docker-compose -f docker-compose.prod.yml exec app npm run db:reset",
     "prod:shell": "docker-compose -f docker-compose.prod.yml exec app sh",
     "docker:local": "docker-compose -f docker-compose.local.yml up",
     "docker:local:build": "docker-compose -f docker-compose.local.yml up --build",
