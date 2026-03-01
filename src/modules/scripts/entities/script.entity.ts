@@ -6,7 +6,6 @@ import { ScriptType } from '@common/enums/index.enum';
 @Entity('scripts')
 @Index(['userId', 'type'])
 @Index(['tenantId', 'type'])
-@Index(['userId', 'type'])
 export class Script extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
