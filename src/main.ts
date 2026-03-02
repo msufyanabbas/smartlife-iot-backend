@@ -74,12 +74,12 @@ async function bootstrap() {
     ? corsOrigin.split(',').map((origin: string) => origin.trim())
     : '*';
 
-  app.enableCors({
-    origin: '*',
-    credentials: false,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  });
+  // app.enableCors({
+  //   origin: '*',
+  //   credentials: false,
+  //   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  //   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  // });
 
   // ── Filters ────────────────────────────────────────────────────────────────
   app.useGlobalFilters(new HttpExceptionFilter());
