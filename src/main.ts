@@ -74,6 +74,8 @@ async function bootstrap() {
     ? corsOrigin.split(',').map((origin: string) => origin.trim())
     : '*';
 
+    // test
+
   // app.enableCors({
   //   origin: '*',
   //   credentials: false,
