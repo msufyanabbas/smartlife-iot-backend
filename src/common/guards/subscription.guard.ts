@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { SUBSCRIPTION_KEY } from '@decorators/index.decorator';
+import { IS_PUBLIC_KEY, SUBSCRIPTION_KEY } from '@decorators/index.decorator';
 import { SubscriptionPlan, UserRole } from '@common/enums/index.enum';
 import { SubscriptionsService } from '@modules/index.service';
 import { Subscription } from '@modules/index.entities';
@@ -27,6 +27,11 @@ export class SubscriptionGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
     const request = context.switchToHttp().getRequest();
     const user = request.user;
 

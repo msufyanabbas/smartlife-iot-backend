@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { SUBSCRIPTION_LIMIT_KEY } from '@common/decorators/index.decorator';
+import { IS_PUBLIC_KEY, SUBSCRIPTION_LIMIT_KEY } from '@common/decorators/index.decorator';
 import { User, Subscription } from '@modules/index.entities';
 import { UserRole } from '@common/enums/index.enum';
 import { SubscriptionUsage } from '@common/interfaces/index.interface';
@@ -56,6 +56,11 @@ export class SubscriptionLimitGuard implements CanActivate {
   // ↑ No SubscriptionsService needed — reads from req.subscription cache set by SubscriptionGuard
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+  context.getHandler(),
+  context.getClass(),
+]);
+if (isPublic) return true;
     const options = this.reflector.get<SubscriptionLimitOptions>(
       SUBSCRIPTION_LIMIT_KEY,
       context.getHandler(),

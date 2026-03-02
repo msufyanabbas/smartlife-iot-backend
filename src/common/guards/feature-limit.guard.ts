@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { FEATURE_KEY } from '@common/decorators/index.decorator';
+import { FEATURE_KEY, IS_PUBLIC_KEY } from '@common/decorators/index.decorator';
 import { Subscription } from '@modules/index.entities';
 import { UserRole } from '@common/enums/index.enum';
 import { SubscriptionFeatures } from '@common/interfaces/index.interface';
@@ -16,6 +16,11 @@ export class FeatureLimitGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+  context.getHandler(),
+  context.getClass(),
+]);
+if (isPublic) return true;
     // Read @RequireFeature() metadata
     const feature = this.reflector.get<keyof SubscriptionFeatures>(
       FEATURE_KEY,

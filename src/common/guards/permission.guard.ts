@@ -9,7 +9,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { PERMISSIONS_KEY } from '@common/decorators/index.decorator';
+import { IS_PUBLIC_KEY, PERMISSIONS_KEY } from '@common/decorators/index.decorator';
 import { User, Customer, Subscription } from '@modules/index.entities';
 import { SubscriptionFeatures } from '@common/interfaces/index.interface';
 import { UserRole } from '@common/enums/index.enum';
@@ -37,6 +37,11 @@ export class PermissionGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+  context.getHandler(),
+  context.getClass(),
+]);
+if (isPublic) return true;
     const requiredPermissions = this.reflector.get<string[]>(
       PERMISSIONS_KEY,
       context.getHandler(),
