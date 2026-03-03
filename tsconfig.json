@@ -11,7 +11,6 @@
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "target": "ES2023",
-    "typeRoots": ["./node_modules/@types", "./src/types"],
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": "./",

@@ -8,6 +8,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
+import ms from 'ms';
 import { JwtService } from '@nestjs/jwt';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';               // ← direct path
 import { MailService } from '@modules/mail/mail.service';                                          // ← direct path
@@ -1153,10 +1154,18 @@ export class AuthService {
 
     // ── Create refresh token ───────────────────────────────────────────────
     const refreshTokenString = this.generateRefreshToken();
-    const refreshTokenExpiry = new Date();
     // Config should store as a plain number of days, e.g. JWT_REFRESH_DAYS=7
-    const refreshDays = this.configService.get<number>('jwt.refreshExpiresIn');
-    refreshTokenExpiry.setDate(refreshTokenExpiry.getDate() + refreshDays!);
+const refreshExpiresIn = this.configService.get<string>(
+  'jwt.refreshExpiresIn'
+);
+
+if (!refreshExpiresIn) {
+  throw new Error('Invalid JWT refresh expiration configuration');
+}
+
+const refreshTokenExpiry = new Date(
+  Date.now() + ms(refreshExpiresIn as ms.StringValue)
+);
 
     const refreshToken = this.refreshTokenRepository.create({
       token: refreshTokenString,
