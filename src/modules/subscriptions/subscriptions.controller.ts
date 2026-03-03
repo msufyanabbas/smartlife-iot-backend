@@ -69,7 +69,7 @@ export class SubscriptionsController {
   @ApiResponse({ status: 200, description: 'Current subscription details', type: SubscriptionResponseDto })
   @ApiResponse({ status: 404, description: 'No subscription found' })
   findCurrent(@CurrentUser() user: User) {
-    return this.subscriptionsService.findCurrent(user.tenantId);
+    return this.subscriptionsService.findCurrent(user.id);
   }
 
   @Get('plans')
