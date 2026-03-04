@@ -36,10 +36,11 @@ import {
   UpdateStatusDto,
 } from './dto/users.dto';
 import { JwtAuthGuard, RolesGuard, ResourceType, SubscriptionLimitGuard } from '@common/guards/index.guards';
-import { RequireSubscriptionLimit } from '@common/decorators/index.decorator';
+import { CurrentUser, RequireSubscriptionLimit } from '@common/decorators/index.decorator';
 import { Roles, Audit } from '@common/decorators/index.decorator';
 import { UserRole, UserStatus, AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 import { AuditInterceptor } from '@/common/interceptors/index.interceptor';
+import { User } from '../index.entities';
 
 @ApiTags('Users')
 @Controller('users')
@@ -85,6 +86,7 @@ export class UsersController {
   @ApiOperation({ summary: 'Get all users' })
   @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
   async findAll(
+    @CurrentUser() user: User,
     @Query() queryDto: QueryUsersDto
   ) {
     const result = await this.usersService.findAll({
@@ -93,7 +95,7 @@ export class UsersController {
       search: queryDto.search,
       role: queryDto.role,
       status: queryDto.status,
-      tenantId: queryDto.tenantId,
+      tenantId: user.tenantId,
     });
     return {
       message: 'Users retrieved successfully',

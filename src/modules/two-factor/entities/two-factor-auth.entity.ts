@@ -9,7 +9,7 @@ import {
 } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
 import { User, Tenant } from '@modules/index.entities';
-import { TwoFactorMethod } from '@/common/enums/index.enum';
+import { TwoFactorMethod } from '@common/enums/index.enum';
 
 @Entity('two_factor_auth')
 @Index(['userId'])

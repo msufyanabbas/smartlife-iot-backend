@@ -1,16 +1,10 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AssetProfile } from './entities/asset-profile.entity';
 import { Asset } from '../assets/entities/asset.entity';
 import { CreateAssetProfileDto, UpdateAssetProfileDto } from './dto/asset-profiles.dto';
-import { QueryProfilesDto } from './dto/device-profiles.dto';
 import { User } from '../index.entities';
 import { PaginatedResponseDto, PaginationDto } from '@/common/dto/pagination.dto';
 import { UserRole } from '@/common/enums/user.enum';

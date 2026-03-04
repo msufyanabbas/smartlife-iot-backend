@@ -1,40 +1,15 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-  Query,
-  UseGuards,
-  HttpCode,
-  HttpStatus,
-} from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-  ApiQuery,
-} from '@nestjs/swagger';
-import { AssetProfilesService } from './asset-profiles.service';
-import {
-  QueryProfilesDto,
-} from './dto/device-profiles.dto';
-import { CreateAssetProfileDto, UpdateAssetProfileDto } from './dto/asset-profiles.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { JwtAuthGuard, RolesGuard } from '@common/guards/index.guards';
+import { Roles, CurrentUser } from '@common/decorators/index.decorator';
 import { UserRole } from '@common/enums/index.enum';
-import { CurrentUser } from '@/common/decorators/current-user.decorator';
-import { User } from '../index.entities';
-import { PaginationDto } from '@/common/dto/pagination.dto';
+import { CreateAssetProfileDto, UpdateAssetProfileDto } from './dto/asset-profiles.dto';
+import { User } from '@modules/index.entities';
+import { PaginationDto } from '@common/dto/pagination.dto';
+import { AssetProfilesService } from './asset-profiles.service';
 
 @ApiTags('Asset Profiles')
 @Controller('profiles/asset')
-@UseGuards(JwtAuthGuard)
-@ApiBearerAuth()
 export class AssetProfilesController {
   constructor(private readonly assetProfilesService: AssetProfilesService) {}
 
