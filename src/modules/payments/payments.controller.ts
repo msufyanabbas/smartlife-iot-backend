@@ -28,6 +28,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { MoyasarWebhookDto } from './dto/moyasar-webhook.dto';
+import { Public } from '@/common/decorators/public.decorator';
 @ApiTags('payments')
 @Controller('payments')
 export class PaymentsController {
@@ -235,6 +236,7 @@ export class PaymentsController {
 
   // ⚠️ PUBLIC ENDPOINT - No auth required (Moyasar calls this)
   @Post('webhook')
+  @Public()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Moyasar webhook endpoint (PUBLIC)',
