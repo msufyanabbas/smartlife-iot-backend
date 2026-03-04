@@ -8,6 +8,7 @@ import {
 } from '@common/enums/index.enum';
 import { FloorPlan, User, Tenant, Device, Asset } from '@modules/index.entities';
 import { ISeeder } from '../seeder.interface';
+import { Device3DData } from '@/common/interfaces/floor-plan.interface';
 
 @Injectable()
 export class FloorPlanSeeder implements ISeeder {
@@ -217,7 +218,7 @@ export class FloorPlanSeeder implements ISeeder {
       width: number,
       height: number,
       floorHeight: number = 3.0,
-    ) => {
+    ): Device3DData[] => {
       if (devices.length === 0) return [];
 
       const selectedDevices = getRandomItems(devices, deviceCount);
