@@ -12,7 +12,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { ConfigService, SubscriptionsService } from '@modules/index.service';
 import * as crypto from 'crypto';
-import { Payment } from '@modules/index.entities';
+import { Payment, User } from '@modules/index.entities';
 import {
   PaymentStatus,
   PaymentProvider
@@ -57,7 +57,7 @@ export class PaymentsService {
    * Validates upgrade eligibility BEFORE creating payment
    */
   async createPaymentIntent(
-    userId: string,
+    user: User,
     createPaymentIntentDto: CreatePaymentIntentDto,
   ): Promise<{
     paymentUrl: string;
@@ -71,12 +71,12 @@ export class PaymentsService {
 
       // Ensure user has a subscription (create free one if not exists)
       let subscription = await this.subscriptionsService
-        .findCurrent(userId)
+        .findCurrent(user.id)
         .catch(() => null);
 
       if (!subscription) {
-        this.logger.log(`Creating free subscription for user ${userId} before payment`);
-        subscription = await this.subscriptionsService.getOrCreateFreeSubscription(userId);
+        this.logger.log(`Creating free subscription for user ${user.id} before payment`);
+        subscription = await this.subscriptionsService.getOrCreateFreeSubscription(user.id);
       }
 
       // CRITICAL: Validate this is an upgrade or renewal, NOT a downgrade
@@ -102,6 +102,8 @@ export class PaymentsService {
       if (amount === 0) {
         throw new BadRequestException('Cannot create payment for free plan');
       }
+
+      const {id: userId} = user;
 
       // Check if there's already a pending payment for this exact upgrade
       const existingPending = await this.paymentRepository
@@ -175,6 +177,7 @@ export class PaymentsService {
 
         metadata: {
           user_id: userId,
+          tenantId: user.tenantId,
           subscription_id: subscription.id,
           plan: plan,
           billing_period: billingPeriod,
@@ -204,6 +207,7 @@ export class PaymentsService {
       // Save payment record (status: PENDING)
       const payment = this.paymentRepository.create({
         userId,
+        tenantId: user.tenantId,
         subscriptionId: subscription.id,
         paymentIntentId: invoice.id,
         provider: PaymentProvider.MOYASAR,

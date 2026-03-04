@@ -27,7 +27,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
-
+import { MoyasarWebhookDto } from './dto/moyasar-webhook.dto';
 @ApiTags('payments')
 @Controller('payments')
 export class PaymentsController {
@@ -78,7 +78,7 @@ export class PaymentsController {
     @Body() createPaymentIntentDto: CreatePaymentIntentDto,
   ) {
     return this.paymentsService.createPaymentIntent(
-      user.id,
+      user,
       createPaymentIntentDto,
     );
   }
