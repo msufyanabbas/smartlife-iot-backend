@@ -73,11 +73,11 @@ export class DeviceProfilesService {
             if (!user.customerId) {
               return PaginatedResponseDto.create([], page, limit, 0);
             }
-            queryBuilder.andWhere('device.customerId = :customerId', {
+            queryBuilder.andWhere('profile.customerId = :customerId', {
               customerId: user.customerId,
             });
           } else if (user.role === UserRole.TENANT_ADMIN) {
-            queryBuilder.andWhere('device.tenantId = :tenantId', {
+            queryBuilder.andWhere('profile.tenantId = :tenantId', {
               tenantId: user.tenantId,
             });
           }
