@@ -20,7 +20,7 @@ env:
 
 jobs:
   # Job 1 & 2 MERGED: Test + Build in parallel layers
-  # Tests run while Docker layers build — saves 1-2 min
+  # Tests run while Docker layers build — saves 1-2 mini
   build:
     name: Build & Test
     runs-on: ubuntu-latest
