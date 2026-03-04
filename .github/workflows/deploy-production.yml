@@ -20,7 +20,7 @@ env:
 
 jobs:
   # Job 1 & 2 MERGED: Test + Build in parallel layers
-  # Tests run while Docker layers build — saves 1-2 mini
+  # Tests run while Docker layers build — saves 1-2 min
   build:
     name: Build & Test
     runs-on: ubuntu-latest
@@ -75,8 +75,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
             NODE_ENV=production
 
