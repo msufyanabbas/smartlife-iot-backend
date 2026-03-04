@@ -28,10 +28,10 @@ export class AssetProfilesService {
   /**
    * Create a new asset profile
    */
-  async create(createDto: CreateAssetProfileDto): Promise<AssetProfile> {
+  async create(user: User, createDto: CreateAssetProfileDto): Promise<AssetProfile> {
     // Check if name already exists
     const existing = await this.assetProfileRepository.findOne({
-      where: { name: createDto.name },
+      where: { name: createDto.name, tenantId: user.tenantId },
     });
 
     if (existing) {
@@ -64,8 +64,12 @@ export class AssetProfilesService {
     if (createDto.default) {
       await this.unsetAllDefaults(createDto.tenantId);
     }
+    const payload = {
+      ...createDto,
+      tenantId: user.tenantId
+    }
 
-    const profile = this.assetProfileRepository.create(createDto);
+    const profile = this.assetProfileRepository.create(payload);
     const savedProfile = await this.assetProfileRepository.save(profile);
 
     // Emit event

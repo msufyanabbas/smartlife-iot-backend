@@ -43,8 +43,8 @@ export class AssetProfilesController {
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Create asset profile' })
   @ApiResponse({ status: 201, description: 'Asset profile created' })
-  async create(@Body() createDto: CreateAssetProfileDto) {
-    const profile = await this.assetProfilesService.create(createDto);
+  async create(@CurrentUser() user: User, @Body() createDto: CreateAssetProfileDto) {
+    const profile = await this.assetProfilesService.create(user, createDto);
     return {
       message: 'Asset profile created successfully',
       data: profile,

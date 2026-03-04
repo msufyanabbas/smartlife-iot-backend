@@ -1,6 +1,6 @@
-import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant } from '@/modules/index.entities';
+import { Device, Tenant } from '@/modules/index.entities';
 import { DeviceProvisionType, DeviceTransportType } from '@common/enums/index.enum';
 
 @Entity('device_profiles')
@@ -39,6 +39,16 @@ export class DeviceProfile extends BaseEntity {
 
   @Column({ nullable: true })
   image?: string;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DEVICE (One to Many Relationship)
+  // ══════════════════════════════════════════════════════════════════════════
+  @Column()
+  deviceId: string;
+
+  @OneToMany(() => Device, device => device.deviceProfile, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'deviceId' })
+  device: Device;
 
   // ══════════════════════════════════════════════════════════════════════════
   // TRANSPORT & PROVISION
