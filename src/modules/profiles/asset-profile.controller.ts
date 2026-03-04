@@ -27,6 +27,9 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '@common/enums/index.enum';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { User } from '../index.entities';
+import { PaginationDto } from '@/common/dto/pagination.dto';
 
 @ApiTags('Asset Profiles')
 @Controller('profiles/asset')
@@ -51,18 +54,8 @@ export class AssetProfilesController {
   @Get()
   @ApiOperation({ summary: 'Get all asset profiles' })
   @ApiResponse({ status: 200, description: 'Asset profiles retrieved' })
-  async findAll(@Query() queryDto: QueryProfilesDto) {
-    const result = await this.assetProfilesService.findAll(queryDto);
-    return {
-      message: 'Asset profiles retrieved successfully',
-      data: result.profiles,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
+  async findAll(@CurrentUser() user: User, @Query() queryDto: PaginationDto) {
+    return this.assetProfilesService.findAll(user, queryDto);
   }
 
   @Get('statistics')

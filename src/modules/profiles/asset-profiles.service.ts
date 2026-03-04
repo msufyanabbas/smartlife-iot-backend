@@ -11,6 +11,9 @@ import { AssetProfile } from './entities/asset-profile.entity';
 import { Asset } from '../assets/entities/asset.entity';
 import { CreateAssetProfileDto, UpdateAssetProfileDto } from './dto/asset-profiles.dto';
 import { QueryProfilesDto } from './dto/device-profiles.dto';
+import { User } from '../index.entities';
+import { PaginatedResponseDto, PaginationDto } from '@/common/dto/pagination.dto';
+import { UserRole } from '@/common/enums/user.enum';
 
 @Injectable()
 export class AssetProfilesService {
@@ -74,13 +77,7 @@ export class AssetProfilesService {
   /**
    * Find all asset profiles with filters
    */
-  async findAll(queryDto: QueryProfilesDto): Promise<{
-    profiles: AssetProfile[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
+  async findAll(user: User, queryDto: PaginationDto): Promise<PaginatedResponseDto<AssetProfile>> {
     const page = queryDto.page || 1;
     const limit = queryDto.limit || 10;
     const skip = (page - 1) * limit;
@@ -88,18 +85,26 @@ export class AssetProfilesService {
     const queryBuilder =
       this.assetProfileRepository.createQueryBuilder('profile');
 
+        // Customer filtering logic
+                if (user.role === UserRole.CUSTOMER_USER) {
+                  if (!user.customerId) {
+                    return PaginatedResponseDto.create([], page, limit, 0);
+                  }
+                  queryBuilder.andWhere('profile.customerId = :customerId', {
+                    customerId: user.customerId,
+                  });
+                } else if (user.role === UserRole.TENANT_ADMIN) {
+                  queryBuilder.andWhere('profile.tenantId = :tenantId', {
+                    tenantId: user.tenantId,
+                  });
+                }
+
     // Apply filters
     if (queryDto.search) {
       queryBuilder.andWhere(
         '(profile.name ILIKE :search OR profile.description ILIKE :search)',
         { search: `%${queryDto.search}%` },
       );
-    }
-
-    if (queryDto.tenantId) {
-      queryBuilder.andWhere('profile.tenantId = :tenantId', {
-        tenantId: queryDto.tenantId,
-      });
     }
 
     if (queryDto.default !== undefined) {
@@ -117,14 +122,7 @@ export class AssetProfilesService {
       .take(limit)
       .orderBy('profile.createdAt', 'DESC')
       .getMany();
-
-    return {
-      profiles,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(profiles, page, limit, total);
   }
 
   /**
