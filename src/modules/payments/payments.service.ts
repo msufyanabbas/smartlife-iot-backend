@@ -349,7 +349,7 @@ export class PaymentsService {
 
         // Call subscription service with query runner for transaction
         await this.subscriptionsService.processSubscriptionAfterPayment(
-          payment.userId,
+          payment.tenantId,
           targetPlan,
           targetBilling,
           payment.amount,
