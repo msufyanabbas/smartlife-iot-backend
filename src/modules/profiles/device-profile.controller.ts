@@ -29,6 +29,8 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '@common/enums/index.enum';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { User } from '../index.entities';
 
 @ApiTags('Profiles')
 @Controller('profiles')
@@ -58,18 +60,8 @@ export class ProfilesController {
   @Get('device')
   @ApiOperation({ summary: 'Get all device profiles' })
   @ApiResponse({ status: 200, description: 'Device profiles retrieved' })
-  async findAllDeviceProfiles(@Query() queryDto: QueryProfilesDto) {
-    const result = await this.deviceProfilesService.findAll(queryDto);
-    return {
-      message: 'Device profiles retrieved successfully',
-      data: result.profiles,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
+  async findAllDeviceProfiles(@CurrentUser() user: User, @Query() queryDto: QueryProfilesDto) {
+    return this.deviceProfilesService.findAll(user, queryDto);
   }
 
   @Get('device/statistics')

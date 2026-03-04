@@ -14,6 +14,9 @@ import {
   UpdateDeviceProfileDto,
   QueryProfilesDto,
 } from './dto/device-profiles.dto';
+import { User } from '../index.entities';
+import { PaginatedResponseDto } from '@/common/dto/pagination.dto';
+import { UserRole } from '@/common/enums/user.enum';
 
 @Injectable()
 export class DeviceProfilesService {
@@ -57,13 +60,7 @@ export class DeviceProfilesService {
   /**
    * Find all device profiles with filters
    */
-  async findAll(queryDto: QueryProfilesDto): Promise<{
-    profiles: DeviceProfile[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
+  async findAll(user: User, queryDto: QueryProfilesDto): Promise<PaginatedResponseDto<DeviceProfile>> {
     const page = queryDto.page || 1;
     const limit = queryDto.limit || 10;
     const skip = (page - 1) * limit;
@@ -71,18 +68,26 @@ export class DeviceProfilesService {
     const queryBuilder =
       this.deviceProfileRepository.createQueryBuilder('profile');
 
+        // Customer filtering logic
+          if (user.role === UserRole.CUSTOMER_USER) {
+            if (!user.customerId) {
+              return PaginatedResponseDto.create([], page, limit, 0);
+            }
+            queryBuilder.andWhere('device.customerId = :customerId', {
+              customerId: user.customerId,
+            });
+          } else if (user.role === UserRole.TENANT_ADMIN) {
+            queryBuilder.andWhere('device.tenantId = :tenantId', {
+              tenantId: user.tenantId,
+            });
+          }
+
     // Apply filters
     if (queryDto.search) {
       queryBuilder.andWhere(
         '(profile.name ILIKE :search OR profile.description ILIKE :search)',
         { search: `%${queryDto.search}%` },
       );
-    }
-
-    if (queryDto.tenantId) {
-      queryBuilder.andWhere('profile.tenantId = :tenantId', {
-        tenantId: queryDto.tenantId,
-      });
     }
 
     if (queryDto.default !== undefined) {
@@ -101,13 +106,7 @@ export class DeviceProfilesService {
       .orderBy('profile.createdAt', 'DESC')
       .getMany();
 
-    return {
-      profiles,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+      return PaginatedResponseDto.create(profiles, page, limit, total);
   }
 
   /**
