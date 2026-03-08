@@ -1062,4 +1062,29 @@ async getInvoices(
       );
     }
   }
+
+  async getInvoiceForPdf(
+  tenantId: string | undefined,
+  paymentId: string,
+): Promise<{ payment: Payment; invoiceNumber: string }> {
+  const subscription = await this.subscriptionRepository.findOne({
+    where: { tenantId },
+    select: ['id'],
+  });
+
+  if (!subscription) throw new NotFoundException('No subscription found');
+
+  const payment = await this.paymentRepository.findOne({
+    where: {
+      id: paymentId,
+      subscriptionId: subscription.id, // ensures tenant isolation
+    },
+  });
+
+  if (!payment) throw new NotFoundException('Invoice not found');
+
+  const invoiceNumber = `INV-${payment.createdAt.getFullYear()}-${payment.id.slice(0, 8).toUpperCase()}`;
+
+  return { payment, invoiceNumber };
+}
 }

@@ -9,7 +9,9 @@ import {
   Param,
   NotFoundException,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -34,6 +36,7 @@ import {
   InvoicesListResponseDto,
 } from './dto/subscription-response.dto';
 import { PaginationDto } from '@/common/dto/pagination.dto';
+import { InvoicePdfService } from './invoice-pdf.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NOTE: All methods receive user.id from the JWT (@CurrentUser()).
@@ -46,7 +49,7 @@ import { PaginationDto } from '@/common/dto/pagination.dto';
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class SubscriptionsController {
-  constructor(private readonly subscriptionsService: SubscriptionsService) {}
+  constructor(private readonly subscriptionsService: SubscriptionsService, private readonly invoicePdfService: InvoicePdfService) {}
 
   @Post()
   @ApiOperation({ 
@@ -246,4 +249,27 @@ export class SubscriptionsController {
   getInvoices(@CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
     return this.subscriptionsService.getInvoices(user.tenantId, paginationDto);
   }
+
+  @Get('invoices/:paymentId/pdf')
+@ApiOperation({ summary: 'Download invoice as PDF' })
+@ApiResponse({ status: 200, description: 'PDF file stream' })
+@ApiResponse({ status: 404, description: 'Invoice not found' })
+async downloadInvoicePdf(
+  @CurrentUser() user: User,
+  @Param('paymentId') paymentId: string,
+  @Res() res: Response,
+) {
+  const { payment, invoiceNumber } =
+    await this.subscriptionsService.getInvoiceForPdf(user.tenantId, paymentId);
+
+  const pdfBuffer = await this.invoicePdfService.generate(payment);
+
+  res.set({
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `attachment; filename="${invoiceNumber}.pdf"`,
+    'Content-Length': pdfBuffer.length,
+  });
+
+  res.end(pdfBuffer);
+}
 }

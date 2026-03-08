@@ -7,12 +7,13 @@ import { Device, EmailTemplate, Payment, Tenant, User } from '../index.entities'
 import { UsersService } from '../users/users.service';
 import { MailService } from '../mail/mail.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
+import { InvoicePdfService } from './invoice-pdf.service';
 
 @Global() // Make it globally available
 @Module({
   imports: [TypeOrmModule.forFeature([Subscription, User, Tenant, Device, EmailTemplate, Payment])],
   controllers: [SubscriptionsController],
-  providers: [SubscriptionsService, UsersService, MailService, EmailTemplatesService],
+  providers: [SubscriptionsService, UsersService, MailService, EmailTemplatesService, InvoicePdfService],
   exports: [SubscriptionsService, UsersService, MailService, EmailTemplatesService],
 })
 export class SubscriptionsModule {}
