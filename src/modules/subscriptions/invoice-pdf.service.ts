@@ -26,12 +26,14 @@ export class InvoicePdfService {
         .fillColor('#1a1a2e')
         .text('Smart Life', 50, 50);
 
+      doc.image('https://dev.smart-life.sa/assets/smartlife-text-black-THaafVXq.png', 50, 45, { width: 140 });
+
       doc
         .fontSize(10)
         .font('Helvetica')
         .fillColor('#6b7280')
         .text('IoT Platform', 50, 82)
-        .text('support@smart-life.sa', 50, 96)
+        .text('iot@smart-life.sa', 50, 96)
         .text('smart-life.sa', 50, 110);
 
       // Invoice title block (top right)
