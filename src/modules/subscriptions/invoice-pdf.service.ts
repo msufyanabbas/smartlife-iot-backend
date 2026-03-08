@@ -1,11 +1,26 @@
 // src/modules/subscriptions/invoice-pdf.service.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
 import { Payment } from '../payments/entities/payment.entity';
 import { PaymentStatus } from '@common/enums/payment.enum';
 
 @Injectable()
-export class InvoicePdfService {
+export class InvoicePdfService implements OnModuleInit {
+  private logoBuffer: Buffer | null = null;
+
+  async onModuleInit() {
+    try {
+      const response = await fetch(
+        'https://dev.smart-life.sa/assets/smartlife-text-black-THaafVXq.png',
+      );
+      const arrayBuffer = await response.arrayBuffer();
+      this.logoBuffer = Buffer.from(arrayBuffer);
+    } catch {
+      // Logo fetch failed — will fall back to text
+      this.logoBuffer = null;
+    }
+  }
+
   generate(payment: Payment): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 50, size: 'A4' });
@@ -20,21 +35,24 @@ export class InvoicePdfService {
       const contentWidth = pageWidth - 100; // 50px margin each side
 
       // ── Header ────────────────────────────────────────────────────────────
-      doc
-        .fontSize(28)
-        .font('Helvetica-Bold')
-        .fillColor('#1a1a2e')
-        .text('Smart Life', 50, 50);
-
-      doc.image('https://dev.smart-life.sa/assets/smartlife-text-black-THaafVXq.png', 50, 45, { width: 140 });
+      if (this.logoBuffer) {
+        doc.image(this.logoBuffer, 50, 45, { width: 140 });
+      } else {
+        // Fallback if logo unavailable
+        doc
+          .fontSize(28)
+          .font('Helvetica-Bold')
+          .fillColor('#1a1a2e')
+          .text('Smart Life', 50, 50);
+      }
 
       doc
         .fontSize(10)
         .font('Helvetica')
         .fillColor('#6b7280')
-        .text('IoT Platform', 50, 82)
-        .text('iot@smart-life.sa', 50, 96)
-        .text('smart-life.sa', 50, 110);
+        .text('IoT Platform', 50, 96)
+        .text('iot@smart-life.sa', 50, 110)
+        .text('smart-life.sa', 50, 124);
 
       // Invoice title block (top right)
       doc
