@@ -17,6 +17,7 @@ import {
   UpgradeSubscriptionDto,
 } from './dto/create-subscription.dto';
 import { UsersService } from '@modules/index.service';
+import { PaginatedResponseDto, PaginationDto } from '@/common/dto/pagination.dto';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Plan Configuration
@@ -983,21 +984,46 @@ private readonly paymentRepository: Repository<Payment>,
   // INVOICES
   // ═══════════════════════════════════════════════════════════════════════════
 
-async getInvoices(tenantId: string | undefined): Promise<{ invoices: any[]; total: number }> {
-  // First get the subscription to find its id
+async getInvoices(
+  tenantId: string | undefined,
+  paginationDto: PaginationDto,
+): Promise<PaginatedResponseDto<any>> {
+  const { page, limit, search, sortBy, sortOrder } = paginationDto;
+
   const subscription = await this.subscriptionRepository.findOne({
     where: { tenantId },
     select: ['id'],
   });
 
   if (!subscription) {
-    return { invoices: [], total: 0 };
+    return PaginatedResponseDto.create([], page, limit, 0);
   }
 
-  const payments = await this.paymentRepository.find({
-    where: { subscriptionId: subscription.id },
-    order: { createdAt: 'DESC' },
-  });
+  const qb = this.paymentRepository
+    .createQueryBuilder('payment')
+    .where('payment.subscriptionId = :subscriptionId', {
+      subscriptionId: subscription.id,
+    });
+
+  if (search) {
+    qb.andWhere(
+      `(payment.metadata->>'plan' ILIKE :search OR payment.description ILIKE :search)`,
+      { search: `%${search}%` },
+    );
+  }
+
+  const allowedSortFields: Record<string, string> = {
+    date:      'payment.paidAt',
+    amount:    'payment.amount',
+    status:    'payment.status',
+    createdAt: 'payment.createdAt',
+  };
+  const sortField = allowedSortFields[sortBy ?? ''] ?? 'payment.createdAt';
+  qb.orderBy(sortField, sortOrder ?? 'DESC');
+
+  qb.skip(paginationDto.skip).take(paginationDto.take);
+
+  const [payments, total] = await qb.getManyAndCount();
 
   const invoices = payments.map((p) => ({
     id: p.id,
@@ -1014,7 +1040,7 @@ async getInvoices(tenantId: string | undefined): Promise<{ invoices: any[]; tota
     createdAt: p.createdAt,
   }));
 
-  return { invoices, total: invoices.length };
+  return PaginatedResponseDto.create(invoices, page, limit, total);
 }
 
   /**

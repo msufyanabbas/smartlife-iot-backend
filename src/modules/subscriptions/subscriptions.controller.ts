@@ -8,6 +8,7 @@ import {
   HttpStatus,
   Param,
   NotFoundException,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -32,6 +33,7 @@ import {
   UpgradeValidationResponseDto,
   InvoicesListResponseDto,
 } from './dto/subscription-response.dto';
+import { PaginationDto } from '@/common/dto/pagination.dto';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NOTE: All methods receive user.id from the JWT (@CurrentUser()).
@@ -241,7 +243,7 @@ export class SubscriptionsController {
     description: 'Returns list of all invoices/receipts for this subscription'
   })
   @ApiResponse({ status: 200, description: 'List of invoices', type: InvoicesListResponseDto })
-  getInvoices(@CurrentUser() user: User) {
-    return this.subscriptionsService.getInvoices(user.tenantId);
+  getInvoices(@CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
+    return this.subscriptionsService.getInvoices(user.tenantId, paginationDto);
   }
 }
