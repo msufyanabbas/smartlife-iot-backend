@@ -1,6 +1,3 @@
-import e from 'express';
-import { CustomerUserLimit } from './customers/entities/customer-user-limit.entity';
-
 // User & Auth entities
 export { User } from './users/entities/user.entity';
 export { RefreshToken } from './auth/entities/refresh-token.entity';

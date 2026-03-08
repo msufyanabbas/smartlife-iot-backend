@@ -11,7 +11,7 @@ import { Repository, QueryRunner, DataSource } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { SubscriptionPlan, SubscriptionStatus, BillingPeriod, SupportLevel } from '@common/enums/index.enum';
 import { SubscriptionFeatures, SubscriptionLimits, SubscriptionUsage, EMPTY_USAGE } from '@common/interfaces/index.interface';
-import { Subscription, Customer, Device, Tenant, User } from '@modules/index.entities';
+import { Subscription, Customer, Device, Tenant, User, Payment } from '@modules/index.entities';
 import {
   CreateSubscriptionDto,
   UpgradeSubscriptionDto,
@@ -168,6 +168,8 @@ export class SubscriptionsService {
     private readonly subscriptionRepository: Repository<Subscription>,
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
+    @InjectRepository(Payment)
+private readonly paymentRepository: Repository<Payment>,
     private readonly dataSource: DataSource
   ) { }
 
@@ -981,10 +983,39 @@ export class SubscriptionsService {
   // INVOICES
   // ═══════════════════════════════════════════════════════════════════════════
 
-  async getInvoices(userId: string) {
-    // TODO: query payments table filtered by tenantId
+async getInvoices(tenantId: string | undefined): Promise<{ invoices: any[]; total: number }> {
+  // First get the subscription to find its id
+  const subscription = await this.subscriptionRepository.findOne({
+    where: { tenantId },
+    select: ['id'],
+  });
+
+  if (!subscription) {
     return { invoices: [], total: 0 };
   }
+
+  const payments = await this.paymentRepository.find({
+    where: { subscriptionId: subscription.id },
+    order: { createdAt: 'DESC' },
+  });
+
+  const invoices = payments.map((p) => ({
+    id: p.id,
+    invoiceNumber: `INV-${p.createdAt.getFullYear()}-${p.id.slice(0, 8).toUpperCase()}`,
+    date: p.paidAt ?? p.createdAt,
+    amount: Number(p.amount),
+    currency: p.currency,
+    status: p.status,
+    plan: p.metadata?.plan ?? null,
+    billingPeriod: p.metadata?.billingPeriod ?? null,
+    method: p.method,
+    provider: p.provider,
+    failureReason: p.failureReason ?? null,
+    createdAt: p.createdAt,
+  }));
+
+  return { invoices, total: invoices.length };
+}
 
   /**
    * Check if plan change is a renewal (same plan)

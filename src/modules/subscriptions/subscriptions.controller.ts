@@ -242,6 +242,6 @@ export class SubscriptionsController {
   })
   @ApiResponse({ status: 200, description: 'List of invoices', type: InvoicesListResponseDto })
   getInvoices(@CurrentUser() user: User) {
-    return this.subscriptionsService.getInvoices(user.id);
+    return this.subscriptionsService.getInvoices(user.tenantId);
   }
 }
