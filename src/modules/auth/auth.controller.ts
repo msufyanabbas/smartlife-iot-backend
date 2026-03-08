@@ -2,7 +2,7 @@
 import { Controller, Post, Body, HttpCode, HttpStatus, Get, Req, Ip, Headers, Query, Res, Delete, Param, Inject, UnauthorizedException, Logger, Patch, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiQuery, ApiParam } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
-import { AuthService } from '@modules/index.service';
+import { AuthService, TenantsService } from '@modules/index.service';
 import { LoginDto, RegisterDto, RefreshTokenDto, AuthResponseDto, UpdateProfileDto, CreateInvitationDto, ExchangeCodeDto, ForgotPasswordDto, ResetPasswordDto, ChangePasswordDto, ResendVerificationDto, VerifyOAuth2FADto, InvitationPublicDto } from '@modules/auth/dto/index.dto';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { Public, Roles } from '@common/decorators/index.decorator';
@@ -21,6 +21,7 @@ export class AuthController {
   private readonly logger = new Logger(AuthController.name);
   constructor(
     private readonly authService: AuthService,
+    private readonly tenantService: TenantsService,
     @Inject('REDIS_SERVICE') private readonly redis: RedisService,
   ) {}
 
@@ -397,10 +398,12 @@ export class AuthController {
   @ApiOperation({ summary: 'Get current user profile' })
   @ApiResponse({ status: 200, description: 'Current user profile' })
   async getProfile(@CurrentUser() user: User) {
+    const tenant = await this.tenantService.findOne(user.tenantId);
     return {
       id: user.id,
       email: user.email,
       name: user.name,
+      companyName: tenant.name,
       phone: user.phone,
       role: user.role,
       status: user.status,

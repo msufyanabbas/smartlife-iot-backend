@@ -77,7 +77,7 @@ export class TenantsService {
     };
   }
 
-  async findOne(id: string): Promise<Tenant> {
+  async findOne(id: string | undefined): Promise<Tenant> {
     const tenant = await this.tenantRepository.findOne({ where: { id } });
 
     if (!tenant) {
