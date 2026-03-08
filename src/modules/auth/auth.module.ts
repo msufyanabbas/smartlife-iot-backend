@@ -4,7 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthController } from './auth.controller';
-import { AuthService } from '@modules/index.service';
+import { AuthService, TenantsService } from '@modules/index.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { User, RefreshToken, OAuthAccount, Customer, Invitation, Subscription, Tenant, TokenBlacklist, TwoFactorAuth } from '@modules/index.entities';
 import { MailModule } from '../mail/mail.module';
@@ -55,6 +55,7 @@ import { TwoFactorAuthModule } from '../two-factor/two-factor-auth.module';
     GoogleStrategy,
     GitHubStrategy,
     AppleStrategy,
+    TenantsService,
     {
       provide: 'REDIS_SERVICE',
       useClass: RedisService
