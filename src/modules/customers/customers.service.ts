@@ -17,7 +17,8 @@ import {
   UpdateCustomerDto,
   BulkUpdateCustomerStatusDto,
 } from './dto/customers.dto';
-import { MailService, TenantsService } from '../index.service';
+import { MailService } from '../mail/mail.service';
+import { TenantsService } from '../tenants/tenants.service';
 
 @Injectable()
 export class CustomersService {
