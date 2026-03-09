@@ -279,7 +279,7 @@ export class NotificationsService {
 
     if (user.role === UserRole.TENANT_ADMIN) {
       whereConditions.tenantId = user.tenantId;
-    } else if (user.role === UserRole.CUSTOMER_ADMIN) {
+    } else if (user.role === UserRole.CUSTOMER) {
       whereConditions.customerId = user.customerId;
     } else {
       whereConditions.userId = user.id;
@@ -310,7 +310,7 @@ export class NotificationsService {
 
     if (user.role === UserRole.TENANT_ADMIN) {
       whereConditions.tenantId = user.tenantId;
-    } else if (user.role === UserRole.CUSTOMER_ADMIN) {
+    } else if (user.role === UserRole.CUSTOMER) {
       whereConditions.customerId = user.customerId;
     } else {
       whereConditions.userId = user.id;
@@ -349,7 +349,7 @@ export class NotificationsService {
       queryBuilder.where('notification.tenantId = :tenantId', {
         tenantId: user.tenantId,
       });
-    } else if (user.role === UserRole.CUSTOMER_ADMIN) {
+    } else if (user.role === UserRole.CUSTOMER) {
       queryBuilder.where('notification.customerId = :customerId', {
         customerId: user.customerId,
       });

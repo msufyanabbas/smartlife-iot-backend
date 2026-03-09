@@ -381,7 +381,7 @@ export class AuditConsumer {
     if (!oldRole || !newRole) return;
 
     // Define role hierarchy
-    const roleHierarchy = ['CUSTOMER_USER', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SUPER_ADMIN'];
+    const roleHierarchy = ['CUSTOMER_USER', 'CUSTOMER', 'TENANT_ADMIN', 'SUPER_ADMIN'];
     const oldLevel = roleHierarchy.indexOf(oldRole);
     const newLevel = roleHierarchy.indexOf(newRole);
 

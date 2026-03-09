@@ -40,7 +40,7 @@ if (isPublic) return true;
     // ── Customer admin / customer user ────────────────────────────────────────
     // Scoped to their own customer only.
     if (
-      user.role === UserRole.CUSTOMER_ADMIN ||
+      user.role === UserRole.CUSTOMER ||
       user.role === UserRole.CUSTOMER_USER
     ) {
       if (!user.customerId) {

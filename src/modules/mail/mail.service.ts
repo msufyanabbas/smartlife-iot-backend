@@ -165,8 +165,8 @@ export class MailService {
     // ✅ Map role to display name
     const roleDisplay = {
       tenant_admin: 'Tenant Administrator',
-      customer_admin: 'Customer Administrator',
-      customer_user: 'User',
+      customer: 'Customer',
+      customer_user: 'Customer User',
     }[role] || role;
 
     try {

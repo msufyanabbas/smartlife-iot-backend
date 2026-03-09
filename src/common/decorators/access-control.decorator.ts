@@ -42,14 +42,14 @@ export const TenantAdminOnly = () =>
 // For routes that customer admins manage within their customer scope.
 // ─────────────────────────────────────────────────────────────────────────────
 export const CustomerAdminOnly = () =>
-  applyDecorators(Roles(UserRole.CUSTOMER_ADMIN));
+  applyDecorators(Roles(UserRole.CUSTOMER));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // @TenantOrCustomerAdmin()
 // Routes accessible by both tenant admins and customer admins.
 // ─────────────────────────────────────────────────────────────────────────────
 export const TenantOrCustomerAdmin = () =>
-  applyDecorators(Roles(UserRole.TENANT_ADMIN, UserRole.CUSTOMER_ADMIN));
+  applyDecorators(Roles(UserRole.TENANT_ADMIN, UserRole.CUSTOMER));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // @ProtectedRoute()

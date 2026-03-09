@@ -65,7 +65,7 @@ export class AuditController {
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
-    UserRole.CUSTOMER_ADMIN,
+    UserRole.CUSTOMER,
     UserRole.CUSTOMER_USER,
   )
   @ApiOperation({
@@ -74,7 +74,7 @@ export class AuditController {
       Automatically shows logs based on your role:
       - SUPER_ADMIN: All logs across all tenants
       - TENANT_ADMIN: All logs in your tenant + all customer logs
-      - CUSTOMER_ADMIN: All logs in your customer (excluding tenant admin activities)
+      - CUSTOMER: All logs in your customer (excluding tenant admin activities)
       - CUSTOMER_USER: Only your own logs within your customer
     `,
   })
@@ -123,7 +123,7 @@ export class AuditController {
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
-    UserRole.CUSTOMER_ADMIN,
+    UserRole.CUSTOMER,
   )
   @ApiOperation({ summary: 'Get audit logs for Users module (auto-filtered)' })
   @ApiQuery({
@@ -171,7 +171,7 @@ export class AuditController {
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
-    UserRole.CUSTOMER_ADMIN,
+    UserRole.CUSTOMER,
   )
   @ApiOperation({
     summary: 'Get audit logs for Devices module (auto-filtered)',
@@ -219,7 +219,7 @@ export class AuditController {
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
-    UserRole.CUSTOMER_ADMIN,
+    UserRole.CUSTOMER,
   )
   @ApiOperation({
     summary: 'Get audit logs for Alarms module (auto-filtered)',
@@ -300,7 +300,7 @@ export class AuditController {
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
-    UserRole.CUSTOMER_ADMIN,
+    UserRole.CUSTOMER,
   )
   @ApiOperation({
     summary: 'Get audit logs for Assets module (auto-filtered)',
@@ -341,7 +341,7 @@ export class AuditController {
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
-    UserRole.CUSTOMER_ADMIN,
+    UserRole.CUSTOMER,
   )
   @ApiOperation({
     summary: 'Get audit logs for Dashboards module (auto-filtered)',
@@ -423,7 +423,7 @@ export class AuditController {
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
-    UserRole.CUSTOMER_ADMIN,
+    UserRole.CUSTOMER,
   )
   @ApiOperation({ summary: 'Get audit statistics (auto-filtered)' })
   @ApiQuery({ name: 'startDate', required: false })
@@ -451,7 +451,7 @@ export class AuditController {
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
-    UserRole.CUSTOMER_ADMIN,
+    UserRole.CUSTOMER,
   )
   @ApiOperation({ summary: 'Get recent audit logs (auto-filtered)' })
   @ApiQuery({ name: 'hours', required: false, type: Number })
@@ -480,7 +480,7 @@ export class AuditController {
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
-    UserRole.CUSTOMER_ADMIN,
+    UserRole.CUSTOMER,
   )
   @ApiOperation({ summary: 'Get failed actions (auto-filtered)' })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -506,7 +506,7 @@ export class AuditController {
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
-    UserRole.CUSTOMER_ADMIN,
+    UserRole.CUSTOMER,
   )
   @ApiOperation({ summary: 'Export audit logs to CSV (auto-filtered)' })
   @ApiResponse({ status: 200, description: 'CSV file generated' })
@@ -533,7 +533,7 @@ export class AuditController {
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
-    UserRole.CUSTOMER_ADMIN,
+    UserRole.CUSTOMER,
   )
   @ApiOperation({ summary: 'Get audit log by ID (auto-filtered)' })
   @ApiParam({ name: 'id', description: 'Audit log ID' })

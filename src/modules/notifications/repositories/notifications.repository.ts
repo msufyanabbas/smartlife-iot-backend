@@ -31,7 +31,7 @@ export class NotificationsRepository extends Repository<Notification> {
       queryBuilder.andWhere(`${alias}.tenantId = :tenantId`, {
         tenantId: user.tenantId,
       });
-    } else if (user.role === UserRole.CUSTOMER_ADMIN) {
+    } else if (user.role === UserRole.CUSTOMER) {
       // Customer admin sees notifications for their customer
       queryBuilder.andWhere(`${alias}.customerId = :customerId`, {
         customerId: user.customerId,

@@ -79,7 +79,7 @@ export class AutomationService {
       .where('automation.tenantId = :tenantId', { tenantId });
 
     // Customer isolation
-    if (role === UserRole.CUSTOMER_ADMIN && customerId) {
+    if (role === UserRole.CUSTOMER && customerId) {
       qb.andWhere('automation.customerId = :customerId', { customerId });
     }
 
@@ -113,7 +113,7 @@ export class AutomationService {
   ): Promise<Automation> {
     const where: any = { id, tenantId };
     
-    if (role === UserRole.CUSTOMER_ADMIN && customerId) {
+    if (role === UserRole.CUSTOMER && customerId) {
       where.customerId = customerId;
     }
 
@@ -133,7 +133,7 @@ export class AutomationService {
   ) {
     const where: any = { tenantId };
     
-    if (role === UserRole.CUSTOMER_ADMIN && customerId) {
+    if (role === UserRole.CUSTOMER && customerId) {
       where.customerId = customerId;
     }
 

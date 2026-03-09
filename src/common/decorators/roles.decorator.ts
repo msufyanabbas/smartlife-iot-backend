@@ -14,7 +14,7 @@ export const ROLES_KEY = 'roles';
  * @Post('customers')
  * createCustomer() { ... }
  *
- * @Roles(UserRole.TENANT_ADMIN, UserRole.CUSTOMER_ADMIN)
+ * @Roles(UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
  * @Get('devices')
  * listDevices() { ... }
  */

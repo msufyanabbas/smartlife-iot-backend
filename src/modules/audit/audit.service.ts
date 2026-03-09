@@ -65,7 +65,7 @@ export class AuditService {
         context.canSeeCustomerLogs = true;
         break;
 
-      case UserRole.CUSTOMER_ADMIN:
+      case UserRole.CUSTOMER:
         // Customer admin can see all logs in their customer
         if (!user.customerId) {
           throw new ForbiddenException('Customer admin must belong to a customer');

@@ -123,6 +123,13 @@ export class User extends BaseEntity {
   @Column({ type: 'timestamp', nullable: true })
   passwordResetExpires?: Date;
 
+  @Column({ nullable: true })
+  @Exclude()
+  setPasswordToken?: string;         // one-time token sent in the invitation email
+
+  @Column({ type: 'timestamp', nullable: true })
+  setPasswordExpires?: Date;         // 7-day window (generous, since this is first login)
+
   @Column({ type: 'jsonb', nullable: true })
   preferences?: Record<string, any>;
 
@@ -160,7 +167,7 @@ export class User extends BaseEntity {
   }
 
   isCustomerAdmin(): boolean {
-    return this.role === UserRole.CUSTOMER_ADMIN;
+    return this.role === UserRole.CUSTOMER;
   }
 
   isCustomerUser(): boolean {

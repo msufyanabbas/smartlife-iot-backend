@@ -45,7 +45,7 @@ export class AuthController {
   /**
    * ✅ NEW: Create invitation
    */
-  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_ADMIN)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @Post('invitations')
   @HttpCode(HttpStatus.CREATED)
   @ApiBearerAuth()
@@ -97,7 +97,7 @@ export class AuthController {
   /**
    * ✅ NEW: List invitations (admin only)
    */
-  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_ADMIN)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @Get('invitations')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List all invitations for your tenant or customer' })
@@ -109,7 +109,7 @@ export class AuthController {
   /**
    * ✅ NEW: Revoke invitation
    */
-  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_ADMIN)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @Delete('invitations/:id')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()

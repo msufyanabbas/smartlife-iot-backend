@@ -262,7 +262,7 @@ export class AuthService {
 
     // ── Permission checks ──────────────────────────────────────────────────
     if (callerRole !== UserRole.SUPER_ADMIN) {
-      if (callerRole === UserRole.CUSTOMER_ADMIN) {
+      if (callerRole === UserRole.CUSTOMER) {
         if (role !== UserRole.CUSTOMER_USER) {
           throw new ForbiddenException(
             'Customer admins can only invite customer users',
@@ -281,7 +281,7 @@ export class AuthService {
     }
 
     // ── Customer-scoped role requires customerId ───────────────────────────
-    if ((role === UserRole.CUSTOMER_ADMIN || role === UserRole.CUSTOMER_USER) && !customerId) {
+    if ((role === UserRole.CUSTOMER || role === UserRole.CUSTOMER_USER) && !customerId) {
       throw new BadRequestException(
         `customerId is required when inviting a ${role}`,
       );
@@ -376,7 +376,7 @@ export class AuthService {
   // Takes tenantId + role directly — no redundant DB load
   async listInvitations(tenantId: string | undefined, callerRole: UserRole, callerCustomerId?: string) {
     const where: any = { tenantId };
-    if (callerRole === UserRole.CUSTOMER_ADMIN) {
+    if (callerRole === UserRole.CUSTOMER) {
       where.customerId = callerCustomerId;
     }
 

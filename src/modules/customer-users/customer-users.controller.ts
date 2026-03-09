@@ -31,8 +31,7 @@ export class CustomerUsersController {
    * Assign a user to a customer
    */
   @Post('assign')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Assign a user to a customer' })
   @ApiResponse({ status: 200, description: 'User assigned successfully' })

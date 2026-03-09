@@ -111,7 +111,7 @@ export class UserSeeder implements ISeeder {
         name: 'John Doe',
         email: 'john.doe@example.com',
         password: 'User@123',
-        role: UserRole.CUSTOMER_ADMIN,
+        role: UserRole.CUSTOMER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
         phone: '+966501234570',
@@ -122,7 +122,7 @@ export class UserSeeder implements ISeeder {
         name: 'Jane Smith',
         email: 'jane.smith@example.com',
         password: 'User@123',
-        role: UserRole.CUSTOMER_ADMIN,
+        role: UserRole.CUSTOMER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
         phone: '+966501234571',
@@ -133,7 +133,7 @@ export class UserSeeder implements ISeeder {
         name: 'Michael Johnson',
         email: 'michael.johnson@example.com',
         password: 'User@123',
-        role: UserRole.CUSTOMER_ADMIN,
+        role: UserRole.CUSTOMER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
         phone: '+966501234572',
@@ -144,7 +144,7 @@ export class UserSeeder implements ISeeder {
         name: 'Sarah Williams',
         email: 'sarah.williams@example.com',
         password: 'User@123',
-        role: UserRole.CUSTOMER_ADMIN,
+        role: UserRole.CUSTOMER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
         phone: '+966501234573',
@@ -285,7 +285,7 @@ export class UserSeeder implements ISeeder {
           name: 'Additional Customer Admin 1',
           email: 'admin@customer8.com',
           password: 'User@123',
-          role: UserRole.CUSTOMER_ADMIN,
+          role: UserRole.CUSTOMER,
           status: UserStatus.ACTIVE,
           emailVerified: true,
           phone: '+966501234584',
@@ -387,7 +387,7 @@ export class UserSeeder implements ISeeder {
           } else if (userRoleEnum === UserRole.TENANT_ADMIN) {
             const tenantAdminRole = findRole('Tenant Administrator', userData.tenantId);
             if (tenantAdminRole) assignedRoles.push(tenantAdminRole);
-          } else if (userRoleEnum === UserRole.CUSTOMER_ADMIN) {
+          } else if (userRoleEnum === UserRole.CUSTOMER) {
             const customerAdminRole = findRole('Customer Administrator', userData.tenantId);
             if (customerAdminRole) assignedRoles.push(customerAdminRole);
           } else if (userRoleEnum === UserRole.CUSTOMER_USER) {
@@ -455,7 +455,7 @@ export class UserSeeder implements ISeeder {
       `   - Tenant Admins: ${users.filter((u) => u.role === UserRole.TENANT_ADMIN).length}`,
     );
     this.logger.log(
-      `   - Customer Admins: ${users.filter((u) => u.role === UserRole.CUSTOMER_ADMIN).length}`,
+      `   - Customer Admins: ${users.filter((u) => u.role === UserRole.CUSTOMER).length}`,
     );
     this.logger.log(
       `   - Customer Users: ${users.filter((u) => u.role === UserRole.CUSTOMER_USER).length}`,
@@ -477,7 +477,7 @@ export class UserSeeder implements ISeeder {
     const roleMap = {
       [UserRole.SUPER_ADMIN]: '👑 Super Admin',
       [UserRole.TENANT_ADMIN]: '🏢 Tenant Admin',
-      [UserRole.CUSTOMER_ADMIN]: '👤 Customer Admin',
+      [UserRole.CUSTOMER]: '👤 Customer Admin',
       [UserRole.CUSTOMER_USER]: '👥 Customer User',
       [UserRole.USER]: '📝 User (Legacy)',
     };

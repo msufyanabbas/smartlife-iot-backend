@@ -4,6 +4,9 @@ import {
   IsEmail,
   IsEnum,
   IsBoolean,
+  IsNotEmpty,
+  MinLength,
+  Matches,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CustomerStatus } from '@common/enums/index.enum';
@@ -152,4 +155,21 @@ export class AssignUserToCustomerDto {
   @ApiProperty({ example: 'user-id-here' })
   @IsString()
   userId: string;
+}
+
+// ─── inline DTO (or move to customers.dto.ts) ─────────────────────────────────
+export class SetCustomerPasswordDto {
+  @ApiProperty({ description: 'Token from the invitation email' })
+  @IsString()
+  @IsNotEmpty()
+  token: string;
+
+  @ApiProperty({ example: 'SecurePass123!', minLength: 8 })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(8)
+  @Matches(/((?=.*\d)|(?=.*\W+))(?![.\n])(?=.*[A-Z])(?=.*[a-z]).*$/, {
+    message: 'Password must contain uppercase, lowercase, and number/special char',
+  })
+  password: string;
 }

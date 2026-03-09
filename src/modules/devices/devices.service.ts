@@ -207,7 +207,7 @@ export class DevicesService {
       where.tenantId = user.tenantId;
     }
 
-    if (user.role === UserRole.CUSTOMER_ADMIN || user.role === UserRole.CUSTOMER_USER) {
+    if (user.role === UserRole.CUSTOMER || user.role === UserRole.CUSTOMER_USER) {
       where.customerId = user.customerId;
     }
 

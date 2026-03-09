@@ -3,37 +3,59 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Inject,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { CustomerStatus } from '@/common/enums/index.enum';
-import { Customer } from '@modules/index.entities';
+import { CustomerStatus, UserRole, UserStatus } from '@/common/enums/index.enum';
+import { Customer, Tenant, User } from '@modules/index.entities';
+import * as crypto from 'crypto';
 import {
   CreateCustomerDto,
   UpdateCustomerDto,
   BulkUpdateCustomerStatusDto,
 } from './dto/customers.dto';
+import { MailService, TenantsService } from '../index.service';
 
 @Injectable()
 export class CustomersService {
+   private readonly logger = new Logger(CustomersService.name);
   constructor(
     @InjectRepository(Customer)
     private customerRepository: Repository<Customer>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+    private tenantService: TenantsService,
     private eventEmitter: EventEmitter2,
+    private mailService: MailService,
   ) {}
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CREATE
+  // ═══════════════════════════════════════════════════════════════════════════
+
   /**
-   * Create a new customer
+   * Creates a customer record AND a linked User account (role=CUSTOMER).
+   *
+   * The user is created in INACTIVE status with no password.
+   * A set-password token is emailed so the customer can activate
+   * their account on first login.
+   *
+   * @param dto            - Customer fields from the request body
+   * @param callerTenantId - Taken from @CurrentUser() in the controller — NOT body
    */
-  async create(createCustomerDto: CreateCustomerDto): Promise<Customer> {
+  async create(createCustomerDto: CreateCustomerDto, user: User): Promise<Customer> {
     // Check if customer with same title exists in this tenant
     const existingCustomer = await this.customerRepository.findOne({
       where: {
         name: createCustomerDto.name,
-        tenantId: createCustomerDto.tenantId,
+        tenantId: user.tenantId,
       },
     });
+
+    const tenant = await this.tenantService.findOne(user.tenantId);
 
     if (existingCustomer) {
       throw new ConflictException(
@@ -41,13 +63,167 @@ export class CustomersService {
       );
     }
 
-    const customer = this.customerRepository.create(createCustomerDto);
+    // ── Email is required to create the login user ─────────────────────────
+    if (!createCustomerDto.email) {
+      throw new BadRequestException(
+        'Customer email is required so a login account can be created',
+      );
+    }
+
+    // ── Check if a user with this email already exists ─────────────────────
+    const existingUser = await this.userRepository.findOne({
+      where: { email: createCustomerDto.email },
+    });
+    if (existingUser) {
+      throw new ConflictException(
+        'A user with this email already exists',
+      );
+    }
+
+    // ── 1. Persist customer row ────────────────────────────────────────────
+    const customer = this.customerRepository.create({
+      ...createCustomerDto,
+      tenantId: user.tenantId, // always from JWT, never from body
+    });
     const savedCustomer = await this.customerRepository.save(customer);
 
-    // Emit event
+    // ── 2. Create linked User (CUSTOMER role, no password yet) ────────────
+    const setPasswordToken = crypto.randomBytes(32).toString('hex');
+    const setPasswordExpires = new Date();
+    setPasswordExpires.setDate(setPasswordExpires.getDate() + 7); // 7-day window
+
+    const newUser = this.userRepository.create({
+      email: createCustomerDto.email,
+      name: createCustomerDto.name,
+      phone: createCustomerDto.phone,
+      // Use a random placeholder — the real password is set via the token link.
+      // The bcrypt hook will hash this, but it will never be usable for login
+      // because the account is INACTIVE until they click the link.
+      password: 'UNSET_' + crypto.randomBytes(16).toString('hex'),
+      role: UserRole.CUSTOMER,
+      status: UserStatus.INACTIVE,     // ← cannot login until they set a password
+      emailVerified: false,
+      tenantId: user.tenantId,
+      customerId: savedCustomer.id,
+      setPasswordToken,
+      setPasswordExpires,
+    });
+
+    await this.userRepository.save(newUser);
+    this.logger.log(`Customer user created: ${createCustomerDto.email} (customer: ${savedCustomer.id})`);
+
+    // ── 3. Send set-password invitation email ──────────────────────────────
+    try {
+      await this.mailService.sendInvitationEmail(
+        createCustomerDto.email,
+        createCustomerDto.name,
+        tenant.name,
+        setPasswordToken,
+        UserRole.CUSTOMER
+      );
+      this.logger.log(`Customer invitation email sent to: ${createCustomerDto.email}`);
+    } catch (err) {
+      // Non-fatal — admin can resend later; customer record is already created
+      this.logger.error(
+        `Failed to send customer invitation email to ${createCustomerDto.email}:`,
+        err,
+      );
+    }
+
     this.eventEmitter.emit('customer.created', { customer: savedCustomer });
 
     return savedCustomer;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SET PASSWORD  (first-time activation)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Called by the customer when they click the invitation link.
+   * Sets their password and activates the account.
+   */
+  async setPasswordFromToken(
+    token: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    const user = await this.userRepository.findOne({
+      where: { setPasswordToken: token },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Invalid or expired invitation link');
+    }
+
+    if (!user.setPasswordExpires || new Date() > user.setPasswordExpires) {
+      throw new BadRequestException(
+        'This invitation link has expired. Please ask your tenant admin to resend it.',
+      );
+    }
+
+    // The @BeforeInsert/@BeforeUpdate hook on User hashes the password automatically
+    user.password = newPassword;
+    user.status = UserStatus.ACTIVE;
+    user.emailVerified = true;         // email was confirmed by clicking the link
+    user.setPasswordToken = undefined;
+    user.setPasswordExpires = undefined;
+
+    await this.userRepository.save(user);
+    this.logger.log(`Password set and account activated for: ${user.email}`);
+
+    return { message: 'Password set successfully. You can now log in.' };
+  }
+
+  /**
+   * Resend the set-password invitation email.
+   * Useful when the token expires or the email was lost.
+   */
+  async resendCustomerInvitation(
+    customerId: string,
+    user: User,
+  ): Promise<{ message: string }> {
+    const customer = await this.findOne(customerId);
+    const tenant = await this.tenantService.findOne(user.tenantId);
+
+    // Tenant isolation — make sure the customer belongs to the caller's tenant
+    if (customer.tenantId !== user.tenantId) {
+      throw new BadRequestException('Customer does not belong to your tenant');
+    }
+
+    const newUser = await this.userRepository.findOne({
+      where: { customerId, role: UserRole.CUSTOMER },
+    });
+
+    if (!user) {
+      throw new NotFoundException(
+        'No linked user account found for this customer',
+      );
+    }
+
+    if (user.status === UserStatus.ACTIVE && user.emailVerified) {
+      throw new BadRequestException(
+        'This customer has already activated their account',
+      );
+    }
+
+    // Rotate the token
+    const setPasswordToken = crypto.randomBytes(32).toString('hex');
+    const setPasswordExpires = new Date();
+    setPasswordExpires.setDate(setPasswordExpires.getDate() + 7);
+
+    user.setPasswordToken = setPasswordToken;
+    user.setPasswordExpires = setPasswordExpires;
+    await this.userRepository.save(user);
+
+      await this.mailService.sendInvitationEmail(
+        user.email,
+        user.name,
+        tenant.name,
+        setPasswordToken,
+        UserRole.CUSTOMER
+      );
+
+    return { message: 'Invitation email resent successfully' };
   }
 
   /**
@@ -236,84 +412,32 @@ export class CustomersService {
     });
   }
 
-  /**
-   * Search customers by term
-   */
-  async search(
-    term: string,
-    tenantId?: string,
-    limit: number = 10,
-  ): Promise<Customer[]> {
-    const queryBuilder = this.customerRepository.createQueryBuilder('customer');
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STATS / SEARCH
+  // ═══════════════════════════════════════════════════════════════════════════
 
-    queryBuilder.where(
-      '(customer.title ILIKE :term OR customer.email ILIKE :term OR customer.city ILIKE :term)',
+  async search(term: string, tenantId?: string, limit = 10): Promise<Customer[]> {
+    const qb = this.customerRepository.createQueryBuilder('customer');
+    qb.where(
+      '(customer.name ILIKE :term OR customer.email ILIKE :term OR customer.city ILIKE :term)',
       { term: `%${term}%` },
     );
-
-    if (tenantId) {
-      queryBuilder.andWhere('customer.tenantId = :tenantId', { tenantId });
-    }
-
-    return await queryBuilder.take(limit).getMany();
+    if (tenantId) qb.andWhere('customer.tenantId = :tenantId', { tenantId });
+    return qb.take(limit).getMany();
   }
 
-  /**
-   * Get customer statistics
-   */
-  async getStatistics(tenantId?: string): Promise<{
-    total: number;
-    active: number;
-    inactive: number;
-    suspended: number;
-    public: number;
-    private: number;
-  }> {
-    const queryBuilder = this.customerRepository.createQueryBuilder('customer');
+  async getStatistics(tenantId?: string) {
+    const qb = this.customerRepository.createQueryBuilder('customer');
+    if (tenantId) qb.where('customer.tenantId = :tenantId', { tenantId });
 
-    if (tenantId) {
-      queryBuilder.where('customer.tenantId = :tenantId', { tenantId });
-    }
+    const [total, active, inactive, suspended] = await Promise.all([
+      qb.getCount(),
+      qb.clone().andWhere('customer.status = :s', { s: CustomerStatus.ACTIVE }).getCount(),
+      qb.clone().andWhere('customer.status = :s', { s: CustomerStatus.INACTIVE }).getCount(),
+      qb.clone().andWhere('customer.status = :s', { s: CustomerStatus.SUSPENDED }).getCount(),
+    ]);
 
-    const [total, active, inactive, suspended, publicCustomers, privateCustomers] =
-      await Promise.all([
-        queryBuilder.getCount(),
-        queryBuilder
-          .clone()
-          .andWhere('customer.status = :status', {
-            status: CustomerStatus.ACTIVE,
-          })
-          .getCount(),
-        queryBuilder
-          .clone()
-          .andWhere('customer.status = :status', {
-            status: CustomerStatus.INACTIVE,
-          })
-          .getCount(),
-        queryBuilder
-          .clone()
-          .andWhere('customer.status = :status', {
-            status: CustomerStatus.SUSPENDED,
-          })
-          .getCount(),
-        queryBuilder
-          .clone()
-          .andWhere('customer.isPublic = :isPublic', { isPublic: true })
-          .getCount(),
-        queryBuilder
-          .clone()
-          .andWhere('customer.isPublic = :isPublic', { isPublic: false })
-          .getCount(),
-      ]);
-
-    return {
-      total,
-      active,
-      inactive,
-      suspended,
-      public: publicCustomers,
-      private: privateCustomers,
-    };
+    return { total, active, inactive, suspended };
   }
 
   /**

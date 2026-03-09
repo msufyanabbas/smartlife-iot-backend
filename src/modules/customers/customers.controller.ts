@@ -18,39 +18,75 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiQuery,
+  ApiParam,
 } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
 import {
   CreateCustomerDto,
   UpdateCustomerDto,
   BulkUpdateCustomerStatusDto,
+  SetCustomerPasswordDto,
 } from './dto/customers.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole, CustomerStatus} from '@common/enums/index.enum';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { User } from '../index.entities';
+import { Public } from '@/common/decorators/public.decorator';
 
 @ApiTags('Customers')
 @Controller('customers')
 export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PUBLIC — set-password (customer clicking their invitation link)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * No auth required — the token in the body IS the credential.
+   * The frontend reads ?token= from the URL and POSTs it here.
+   */
+  @Public()
+  @Post('set-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Set password for new customer account (from invitation link)' })
+  @ApiResponse({ status: 200, description: 'Password set — account activated' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  async setPassword(@Body() dto: SetCustomerPasswordDto) {
+    return this.customersService.setPasswordFromToken(dto.token, dto.password);
+  }
+
   /**
    * Create a new customer
    */
   @Post()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @Roles(UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a new customer' })
   @ApiResponse({ status: 201, description: 'Customer created successfully' })
   @ApiResponse({ status: 409, description: 'Customer already exists' })
-  async create(@Body() createCustomerDto: CreateCustomerDto) {
-    const customer = await this.customersService.create(createCustomerDto);
+  async create(@CurrentUser() user: User, @Body() createCustomerDto: CreateCustomerDto) {
+    const customer = await this.customersService.create(createCustomerDto, user);
     return {
       message: 'Customer created successfully',
       data: customer,
     };
+  }
+
+  @Post(':id/resend-invitation')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Resend set-password invitation to customer' })
+  @ApiParam({ name: 'id', description: 'Customer ID' })
+  @ApiResponse({ status: 200, description: 'Invitation resent' })
+  async resendInvitation(
+    @CurrentUser() currentUser: User,
+    @Param('id') id: string,
+  ) {
+    return this.customersService.resendCustomerInvitation(id, currentUser);
   }
 
   /**

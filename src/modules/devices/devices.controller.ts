@@ -74,7 +74,7 @@ export class DevicesController {
    * Create new device
    */
   @Post()
-  @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER_ADMIN)
+  @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
   @Audit({ action: AuditAction.CREATE, entityType: AuditEntityType.DEVICE })
   @Notify({
     type: NotificationType.DEVICE,
@@ -109,7 +109,7 @@ export class DevicesController {
    * Get all devices
    */
   @Get()
-  @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER_ADMIN)
+  @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
   @ApiOperation({ summary: 'Get all devices with pagination' })
   @ApiResponse({ status: 200, description: 'List of devices' })
   findAll(@ResolvedTenantId() tenantId: string | undefined, @ResolvedCustomerId() customerId: string | undefined, @CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
