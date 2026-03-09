@@ -14,7 +14,8 @@ import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { UserRole, UserStatus } from '@common/enums/index.enum';
 import { Customer } from '../customers/entities/customers.entity';
-import { MailService, TenantsService } from '../index.service';
+import { MailService } from '../mail/mail.service';
+import { TenantsService } from '../tenants/tenants.service';
 import * as crypto from 'crypto'
 import { CreateCustomerUserDto } from './dto/customer-users.dto';
 
