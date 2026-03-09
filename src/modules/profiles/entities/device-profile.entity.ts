@@ -43,12 +43,12 @@ export class DeviceProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // DEVICE (One to Many Relationship)
   // ══════════════════════════════════════════════════════════════════════════
-  @Column()
-  deviceId: string;
+  // @Column()
+  // deviceId: string;
 
-  @OneToMany(() => Device, device => device.deviceProfile, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'deviceId' })
-  device: Device;
+  // @OneToMany(() => Device, device => device.deviceProfile, { onDelete: 'CASCADE' })
+  // @JoinColumn({ name: 'deviceId' })
+  // device: Device;
 
   // ══════════════════════════════════════════════════════════════════════════
   // TRANSPORT & PROVISION
