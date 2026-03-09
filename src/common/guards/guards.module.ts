@@ -68,6 +68,7 @@ import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module
     { provide: APP_GUARD, useClass: RolesGuard },
     // Step 4 — Tenant isolation (reads from JWT payload, no DB)
     { provide: APP_GUARD, useClass: TenantIsolationGuard },
+    { provide: APP_GUARD, useClass: CustomerAccessGuard },
     // Step 5 — Subscription load + health + plan gate (1 DB call, caches req.subscription)
     { provide: APP_GUARD, useClass: SubscriptionGuard },
     // Step 6 — Feature flag check (uses req.subscription cache, no DB)

@@ -28,6 +28,8 @@ import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { UsersService } from '../users/users.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { request } from 'axios';
+import { Request } from 'express';
 
 @Injectable()
 export class DevicesService {
@@ -105,12 +107,27 @@ export class DevicesService {
    * Find all devices with pagination
    */
   async findAll(
+    tenantId: string | undefined,
+    customerId: string | undefined,
     user: User,
     paginationDto: PaginationDto,
   ): Promise<PaginatedResponseDto<Device>> {
     const { page, limit, search, sortBy, sortOrder } = paginationDto;
 
     const queryBuilder = this.deviceRepository.createQueryBuilder('device');
+
+    if (tenantId) {
+    queryBuilder.andWhere('device.tenantId = :tenantId', { 
+      tenantId: tenantId 
+    });
+  }
+
+  // CustomerAccessGuard sets this for CUSTOMER_ADMIN / CUSTOMER_USER
+  if (customerId) {
+    queryBuilder.andWhere('device.customerId = :customerId', { 
+      customerId: customerId 
+    });
+  }
 
     // Customer filtering logic
     if (user.role === UserRole.CUSTOMER_USER) {

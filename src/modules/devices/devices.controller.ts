@@ -12,6 +12,7 @@ import {
   HttpCode,
   HttpStatus,
   ForbiddenException,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -23,7 +24,7 @@ import { DevicesService } from './devices.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
-import { CurrentUser } from '@common/decorators/current-user.decorator';
+import { CurrentUser, ResolvedCustomerId, ResolvedTenantId } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/users/entities/user.entity';
 import { AuditAction, AuditEntityType, UserRole } from '@common/enums/index.enum';
 import { PaginationDto } from '@common/dto/pagination.dto';
@@ -39,6 +40,7 @@ import { Notify } from '@common/decorators/notify.decorator';
 import { NotificationChannel, NotificationPriority, NotificationType } from '@common/enums/index.enum';
 import { Audit } from '@common/decorators/audit.decorator';
 import { MQTTAdapter } from '@modules/protocols/adapters/mqtt.adapter';
+import type { Request } from 'express';
 
 // ══════════════════════════════════════════════════════════════════════════
 // DEVICE COMMAND DTO (moved from gateway)
@@ -110,8 +112,8 @@ export class DevicesController {
   @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER_ADMIN)
   @ApiOperation({ summary: 'Get all devices with pagination' })
   @ApiResponse({ status: 200, description: 'List of devices' })
-  findAll(@CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
-    return this.devicesService.findAll(user, paginationDto);
+  findAll(@ResolvedTenantId() tenantId: string | undefined, @ResolvedCustomerId() customerId: string | undefined, @CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
+    return this.devicesService.findAll(tenantId, customerId, user, paginationDto);
   }
 
   /**
