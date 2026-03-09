@@ -5,18 +5,16 @@ import { CustomerUsersService } from './customer-users.service';
 import { User } from '../users/entities/user.entity';
 import { CustomersModule } from '../customers/customers.module';
 import { UsersModule } from '../users/users.module';
-import { Tenant } from '../index.entities';
-import { CustomersService, MailService, TenantsService } from '../index.service';
-import { MailModule, TenantsModule } from '../index.module';
+import { TenantsModule } from '../tenants/tenants.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Tenant]),
+    TypeOrmModule.forFeature([User]),
     CustomersModule,
     UsersModule,
-    MailModule,
     TenantsModule,
-    MailModule
+    MailModule,
   ],
   controllers: [CustomerUsersController],
   providers: [CustomerUsersService],
