@@ -259,6 +259,8 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
         const devices = await this.devicesService.findAll(
           { role: 'SUPER_ADMIN' } as any,
           { page: 1, limit: 1000 } as any,
+             { role: 'SUPER_ADMIN' } as any,
+          { page: 1, limit: 1000 } as any,
         );
 
         const matchingDevice = devices.data.find(
