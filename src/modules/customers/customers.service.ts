@@ -194,13 +194,13 @@ export class CustomersService {
       where: { customerId, role: UserRole.CUSTOMER },
     });
 
-    if (!user) {
+    if (!newUser) {
       throw new NotFoundException(
         'No linked user account found for this customer',
       );
     }
 
-    if (user.status === UserStatus.ACTIVE && user.emailVerified) {
+    if (newUser.status === UserStatus.ACTIVE && newUser.emailVerified) {
       throw new BadRequestException(
         'This customer has already activated their account',
       );
@@ -211,13 +211,13 @@ export class CustomersService {
     const setPasswordExpires = new Date();
     setPasswordExpires.setDate(setPasswordExpires.getDate() + 7);
 
-    user.setPasswordToken = setPasswordToken;
-    user.setPasswordExpires = setPasswordExpires;
-    await this.userRepository.save(user);
+    newUser.setPasswordToken = setPasswordToken;
+    newUser.setPasswordExpires = setPasswordExpires;
+    await this.userRepository.save(newUser);
 
       await this.mailService.sendInvitationEmail(
-        user.email,
-        user.name,
+        newUser.email,
+        newUser.name,
         tenant.name,
         setPasswordToken,
         UserRole.CUSTOMER
@@ -297,7 +297,7 @@ export class CustomersService {
   /**
    * Find one customer by ID
    */
-  async findOne(id: string): Promise<Customer> {
+  async findOne(id: string | undefined): Promise<Customer> {
     const customer = await this.customerRepository.findOne({ where: { id } });
 
     if (!customer) {

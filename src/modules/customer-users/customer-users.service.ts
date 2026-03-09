@@ -3,6 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Logger,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -10,8 +12,11 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CustomersService } from '../customers/customers.service';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
-import { UserRole } from '@common/enums/index.enum';
+import { UserRole, UserStatus } from '@common/enums/index.enum';
 import { Customer } from '../customers/entities/customers.entity';
+import { MailService, TenantsService } from '../index.service';
+import * as crypto from 'crypto'
+import { CreateCustomerUserDto } from './dto/customer-users.dto';
 
 /**
  * Service to manage relationships between Customers and Users
@@ -19,13 +24,193 @@ import { Customer } from '../customers/entities/customers.entity';
  */
 @Injectable()
 export class CustomerUsersService {
+   private readonly logger = new Logger(CustomerUsersService.name);
   constructor(
     @InjectRepository(User)
     private userRepository: Repository<User>,
     private customersService: CustomersService,
     private usersService: UsersService,
+     private tenantService: TenantsService,
+    private mailService: MailService,
     private eventEmitter: EventEmitter2,
   ) {}
+
+  
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CREATE CUSTOMER USER (with invitation)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Creates a new CUSTOMER_USER account and sends a set-password email.
+   *
+   * Called by: tenant admin or customer admin (controller enforces roles).
+   *
+   * @param dto             - New user details
+   * @param callerTenantId  - From JWT, used for isolation checks
+   */
+  async createCustomerUser(
+    dto: CreateCustomerUserDto,
+    user: User,
+  ): Promise<User> {
+    const customer = await this.customersService.findOne(user.customerId);
+
+    // Tenant isolation — customer must belong to the caller's tenant
+    if (customer.tenantId !== user.tenantId) {
+      throw new ForbiddenException('Customer does not belong to your tenant');
+    }
+
+    // Check email uniqueness
+    const existing = await this.userRepository.findOne({
+      where: { email: dto.email, tenantId: user.tenantId },
+    });
+    if (existing) {
+      throw new ConflictException('A user with this email already exists in this tenant');
+    }
+
+    // Generate set-password token (7-day window)
+    const setPasswordToken = crypto.randomBytes(32).toString('hex');
+    const setPasswordExpires = new Date();
+    setPasswordExpires.setDate(setPasswordExpires.getDate() + 7);
+
+    const newUser = this.userRepository.create({
+      email: dto.email,
+      name: dto.name,
+      phone: dto.phone,
+      password: 'UNSET_' + crypto.randomBytes(16).toString('hex'),
+      role: UserRole.CUSTOMER_USER,
+      status: UserStatus.INACTIVE,
+      emailVerified: false,
+      tenantId: user.tenantId,
+      customerId: user.customerId,
+      setPasswordToken,
+      setPasswordExpires,
+    });
+
+    const saved = await this.userRepository.save(newUser);
+    this.logger.log(
+      `Customer user created: ${dto.email} (customer: ${customer.id})`,
+    );
+
+    // Send invitation
+    try {
+      await this.mailService.sendInvitationEmail(
+        dto.email,
+        dto.name,
+        customer.name,
+        setPasswordToken,
+        UserRole.CUSTOMER_USER
+      );
+      this.logger.log(`Customer user invitation sent to: ${dto.email}`);
+    } catch (err) {
+      this.logger.error(
+        `Failed to send customer user invitation to ${dto.email}:`,
+        err,
+      );
+    }
+
+    this.eventEmitter.emit('customer.user.created', {
+      userId: saved.id,
+      customerId: user.customerId,
+    });
+
+    return saved;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SET PASSWORD (first-time activation — shared logic, but scoped to CUSTOMER_USER)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Customer users call this after clicking their invitation link.
+   * We reuse the same setPasswordToken column on User.
+   */
+  async setPasswordFromToken(
+    token: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    const user = await this.userRepository.findOne({
+      where: { setPasswordToken: token },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Invalid or expired invitation link');
+    }
+
+    if (!user.setPasswordExpires || new Date() > user.setPasswordExpires) {
+      throw new BadRequestException(
+        'This invitation link has expired. Please ask your admin to resend it.',
+      );
+    }
+
+    user.password = newPassword; // @BeforeUpdate hook hashes it
+    user.status = UserStatus.ACTIVE;
+    user.emailVerified = true;
+    user.setPasswordToken = undefined;
+    user.setPasswordExpires = undefined;
+
+    await this.userRepository.save(user);
+    this.logger.log(`Password set and account activated for: ${user.email}`);
+
+    return { message: 'Password set successfully. You can now log in.' };
+  }
+
+  /**
+   * Resend invitation to a customer user whose token expired.
+   */
+  async resendCustomerUserInvitation(
+    userId: string,
+    user: User,
+  ): Promise<{ message: string }> {
+    const newUser = await this.userRepository.findOne({ where: { id: userId, tenantId: user.tenantId, customerId: user.customerId } });
+    const tenant = await this.tenantService.findOne(user.tenantId);
+
+    if (!newUser) throw new NotFoundException('User not found');
+    if (newUser.tenantId !== user.tenantId) {
+      throw new ForbiddenException('User does not belong to your tenant');
+    }
+    if (newUser.status === UserStatus.ACTIVE && newUser.emailVerified) {
+      throw new BadRequestException('This user has already activated their account');
+    }
+
+    const setPasswordToken = crypto.randomBytes(32).toString('hex');
+    const setPasswordExpires = new Date();
+    setPasswordExpires.setDate(setPasswordExpires.getDate() + 7);
+
+    newUser.setPasswordToken = setPasswordToken;
+    newUser.setPasswordExpires = setPasswordExpires;
+    await this.userRepository.save(newUser);
+
+    const customer = user.customerId
+      ? await this.customersService.findOne(user.customerId)
+      : null;
+
+    await this.mailService.sendInvitationEmail(
+      user.email,
+      user.name,
+      tenant.name,
+      setPasswordToken,
+      UserRole.CUSTOMER_USER
+    );
+
+    return { message: 'Invitation email resent successfully' };
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   /**
    * Assign a user to a customer (make them a CUSTOMER_USER)

@@ -8,6 +8,8 @@ import {
   Query,
   UseGuards,
   Request,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -15,17 +17,81 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiQuery,
+  ApiParam,
 } from '@nestjs/swagger';
 import { CustomerUsersService } from './customer-users.service';
 import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
 import { RolesGuard } from '@common/guards/roles.guard';
 import { Roles } from '@common/decorators/roles.decorator';
 import { UserRole } from '@common/enums/index.enum';
+import { Public } from '@/common/decorators/public.decorator';
+import { CreateCustomerUserRequestDto, SetCustomerUserPasswordDto } from './dto/customer-users.dto';
+import { User } from '../index.entities';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
 
 @ApiTags('Customer Users')
 @Controller('customer-users')
 export class CustomerUsersController {
   constructor(private readonly customerUsersService: CustomerUsersService) {}
+
+    // ═══════════════════════════════════════════════════════════════════════════
+  // PUBLIC — activate account
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  @Public()
+  @Post('set-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Activate customer user account (from invitation email)' })
+  @ApiResponse({ status: 200, description: 'Password set — account activated' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  async setPassword(@Body() dto: SetCustomerUserPasswordDto) {
+    return this.customerUsersService.setPasswordFromToken(dto.token, dto.password);
+  }
+
+
+   // ═══════════════════════════════════════════════════════════════════════════
+  // CREATE — tenant admin or customer admin
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a new customer user (sends invitation email)' })
+  @ApiResponse({ status: 201, description: 'Customer user created — invitation sent' })
+  @ApiResponse({ status: 409, description: 'Email already exists' })
+  async create(
+    @CurrentUser() currentUser: User,
+    @Body() dto: CreateCustomerUserRequestDto,
+  ) {
+    const user = await this.customerUsersService.createCustomerUser(
+      dto,
+      currentUser,
+    );
+    return {
+      message: 'Customer user created. Invitation email sent.',
+      data: { id: user.id, email: user.email, name: user.name, role: user.role },
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RESEND INVITATION
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  @Post(':id/resend-invitation')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Resend set-password invitation to customer user' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  async resendInvitation(
+    @CurrentUser() currentUser: User,
+    @Param('id') id: string,
+  ) {
+    return this.customerUsersService.resendCustomerUserInvitation(id, currentUser);
+  }
+
 
   /**
    * Assign a user to a customer
