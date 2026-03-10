@@ -42,22 +42,23 @@ export interface SubscriptionLimits {
  * Based on Smart Life Excel specifications
  */
 export interface SubscriptionFeatures {
-  overview: boolean;
-  solutionTemplates: boolean;
-  solutionDashboards: boolean;
-  assetProfiles: boolean;
-  deviceProfiles: boolean;
-  alerts: boolean;
-  analytics: boolean;
-  userRoles: boolean;
-  integration: boolean;
-  edge: boolean;
-  scheduleManagement: boolean;
-  subscription: boolean;
-  resources: boolean;
-  notifications: boolean;
-  sharingCenter: boolean;
-  apiMonitoring: boolean;
+  overview?: boolean;
+  solutionTemplates?: boolean;
+  solutionDashboards?: boolean;
+  assetProfiles?: boolean;
+  settings?: boolean;
+  deviceProfiles?: boolean;
+  alerts?: boolean;
+  analytics?: boolean;
+  userRoles?: boolean;
+  integration?: boolean;
+  edge?: boolean;
+  scheduleManagement?: boolean;
+  subscription?: boolean;
+  resources?: boolean;
+  notifications?: boolean;
+  sharingCenter?: boolean;
+  apiMonitoring?: boolean;
   // Analytics & Automation
   realtimeAnalytics?: boolean;
   advancedAutomation?: boolean;

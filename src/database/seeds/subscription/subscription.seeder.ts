@@ -102,6 +102,23 @@ export class SubscriptionSeeder implements ISeeder {
    */
   private getPlanFeatures(plan: SubscriptionPlan): SubscriptionFeatures {
     const defaultFeatures: SubscriptionFeatures = {
+    overview: true,
+    solutionTemplates: true,
+    solutionDashboards: true,
+    deviceProfiles: true,
+    assetProfiles: true,
+    alerts: true,
+    analytics: false,
+    userRoles: true,
+    integration: false,
+    edge: true,
+    scheduleManagement: false,
+    subscription: true,
+    resources: true,
+    notifications: true,
+    sharingCenter: false,
+    apiMonitoring: false,
+    auditLogs: false,
       realtimeAnalytics: false,
       advancedAutomation: false,
       ruleEngine: 'basic',
