@@ -33,13 +33,13 @@ export class TwoFactorAuthService {
   /**
    * Get or create 2FA record for user
    */
-  async getOrCreate(userId: string): Promise<TwoFactorAuth> {
+  async getOrCreate(user: User): Promise<TwoFactorAuth> {
     let twoFactor = await this.twoFactorAuthRepository.findOne({
-      where: { userId },
+      where: { userId: user.id, tenantId: user.tenantId },
     });
 
     if (!twoFactor) {
-      twoFactor = this.twoFactorAuthRepository.create({ userId });
+      twoFactor = this.twoFactorAuthRepository.create({ userId: user.id, tenantId: user.tenantId });
       await this.twoFactorAuthRepository.save(twoFactor);
     }
 
@@ -60,8 +60,8 @@ export class TwoFactorAuthService {
   /**
    * Get user's 2FA settings
    */
-  async getSettings(userId: string): Promise<any> {
-    const twoFactor = await this.getOrCreate(userId);
+  async getSettings(user: User): Promise<any> {
+    const twoFactor = await this.getOrCreate(user);
 
     return {
       isEnabled: twoFactor.isEnabled,
@@ -79,18 +79,18 @@ export class TwoFactorAuthService {
   /**
    * Generate TOTP secret and QR code for authenticator app
    */
-  async generateAuthenticatorSecret(userId: string): Promise<{
+  async generateAuthenticatorSecret(user: User): Promise<{
     secret: string;
     qrCode: string;
     manualEntryKey: string;
   }> {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) {
+    const newUser = await this.userRepository.findOne({ where: { id: user.id, tenantId: user.tenantId } });
+    if (!newUser) {
       throw new NotFoundException('User not found');
     }
 
     const secret = speakeasy.generateSecret({
-      name: `${this.configService.get('APP_NAME', 'SmartLife IoT')} (${user.email})`,
+      name: `${this.configService.get('APP_NAME', 'SmartLife IoT')} (${newUser.email})`,
       issuer: this.configService.get('APP_NAME', 'SmartLife IoT'),
       length: 32,
     });
@@ -99,7 +99,7 @@ export class TwoFactorAuthService {
     const qrCode = await QRCode.toDataURL(secret.otpauth_url!);
 
     // Save temporary secret (not enabled yet)
-    const twoFactor = await this.getOrCreate(userId);
+    const twoFactor = await this.getOrCreate(newUser);
     twoFactor.secret = secret.base32;
     await this.twoFactorAuthRepository.save(twoFactor);
 
@@ -113,7 +113,7 @@ export class TwoFactorAuthService {
   /**
    * Verify TOTP code from authenticator app
    */
-  async verifyAuthenticatorCode(userId: string, code: string): Promise<boolean> {
+  async verifyAuthenticatorCode(userId: User, code: string): Promise<boolean> {
     const twoFactor = await this.getOrCreate(userId);
 
     if (!twoFactor.secret) {
@@ -133,7 +133,7 @@ export class TwoFactorAuthService {
   /**
    * Enable authenticator 2FA
    */
-  async enableAuthenticator(userId: string, code: string): Promise<{
+  async enableAuthenticator(userId: User, code: string): Promise<{
     backupCodes: string[];
     message: string;
   }> {
@@ -172,7 +172,7 @@ export class TwoFactorAuthService {
   /**
    * Setup SMS 2FA
    */
-  async setupSMS(userId: string, phoneNumber: string): Promise<{ message: string }> {
+  async setupSMS(userId: User, phoneNumber: string): Promise<{ message: string }> {
     // Validate phone number format (basic validation)
     if (!phoneNumber.match(/^\+?[1-9]\d{1,14}$/)) {
       throw new BadRequestException('Invalid phone number format');
@@ -194,7 +194,7 @@ export class TwoFactorAuthService {
   /**
    * Send SMS verification code
    */
-  async sendSMSCode(userId: string): Promise<void> {
+  async sendSMSCode(userId: User): Promise<void> {
     const twoFactor = await this.getOrCreate(userId);
 
     if (!twoFactor.phoneNumber) {
@@ -224,7 +224,7 @@ export class TwoFactorAuthService {
   /**
    * Verify SMS code and enable SMS 2FA
    */
-  async enableSMS(userId: string, code: string): Promise<{
+  async enableSMS(userId: User, code: string): Promise<{
     backupCodes: string[];
     message: string;
   }> {
@@ -280,8 +280,8 @@ export class TwoFactorAuthService {
   /**
    * Send email verification code
    */
-  async sendEmailCode(userId: string): Promise<void> {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
+  async sendEmailCode(userId: User): Promise<void> {
+    const user = await this.userRepository.findOne({ where: { id: userId.id } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
@@ -311,7 +311,7 @@ export class TwoFactorAuthService {
   /**
    * Enable email 2FA
    */
-  async enableEmail(userId: string, code: string): Promise<{
+  async enableEmail(userId: User, code: string): Promise<{
     backupCodes: string[];
     message: string;
   }> {
@@ -362,9 +362,9 @@ export class TwoFactorAuthService {
   /**
    * Verify 2FA code during login
    */
-  async verifyCode(userId: string, code: string): Promise<boolean> {
+  async verifyCode(userId: User, code: string): Promise<boolean> {
     const twoFactor = await this.twoFactorAuthRepository.findOne({
-      where: { userId },
+      where: { userId: userId.id },
     });
 
     if (!twoFactor || !twoFactor.isEnabled) {
@@ -372,7 +372,7 @@ export class TwoFactorAuthService {
     }
 
     // Check if it's a backup code first
-    if (await this.verifyBackupCode(userId, code)) {
+    if (await this.verifyBackupCode(userId.id, code)) {
       return true;
     }
 
@@ -449,7 +449,7 @@ export class TwoFactorAuthService {
   /**
    * Disable 2FA
    */
-  async disable(userId: string, code: string): Promise<{ message: string }> {
+  async disable(userId: User, code: string): Promise<{ message: string }> {
     const verified = await this.verifyCode(userId, code);
 
     if (!verified) {
@@ -457,7 +457,7 @@ export class TwoFactorAuthService {
     }
 
     const twoFactor = await this.twoFactorAuthRepository.findOne({
-      where: { userId },
+      where: { userId: userId.id },
     });
 
     if (twoFactor) {
@@ -524,7 +524,7 @@ export class TwoFactorAuthService {
   /**
    * Regenerate backup codes
    */
-  async regenerateBackupCodes(userId: string, verificationCode: string): Promise<{
+  async regenerateBackupCodes(userId: User, verificationCode: string): Promise<{
     backupCodes: string[];
     message: string;
   }> {
@@ -535,7 +535,7 @@ export class TwoFactorAuthService {
     }
 
     const twoFactor = await this.twoFactorAuthRepository.findOne({
-      where: { userId },
+      where: { userId: userId.id },
     });
 
     if (!twoFactor?.isEnabled) {

@@ -15,8 +15,8 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { TwoFactorAuthService } from './two-factor-auth.service';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { AuthenticatorSecretResponseDto, BackupCodesResponseDto, MessageResponseDto, SetupSMSDto, TwoFactorSettingsResponseDto, VerifyCodeDto } from './dto/two-factor-challenge.dto';
 
@@ -46,7 +46,7 @@ export class TwoFactorAuthController {
     type: TwoFactorSettingsResponseDto
   })
   async getSettings(@CurrentUser() user: User) {
-    return this.twoFactorAuthService.getSettings(user.id);
+    return this.twoFactorAuthService.getSettings(user);
   }
 
   // ==================== AUTHENTICATOR SETUP ====================
@@ -67,7 +67,7 @@ export class TwoFactorAuthController {
     type: AuthenticatorSecretResponseDto
   })
   async generateAuthenticatorSecret(@CurrentUser() user: User): Promise<AuthenticatorSecretResponseDto> {
-    return this.twoFactorAuthService.generateAuthenticatorSecret(user.id);
+    return this.twoFactorAuthService.generateAuthenticatorSecret(user);
   }
 
   @Post('authenticator/enable')
@@ -95,7 +95,7 @@ export class TwoFactorAuthController {
     @CurrentUser() user: User,
     @Body() verifyDto: VerifyCodeDto,
   ) {
-    return this.twoFactorAuthService.enableAuthenticator(user.id, verifyDto.code);
+    return this.twoFactorAuthService.enableAuthenticator(user, verifyDto.code);
   }
 
   // ==================== SMS SETUP ====================
@@ -124,7 +124,7 @@ export class TwoFactorAuthController {
     @CurrentUser() user: User,
     @Body() setupDto: SetupSMSDto,
   ) {
-    return this.twoFactorAuthService.setupSMS(user.id, setupDto.phoneNumber);
+    return this.twoFactorAuthService.setupSMS(user, setupDto.phoneNumber);
   }
 
   @Post('sms/resend')
@@ -136,7 +136,7 @@ export class TwoFactorAuthController {
     type: MessageResponseDto
   })
   async resendSMSCode(@CurrentUser() user: User): Promise<MessageResponseDto> {
-    await this.twoFactorAuthService.sendSMSCode(user.id);
+    await this.twoFactorAuthService.sendSMSCode(user);
     return { message: 'Verification code sent' };
   }
 
@@ -162,7 +162,7 @@ export class TwoFactorAuthController {
     },
   })
   async enableSMS(@CurrentUser() user: User, @Body() verifyDto: VerifyCodeDto) {
-    return this.twoFactorAuthService.enableSMS(user.id, verifyDto.code);
+    return this.twoFactorAuthService.enableSMS(user, verifyDto.code);
   }
 
   // ==================== EMAIL SETUP ====================
@@ -175,7 +175,7 @@ export class TwoFactorAuthController {
     description: 'Code sent',
   })
   async sendEmailCode(@CurrentUser() user: User): Promise<MessageResponseDto> {
-    await this.twoFactorAuthService.sendEmailCode(user.id);
+    await this.twoFactorAuthService.sendEmailCode(user);
     return { message: 'Verification code sent to your email' };
   }
 
@@ -200,7 +200,7 @@ export class TwoFactorAuthController {
     },
   })
   async enableEmail(@CurrentUser() user: User, @Body() verifyDto: VerifyCodeDto) {
-    return this.twoFactorAuthService.enableEmail(user.id, verifyDto.code);
+    return this.twoFactorAuthService.enableEmail(user, verifyDto.code);
   }
 
   // ==================== DISABLE 2FA ====================
@@ -226,7 +226,7 @@ export class TwoFactorAuthController {
     },
   })
   async disable(@CurrentUser() user: User, @Body() verifyDto: VerifyCodeDto) {
-    return this.twoFactorAuthService.disable(user.id, verifyDto.code);
+    return this.twoFactorAuthService.disable(user, verifyDto.code);
   }
 
   // ==================== BACKUP CODES ====================
@@ -255,6 +255,6 @@ export class TwoFactorAuthController {
     @CurrentUser() user: User,
     @Body() verifyDto: VerifyCodeDto,
   ): Promise<BackupCodesResponseDto> {
-    return this.twoFactorAuthService.regenerateBackupCodes(user.id, verifyDto.code);
+    return this.twoFactorAuthService.regenerateBackupCodes(user, verifyDto.code);
   }
 }
