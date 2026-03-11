@@ -284,8 +284,9 @@ export class AuthController {
     @Body() dto: VerifyOAuth2FADto,  // typed DTO — no more raw @Body('userId'), @Body('code')
     @Ip() ipAddress: string,
     @Headers('user-agent') userAgent: string,
+    @CurrentUser() user: User,
   ): Promise<AuthResponseDto> {
-    return this.authService.verifyOAuth2FA(dto.userId, dto.code, ipAddress, userAgent);
+    return this.authService.verifyOAuth2FA(user, dto.code, ipAddress, userAgent);
   }
 
   // ============ OAuth Account Management ============

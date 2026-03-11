@@ -501,13 +501,13 @@ export class AuthService {
     if (has2FA) {
       if (!twoFactorCode) {
         const twoFASettings =
-          await this.twoFactorAuthService.getSettings(user.id);
+          await this.twoFactorAuthService.getSettings(user);
 
         // Send code automatically for SMS/Email
         if (twoFASettings.method === 'sms') {
-          await this.twoFactorAuthService.sendSMSCode(user.id);
+          await this.twoFactorAuthService.sendSMSCode(user);
         } else if (twoFASettings.method === 'email') {
-          await this.twoFactorAuthService.sendEmailCode(user.id);
+          await this.twoFactorAuthService.sendEmailCode(user);
         }
 
         // Return 2FA challenge
@@ -520,7 +520,7 @@ export class AuthService {
 
       // Verify 2FA code
       const isValid = await this.twoFactorAuthService.verifyCode(
-        user.id,
+        user,
         twoFactorCode,
       );
 
@@ -753,13 +753,13 @@ export class AuthService {
     const has2FA = await this.twoFactorAuthService.isEnabled(user.id);
 
     if (has2FA) {
-      const twoFASettings = await this.twoFactorAuthService.getSettings(user.id);
+      const twoFASettings = await this.twoFactorAuthService.getSettings(user);
 
       // Send code automatically for SMS/Email
       if (twoFASettings.method === 'sms') {
-        await this.twoFactorAuthService.sendSMSCode(user.id);
+        await this.twoFactorAuthService.sendSMSCode(user);
       } else if (twoFASettings.method === 'email') {
-        await this.twoFactorAuthService.sendEmailCode(user.id);
+        await this.twoFactorAuthService.sendEmailCode(user);
       }
 
       // Return 2FA challenge for OAuth flow
@@ -787,13 +787,13 @@ export class AuthService {
    * ✅ NEW: Verify OAuth 2FA and complete login
    */
   async verifyOAuth2FA(
-    userId: string,
+    userId: User,
     twoFactorCode: string,
     ipAddress?: string,
     userAgent?: string,
   ): Promise<AuthResponseDto> {
     const user = await this.userRepository.findOne({
-      where: { id: userId },
+      where: { id: userId.id },
     });
 
     if (!user) {
