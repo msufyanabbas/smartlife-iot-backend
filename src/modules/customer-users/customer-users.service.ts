@@ -57,7 +57,7 @@ export class CustomerUsersService {
     const customer = await this.customersService.findOne(user.customerId);
 
     // Tenant isolation — customer must belong to the caller's tenant
-    if (customer.tenantId !== user.tenantId) {
+    if (customer.tenantId !== (user.tenantId || user.id)) {
       throw new ForbiddenException('Customer does not belong to your tenant');
     }
 
