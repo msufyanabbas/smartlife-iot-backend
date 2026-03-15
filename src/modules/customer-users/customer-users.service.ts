@@ -17,7 +17,7 @@ import { Customer } from '../customers/entities/customers.entity';
 import { MailService } from '../mail/mail.service';
 import { TenantsService } from '../tenants/tenants.service';
 import * as crypto from 'crypto'
-import { CreateCustomerUserDto } from './dto/customer-users.dto';
+import { CreateCustomerUserDto, CreateCustomerUserRequestDto } from './dto/customer-users.dto';
 
 /**
  * Service to manage relationships between Customers and Users
@@ -49,15 +49,17 @@ export class CustomerUsersService {
    *
    * @param dto             - New user details
    * @param callerTenantId  - From JWT, used for isolation checks
+   * 
+   * ba92b0a9-df9f-477e-8a86-44a7a599a385
    */
   async createCustomerUser(
-    dto: CreateCustomerUserDto,
+    dto: CreateCustomerUserRequestDto,
     user: User,
   ): Promise<User> {
-    const customer = await this.customersService.findOne(user.customerId);
+    const customer = await this.customersService.findOne(user.customerId || dto.customerId);
 
     // Tenant isolation — customer must belong to the caller's tenant
-    if (customer.tenantId !== (user.tenantId || user.id)) {
+    if (customer.tenantId !== user.tenantId) {
       throw new ForbiddenException('Customer does not belong to your tenant');
     }
 
