@@ -24,8 +24,7 @@ export class CreateCustomerUserRequestDto implements CreateCustomerUserDto {
   phone?: string;
 
   @ApiProperty({ example: 'customer-uuid' })
-  @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   customerId: string;
 }
 
