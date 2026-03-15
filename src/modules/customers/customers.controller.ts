@@ -230,6 +230,23 @@ export class CustomersController {
   }
 
   /**
+   * Get customers by tenant
+   */
+  @Get('tenant')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get customers by tenant' })
+  @ApiResponse({ status: 200, description: 'Customers retrieved successfully' })
+  async findByTenantCustomers(@CurrentUser() user: User) {
+    const customers = await this.customersService.findByTenant(user.tenantId);
+    return {
+      message: 'Customers retrieved successfully',
+      data: customers,
+    };
+  }
+
+  /**
    * Get customers by status
    */
   @Get('status/:status')

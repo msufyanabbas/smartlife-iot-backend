@@ -406,7 +406,7 @@ export class CustomersService {
   /**
    * Get customers by tenant
    */
-  async findByTenant(tenantId: string): Promise<Customer[]> {
+  async findByTenant(tenantId: string | undefined): Promise<Customer[]> {
     return await this.customerRepository.find({
       where: { tenantId },
       order: { createdAt: 'DESC' },
