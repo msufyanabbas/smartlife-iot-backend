@@ -20,11 +20,11 @@ export class MailService {
   }
 
   private createTransporter() {
-    const smtpHost = this.configService.get<string>('SMTP_HOST');
-    const smtpPort = this.configService.get<number>('SMTP_PORT');
-    const smtpUser = this.configService.get<string>('SMTP_USER');
-    const smtpPass = this.configService.get<string>('SMTP_PASS');
-    const smtpFrom = this.configService.get<string>('SMTP_FROM');
+    const smtpHost = this.configService.get<string>('app.smtp.host');
+    const smtpPort = this.configService.get<number>('app.smtp.port');
+    const smtpUser = this.configService.get<string>('app.smtp.user');
+    const smtpPass = this.configService.get<string>('app.smtp.pass');
+    const smtpFrom = this.configService.get<string>('app.smtp.from');
 
     // Check if SMTP is configured
     if (!smtpHost || !smtpPort || !smtpUser || !smtpPass) {
