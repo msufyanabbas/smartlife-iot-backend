@@ -48,15 +48,15 @@ export class CustomersController {
    * No auth required — the token in the body IS the credential.
    * The frontend reads ?token= from the URL and POSTs it here.
    */
-  @Public()
-  @Post('set-password')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Set password for new customer account (from invitation link)' })
-  @ApiResponse({ status: 200, description: 'Password set — account activated' })
-  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
-  async setPassword(@Body() dto: SetCustomerPasswordDto) {
-    return this.customersService.setPasswordFromToken(dto.token, dto.password);
-  }
+  // @Public()
+  // @Post('set-password')
+  // @HttpCode(HttpStatus.OK)
+  // @ApiOperation({ summary: 'Set password for new customer account (from invitation link)' })
+  // @ApiResponse({ status: 200, description: 'Password set — account activated' })
+  // @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  // async setPassword(@Body() dto: SetCustomerPasswordDto) {
+  //   return this.customersService.setPasswordFromToken(dto.token, dto.password);
+  // }
 
   /**
    * Create a new customer

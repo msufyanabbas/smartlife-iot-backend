@@ -38,15 +38,15 @@ export class CustomerUsersController {
   // PUBLIC — activate account
   // ═══════════════════════════════════════════════════════════════════════════
 
-  @Public()
-  @Post('set-password')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Activate customer user account (from invitation email)' })
-  @ApiResponse({ status: 200, description: 'Password set — account activated' })
-  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
-  async setPassword(@Body() dto: SetCustomerUserPasswordDto) {
-    return this.customerUsersService.setPasswordFromToken(dto.token, dto.password);
-  }
+  // @Public()
+  // @Post('set-password')
+  // @HttpCode(HttpStatus.OK)
+  // @ApiOperation({ summary: 'Activate customer user account (from invitation email)' })
+  // @ApiResponse({ status: 200, description: 'Password set — account activated' })
+  // @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  // async setPassword(@Body() dto: SetCustomerUserPasswordDto) {
+  //   return this.customerUsersService.setPasswordFromToken(dto.token, dto.password);
+  // }
 
 
    // ═══════════════════════════════════════════════════════════════════════════

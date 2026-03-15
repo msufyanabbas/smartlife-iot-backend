@@ -19,7 +19,7 @@ import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { Customer, Invitation, Tenant, User, RefreshToken, OAuthAccount, TokenBlacklist } from '@modules/index.entities';
-import { TenantStatus, SubscriptionPlan, UserRole, OAuthProviderEnum, InvitationStatus } from '@common/enums/index.enum';
+import { TenantStatus, SubscriptionPlan, UserRole, OAuthProviderEnum, InvitationStatus, UserStatus } from '@common/enums/index.enum';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto, UserInfoDto } from './dto/auth-response.dto';
@@ -822,6 +822,36 @@ export class AuthService {
     // Pass undefined since we don't track which OAuth provider initiated 2FA
     return this.generateAuthResponse(user, ipAddress, userAgent, undefined);
   }
+
+  async setPasswordFromToken(
+  token: string,
+  newPassword: string,
+): Promise<{ message: string }> {
+  const user = await this.userRepository.findOne({
+    where: { setPasswordToken: token },
+  });
+
+  if (!user) {
+    throw new BadRequestException('Invalid or expired invitation link');
+  }
+
+  if (!user.setPasswordExpires || new Date() > user.setPasswordExpires) {
+    throw new BadRequestException(
+      'This invitation link has expired. Please ask your admin to resend it.',
+    );
+  }
+
+  user.password = newPassword;
+  user.status = UserStatus.ACTIVE;
+  user.emailVerified = true;
+  user.setPasswordToken = undefined;
+  user.setPasswordExpires = undefined;
+
+  await this.userRepository.save(user);
+  this.logger.log(`Password set and account activated for: ${user.email}`);
+
+  return { message: 'Password set successfully. You can now log in.' };
+}
 
   /**
    * Link OAuth account to existing user

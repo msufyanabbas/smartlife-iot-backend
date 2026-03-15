@@ -14,6 +14,7 @@ import { GoogleAuthGuard, GitHubAuthGuard, AppleAuthGuard
 } from '@guards/index.guards';
 import { randomBytes } from 'crypto';
 import { TwoFactorChallengeDto } from '../two-factor/dto/two-factor-challenge.dto';
+import { SetCustomerPasswordDto } from '../customers/dto/customers.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -270,6 +271,16 @@ export class AuthController {
       userId: sessionData.userId,
     };
   }
+
+@Public()
+@Post('set-password')
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Activate account from invitation link (customer or customer user)' })
+@ApiResponse({ status: 200, description: 'Password set — account activated' })
+@ApiResponse({ status: 400, description: 'Invalid or expired token' })
+async setPassword(@Body() dto: SetCustomerPasswordDto) {
+  return this.authService.setPasswordFromToken(dto.token, dto.password);
+}
 
   /**
  * Verify 2FA code for OAuth login
