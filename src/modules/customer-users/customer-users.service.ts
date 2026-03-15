@@ -85,7 +85,7 @@ export class CustomerUsersService {
       status: UserStatus.INACTIVE,
       emailVerified: false,
       tenantId: user.tenantId,
-      customerId: user.customerId,
+      customerId: user.customerId || dto.customerId,
       setPasswordToken,
       setPasswordExpires,
     });
