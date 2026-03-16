@@ -235,9 +235,8 @@ export class CustomersService {
     limit?: number;
     search?: string;
     status?: CustomerStatus;
-    tenantId?: string;
     isPublic?: boolean;
-  }): Promise<{
+  }, tenantId: string | undefined): Promise<{
     customers: Customer[];
     total: number;
     page: number;
@@ -264,9 +263,9 @@ export class CustomersService {
       });
     }
 
-    if (options.tenantId) {
+    if (tenantId) {
       queryBuilder.andWhere('customer.tenantId = :tenantId', {
-        tenantId: options.tenantId,
+        tenantId: tenantId,
       });
     }
 

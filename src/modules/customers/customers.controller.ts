@@ -95,6 +95,7 @@ export class CustomersController {
   @Get()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @Roles(UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Get all customers' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -104,6 +105,7 @@ export class CustomersController {
   @ApiQuery({ name: 'isPublic', required: false, type: Boolean })
   @ApiResponse({ status: 200, description: 'Customers retrieved successfully' })
   async findAll(
+    @CurrentUser() user: User,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
@@ -116,9 +118,8 @@ export class CustomersController {
       limit: limit ? +limit : undefined,
       search,
       status,
-      tenantId,
       isPublic: isPublic !== undefined ? isPublic === true : undefined,
-    });
+    }, tenantId);
 
     return {
       message: 'Customers retrieved successfully',
