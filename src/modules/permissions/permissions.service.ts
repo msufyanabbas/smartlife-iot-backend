@@ -43,10 +43,6 @@ export class PermissionsService {
    */
   async findAll(tenantId: string | undefined): Promise<Permission[]> {
     return await this.permissionRepository.find({
-      where: {
-        isSystem: true,
-        tenantId
-      },
       order: {
         resource: 'ASC',
         action: 'ASC',
