@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Permission } from './entities/permissions.entity';
 import { CreatePermissionDto, UpdatePermissionDto } from './dto';
+import { User } from '../index.entities';
 
 @Injectable()
 export class PermissionsService {
@@ -41,25 +42,25 @@ export class PermissionsService {
   /**
    * Get all permissions
    */
-  async findAll(tenantId: string | undefined): Promise<Permission[]> {
-    return await this.permissionRepository.find({
-      where: {
-        isSystem: true,
-        tenantId
-      },
-      order: {
-        resource: 'ASC',
-        action: 'ASC',
-      },
-    });
-  }
+async findAll(tenantId: string | undefined): Promise<Permission[]> {
+  return this.permissionRepository.find({
+    where: [
+      { isSystem: true },
+      ...(tenantId ? [{ tenantId }] : []),
+    ],
+    order: {
+      resource: 'ASC',
+      action: 'ASC',
+    },
+  });
+}
 
   /**
    * Get permissions by resource
    */
-  async findByResource(resource: string): Promise<Permission[]> {
+  async findByResource(resource: string, user: User): Promise<Permission[]> {
     return await this.permissionRepository.find({
-      where: { resource },
+      where: { resource, tenantId: user.tenantId },
       order: { action: 'ASC' },
     });
   }

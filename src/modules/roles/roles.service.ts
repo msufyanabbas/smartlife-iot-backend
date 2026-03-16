@@ -64,55 +64,57 @@ export class RolesService {
     return this.roleRepository.save(role);
   }
 
-  async findAll(queryDto: QueryRoleDto, user: User) {
-    const { search, isSystem, page, limit, sortBy, sortOrder } = queryDto as any;
+ async findAll(queryDto: QueryRoleDto, user: User) {
+  const { search, isSystem, page, limit, sortBy, sortOrder } = queryDto as any;
 
-    const queryBuilder = this.roleRepository
-      .createQueryBuilder('role')
-      .leftJoinAndSelect('role.permissions', 'permissions')
-      .leftJoinAndSelect('role.tenant', 'tenant');
+  const queryBuilder = this.roleRepository
+    .createQueryBuilder('role')
+    .leftJoinAndSelect('role.permissions', 'permissions')
+    .leftJoinAndSelect('role.tenant', 'tenant');
 
-    // Search filter
-    if (search) {
-      queryBuilder.andWhere(
-        '(role.name ILIKE :search OR role.description ILIKE :search)',
-        { search: `%${search}%` }
-      );
-    }
-
-    // Tenant filter
-    if (user.tenantId !== undefined) {
-      if (user.tenantId === null || user.tenantId === 'null') {
-        queryBuilder.andWhere('role.tenantId IS NULL');
-      } else {
-        queryBuilder.andWhere('role.tenantId = :tenantId', { tenantId: user.tenantId });
-      }
-    }
-
-    // System role filter
-    if (isSystem !== undefined) {
-      queryBuilder.andWhere('role.isSystem = :isSystem', { isSystem });
-    }
-
-    // Sorting
-    queryBuilder.orderBy(`role.${sortBy}`, sortOrder);
-
-    // Pagination
-    const skip = (page - 1) * limit;
-    queryBuilder.skip(skip).take(limit);
-
-    const [data, total] = await queryBuilder.getManyAndCount();
-
-    return {
-      data,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+  // Search filter
+  if (search) {
+    queryBuilder.andWhere(
+      '(role.name ILIKE :search OR role.description ILIKE :search)',
+      { search: `%${search}%` },
+    );
   }
+
+  // Show system roles OR roles belonging to the user's tenant — same logic as permissions.
+  // A single andWhere with tenantId would exclude system roles (tenantId IS NULL).
+  if (user.tenantId) {
+    queryBuilder.andWhere(
+      '(role.isSystem = true OR role.tenantId = :tenantId)',
+      { tenantId: user.tenantId },
+    );
+  } else {
+    // SUPER_ADMIN has no tenantId — show everything (system + all tenant roles)
+    // No filter needed unless isSystem is explicitly requested below
+  }
+
+  // Optional explicit isSystem filter (overrides the base OR when provided)
+  if (isSystem !== undefined) {
+    queryBuilder.andWhere('role.isSystem = :isSystem', { isSystem });
+  }
+
+  // Sorting and pagination
+  queryBuilder.orderBy(`role.${sortBy}`, sortOrder);
+
+  const skip = (page - 1) * limit;
+  queryBuilder.skip(skip).take(limit);
+
+  const [data, total] = await queryBuilder.getManyAndCount();
+
+  return {
+    data,
+    meta: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
 
   async findOne(id: string): Promise<Role> {
     const role = await this.roleRepository.findOne({

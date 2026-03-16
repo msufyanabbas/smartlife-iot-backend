@@ -80,11 +80,11 @@ export class PermissionsController {
     description: 'List of permissions retrieved successfully',
     type: [PermissionResponseDto],
   })
-  async findAll(@Query('resource') resource?: string, @CurrentUser() user?: User) {
+  async findAll( @CurrentUser() user: User, @Query('resource') resource?: string,) {
     if (resource) {
-      return await this.permissionsService.findByResource(resource);
+      return await this.permissionsService.findByResource(resource, user);
     }
-    return await this.permissionsService.findAll(user?.tenantId);
+    return await this.permissionsService.findAll(user.tenantId);
   }
 
   @Get('resources')
