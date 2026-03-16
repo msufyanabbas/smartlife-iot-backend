@@ -31,7 +31,7 @@ export class RolesController {
   @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiResponse({ status: 409, description: 'Role already exists' })
   create(@CurrentUser() user: User, @Body() createRoleDto: CreateRoleDto) {
-    return this.rolesService.create(createRoleDto);
+    return this.rolesService.create(createRoleDto, user);
   }
 
   @Get()

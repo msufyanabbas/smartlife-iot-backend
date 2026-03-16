@@ -21,35 +21,35 @@ export class RolesService {
     private readonly tenantRepository: Repository<Tenant>,
   ) {}
 
-  async create(createRoleDto: CreateRoleDto): Promise<Role> {
-    const { permissionIds, tenantId, ...roleData } = createRoleDto;
+  async create(createRoleDto: CreateRoleDto, user: User): Promise<Role> {
+    const { permissionIds, ...roleData } = createRoleDto;
 
     // Check if role name already exists for this tenant/system
     const existingRole = await this.roleRepository.findOne({
       where: {
         name: roleData.name,
-        tenantId: tenantId || IsNull(),
+        tenantId: user.tenantId || IsNull(),
       },
     });
 
     if (existingRole) {
       throw new ConflictException(
-        `Role with name "${roleData.name}" already exists${tenantId ? ' for this tenant' : ' as a system role'}`
+        `Role with name "${roleData.name}" already exists${user.tenantId ? ' for this tenant' : ' as a system role'}`
       );
     }
 
     // Validate tenant if provided
-    if (tenantId) {
-      const tenant = await this.tenantRepository.findOne({ where: { id: tenantId } });
+    if (user.tenantId) {
+      const tenant = await this.tenantRepository.findOne({ where: { id: user.tenantId } });
       if (!tenant) {
-        throw new NotFoundException(`Tenant with ID ${tenantId} not found`);
+        throw new NotFoundException(`Tenant with ID ${user.tenantId} not found`);
       }
     }
 
     // Create role
     const role = this.roleRepository.create({
       ...roleData,
-      tenantId,
+      tenantId: user.tenantId,
     });
 
     // Assign permissions if provided
