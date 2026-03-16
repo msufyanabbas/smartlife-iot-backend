@@ -64,8 +64,8 @@ export class RolesService {
     return this.roleRepository.save(role);
   }
 
-  async findAll(queryDto: QueryRoleDto) {
-    const { search, tenantId, isSystem, page, limit, sortBy, sortOrder } = queryDto as any;
+  async findAll(queryDto: QueryRoleDto, user: User) {
+    const { search, isSystem, page, limit, sortBy, sortOrder } = queryDto as any;
 
     const queryBuilder = this.roleRepository
       .createQueryBuilder('role')
@@ -81,11 +81,11 @@ export class RolesService {
     }
 
     // Tenant filter
-    if (tenantId !== undefined) {
-      if (tenantId === null || tenantId === 'null') {
+    if (user.tenantId !== undefined) {
+      if (user.tenantId === null || user.tenantId === 'null') {
         queryBuilder.andWhere('role.tenantId IS NULL');
       } else {
-        queryBuilder.andWhere('role.tenantId = :tenantId', { tenantId });
+        queryBuilder.andWhere('role.tenantId = :tenantId', { tenantId: user.tenantId });
       }
     }
 

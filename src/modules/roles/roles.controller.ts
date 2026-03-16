@@ -17,6 +17,8 @@ import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { QueryRoleDto } from './dto/query-role.dto';
 import { AssignPermissionsDto } from './dto/assign-permissions.dto';
+import { User } from '../index.entities';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
 
 @ApiTags('Roles')
 @Controller('roles')
@@ -28,15 +30,15 @@ export class RolesController {
   @ApiResponse({ status: 201, description: 'Role created successfully' })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiResponse({ status: 409, description: 'Role already exists' })
-  create(@Body() createRoleDto: CreateRoleDto) {
+  create(@CurrentUser() user: User, @Body() createRoleDto: CreateRoleDto) {
     return this.rolesService.create(createRoleDto);
   }
 
   @Get()
   @ApiOperation({ summary: 'Get all roles with filtering and pagination' })
   @ApiResponse({ status: 200, description: 'Roles retrieved successfully' })
-  findAll(@Query() queryDto: QueryRoleDto) {
-    return this.rolesService.findAll(queryDto);
+  findAll(@CurrentUser() user: User, @Query() queryDto: QueryRoleDto) {
+    return this.rolesService.findAll(queryDto, user);
   }
 
   @Get('system')
