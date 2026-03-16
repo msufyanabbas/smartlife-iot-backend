@@ -416,7 +416,7 @@ export class CustomerUsersService {
   async getAccessibleCustomers(user: User): Promise<Customer[]> {
     // Super Admin: all customers
     if (user.role === UserRole.SUPER_ADMIN) {
-      const result = await this.customersService.findAll({});
+      const result = await this.customersService.findAll({}, user.tenantId);
       return result.customers;
     }
 
