@@ -119,7 +119,7 @@ export class CustomersController {
       search,
       status,
       isPublic: isPublic !== undefined ? isPublic === true : undefined,
-    }, tenantId);
+    }, user.tenantId);
 
     return {
       message: 'Customers retrieved successfully',
