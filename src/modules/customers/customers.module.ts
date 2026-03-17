@@ -7,7 +7,7 @@ import { User } from '../users/entities/user.entity';
 import { MailModule } from '../mail/mail.module';
 import { TenantsModule } from '../tenants/tenants.module';
 import { CustomerListener } from './customers.listener';
-import { UsersModule } from '../index.module';
+import { UsersModule } from '@modules/users/users.module';
 
 @Module({
   imports: [
