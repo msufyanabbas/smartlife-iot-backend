@@ -6,6 +6,7 @@ import { Customer } from './entities/customers.entity';
 import { User } from '../users/entities/user.entity';
 import { MailModule } from '../mail/mail.module';
 import { TenantsModule } from '../tenants/tenants.module';
+import { CustomerListener } from './customers.listener';
 
 @Module({
   imports: [
@@ -14,7 +15,7 @@ import { TenantsModule } from '../tenants/tenants.module';
     MailModule,
   ],
   controllers: [CustomersController],
-  providers: [CustomersService],
+  providers: [CustomersService, CustomerListener],
   exports: [CustomersService],
 })
 export class CustomersModule {}
