@@ -19,6 +19,7 @@ import {
 } from './dto/customers.dto';
 import { MailService } from '../mail/mail.service';
 import { TenantsService } from '../tenants/tenants.service';
+import { UsersService } from '../index.service';
 
 @Injectable()
 export class CustomersService {
@@ -31,6 +32,7 @@ export class CustomersService {
     private tenantService: TenantsService,
     private eventEmitter: EventEmitter2,
     private mailService: MailService,
+    private userService: UsersService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -338,6 +340,7 @@ export class CustomersService {
    */
   async remove(user: User, id: string): Promise<void> {
     const customer = await this.findOne(user.tenantId, id);
+    await this.userService.remove(user.id);
 
     await this.customerRepository.softRemove(customer);
 
@@ -401,7 +404,8 @@ export class CustomersService {
   // STATS / SEARCH
   // ═══════════════════════════════════════════════════════════════════════════
 
-  async search(term: string, tenantId?: string, limit = 10): Promise<Customer[]> {
+  async search(user: User, term: string, limit = 10): Promise<Customer[]> {
+    const {tenantId} = user;
     const qb = this.customerRepository.createQueryBuilder('customer');
     qb.where(
       '(customer.name ILIKE :term OR customer.email ILIKE :term OR customer.city ILIKE :term)',

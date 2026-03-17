@@ -166,13 +166,14 @@ export class CustomersController {
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Search results' })
   async search(
+    @CurrentUser() user: User,
     @Query('q') term: string,
     @Query('tenantId') tenantId?: string,
     @Query('limit') limit?: number,
   ) {
     const customers = await this.customersService.search(
+      user,
       term,
-      tenantId,
       limit ? +limit : 10,
     );
     return {
