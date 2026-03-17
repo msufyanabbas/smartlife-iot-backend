@@ -33,7 +33,7 @@ export class Customer extends BaseEntity {
   @Column({ nullable: true })
   zip?: string;
 
-  @Column({ type: 'enum', enum: CustomerStatus, default: CustomerStatus.ACTIVE })
+  @Column({ type: 'enum', enum: CustomerStatus, default: CustomerStatus.INACTIVE })
   status: CustomerStatus;
 
   @Column()

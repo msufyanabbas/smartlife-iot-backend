@@ -35,15 +35,14 @@ export class CustomerListener {
         err,
       );
     }
-    try {
-    // Increment subscription usage (fire and forget)
-    void this.subscriptionsService.incrementTenantUsage(
+  try {
+    await this.subscriptionsService.incrementTenantUsage(
       payload.tenantId,
       'customers',
       1,
     );
-    } catch (err) {
-        this.logger.error('Failed to upgrade subscription usage for customers')
-    }
+  } catch (err) {
+    this.logger.error('Failed to increment subscription usage for customers', err);
+  }
   }
 }
