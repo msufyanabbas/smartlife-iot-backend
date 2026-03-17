@@ -83,6 +83,7 @@ export class CustomersService {
     const customer = this.customerRepository.create({
       ...createCustomerDto,
       tenantId: user.tenantId, // always from JWT, never from body
+      status: CustomerStatus.INACTIVE
     });
     const savedCustomer = await this.customerRepository.save(customer);
 

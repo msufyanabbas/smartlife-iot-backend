@@ -51,7 +51,7 @@ export class CustomerListener {
   try {
     await this.subscriptionsService.decrementTenantUsage(
       payload.tenantId,
-      'customers',
+      'users',
       1,
     );
   } catch (err) {

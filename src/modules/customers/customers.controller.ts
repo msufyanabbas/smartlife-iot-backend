@@ -62,7 +62,7 @@ export class CustomersController {
         urlTemplate: '/customers/{entityId}',
       },
     })
-  @RequireSubscriptionLimit({ resource: ResourceType.CUSTOMER })
+  @RequireSubscriptionLimit({ resource: ResourceType.USER })
   @ApiOperation({ summary: 'Create a new customer' })
   @ApiResponse({ status: 201, description: 'Customer created successfully' })
   @ApiResponse({ status: 403, description: 'Customer limit reached' })
