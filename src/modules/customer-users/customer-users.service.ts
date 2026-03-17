@@ -56,7 +56,7 @@ export class CustomerUsersService {
     dto: CreateCustomerUserRequestDto,
     user: User,
   ): Promise<User> {
-    const customer = await this.customersService.findOne(user.customerId || dto.customerId);
+    const customer = await this.customersService.findOne(user.tenantId, user.customerId || dto.customerId);
 
     // Tenant isolation — customer must belong to the caller's tenant
     if (customer.tenantId !== user.tenantId) {
@@ -185,7 +185,7 @@ export class CustomerUsersService {
     await this.userRepository.save(newUser);
 
     const customer = user.customerId
-      ? await this.customersService.findOne(user.customerId)
+      ? await this.customersService.findOne(user.tenantId, user.customerId)
       : null;
 
     await this.mailService.sendInvitationEmail(
@@ -223,7 +223,7 @@ export class CustomerUsersService {
     customerId: string,
   ): Promise<User> {
     const user = await this.usersService.findOne(userId);
-    const customer = await this.customersService.findOne(customerId);
+    const customer = await this.customersService.findOne(user.tenantId, customerId);
 
     // Validate tenant match
     if (user.tenantId !== customer.tenantId) {
@@ -281,8 +281,8 @@ export class CustomerUsersService {
   /**
    * Get all users for a specific customer
    */
-  async getUsersByCustomer(customerId: string): Promise<User[]> {
-    await this.customersService.findOne(customerId); // Validate customer exists
+  async getUsersByCustomer(tenantId: string | undefined, customerId: string): Promise<User[]> {
+    await this.customersService.findOne(tenantId, customerId); // Validate customer exists
 
     return await this.userRepository.find({
       where: { customerId },
@@ -300,20 +300,21 @@ export class CustomerUsersService {
       return null;
     }
 
-    return await this.customersService.findOne(user.customerId);
+    return await this.customersService.findOne(user.tenantId, user.customerId);
   }
 
   /**
    * Bulk assign users to a customer
    */
   async bulkAssignUsersToCustomer(
+    user: User,
     userIds: string[],
     customerId: string,
   ): Promise<{
     successful: string[];
     failed: Array<{ userId: string; reason: string }>;
   }> {
-    const customer = await this.customersService.findOne(customerId);
+    const customer = await this.customersService.findOne(user.tenantId, customerId);
     const successful: string[] = [];
     const failed: Array<{ userId: string; reason: string }> = [];
 
@@ -362,7 +363,7 @@ export class CustomerUsersService {
     newCustomerId: string,
   ): Promise<User> {
     const user = await this.usersService.findOne(userId);
-    const newCustomer = await this.customersService.findOne(newCustomerId);
+    const newCustomer = await this.customersService.findOne(user.tenantId, newCustomerId);
 
     // Validate tenant match
     if (user.tenantId !== newCustomer.tenantId) {
@@ -427,7 +428,7 @@ export class CustomerUsersService {
 
     // Customer User: only their customer
     if (user.role === UserRole.CUSTOMER_USER && user.customerId) {
-      const customer = await this.customersService.findOne(user.customerId);
+      const customer = await this.customersService.findOne(user.tenantId, user.customerId);
       return [customer];
     }
 
@@ -453,12 +454,12 @@ export class CustomerUsersService {
   /**
    * Get statistics about customer users
    */
-  async getCustomerUserStatistics(customerId: string): Promise<{
+  async getCustomerUserStatistics(user: User, customerId: string): Promise<{
     totalUsers: number;
     activeUsers: number;
     inactiveUsers: number;
   }> {
-    await this.customersService.findOne(customerId); // Validate customer exists
+    await this.customersService.findOne(user.tenantId, customerId); // Validate customer exists
 
     const allUsers = await this.userRepository.find({
       where: { customerId },
@@ -479,11 +480,12 @@ export class CustomerUsersService {
    * Search users within a customer
    */
   async searchCustomerUsers(
+    user: User,
     customerId: string,
     searchTerm: string,
     limit: number = 10,
   ): Promise<User[]> {
-    await this.customersService.findOne(customerId); // Validate customer exists
+    await this.customersService.findOne(user.tenantId, customerId); // Validate customer exists
 
     return await this.userRepository
       .createQueryBuilder('user')
@@ -499,8 +501,8 @@ export class CustomerUsersService {
   /**
    * When a customer is deleted, handle all associated users
    */
-  async handleCustomerDeletion(customerId: string): Promise<void> {
-    const users = await this.getUsersByCustomer(customerId);
+  async handleCustomerDeletion(tenantId: string | undefined, customerId: string): Promise<void> {
+    const users = await this.getUsersByCustomer(tenantId, customerId);
 
     // Remove customer assignment from all users
     for (const user of users) {

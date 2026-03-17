@@ -140,6 +140,7 @@ export class CustomerUsersController {
   @ApiOperation({ summary: 'Get all users for a customer' })
   @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
   async getUsersByCustomer(
+    @CurrentUser() user: User,
     @Param('customerId') customerId: string,
     @Request() req,
   ) {
@@ -150,6 +151,7 @@ export class CustomerUsersController {
     );
 
     const users = await this.customerUsersService.getUsersByCustomer(
+      user.tenantId,
       customerId,
     );
     return {
@@ -187,9 +189,11 @@ export class CustomerUsersController {
   @ApiOperation({ summary: 'Bulk assign users to a customer' })
   @ApiResponse({ status: 200, description: 'Bulk assignment completed' })
   async bulkAssignUsersToCustomer(
+    @CurrentUser() user: User,
     @Body() body: { userIds: string[]; customerId: string },
   ) {
     const result = await this.customerUsersService.bulkAssignUsersToCustomer(
+      user,
       body.userIds,
       body.customerId,
     );
@@ -251,8 +255,9 @@ export class CustomerUsersController {
     status: 200,
     description: 'Statistics retrieved successfully',
   })
-  async getCustomerUserStatistics(@Param('customerId') customerId: string) {
+  async getCustomerUserStatistics(@CurrentUser() user: User, @Param('customerId') customerId: string) {
     const stats = await this.customerUsersService.getCustomerUserStatistics(
+      user,
       customerId,
     );
     return {
@@ -272,6 +277,7 @@ export class CustomerUsersController {
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Search results' })
   async searchCustomerUsers(
+    @CurrentUser() user: User,
     @Param('customerId') customerId: string,
     @Query('q') searchTerm: string,
     @Query('limit') limit?: number,
@@ -284,6 +290,7 @@ export class CustomerUsersController {
     );
 
     const users = await this.customerUsersService.searchCustomerUsers(
+      user,
       customerId,
       searchTerm,
       limit ? +limit : 10,
