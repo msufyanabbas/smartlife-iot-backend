@@ -359,7 +359,7 @@ private readonly paymentRepository: Repository<Payment>,
    */
   async findByTenantId(tenantId: string): Promise<Subscription> {
     const subscription = await this.subscriptionRepository.findOne({
-      where: { tenantId },
+      where: { tenantId, status: SubscriptionStatus.ACTIVE },
     });
     if (!subscription) {
       throw new NotFoundException('No subscription found for this tenant');
@@ -784,6 +784,10 @@ private readonly paymentRepository: Repository<Payment>,
     subscription.status = SubscriptionStatus.CANCELLED;
     subscription.cancelledAt = new Date();
     subscription.updatedBy = userId;
+
+    await this.create(subscription.tenantId, {
+          plan: SubscriptionPlan.FREE,
+    });
 
     return await this.subscriptionRepository.save(subscription);
   }
