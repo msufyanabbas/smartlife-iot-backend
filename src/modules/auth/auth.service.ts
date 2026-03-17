@@ -243,8 +243,6 @@ export class AuthService {
       );
     }
 
-    this.subscriptionsService.incrementTenantUsage(tenant.id, 'users', 1);
-
     return {
       message:
         'Registration successful. Please check your email to verify your account.',
