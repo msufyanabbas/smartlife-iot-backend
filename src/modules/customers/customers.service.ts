@@ -165,7 +165,7 @@ export class CustomersService {
     customerId: string,
     user: User,
   ): Promise<{ message: string }> {
-    const customer = await this.findOne(customerId);
+    const customer = await this.findOne(user.tenantId, customerId);
     const tenant = await this.tenantService.findOne(user.tenantId);
 
     // Tenant isolation — make sure the customer belongs to the caller's tenant
@@ -279,8 +279,8 @@ export class CustomersService {
   /**
    * Find one customer by ID
    */
-  async findOne(id: string | undefined): Promise<Customer> {
-    const customer = await this.customerRepository.findOne({ where: { id } });
+  async findOne(tenantId: string | undefined, id: string | undefined): Promise<Customer> {
+    const customer = await this.customerRepository.findOne({ where: { id, tenantId } });
 
     if (!customer) {
       throw new NotFoundException('Customer not found');
@@ -305,10 +305,11 @@ export class CustomersService {
    * Update customer
    */
   async update(
+    user: User,
     id: string,
     updateCustomerDto: UpdateCustomerDto,
   ): Promise<Customer> {
-    const customer = await this.findOne(id);
+    const customer = await this.findOne(user.tenantId,id);
 
     // Check if title is being changed and if it's already taken
     if (updateCustomerDto.name && updateCustomerDto.name !== customer.name) {
@@ -334,13 +335,13 @@ export class CustomersService {
   /**
    * Delete customer (soft delete)
    */
-  async remove(id: string): Promise<void> {
-    const customer = await this.findOne(id);
+  async remove(user: User, id: string): Promise<void> {
+    const customer = await this.findOne(user.tenantId, id);
 
     await this.customerRepository.softRemove(customer);
 
     // Emit event
-    this.eventEmitter.emit('customer.deleted', { customerId: id });
+    this.eventEmitter.emit('customer.deleted', { customerId: id, tenantId: user.tenantId });
   }
 
   /**
@@ -349,8 +350,9 @@ export class CustomersService {
   async updateStatus(
     customerId: string,
     status: CustomerStatus,
+    user: User
   ): Promise<Customer> {
-    const customer = await this.findOne(customerId);
+    const customer = await this.findOne(user.tenantId, customerId);
     const previousStatus = customer.status;
     customer.status = status;
 

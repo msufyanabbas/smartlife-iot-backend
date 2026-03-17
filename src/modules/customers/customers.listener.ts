@@ -45,4 +45,17 @@ export class CustomerListener {
     this.logger.error('Failed to increment subscription usage for customers', err);
   }
   }
+
+  @OnEvent('customer.deleted')
+  async handleDeviceDeleted(payload: { customerId: string, tenantId: string }) {
+  try {
+    await this.subscriptionsService.decrementTenantUsage(
+      payload.tenantId,
+      'customers',
+      1,
+    );
+  } catch (err) {
+    this.logger.error(`Failed to decrement customer usage for tenant ${payload.tenantId}:`, err);
+  }
+  }
 }

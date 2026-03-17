@@ -280,8 +280,8 @@ export class CustomersController {
   @ApiOperation({ summary: 'Get customer by ID' })
   @ApiResponse({ status: 200, description: 'Customer retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
-  async findOne(@Param('id') id: string) {
-    const customer = await this.customersService.findOne(id);
+  async findOne(@CurrentUser() user: User, @Param('id') id: string) {
+    const customer = await this.customersService.findOne(user.tenantId, id);
     return {
       message: 'Customer retrieved successfully',
       data: customer,
@@ -299,10 +299,11 @@ export class CustomersController {
   @ApiResponse({ status: 200, description: 'Customer updated successfully' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   async update(
+    @CurrentUser() user: User,
     @Param('id') id: string,
     @Body() updateCustomerDto: UpdateCustomerDto,
   ) {
-    const customer = await this.customersService.update(id, updateCustomerDto);
+    const customer = await this.customersService.update(user, id, updateCustomerDto);
     return {
       message: 'Customer updated successfully',
       data: customer,
@@ -319,10 +320,11 @@ export class CustomersController {
   @ApiOperation({ summary: 'Update customer status' })
   @ApiResponse({ status: 200, description: 'Status updated successfully' })
   async updateStatus(
+    @CurrentUser() user: User,
     @Param('id') id: string,
     @Body('status') status: CustomerStatus,
   ) {
-    const customer = await this.customersService.updateStatus(id, status);
+    const customer = await this.customersService.updateStatus(id, status, user);
     return {
       message: 'Status updated successfully',
       data: customer,
@@ -340,7 +342,7 @@ export class CustomersController {
   @ApiOperation({ summary: 'Delete customer' })
   @ApiResponse({ status: 204, description: 'Customer deleted successfully' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
-  async remove(@Param('id') id: string) {
-    await this.customersService.remove(id);
+  async remove(@CurrentUser() user: User, @Param('id') id: string) {
+    await this.customersService.remove(user, id);
   }
 }
