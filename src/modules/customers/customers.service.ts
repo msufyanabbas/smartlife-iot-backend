@@ -56,8 +56,6 @@ export class CustomersService {
       },
     });
 
-    const tenant = await this.tenantService.findOne(user.tenantId);
-
     if (existingCustomer) {
       throw new ConflictException(
         'Customer with this title already exists in this tenant',
@@ -111,27 +109,11 @@ export class CustomersService {
     });
 
     await this.userRepository.save(newUser);
-    this.logger.log(`Customer user created: ${createCustomerDto.email} (customer: ${savedCustomer.id})`);
 
-    // ── 3. Send set-password invitation email ──────────────────────────────
-    try {
-      await this.mailService.sendInvitationEmail(
-        createCustomerDto.email,
-        createCustomerDto.name,
-        tenant.name,
-        setPasswordToken,
-        UserRole.CUSTOMER
-      );
-      this.logger.log(`Customer invitation email sent to: ${createCustomerDto.email}`);
-    } catch (err) {
-      // Non-fatal — admin can resend later; customer record is already created
-      this.logger.error(
-        `Failed to send customer invitation email to ${createCustomerDto.email}:`,
-        err,
-      );
-    }
+    this.logger.log(`Customer created: ${createCustomerDto.email} (customer: ${savedCustomer.id})`);
 
-    this.eventEmitter.emit('customer.created', { customer: savedCustomer });
+    // Do side-effects when a customer is created using the listener created, e.g sending invitation email etc. 
+    this.eventEmitter.emit('customer.created', { customer: savedCustomer, email: createCustomerDto.email, name: createCustomerDto.name, tenantId: user.tenantId, setPasswordToken, role: UserRole.CUSTOMER });
 
     return savedCustomer;
   }

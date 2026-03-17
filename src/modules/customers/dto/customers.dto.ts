@@ -58,11 +58,11 @@ export class AllocatedLimitsDto {
 // ─── Create ───────────────────────────────────────────────────────────────────
 
 export class CreateCustomerDto {
-  @ApiProperty({ example: 'Acme Corporation' })
+  @ApiProperty({ example: 'Riyadh Corporation' })
   @IsString()
   name: string;
 
-  @ApiProperty({ example: 'contact@acme.com' })
+  @ApiProperty({ example: 'contact@riyadh-corporation.com' })
   @IsEmail()
   email: string;
 

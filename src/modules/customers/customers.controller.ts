@@ -30,42 +30,42 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole, CustomerStatus} from '@common/enums/index.enum';
+import { UserRole, CustomerStatus, AuditAction, AuditEntityType, NotificationType, NotificationChannel, NotificationPriority} from '@common/enums/index.enum';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { User } from '../index.entities';
 import { Public } from '@/common/decorators/public.decorator';
+import { Audit } from '@/common/decorators/audit.decorator';
+import { Notify } from '@/common/decorators/notify.decorator';
+import { RequireSubscriptionLimit } from '@/common/decorators/subscription.decorator';
+import { ResourceType } from '@/common/guards/subscription-limit.guard';
 
 @ApiTags('Customers')
 @Controller('customers')
 export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PUBLIC — set-password (customer clicking their invitation link)
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  /**
-   * No auth required — the token in the body IS the credential.
-   * The frontend reads ?token= from the URL and POSTs it here.
-   */
-  // @Public()
-  // @Post('set-password')
-  // @HttpCode(HttpStatus.OK)
-  // @ApiOperation({ summary: 'Set password for new customer account (from invitation link)' })
-  // @ApiResponse({ status: 200, description: 'Password set — account activated' })
-  // @ApiResponse({ status: 400, description: 'Invalid or expired token' })
-  // async setPassword(@Body() dto: SetCustomerPasswordDto) {
-  //   return this.customersService.setPasswordFromToken(dto.token, dto.password);
-  // }
-
   /**
    * Create a new customer
    */
   @Post()
   @Roles(UserRole.TENANT_ADMIN)
-  @ApiBearerAuth()
+  @Audit({ action: AuditAction.CREATE, entityType: AuditEntityType.CUSTOMER })
+  @Notify({
+      type: NotificationType.USER,
+      channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+      priority: NotificationPriority.NORMAL,
+      title: 'Customer Created',
+      message: 'Customer "{entityName}" has been created successfully',
+      recipients: 'self',
+      entityType: 'customer',
+      action: {
+        label: 'View Customer',
+        urlTemplate: '/customers/{entityId}',
+      },
+    })
+  @RequireSubscriptionLimit({ resource: ResourceType.CUSTOMER })
   @ApiOperation({ summary: 'Create a new customer' })
   @ApiResponse({ status: 201, description: 'Customer created successfully' })
+  @ApiResponse({ status: 403, description: 'Customer limit reached' })
   @ApiResponse({ status: 409, description: 'Customer already exists' })
   async create(@CurrentUser() user: User, @Body() createCustomerDto: CreateCustomerDto) {
     const customer = await this.customersService.create(createCustomerDto, user);
