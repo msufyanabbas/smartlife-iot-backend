@@ -41,6 +41,11 @@ export class CustomerListener {
       'customers',
       1,
     );
+      await this.subscriptionsService.incrementTenantUsage(
+      payload.tenantId,
+      'users',
+      1,
+    );
   } catch (err) {
     this.logger.error('Failed to increment subscription usage for customers', err);
   }
@@ -50,6 +55,11 @@ export class CustomerListener {
   async handleDeviceDeleted(payload: { customerId: string, tenantId: string }) {
   try {
     await this.subscriptionsService.decrementTenantUsage(
+      payload.tenantId,
+      'customers',
+      1,
+    );
+       await this.subscriptionsService.decrementTenantUsage(
       payload.tenantId,
       'users',
       1,
