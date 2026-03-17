@@ -285,7 +285,7 @@ private readonly paymentRepository: Repository<Payment>,
     createSubscriptionDto: CreateSubscriptionDto,
   ): Promise<Subscription> {
     const existing = await this.subscriptionRepository.findOne({
-      where: { tenantId },
+      where: { tenantId, status: SubscriptionStatus.ACTIVE },
     });
 
     if (existing) {
