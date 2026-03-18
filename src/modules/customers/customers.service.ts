@@ -19,8 +19,7 @@ import {
 } from './dto/customers.dto';
 import { MailService } from '../mail/mail.service';
 import { TenantsService } from '../tenants/tenants.service';
-import { UsersService } from '../index.service';
-
+import { UsersService } from '../users/users.service';
 @Injectable()
 export class CustomersService {
    private readonly logger = new Logger(CustomersService.name);

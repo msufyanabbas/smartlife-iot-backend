@@ -20,7 +20,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
-import { UsersService } from '@modules/index.service';
+import { UsersService } from '@modules/users/users.service';
 import {
   CreateUserDto,
   UpdateUserDto,

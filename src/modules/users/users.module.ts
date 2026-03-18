@@ -1,24 +1,20 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UsersController } from './users.controller';
-import { UsersService } from './users.service';                          // ← direct
-import { TenantsService } from '../tenants/tenants.service';            // ← direct
+import { UsersService } from './users.service';
 import { User } from './entities/user.entity';
-import { Tenant } from '../tenants/entities/tenant.entity';             // ← direct
+import { Tenant } from '../tenants/entities/tenant.entity';
 import { MailModule } from '../mail/mail.module';
-import { TenantsModule } from '../tenants/tenants.module';              // ← import module
+import { TenantsModule } from '../tenants/tenants.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Tenant]),
     MailModule,
-    TenantsModule,   // ← add this so TenantsService is properly provided
+    TenantsModule,
   ],
   controllers: [UsersController],
-  providers: [
-    UsersService,
-    // TenantsService,  ← remove this, let TenantsModule provide it
-  ],
+  providers: [UsersService],
   exports: [UsersService],
 })
 export class UsersModule {}
