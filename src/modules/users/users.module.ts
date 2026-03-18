@@ -1,18 +1,24 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UsersController } from './users.controller';
-import { UsersService, TenantsService } from '@modules/index.service';
+import { UsersService } from './users.service';                          // ← direct
+import { TenantsService } from '../tenants/tenants.service';            // ← direct
 import { User } from './entities/user.entity';
-import { MailModule } from '../../modules/mail/mail.module';
-import { AuditModule } from '../index.module';
-import { APP_INTERCEPTOR } from '@nestjs/core';
-import { AuditInterceptor } from '@/common/interceptors/index.interceptor';
-import { Tenant } from '@modules/index.entities';
+import { Tenant } from '../tenants/entities/tenant.entity';             // ← direct
+import { MailModule } from '../mail/mail.module';
+import { TenantsModule } from '../tenants/tenants.module';              // ← import module
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, Tenant]), MailModule],
+  imports: [
+    TypeOrmModule.forFeature([User, Tenant]),
+    MailModule,
+    TenantsModule,   // ← add this so TenantsService is properly provided
+  ],
   controllers: [UsersController],
-  providers: [UsersService, TenantsService],
+  providers: [
+    UsersService,
+    // TenantsService,  ← remove this, let TenantsModule provide it
+  ],
   exports: [UsersService],
 })
 export class UsersModule {}
