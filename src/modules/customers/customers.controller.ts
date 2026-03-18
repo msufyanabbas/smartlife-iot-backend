@@ -336,13 +336,11 @@ export class CustomersController {
    * Delete customer
    */
   @Delete(':id')
-  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete customer' })
   @ApiResponse({ status: 204, description: 'Customer deleted successfully' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   async remove(@CurrentUser() user: User, @Param('id') id: string) {
     await this.customersService.remove(user, id);
-    return;
   }
 }

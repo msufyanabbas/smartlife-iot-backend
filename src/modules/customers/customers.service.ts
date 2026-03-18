@@ -340,9 +340,11 @@ export class CustomersService {
    */
   async remove(user: User, id: string): Promise<void> {
     const customer = await this.findOne(user.tenantId, id);
-    await this.userService.remove(user.id);
+    const newUser = await this.userService.findByCustomer(customer.id);
 
-    await this.customerRepository.softRemove(customer);
+    // await this.customerRepository.softRemove(customer);
+    await this.customerRepository.remove(customer);
+    await this.userRepository.remove(newUser);
 
     // Emit event
     this.eventEmitter.emit('customer.deleted', { customerId: id, tenantId: user.tenantId });
