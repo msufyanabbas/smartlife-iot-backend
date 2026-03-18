@@ -112,12 +112,12 @@ export class NotificationInterceptor implements NestInterceptor {
     success: boolean,
     error?: any,
   ): Promise<void> {
-    const entityId = request.params?.id || response?.data?.id || response?.id;
+    const entityId = request.params?.id || response?.data?.data?.id || response?.data?.data?.id;
     const entityName =
-      response?.data?.name ||
-      response?.data?.title ||
-      response?.data?.email ||
-      response?.name ||
+      response?.data?.data?.name ||
+      response?.data?.data?.title ||
+      response?.data?.data?.email ||
+      response?.data?.data?.name ||
       'Unknown';
 
     const title = this.replacePlaceholders(metadata.title, {
