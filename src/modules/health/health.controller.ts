@@ -11,6 +11,7 @@ import { DatabaseHealthIndicator } from './indicators/database.health';
 import { RedisHealthIndicator } from './indicators/redis.health';
 import { KafkaHealthIndicator } from './indicators/kafka.health';
 import { MqttHealthIndicator } from './indicators/mqtt.health';
+import { Public } from '@/common/decorators/public.decorator';
 
 @Controller('health')
 export class HealthController {
@@ -26,6 +27,7 @@ export class HealthController {
   ) {}
 
   @Get()
+  @Public()
   @HealthCheck()
   check() {
     return this.health.check([
@@ -37,6 +39,7 @@ export class HealthController {
   }
 
   @Get('full')
+  @Public()
   @HealthCheck()
   checkFull() {
     return this.health.check([
@@ -67,6 +70,7 @@ export class HealthController {
   }
 
   @Get('liveness')
+  @Public()
   @HealthCheck()
   checkLiveness() {
     // Simple check - is the app running?
@@ -76,6 +80,7 @@ export class HealthController {
   }
 
   @Get('readiness')
+  @Public()
   @HealthCheck()
   checkReadiness() {
     // Can the app serve requests?
@@ -86,6 +91,7 @@ export class HealthController {
   }
 
   @Get('database')
+  @Public()
   @HealthCheck()
   checkDatabase() {
     return this.health.check([
@@ -95,12 +101,14 @@ export class HealthController {
   }
 
   @Get('cache')
+  @Public()
   @HealthCheck()
   checkCache() {
     return this.health.check([() => this.redisHealth.isHealthy('redis')]);
   }
 
   @Get('messaging')
+  @Public()
   @HealthCheck()
   checkMessaging() {
     return this.health.check([
