@@ -64,51 +64,66 @@ export class RolesService {
     return this.roleRepository.save(role);
   }
 
- async findAll(queryDto: QueryRoleDto, user: User) {
+async findAll(queryDto: QueryRoleDto, user: User) {
   const { search, isSystem, page, limit, sortBy, sortOrder } = queryDto as any;
 
-  const queryBuilder = this.roleRepository
-    .createQueryBuilder('role')
-    .leftJoinAndSelect('role.permissions', 'permissions')
-    .leftJoinAndSelect('role.tenant', 'tenant');
+  // ── Base filter builder (reused for all 3 queries) ─────────────────────────
+  const applyBaseFilters = (qb: ReturnType<typeof this.roleRepository.createQueryBuilder>) => {
+    if (search) {
+      qb.andWhere(
+        '(role.name ILIKE :search OR role.description ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
 
-  // Search filter
-  if (search) {
-    queryBuilder.andWhere(
-      '(role.name ILIKE :search OR role.description ILIKE :search)',
-      { search: `%${search}%` },
-    );
-  }
+    if (user.tenantId) {
+      qb.andWhere(
+        '(role.isSystem = true OR role.tenantId = :tenantId)',
+        { tenantId: user.tenantId },
+      );
+    }
 
-  // Show system roles OR roles belonging to the user's tenant — same logic as permissions.
-  // A single andWhere with tenantId would exclude system roles (tenantId IS NULL).
-  if (user.tenantId) {
-    queryBuilder.andWhere(
-      '(role.isSystem = true OR role.tenantId = :tenantId)',
-      { tenantId: user.tenantId },
-    );
-  } else {
-    // SUPER_ADMIN has no tenantId — show everything (system + all tenant roles)
-    // No filter needed unless isSystem is explicitly requested below
-  }
+    if (isSystem !== undefined) {
+      qb.andWhere('role.isSystem = :isSystem', { isSystem });
+    }
 
-  // Optional explicit isSystem filter (overrides the base OR when provided)
-  if (isSystem !== undefined) {
-    queryBuilder.andWhere('role.isSystem = :isSystem', { isSystem });
-  }
+    return qb;
+  };
 
-  // Sorting and pagination
-  queryBuilder.orderBy(`role.${sortBy}`, sortOrder);
+  // ── 1. Main query (paginated data + total) ─────────────────────────────────
+  const mainQuery = applyBaseFilters(
+    this.roleRepository
+      .createQueryBuilder('role')
+      .leftJoinAndSelect('role.permissions', 'permissions')
+      .leftJoinAndSelect('role.tenant', 'tenant'),
+  )
+    .orderBy(`role.${sortBy}`, sortOrder)
+    .skip((page - 1) * limit)
+    .take(limit);
 
-  const skip = (page - 1) * limit;
-  queryBuilder.skip(skip).take(limit);
+  // ── 2. System roles count ──────────────────────────────────────────────────
+  const systemCountQuery = applyBaseFilters(
+    this.roleRepository.createQueryBuilder('role'),
+  ).andWhere('role.isSystem = true');
 
-  const [data, total] = await queryBuilder.getManyAndCount();
+  // ── 3. Custom roles count ──────────────────────────────────────────────────
+  const customCountQuery = applyBaseFilters(
+    this.roleRepository.createQueryBuilder('role'),
+  ).andWhere('role.isSystem = false');
+
+  // ── Run all 3 in parallel ──────────────────────────────────────────────────
+  const [[data, total], systemRoles, customRoles] = await Promise.all([
+    mainQuery.getManyAndCount(),
+    systemCountQuery.getCount(),
+    customCountQuery.getCount(),
+  ]);
 
   return {
     data,
     meta: {
       total,
+      systemRoles,
+      customRoles,
       page,
       limit,
       totalPages: Math.ceil(total / limit),
