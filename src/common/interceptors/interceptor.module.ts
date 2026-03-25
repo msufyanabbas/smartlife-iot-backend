@@ -27,12 +27,6 @@ import { AuditModule, MetricsModule, NotificationsModule } from '@/modules/index
 
     ],
     providers: [
-        LoggingInterceptor,
-        MetricsInterceptor,
-        AuditInterceptor,
-        NotificationInterceptor,
-        UsageTrackingInterceptor,
-
         { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },
         { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
         { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
