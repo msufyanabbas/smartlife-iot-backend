@@ -246,7 +246,7 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid or expired code' })
   async exchangeCode(
     @Body() dto: ExchangeCodeDto,
-  ) {
+  ): Promise<AuthResponseDto | TwoFactorChallengeDto>  {
     const sessionKey = `oauth:session:${dto.code}`;
     const data = await this.redis.get(sessionKey);
 
@@ -265,11 +265,14 @@ export class AuthController {
       return { requires2FA: true, userId: sessionData.userId, method: sessionData.method };
     }
 
-    return {
-      accessToken: sessionData.accessToken,
-      refreshToken: sessionData.refreshToken,
-      userId: sessionData.userId,
-    };
+   return {
+  accessToken: sessionData.accessToken,
+  refreshToken: sessionData.refreshToken,
+  expiresIn: sessionData.expiresIn,
+  tokenType: sessionData.tokenType,
+  userId: sessionData.userId,
+  user: sessionData.user, 
+};
   }
 
 @Public()
@@ -477,47 +480,50 @@ async setPassword(@Body() dto: SetCustomerPasswordDto) {
     return this.authService.updateProfile(user.id, dto);
   }
 
-    private async handleOAuthCallback(
-    req: Request,
-    res: Response,
-    ipAddress: string,
-    userAgent: string,
-    loginFn: () => Promise<AuthResponseDto | TwoFactorChallengeDto>,
-    providerName: string,
-  ) {
-    const frontendUrl = process.env.FRONTEND_URL;
-    try {
-      const authResponse = await loginFn();
-      const sessionCode = randomBytes(32).toString('hex');
+private async handleOAuthCallback(
+  req: Request,
+  res: Response,
+  ipAddress: string,
+  userAgent: string,
+  loginFn: () => Promise<AuthResponseDto | TwoFactorChallengeDto>,
+  providerName: string,
+) {
+  const frontendUrl = process.env.FRONTEND_URL;
+  try {
+    const authResponse = await loginFn();
+    const sessionCode = randomBytes(32).toString('hex');
 
-      if ('requires2FA' in authResponse) {
-        await this.redis.set(
-          `oauth:session:${sessionCode}`,
-          JSON.stringify({
-            requires2FA: true,
-            userId: authResponse.userId,
-            method: authResponse.method,
-            expiresAt: Date.now() + 300_000, // 5 minutes for 2FA
-          }),
-          300,
-        );
-      } else {
-        await this.redis.set(
-          `oauth:session:${sessionCode}`,
-          JSON.stringify({
-            accessToken: authResponse.accessToken,
-            refreshToken: authResponse.refreshToken,
-            userId: authResponse.user.id,
-            expiresAt: Date.now() + 60_000, // 1 minute
-          }),
-          60,
-        );
-      }
-
-      return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
-    } catch (error) {
-      this.logger.error(`${providerName} auth callback error:`, error);
-      return res.redirect(`${frontendUrl}/login?error=auth_failed`);
+    if ('requires2FA' in authResponse) {
+      await this.redis.set(
+        `oauth:session:${sessionCode}`,
+        JSON.stringify({
+          requires2FA: true,
+          userId: authResponse.userId,
+          method: authResponse.method,
+          expiresAt: Date.now() + 300_000, // 5 minutes for 2FA
+        }),
+        300,
+      );
+    } else {
+      await this.redis.set(
+        `oauth:session:${sessionCode}`,
+        JSON.stringify({
+          accessToken: authResponse.accessToken,
+          refreshToken: authResponse.refreshToken,
+          expiresIn: authResponse.expiresIn,
+          tokenType: authResponse.tokenType,
+          user: authResponse.user,        
+          userId: authResponse.user.id,
+          expiresAt: Date.now() + 60_000,  // 1 minute
+        }),
+        60,
+      );
     }
+
+    return res.redirect(`${frontendUrl}/auth/callback?code=${sessionCode}`);
+  } catch (error) {
+    this.logger.error(`${providerName} auth callback error:`, error);
+    return res.redirect(`${frontendUrl}/login?error=auth_failed`);
   }
+}
 }
