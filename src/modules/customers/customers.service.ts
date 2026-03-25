@@ -53,13 +53,19 @@ export class CustomersService {
     const existingCustomer = await this.customerRepository.findOne({
       where: {
         name: createCustomerDto.name,
+        email: createCustomerDto.email,
         tenantId: user.tenantId,
       },
     });
 
-    if (existingCustomer) {
+    // ── Check if a user with this email already exists ─────────────────────
+    const existingUser = await this.userRepository.findOne({
+      where: { email: createCustomerDto.email },
+    });
+
+    if (existingCustomer || existingUser) {
       throw new ConflictException(
-        'Customer with this title already exists in this tenant',
+        'Customer with this title or email already exists in this tenant',
       );
     }
 
@@ -67,16 +73,6 @@ export class CustomersService {
     if (!createCustomerDto.email) {
       throw new BadRequestException(
         'Customer email is required so a login account can be created',
-      );
-    }
-
-    // ── Check if a user with this email already exists ─────────────────────
-    const existingUser = await this.userRepository.findOne({
-      where: { email: createCustomerDto.email },
-    });
-    if (existingUser) {
-      throw new ConflictException(
-        'A user with this email already exists',
       );
     }
 
