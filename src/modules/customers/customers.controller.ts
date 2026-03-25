@@ -51,7 +51,7 @@ export class CustomersController {
   @Audit({ action: AuditAction.CREATE, entityType: AuditEntityType.CUSTOMER })
   @Notify({
       type: NotificationType.USER,
-      channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+      channels: [NotificationChannel.IN_APP],
       priority: NotificationPriority.NORMAL,
       title: 'Customer Created',
       message: 'Customer "{entityName}" has been created successfully',
