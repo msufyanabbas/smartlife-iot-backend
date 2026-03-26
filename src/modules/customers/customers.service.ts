@@ -53,19 +53,19 @@ export class CustomersService {
   // ── Pre-checks OUTSIDE transaction (fast fail) ─────────────────────────
   const existingCustomer = await this.customerRepository.findOne({
     where: {
-      name: createCustomerDto.name,
+      phone: createCustomerDto.phone,
       email: createCustomerDto.email,
       tenantId: user.tenantId,
     },
   });
 
   const existingUser = await this.userRepository.findOne({
-    where: { email: createCustomerDto.email },
+    where: { email: createCustomerDto.email, phone: createCustomerDto.phone },
   });
 
   if (existingCustomer || existingUser) {
     throw new ConflictException(
-      'Customer with this title or email already exists in this tenant',
+      'Customer with this phone or email already exists in this tenant',
     );
   }
 
