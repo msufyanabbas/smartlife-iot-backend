@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, In } from 'typeorm';
+import { Repository, Like, In, DataSource } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CustomerStatus, UserRole, UserStatus } from '@/common/enums/index.enum';
 import { Customer, Tenant, User } from '@modules/index.entities';
@@ -32,6 +32,7 @@ export class CustomersService {
     private eventEmitter: EventEmitter2,
     private mailService: MailService,
     private userService: UsersService,
+    private readonly dataSource: DataSource,
   ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -48,57 +49,56 @@ export class CustomersService {
    * @param dto            - Customer fields from the request body
    * @param callerTenantId - Taken from @CurrentUser() in the controller — NOT body
    */
-  async create(createCustomerDto: CreateCustomerDto, user: User): Promise<Customer> {
-    // Check if customer with same title exists in this tenant
-    const existingCustomer = await this.customerRepository.findOne({
-      where: {
-        name: createCustomerDto.name,
-        email: createCustomerDto.email,
-        tenantId: user.tenantId,
-      },
-    });
+ async create(createCustomerDto: CreateCustomerDto, user: User): Promise<Customer> {
+  // ── Pre-checks OUTSIDE transaction (fast fail) ─────────────────────────
+  const existingCustomer = await this.customerRepository.findOne({
+    where: {
+      name: createCustomerDto.name,
+      email: createCustomerDto.email,
+      tenantId: user.tenantId,
+    },
+  });
 
-    // ── Check if a user with this email already exists ─────────────────────
-    const existingUser = await this.userRepository.findOne({
-      where: { email: createCustomerDto.email },
-    });
+  const existingUser = await this.userRepository.findOne({
+    where: { email: createCustomerDto.email },
+  });
 
-    if (existingCustomer || existingUser) {
-      throw new ConflictException(
-        'Customer with this title or email already exists in this tenant',
-      );
-    }
+  if (existingCustomer || existingUser) {
+    throw new ConflictException(
+      'Customer with this title or email already exists in this tenant',
+    );
+  }
 
-    // ── Email is required to create the login user ─────────────────────────
-    if (!createCustomerDto.email) {
-      throw new BadRequestException(
-        'Customer email is required so a login account can be created',
-      );
-    }
+  if (!createCustomerDto.email) {
+    throw new BadRequestException(
+      'Customer email is required so a login account can be created',
+    );
+  }
 
-    // ── 1. Persist customer row ────────────────────────────────────────────
-    const customer = this.customerRepository.create({
-      ...createCustomerDto,
-      tenantId: user.tenantId, // always from JWT, never from body
-      status: CustomerStatus.INACTIVE
-    });
-    const savedCustomer = await this.customerRepository.save(customer);
-
-    // ── 2. Create linked User (CUSTOMER role, no password yet) ────────────
-    const setPasswordToken = crypto.randomBytes(32).toString('hex');
+      const setPasswordToken = crypto.randomBytes(32).toString('hex');
     const setPasswordExpires = new Date();
-    setPasswordExpires.setDate(setPasswordExpires.getDate() + 7); // 7-day window
+    setPasswordExpires.setDate(setPasswordExpires.getDate() + 7);
 
-    const newUser = this.userRepository.create({
+  // ── All writes inside a single transaction ─────────────────────────────
+  const savedCustomer = await this.dataSource.transaction(async (manager) => {
+    // 1. Persist customer row
+    const customer = manager.create(Customer, {
+      ...createCustomerDto,
+      tenantId: user.tenantId,
+      status: CustomerStatus.INACTIVE,
+    });
+    const savedCustomer = await manager.save(customer);
+
+    // 2. Create linked User
+
+
+    const newUser = manager.create(User, {
       email: createCustomerDto.email,
       name: createCustomerDto.name,
       phone: createCustomerDto.phone,
-      // Use a random placeholder — the real password is set via the token link.
-      // The bcrypt hook will hash this, but it will never be usable for login
-      // because the account is INACTIVE until they click the link.
       password: 'UNSET_' + crypto.randomBytes(16).toString('hex'),
       role: UserRole.CUSTOMER,
-      status: UserStatus.INACTIVE,     // ← cannot login until they set a password
+      status: UserStatus.INACTIVE,
       emailVerified: false,
       tenantId: user.tenantId,
       customerId: savedCustomer.id,
@@ -106,15 +106,24 @@ export class CustomersService {
       setPasswordExpires,
     });
 
-    await this.userRepository.save(newUser);
-
-    this.logger.log(`Customer created: ${createCustomerDto.email} (customer: ${savedCustomer.id})`);
-
-    // Do side-effects when a customer is created using the listener created, e.g sending invitation email etc. 
-    this.eventEmitter.emit('customer.created', { customer: savedCustomer, email: createCustomerDto.email, name: createCustomerDto.name, tenantId: user.tenantId, setPasswordToken, role: UserRole.CUSTOMER });
+    await manager.save(newUser);
 
     return savedCustomer;
-  }
+  });
+
+  this.logger.log(`Customer created: ${createCustomerDto.email} (customer: ${savedCustomer.id})`);
+
+  this.eventEmitter.emit('customer.created', {
+    customer: savedCustomer,
+    email: createCustomerDto.email,
+    name: createCustomerDto.name,
+    tenantId: user.tenantId,
+    setPasswordToken: setPasswordToken /* store token before transaction if needed */,
+    role: UserRole.CUSTOMER,
+  });
+
+  return savedCustomer;
+}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SET PASSWORD  (first-time activation)
