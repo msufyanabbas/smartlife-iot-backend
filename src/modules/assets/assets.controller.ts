@@ -58,32 +58,16 @@ export class AssetsController {
     };
   }
 
-  @Get()
-  @ApiOperation({ summary: 'Get all assets with filters' })
-  @ApiQuery({ name: 'search', required: false })
-  @ApiQuery({ name: 'type', required: false, enum: AssetType })
-  @ApiQuery({ name: 'tenantId', required: false })
-  @ApiQuery({ name: 'customerId', required: false })
-  @ApiQuery({ name: 'tenantId', required: false })
-  @ApiQuery({ name: 'assetProfileId', required: false })
-  @ApiQuery({ name: 'parentAssetId', required: false })
-  @ApiQuery({ name: 'active', required: false, type: Boolean })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiResponse({ status: 200, description: 'Assets retrieved successfully' })
-  async findAll(@CurrentUser() user: User, @Query() queryDto: QueryAssetsDto) {
-    const result = await this.assetsService.findAll(queryDto, user);
-    return {
-      message: 'Assets retrieved successfully',
-      data: result.assets,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
-  }
+@Get()
+@Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
+@ApiOperation({ summary: 'Get all assets with pagination' })
+@ApiResponse({ status: 200, description: 'Assets retrieved successfully' })
+findAll(
+  @CurrentUser() user: User,
+  @Query() queryDto: QueryAssetsDto,
+) {
+  return this.assetsService.findAll(user, user.customerId, queryDto);
+}
 
   @Get('statistics')
   @ApiOperation({ summary: 'Get asset statistics' })

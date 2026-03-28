@@ -17,6 +17,7 @@ import {
   UpdateAttributesDto,
 } from './dto/assets.dto';
 import { UserRole } from '@common/enums/index.enum';
+import { PaginatedResponseDto, SortOrder } from '@/common/dto/pagination.dto';
 
 @Injectable()
 export class AssetsService {
@@ -82,115 +83,95 @@ export class AssetsService {
   /**
  * Find all assets with filters and pagination
  */
-async findAll(queryDto: QueryAssetsDto, user: User): Promise<{
-  assets: Asset[];
-  total: number;
-  page: number;
-  limit: number;
-  totalPages: number;
-}> {
-  const page = queryDto.page || 1;
-  const limit = queryDto.limit || 10;
-  const skip = (page - 1) * limit;
+private static readonly ALLOWED_SORT_FIELDS: Record<string, string> = {
+  name: 'asset.name',
+  createdAt: 'asset.createdAt',
+  updatedAt: 'asset.updatedAt',
+  type: 'asset.type',
+  label: 'asset.label',
+};
 
-  const queryBuilder = this.assetRepository.createQueryBuilder('asset');
+async findAll(
+  user: User,
+  customerId: string | undefined,
+  queryDto: QueryAssetsDto,
+): Promise<PaginatedResponseDto<Asset>> {
+  const { page, limit, skip, take, search, sortBy, sortOrder } = queryDto;
 
-  // ========================================
-  // TENANT & CUSTOMER FILTERING LOGIC
-  // ========================================
-  
-  // Always filter by tenant first
-  queryBuilder.where('asset.tenantId = :tenantId', { tenantId: user.tenantId });
+  const qb = this.assetRepository.createQueryBuilder('asset');
 
-  if (user.role === UserRole.CUSTOMER_USER) {
-    // Customer users only see their customer's assets
-    if (!user.customerId) {
-      return {
-        assets: [],
-        total: 0,
-        page,
-        limit,
-        totalPages: 0,
-      };
+  // ── Tenant scoping ────────────────────────────────────────────────────────
+  if (user.role === UserRole.SUPER_ADMIN) {
+    // SUPER_ADMIN: optionally filter by tenantId query param, otherwise sees all
+    if (queryDto.tenantId) {
+      qb.andWhere('asset.tenantId = :tenantId', { tenantId: queryDto.tenantId });
     }
-    queryBuilder.andWhere('asset.customerId = :customerId', {
-      customerId: user.customerId,
-    });
-  }
-  // TENANT_ADMIN sees all assets in their tenant (already filtered above)
-  // SUPER_ADMIN can optionally filter by tenantId in query (override above)
-  
-  if (queryDto.tenantId && user.role === UserRole.SUPER_ADMIN) {
-    queryBuilder.andWhere('asset.tenantId = :queryTenantId', {
-      queryTenantId: queryDto.tenantId,
-    });
+  } else {
+    // All other roles are always scoped to their own tenant via JWT claim
+    qb.andWhere('asset.tenantId = :tenantId', { tenantId: user.tenantId });
   }
 
-  // Apply other filters
-  if (queryDto.search) {
-    queryBuilder.andWhere(
+  // ── Customer scoping ──────────────────────────────────────────────────────
+  if (
+    user.role === UserRole.CUSTOMER_USER ||
+    user.role === UserRole.CUSTOMER
+  ) {
+    // Trust JWT claim first, fall back to resolved decorator value
+    const effectiveCustomerId = user.customerId ?? customerId;
+    if (!effectiveCustomerId) {
+      return PaginatedResponseDto.create([], page, limit, 0);
+    }
+    qb.andWhere('asset.customerId = :customerId', {
+      customerId: effectiveCustomerId,
+    });
+  } else if (customerId) {
+    // Tenant admin/user filtering by a specific customer (e.g. customer detail page)
+    qb.andWhere('asset.customerId = :customerId', { customerId });
+  }
+
+  // ── Optional filters ──────────────────────────────────────────────────────
+  if (search) {
+    qb.andWhere(
       '(asset.name ILIKE :search OR asset.label ILIKE :search OR asset.description ILIKE :search)',
-      { search: `%${queryDto.search}%` },
+      { search: `%${search}%` },
     );
   }
 
   if (queryDto.type) {
-    queryBuilder.andWhere('asset.type = :type', { type: queryDto.type });
-  }
-
-  if (queryDto.customerId) {
-    // Validate access
-    if (
-      user.role === UserRole.CUSTOMER_USER &&
-      user.customerId !== queryDto.customerId
-    ) {
-      throw new ForbiddenException('Access denied to this customer');
-    }
-    queryBuilder.andWhere('asset.customerId = :customerId', {
-      customerId: queryDto.customerId,
-    });
+    qb.andWhere('asset.type = :type', { type: queryDto.type });
   }
 
   if (queryDto.assetProfileId) {
-    queryBuilder.andWhere('asset.assetProfileId = :assetProfileId', {
+    qb.andWhere('asset.assetProfileId = :assetProfileId', {
       assetProfileId: queryDto.assetProfileId,
     });
   }
 
   if (queryDto.parentAssetId) {
-    queryBuilder.andWhere('asset.parentAssetId = :parentAssetId', {
+    qb.andWhere('asset.parentAssetId = :parentAssetId', {
       parentAssetId: queryDto.parentAssetId,
     });
   }
 
   if (queryDto.active !== undefined) {
-    queryBuilder.andWhere('asset.active = :active', {
-      active: queryDto.active,
-    });
+    qb.andWhere('asset.active = :active', { active: queryDto.active });
   }
 
-  if (queryDto.tags && queryDto.tags.length > 0) {
-    queryBuilder.andWhere('asset.tags && :tags', { tags: queryDto.tags });
+  if (queryDto.tags?.length) {
+    qb.andWhere('asset.tags && :tags', { tags: queryDto.tags });
   }
 
-  // Get total count
-  const total = await queryBuilder.getCount();
+  // ── Sorting & pagination ──────────────────────────────────────────────────
+  const sortColumn =
+    AssetsService.ALLOWED_SORT_FIELDS[sortBy ?? ''] ?? 'asset.createdAt';
 
-  // Apply pagination
-  const assets = await queryBuilder
-    .leftJoinAndSelect('asset.parentAsset', 'parentAsset')
+  qb.leftJoinAndSelect('asset.parentAsset', 'parentAsset')
+    .orderBy(sortColumn, sortOrder ?? SortOrder.DESC)
     .skip(skip)
-    .take(limit)
-    .orderBy('asset.createdAt', 'DESC')
-    .getMany();
+    .take(take);
 
-  return {
-    assets,
-    total,
-    page,
-    limit,
-    totalPages: Math.ceil(total / limit),
-  };
+  const [assets, total] = await qb.getManyAndCount();
+  return PaginatedResponseDto.create(assets, page, limit, total);
 }
 
   /**
