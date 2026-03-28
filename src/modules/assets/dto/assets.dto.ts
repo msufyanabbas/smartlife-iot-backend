@@ -11,6 +11,7 @@ import {
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { AssetType } from '@common/enums/index.enum';
+import { SortOrder } from '@/common/dto/pagination.dto';
 
 class LocationDto {
   @ApiPropertyOptional()
@@ -219,11 +220,29 @@ export class QueryAssetsDto {
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
-  page?: number;
+  page: number;
+
+    @ApiPropertyOptional({ description: 'Sort field' })
+    @IsString()
+    @IsOptional()
+    sortBy?: string;
+  
+    @ApiPropertyOptional({ enum: SortOrder, default: SortOrder.DESC })
+    @IsEnum(SortOrder)
+    @IsOptional()
+    sortOrder?: SortOrder = SortOrder.DESC;
 
   @ApiPropertyOptional({ default: 10 })
   @IsOptional()
-  limit?: number;
+  limit: number;
+
+    get skip(): number {
+    return (this.page - 1) * this.limit;
+  }
+
+  get take(): number {
+    return this.limit;
+  }
 }
 
 export class AssignDeviceDto {

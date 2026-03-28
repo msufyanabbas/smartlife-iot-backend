@@ -96,28 +96,36 @@ async findAll(
   customerId: string | undefined,
   queryDto: QueryAssetsDto,
 ): Promise<PaginatedResponseDto<Asset>> {
-  // ✅ Destructure only plain properties
-  const { page, limit, search, sortBy, sortOrder } = queryDto;
+  const { page, limit, skip, take, search, sortBy, sortOrder } = queryDto;
 
   const qb = this.assetRepository.createQueryBuilder('asset');
 
   // ── Tenant scoping ────────────────────────────────────────────────────────
   if (user.role === UserRole.SUPER_ADMIN) {
+    // SUPER_ADMIN: optionally filter by tenantId query param, otherwise sees all
     if (user.tenantId) {
       qb.andWhere('asset.tenantId = :tenantId', { tenantId: user.tenantId });
     }
   } else {
+    // All other roles are always scoped to their own tenant via JWT claim
     qb.andWhere('asset.tenantId = :tenantId', { tenantId: user.tenantId });
   }
 
   // ── Customer scoping ──────────────────────────────────────────────────────
-  if (user.role === UserRole.CUSTOMER_USER || user.role === UserRole.CUSTOMER) {
+  if (
+    user.role === UserRole.CUSTOMER_USER ||
+    user.role === UserRole.CUSTOMER
+  ) {
+    // Trust JWT claim first, fall back to resolved decorator value
     const effectiveCustomerId = user.customerId ?? customerId;
     if (!effectiveCustomerId) {
       return PaginatedResponseDto.create([], page, limit, 0);
     }
-    qb.andWhere('asset.customerId = :customerId', { customerId: effectiveCustomerId });
+    qb.andWhere('asset.customerId = :customerId', {
+      customerId: effectiveCustomerId,
+    });
   } else if (customerId) {
+    // Tenant admin/user filtering by a specific customer (e.g. customer detail page)
     qb.andWhere('asset.customerId = :customerId', { customerId });
   }
 
@@ -159,8 +167,8 @@ async findAll(
 
   qb.leftJoinAndSelect('asset.parentAsset', 'parentAsset')
     .orderBy(sortColumn, sortOrder ?? SortOrder.DESC)
-    .skip(queryDto.skip)   // ✅ access getter via object, not destructuring
-    .take(queryDto.take);  // ✅ same
+    .skip(skip)
+    .take(take);
 
   const [assets, total] = await qb.getManyAndCount();
   return PaginatedResponseDto.create(assets, page, limit, total);
