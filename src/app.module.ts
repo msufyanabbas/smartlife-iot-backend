@@ -1,15 +1,4 @@
-import {
-  Module,
-  ConfigModule,
-  TypeOrmModule,
-  CacheModule,
-  BullModule,
-  EventEmitterModule,
-  ScheduleModule,
-  ThrottlerModule,
-  featureModules,
-  MetricsModule
-} from '@modules/index.module';
+import { Module, ConfigModule, TypeOrmModule, CacheModule, BullModule, EventEmitterModule, ScheduleModule, ThrottlerModule, featureModules, MetricsModule } from '@modules/index.module';
 import { ConfigService } from '@modules/index.service';
 import { redisStore } from 'cache-manager-redis-yet';
 import { configModules } from './config';
@@ -23,7 +12,6 @@ import { RequestIdMiddleware } from '@common/middleware/request-id.middleware';
 @Module({
   imports: [
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
-
     ConfigModule.forRoot({
       isGlobal: true,
       load: configModules,
@@ -31,9 +19,7 @@ import { RequestIdMiddleware } from '@common/middleware/request-id.middleware';
       ignoreEnvFile: false,
       cache: true,
     }),
-
     TypeOrmModule.forRoot(AppDataSource.options),
-
     CacheModule.registerAsync({
       isGlobal: true,
       imports: [ConfigModule],
@@ -50,7 +36,6 @@ import { RequestIdMiddleware } from '@common/middleware/request-id.middleware';
         }),
       }),
     }),
-
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -62,14 +47,11 @@ import { RequestIdMiddleware } from '@common/middleware/request-id.middleware';
         },
       }),
     }),
-
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
     MetricsModule,
-
     GuardsModule,         // ✅ registers all APP_GUARD tokens
     InterceptorsModule,   // ✅ registers all APP_INTERCEPTOR tokens — in imports, not providers
-
     ...featureModules,
   ],
   controllers: [AppController],
