@@ -49,8 +49,9 @@ export class ProfilesController {
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Create device profile' })
   @ApiResponse({ status: 201, description: 'Device profile created' })
-  async createDeviceProfile(@Body() createDto: CreateDeviceProfileDto) {
-    const profile = await this.deviceProfilesService.create(createDto);
+  async createDeviceProfile(@CurrentUser() user: User, @Body() createDto: CreateDeviceProfileDto) {
+    const newCreateDto = { ...createDto, tenantId: user.tenantId };
+    const profile = await this.deviceProfilesService.create(newCreateDto);
     return {
       message: 'Device profile created successfully',
       data: profile,
