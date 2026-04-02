@@ -23,11 +23,12 @@ import { CustomerUsersService } from './customer-users.service';
 import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
 import { RolesGuard } from '@common/guards/roles.guard';
 import { Roles } from '@common/decorators/roles.decorator';
-import { UserRole } from '@common/enums/index.enum';
+import { NotificationChannel, NotificationPriority, NotificationType, UserRole } from '@common/enums/index.enum';
 import { Public } from '@/common/decorators/public.decorator';
 import { CreateCustomerUserRequestDto, SetCustomerUserPasswordDto } from './dto/customer-users.dto';
 import { User } from '../index.entities';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { Notify } from '@/common/decorators/notify.decorator';
 
 @ApiTags('Customer Users')
 @Controller('customer-users')
@@ -56,11 +57,25 @@ export class CustomerUsersController {
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  
   @ApiBearerAuth()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a new customer user (sends invitation email)' })
   @ApiResponse({ status: 201, description: 'Customer user created — invitation sent' })
   @ApiResponse({ status: 409, description: 'Email already exists' })
+    @Notify({
+        type: NotificationType.USER,
+        channels: [NotificationChannel.IN_APP],
+        priority: NotificationPriority.NORMAL,
+        title: 'Customer User Created',
+        message: 'Customer User "{entityName}" has been created successfully',
+        recipients: 'self',
+        entityType: 'users',
+        action: {
+          label: 'View Customer User',
+          urlTemplate: '/user/{entityId}',
+        },
+      })
   async create(
     @CurrentUser() currentUser: User,
     @Body() dto: CreateCustomerUserRequestDto,
