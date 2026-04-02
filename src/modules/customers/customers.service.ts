@@ -5,12 +5,13 @@ import {
   ConflictException,
   Inject,
   Logger,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, DataSource } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CustomerStatus, UserRole, UserStatus } from '@/common/enums/index.enum';
-import { Customer, Tenant, User } from '@modules/index.entities';
+import { Customer, Subscription, Tenant, User } from '@modules/index.entities';
 import * as crypto from 'crypto';
 import {
   CreateCustomerDto,
@@ -20,6 +21,8 @@ import {
 import { MailService } from '../mail/mail.service';
 import { TenantsService } from '../tenants/tenants.service';
 import { UsersService } from '../users/users.service';
+import { SubscriptionsService } from '../index.service';
+import { SubscriptionLimits, SubscriptionUsage } from '@/common/interfaces/subscription.interface';
 @Injectable()
 export class CustomersService {
    private readonly logger = new Logger(CustomersService.name);
@@ -32,6 +35,7 @@ export class CustomersService {
     private eventEmitter: EventEmitter2,
     private mailService: MailService,
     private userService: UsersService,
+    private subscriptionsService: SubscriptionsService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -73,6 +77,11 @@ export class CustomersService {
     throw new BadRequestException(
       'Customer email is required so a login account can be created',
     );
+  }
+
+  if (createCustomerDto.allocatedLimits) {
+    const subscription = await this.subscriptionsService.findByTenantId(user.tenantId);
+    this.validateAllocatedLimits(createCustomerDto.allocatedLimits, subscription);
   }
 
       const setPasswordToken = crypto.randomBytes(32).toString('hex');
@@ -329,6 +338,11 @@ export class CustomersService {
       }
     }
 
+    if (updateCustomerDto.allocatedLimits) {
+    const subscription = await this.subscriptionsService.findByTenantId(user.tenantId);
+    this.validateAllocatedLimits(updateCustomerDto.allocatedLimits, subscription);
+  }
+
     Object.assign(customer, updateCustomerDto);
 
     const updatedCustomer = await this.customerRepository.save(customer);
@@ -472,4 +486,76 @@ export class CustomersService {
       order: { name: 'ASC' },
     });
   }
+
+  // src/modules/customers/customers.service.ts
+
+/**
+ * Validates that the requested allocatedLimits for a customer do not exceed
+ * what the tenant's subscription permits.
+ *
+ * Two checks per resource:
+ *  1. Hard ceiling  — cannot exceed the plan limit itself
+ *  2. Available cap — cannot exceed what the tenant hasn't used yet
+ *     (so the sum of all customer allocations stays within the plan)
+ *
+ * -1 on a subscription limit = unlimited → skip that resource entirely.
+ */
+private validateAllocatedLimits(
+  allocatedLimits: Customer['allocatedLimits'],
+  subscription: Subscription,
+): void {
+  if (!allocatedLimits || Object.keys(allocatedLimits).length === 0) return;
+
+  // Map customer allocatedLimits keys → subscription keys
+  const resourceMap: Array<{
+    customerKey: keyof Customer['allocatedLimits'];
+    limitKey:    keyof SubscriptionLimits;
+    usageKey:    keyof SubscriptionUsage;
+    label:       string;
+  }> = [
+    { customerKey: 'devices',     limitKey: 'devices',     usageKey: 'devices',     label: 'Devices'     },
+    { customerKey: 'dashboards',  limitKey: 'dashboards',  usageKey: 'dashboards',  label: 'Dashboards'  },
+    { customerKey: 'assets',      limitKey: 'assets',      usageKey: 'assets',      label: 'Assets'      },
+    { customerKey: 'floorPlans',  limitKey: 'floorPlans',  usageKey: 'floorPlans',  label: 'Floor Plans' },
+    { customerKey: 'automations', limitKey: 'automations', usageKey: 'automations', label: 'Automations' },
+    { customerKey: 'users',       limitKey: 'users',       usageKey: 'users',       label: 'Users'       },
+  ];
+
+  const errors: string[] = [];
+
+  for (const { customerKey, limitKey, usageKey, label } of resourceMap) {
+    const requested = allocatedLimits[customerKey];
+    if (requested === undefined || requested === null) continue; // null = no cap, always valid
+
+    const planLimit   = subscription.limits[limitKey] as number;
+    const currentUsage = subscription.usage[usageKey] as number ?? 0;
+
+    // -1 means unlimited on the subscription side — no cap to enforce
+    if (planLimit === -1) continue;
+
+    // 1. Cannot exceed the plan's hard ceiling
+    if (requested > planLimit) {
+      errors.push(
+        `${label}: requested allocation (${requested}) exceeds plan limit (${planLimit})`,
+      );
+      continue; // no point checking available if already over ceiling
+    }
+
+    // 2. Cannot allocate more than what's still available at tenant level
+    const available = planLimit - currentUsage;
+    if (requested > available) {
+      errors.push(
+        `${label}: requested allocation (${requested}) exceeds available tenant capacity ` +
+        `(${available} remaining — ${currentUsage}/${planLimit} used)`,
+      );
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new BadRequestException({
+      message: 'Allocated limits exceed subscription capacity',
+      errors,
+    });
+  }
+}
 }

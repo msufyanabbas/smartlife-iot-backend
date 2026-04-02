@@ -266,7 +266,7 @@ private readonly paymentRepository: Repository<Payment>,
    * Reads from cached usage counters — no live COUNT queries.
    */
   async canTenantPerformAction(
-    tenantId: string,
+    tenantId: string | undefined,
     resource: keyof SubscriptionUsage,
   ): Promise<boolean> {
     const subscription = await this.subscriptionRepository.findOne({
@@ -357,7 +357,7 @@ private readonly paymentRepository: Repository<Payment>,
    * Primary lookup — by tenantId.
    * Used internally and by guards.
    */
-  async findByTenantId(tenantId: string): Promise<Subscription> {
+  async findByTenantId(tenantId: string | undefined): Promise<Subscription> {
     const subscription = await this.subscriptionRepository.findOne({
       where: { tenantId, status: SubscriptionStatus.ACTIVE },
     });
