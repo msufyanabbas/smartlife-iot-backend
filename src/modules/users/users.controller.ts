@@ -305,7 +305,7 @@ export class UsersController {
    */
   @Patch('bulk/status')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Bulk update user status' })
   @ApiResponse({ status: 200, description: 'Status updated successfully' })
