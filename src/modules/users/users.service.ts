@@ -187,7 +187,12 @@ export class UsersService {
     await this.userRepository.softRemove(user);
 
     // Emit event
-    this.eventEmitter.emit('user.deleted', { userId: id });
+    this.eventEmitter.emit('user.deleted', {
+    userId: id,
+    role: user.role,
+    customerId: user.customerId,
+    tenantId: user.tenantId,
+  });
   }
 
   /**
@@ -380,29 +385,37 @@ export class UsersService {
 
     // Emit event
     this.eventEmitter.emit('user.status.changed', {
-      userId,
-      status,
-      previousStatus: user.status,
-    });
-
+    userId,
+    role: user.role,
+    customerId: user.customerId,
+    tenantId: user.tenantId,
+    status,
+    previousStatus: user.status,
+  });
     return updatedUser;
   }
 
   /**
    * Bulk update user status
    */
-  async bulkUpdateStatus(bulkUpdateDto: BulkUpdateStatusDto): Promise<void> {
-    await this.userRepository.update(
-      { id: In(bulkUpdateDto.userIds) },
-      { status: bulkUpdateDto.status },
-    );
+async bulkUpdateStatus(bulkUpdateDto: BulkUpdateStatusDto): Promise<void> {
+  const users = await this.findByIds(bulkUpdateDto.userIds);
 
-    // Emit event
-    this.eventEmitter.emit('users.status.bulk.updated', {
-      userIds: bulkUpdateDto.userIds,
-      status: bulkUpdateDto.status,
-    });
-  }
+  await this.userRepository.update(
+    { id: In(bulkUpdateDto.userIds) },
+    { status: bulkUpdateDto.status },
+  );
+
+  this.eventEmitter.emit('users.status.bulk.updated', {
+    status: bulkUpdateDto.status,
+    affectedUsers: users.map(u => ({
+      userId: u.id,
+      role: u.role,
+      customerId: u.customerId,
+      tenantId: u.tenantId,
+    })),
+  });
+}
 
   /**
    * Invite user
