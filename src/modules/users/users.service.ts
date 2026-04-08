@@ -4,13 +4,15 @@ import {
   BadRequestException,
   ConflictException,
   UnauthorizedException,
+  forwardRef,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as crypto from 'crypto';
 import { User } from './entities/user.entity';
-import { UserRole, UserStatus } from '@common/enums/index.enum';
+import { NotificationChannel, NotificationPriority, NotificationType, UserRole, UserStatus } from '@common/enums/index.enum';
 import {
   CreateUserDto,
   UpdateUserDto,
@@ -20,8 +22,16 @@ import {
   UpdatePreferencesDto,
   BulkUpdateStatusDto,
   InviteUserDto,
+  BulkDeleteUsersDto,
+  BulkAssignRoleDto,
+  BulkRemoveRoleDto,
+  BulkUpdatePermissionsDto,
+  BulkSendEmailDto,
+  BulkSendNotificationDto,
 } from './dto/users.dto';
 import { MailService } from '../../modules/mail/mail.service';
+import { Permission, Role } from '../index.entities';
+import { NotificationsService } from '../index.service';
 
 @Injectable()
 export class UsersService {
@@ -30,6 +40,13 @@ export class UsersService {
     private userRepository: Repository<User>,
     private eventEmitter: EventEmitter2,
     private mailService: MailService,
+    @InjectRepository(Role)
+  private roleRepository: Repository<Role>,
+  @InjectRepository(Permission)
+  private permissionRepository: Repository<Permission>,
+   // NotificationsService injected via forwardRef to avoid circular dep
+  @Inject(forwardRef(() => NotificationsService))
+  private notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -394,6 +411,170 @@ export class UsersService {
   });
     return updatedUser;
   }
+
+  // ── Bulk Delete ───────────────────────────────────────────────────────────────
+
+async bulkDelete(dto: BulkDeleteUsersDto): Promise<{ deleted: number }> {
+  const users = await this.findByIds(dto.userIds);
+
+  if (users.length === 0) return { deleted: 0 };
+
+  await this.userRepository.softRemove(users);
+
+  // Emit per-user so CustomerListener can cascade for CUSTOMER role users
+  for (const user of users) {
+    this.eventEmitter.emit('user.deleted', {
+      userId: user.id,
+      role: user.role,
+      customerId: user.customerId,
+      tenantId: user.tenantId,
+    });
+  }
+
+  return { deleted: users.length };
+}
+
+// ── Bulk Assign Role ──────────────────────────────────────────────────────────
+
+async bulkAssignRole(dto: BulkAssignRoleDto): Promise<{ updated: number }> {
+  const role = await this.roleRepository.findOne({
+    where: { id: dto.roleId },
+    relations: ['permissions'],
+  });
+
+  if (!role) throw new NotFoundException(`Role ${dto.roleId} not found`);
+
+  const users = await this.userRepository.find({
+    where: { id: In(dto.userIds) },
+    relations: ['roles'],
+  });
+
+  if (users.length === 0) return { updated: 0 };
+
+  for (const user of users) {
+    const alreadyAssigned = user.roles?.some(r => r.id === role.id);
+    if (!alreadyAssigned) {
+      user.roles = [...(user.roles || []), role];
+    }
+  }
+
+  await this.userRepository.save(users);
+
+  this.eventEmitter.emit('users.role.bulk.assigned', {
+    userIds: users.map(u => u.id),
+    roleId: role.id,
+    roleName: role.name,
+  });
+
+  return { updated: users.length };
+}
+
+// ── Bulk Remove Role ──────────────────────────────────────────────────────────
+
+async bulkRemoveRole(dto: BulkRemoveRoleDto): Promise<{ updated: number }> {
+  const users = await this.userRepository.find({
+    where: { id: In(dto.userIds) },
+    relations: ['roles'],
+  });
+
+  if (users.length === 0) return { updated: 0 };
+
+  for (const user of users) {
+    user.roles = (user.roles || []).filter(r => r.id !== dto.roleId);
+  }
+
+  await this.userRepository.save(users);
+
+  this.eventEmitter.emit('users.role.bulk.removed', {
+    userIds: users.map(u => u.id),
+    roleId: dto.roleId,
+  });
+
+  return { updated: users.length };
+}
+
+// ── Bulk Send Email ───────────────────────────────────────────────────────────
+
+async bulkSendEmail(dto: BulkSendEmailDto): Promise<{ sent: number; failed: number }> {
+  const users = await this.findByIds(dto.userIds);
+
+  if (users.length === 0) return { sent: 0, failed: 0 };
+
+  let sent = 0;
+  let failed = 0;
+
+  await Promise.allSettled(
+    users.map(async (user) => {
+      try {
+        await this.mailService.sendEmail({
+          to: user.email,
+          subject: dto.subject,
+          text: dto.message,
+          html: dto.htmlContent || `<p>${dto.message}</p>`,
+        });
+        sent++;
+      } catch {
+        failed++;
+      }
+    }),
+  );
+
+  return { sent, failed };
+}
+
+async bulkSendNotification(
+  dto: BulkSendNotificationDto,
+): Promise<{ sent: number }> {
+  return this.notificationsService.sendBulk({
+    userIds: dto.userIds,
+    title: dto.title,
+    message: dto.message,
+    type: dto.type ?? NotificationType.SYSTEM,
+    channel: NotificationChannel.IN_APP,
+    priority: dto.priority ?? NotificationPriority.NORMAL,
+  });
+}
+
+// ── Bulk Update Permissions ───────────────────────────────────────────────────
+
+async bulkUpdatePermissions(
+  dto: BulkUpdatePermissionsDto,
+): Promise<{ updated: number }> {
+  const users = await this.userRepository.find({
+    where: { id: In(dto.userIds) },
+    relations: ['directPermissions'],
+  });
+
+  if (users.length === 0) return { updated: 0 };
+
+  const permissions = await this.permissionRepository.find({
+    where: { id: In(dto.permissionIds) },
+  });
+
+  if (permissions.length !== dto.permissionIds.length) {
+    throw new BadRequestException('One or more permission IDs are invalid');
+  }
+
+  for (const user of users) {
+    const current = user.directPermissions || [];
+
+    if (dto.operation === 'replace') {
+      user.directPermissions = permissions;
+    } else if (dto.operation === 'add') {
+      const newIds = new Set(permissions.map(p => p.id));
+      const filtered = current.filter(p => !newIds.has(p.id));
+      user.directPermissions = [...filtered, ...permissions];
+    } else if (dto.operation === 'remove') {
+      const removeIds = new Set(dto.permissionIds);
+      user.directPermissions = current.filter(p => !removeIds.has(p.id));
+    }
+  }
+
+  await this.userRepository.save(users);
+
+  return { updated: users.length };
+}
+
 
   /**
    * Bulk update user status

@@ -34,6 +34,12 @@ import {
   QueryUsersDto,
   SearchUsersDto,
   UpdateStatusDto,
+  BulkSendNotificationDto,
+  BulkSendEmailDto,
+  BulkUpdatePermissionsDto,
+  BulkRemoveRoleDto,
+  BulkAssignRoleDto,
+  BulkDeleteUsersDto,
 } from './dto/users.dto';
 import { JwtAuthGuard, RolesGuard, ResourceType, SubscriptionLimitGuard } from '@common/guards/index.guards';
 import { CurrentUser, RequireSubscriptionLimit } from '@common/decorators/index.decorator';
@@ -419,4 +425,73 @@ export class UsersController {
   async remove(@Param('id') id: string) {
     await this.usersService.remove(id);
   }
+
+  @Delete('bulk')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPER_ADMIN)
+@ApiBearerAuth()
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Bulk delete users' })
+@ApiResponse({ status: 200, description: 'Users deleted successfully' })
+async bulkDelete(@Body() dto: BulkDeleteUsersDto) {
+  const result = await this.usersService.bulkDelete(dto);
+  return { message: 'Users deleted successfully', data: result };
+}
+
+@Patch('bulk/assign-role')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+@ApiBearerAuth()
+@ApiOperation({ summary: 'Bulk assign role to users' })
+@ApiResponse({ status: 200, description: 'Role assigned successfully' })
+async bulkAssignRole(@Body() dto: BulkAssignRoleDto) {
+  const result = await this.usersService.bulkAssignRole(dto);
+  return { message: 'Role assigned successfully', data: result };
+}
+
+@Patch('bulk/remove-role')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+@ApiBearerAuth()
+@ApiOperation({ summary: 'Bulk remove role from users' })
+@ApiResponse({ status: 200, description: 'Role removed successfully' })
+async bulkRemoveRole(@Body() dto: BulkRemoveRoleDto) {
+  const result = await this.usersService.bulkRemoveRole(dto);
+  return { message: 'Role removed successfully', data: result };
+}
+
+@Patch('bulk/permissions')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+@ApiBearerAuth()
+@ApiOperation({ summary: 'Bulk update direct permissions on users' })
+@ApiResponse({ status: 200, description: 'Permissions updated successfully' })
+async bulkUpdatePermissions(@Body() dto: BulkUpdatePermissionsDto) {
+  const result = await this.usersService.bulkUpdatePermissions(dto);
+  return { message: 'Permissions updated successfully', data: result };
+}
+
+@Post('bulk/send-email')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+@ApiBearerAuth()
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Bulk send email to users' })
+@ApiResponse({ status: 200, description: 'Emails sent' })
+async bulkSendEmail(@Body() dto: BulkSendEmailDto) {
+  const result = await this.usersService.bulkSendEmail(dto);
+  return { message: 'Emails processed', data: result };
+}
+
+@Post('bulk/send-notification')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+@ApiBearerAuth()
+@HttpCode(HttpStatus.OK)
+@ApiOperation({ summary: 'Bulk send in-app notification to users' })
+@ApiResponse({ status: 200, description: 'Notifications sent' })
+async bulkSendNotification(@Body() dto: BulkSendNotificationDto) {
+  const result = await this.usersService.bulkSendNotification(dto);
+  return { message: 'Notifications sent', data: result };
+}
 }

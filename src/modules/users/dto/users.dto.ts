@@ -7,9 +7,10 @@ import {
   IsBoolean,
   IsNumber,
   IsArray,
+  IsNotEmpty,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { UserRole, UserStatus } from '@common/enums/index.enum';
+import { NotificationPriority, NotificationType, UserRole, UserStatus } from '@common/enums/index.enum';
 import { Type } from 'class-transformer';
 export class CreateUserDto {
   @ApiProperty({ example: 'john@example.com' })
@@ -56,6 +57,101 @@ export class CreateUserDto {
   preferences?: Record<string, any>;
 }
 
+export class BulkDeleteUsersDto {
+  @ApiProperty({ example: ['user-id-1', 'user-id-2'], type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  userIds: string[];
+}
+
+export class BulkAssignRoleDto {
+  @ApiProperty({ example: ['user-id-1', 'user-id-2'], type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  userIds: string[];
+
+  @ApiProperty({ example: 'role-id-here' })
+  @IsString()
+  @IsNotEmpty()
+  roleId: string;
+}
+
+export class BulkRemoveRoleDto {
+  @ApiProperty({ example: ['user-id-1', 'user-id-2'], type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  userIds: string[];
+
+  @ApiProperty({ example: 'role-id-here' })
+  @IsString()
+  @IsNotEmpty()
+  roleId: string;
+}
+
+export class BulkUpdatePermissionsDto {
+  @ApiProperty({ example: ['user-id-1', 'user-id-2'], type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  userIds: string[];
+
+  @ApiProperty({ example: ['permission-id-1', 'permission-id-2'], type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  permissionIds: string[];
+
+  @ApiProperty({ enum: ['add', 'remove', 'replace'] })
+  @IsEnum(['add', 'remove', 'replace'])
+  operation: 'add' | 'remove' | 'replace';
+}
+
+export class BulkSendEmailDto {
+  @ApiProperty({ example: ['user-id-1', 'user-id-2'], type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  userIds: string[];
+
+  @ApiProperty({ example: 'Important announcement' })
+  @IsString()
+  @IsNotEmpty()
+  subject: string;
+
+  @ApiProperty({ example: 'Hello, this is a message...' })
+  @IsString()
+  @IsNotEmpty()
+  message: string;
+
+  @ApiPropertyOptional({ example: '<p>Hello</p>' })
+  @IsOptional()
+  @IsString()
+  htmlContent?: string;
+}
+
+export class BulkSendNotificationDto {
+  @ApiProperty({ example: ['user-id-1', 'user-id-2'], type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  userIds: string[];
+
+  @ApiProperty({ example: 'System Update' })
+  @IsString()
+  @IsNotEmpty()
+  title: string;
+
+  @ApiProperty({ example: 'The system will be down for maintenance.' })
+  @IsString()
+  @IsNotEmpty()
+  message: string;
+
+  @ApiPropertyOptional({ enum: NotificationType, default: NotificationType.SYSTEM })
+  @IsOptional()
+  @IsEnum(NotificationType)
+  type?: NotificationType;
+
+  @ApiPropertyOptional({ enum: NotificationPriority, default: NotificationPriority.NORMAL })
+  @IsOptional()
+  @IsEnum(NotificationPriority)
+  priority?: NotificationPriority;
+}
 export class UpdateUserDto {
   @ApiPropertyOptional({ example: 'john@example.com' })
   @IsOptional()

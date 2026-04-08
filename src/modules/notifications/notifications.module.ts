@@ -1,5 +1,5 @@
 // src/modules/notifications/notifications.module.ts
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
@@ -17,7 +17,7 @@ import { UsersService } from '../users/users.service';
   imports: [
     TypeOrmModule.forFeature([Notification, User]),
     MailModule,
-    UsersModule, // ✅ Add this
+    forwardRef(() => UsersModule),
   ],
   controllers: [NotificationsController],
   providers: [
