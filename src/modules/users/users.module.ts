@@ -7,10 +7,11 @@ import { Tenant } from '../tenants/entities/tenant.entity';
 import { MailModule } from '../mail/mail.module';
 import { TenantsModule } from '../tenants/tenants.module';
 import { NotificationsModule } from '../index.module';
+import { Permission, Role } from '../index.entities';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Tenant]),
+    TypeOrmModule.forFeature([User, Tenant, Role, Permission]),
     MailModule,
     TenantsModule,
     forwardRef(() => NotificationsModule),
