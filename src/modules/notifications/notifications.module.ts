@@ -1,4 +1,3 @@
-// src/modules/notifications/notifications.module.ts
 import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotificationsController } from './notifications.controller';
@@ -9,25 +8,23 @@ import { EmailChannel } from './channels/email.channel';
 import { SmsChannel } from './channels/sms.channel';
 import { PushChannel } from './channels/push.channel';
 import { MailModule } from '../../modules/mail/mail.module';
-import { UsersModule } from '../users/users.module'; 
-import { User } from '../index.entities';
-import { UsersService } from '../users/users.service';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Notification, User]),
+    TypeOrmModule.forFeature([Notification]),  // ← remove User, UsersModule handles it
     MailModule,
     forwardRef(() => UsersModule),
   ],
   controllers: [NotificationsController],
   providers: [
     NotificationsService,
-    UsersService,
+    // ← UsersService removed from providers
     NotificationsRepository,
     EmailChannel,
     SmsChannel,
     PushChannel,
   ],
-  exports: [NotificationsService, UsersService],
+  exports: [NotificationsService],  // ← UsersService removed from exports
 })
 export class NotificationsModule {}

@@ -5,7 +5,7 @@ import { SubscriptionsController } from './subscriptions.controller';
 import { Subscription } from './entities/subscription.entity';
 import { Device, EmailTemplate, Payment, Tenant } from '../index.entities';
 import { InvoicePdfService } from './invoice-pdf.service';
-import { UsersModule } from '../users/users.module';       // ← direct path, not index.module
+import { UsersModule } from '../users/users.module';
 import { MailModule } from '../mail/mail.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
@@ -13,15 +13,15 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
 @Module({
   imports: [
     TypeOrmModule.forFeature([Subscription, Tenant, Device, EmailTemplate, Payment]),
-    forwardRef(() => UsersModule),      // ← provides UsersService with all its deps
-    MailModule,                          // ← provides MailService
-    EmailTemplatesModule,                // ← provides EmailTemplatesService
+    forwardRef(() => UsersModule),
+    MailModule,
+    EmailTemplatesModule,
   ],
   controllers: [SubscriptionsController],
   providers: [
     SubscriptionsService,
     InvoicePdfService,
-    // ← UsersService, MailService, EmailTemplatesService removed from here
+    // ← UsersService, MailService, EmailTemplatesService removed
   ],
   exports: [SubscriptionsService],
 })
