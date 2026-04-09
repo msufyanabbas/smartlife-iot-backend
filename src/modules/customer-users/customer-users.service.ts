@@ -82,7 +82,7 @@ export class CustomerUsersService {
   let assignedRoles: Role[] = [];
   if (dto.roleId) {
     const role = await this.roleRepository.findOne({
-      where: { id: dto.roleId, tenantId: user.tenantId }, // tenant-scoped!
+      where: { id: dto.roleId, tenantId: user.tenantId, isSystem: false }, // tenant-scoped!
     });
     if (!role) {
       throw new NotFoundException(`Role ${dto.roleId} not found in your tenant`);
