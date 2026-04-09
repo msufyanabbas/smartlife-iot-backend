@@ -55,14 +55,12 @@ export class CustomerUsersController {
   // ═══════════════════════════════════════════════════════════════════════════
 
   @Post()
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
-  @ApiBearerAuth()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a new customer user (sends invitation email)' })
   @ApiResponse({ status: 201, description: 'Customer user created — invitation sent' })
   @ApiResponse({ status: 409, description: 'Email already exists' })
-    @Notify({
+  @Notify({
         type: NotificationType.USER,
         channels: [NotificationChannel.IN_APP],
         priority: NotificationPriority.NORMAL,
@@ -88,6 +86,28 @@ export class CustomerUsersController {
       data: { id: user.id, email: user.email, name: user.name, role: user.role },
     };
   }
+
+  @Get('hierarchy')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(
+  UserRole.SUPER_ADMIN,
+  UserRole.TENANT_ADMIN,
+  UserRole.CUSTOMER,
+  UserRole.CUSTOMER_USER,
+)
+@ApiBearerAuth()
+@ApiOperation({
+  summary: 'Get tenant → customers → users hierarchy with resource counts',
+  description: `
+    SUPER_ADMIN / TENANT_ADMIN → full tree (all customers + all their users)
+    CUSTOMER admin             → their customer + its users
+    CUSTOMER_USER              → their customer + their own user node
+  `,
+})
+async getHierarchy(@CurrentUser() currentUser: User) {
+  const data = await this.customerUsersService.getTenantHierarchy(currentUser);
+  return { message: 'Hierarchy retrieved successfully', data };
+}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // RESEND INVITATION
@@ -314,6 +334,19 @@ export class CustomerUsersController {
       data: users,
     };
   }
+
+  @Get(':id/details')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+@ApiBearerAuth()
+@ApiOperation({ summary: 'Get customer user with assigned resource counts' })
+async getCustomerUserDetails(
+  @CurrentUser() currentUser: User,
+  @Param('id') id: string,
+) {
+  const data = await this.customerUsersService.getCustomerUserWithResources(id, currentUser);
+  return { message: 'Customer user details retrieved', data };
+}
 
   /**
    * Check if current user has access to a customer

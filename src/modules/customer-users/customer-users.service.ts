@@ -18,7 +18,8 @@ import { MailService } from '../mail/mail.service';
 import { TenantsService } from '../tenants/tenants.service';
 import * as crypto from 'crypto'
 import { CreateCustomerUserDto, CreateCustomerUserRequestDto } from './dto/customer-users.dto';
-import { Role } from '../index.entities';
+import { CustomerUserLimit, Role } from '../index.entities';
+import { AssignmentService } from '../assignments/assignment.service';
 
 /**
  * Service to manage relationships between Customers and Users
@@ -37,6 +38,9 @@ export class CustomerUsersService {
      private tenantService: TenantsService,
     private mailService: MailService,
     private eventEmitter: EventEmitter2,
+    @InjectRepository(CustomerUserLimit)
+  private userLimitsRepository: Repository<CustomerUserLimit>,
+   private assignmentService: AssignmentService,
   ) {}
 
   
@@ -533,4 +537,104 @@ export class CustomerUsersService {
       affectedUserIds: users.map((u) => u.id),
     });
   }
+
+
+  async getCustomerUserWithResources(userId: string, requestingUser: User) {
+  const user = await this.userRepository.findOne({
+    where: { id: userId, tenantId: requestingUser.tenantId },
+    relations: ['roles', 'directPermissions'],
+  });
+
+  if (!user) throw new NotFoundException('User not found');
+
+  // Get their limits record if exists
+  const userLimit = await this.userLimitsRepository.findOne({
+    where: { userId, customerId: user.customerId },
+  });
+
+  const assignedResources = await this.assignmentService.getUserResourceSummary(
+    userId,
+    requestingUser.tenantId,
+  );
+
+  return {
+    ...user,
+    assignedResources,        // how many of each resource assigned
+    limits: userLimit?.limits ?? null,        // per-resource caps
+    usageCounters: userLimit?.usageCounters ?? null, // usage within caps
+  };
+}
+
+async getTenantHierarchy(requestingUser: User) {
+  // ── For CUSTOMER_USER: return only their own slice ──────────────────
+  if (requestingUser.role === UserRole.CUSTOMER_USER) {
+    return this.getSingleCustomerHierarchy(
+      requestingUser.tenantId,
+      requestingUser.customerId!,
+      requestingUser,
+    );
+  }
+
+  // ── For CUSTOMER admin: return their customer + its users ────────────
+  if (requestingUser.role === UserRole.CUSTOMER) {
+    const customer = await this.customersService.findOne(
+      requestingUser.tenantId,
+      requestingUser.customerId!,
+    );
+    return {
+      customer: await this.buildCustomerNode(customer, requestingUser.tenantId),
+    };
+  }
+
+  // ── For TENANT_ADMIN / SUPER_ADMIN: full tree ────────────────────────
+  const customers = await this.customersService.findByTenant(requestingUser.tenantId!);
+
+  const customerNodes = await Promise.all(
+    customers.map(c => this.buildCustomerNode(c, requestingUser.tenantId)),
+  );
+
+  return {
+    tenantId: requestingUser.tenantId,
+    totalCustomers: customers.length,
+    customers: customerNodes,
+  };
+}
+
+// ── Private helpers ────────────────────────────────────────────────────────
+
+private async buildCustomerNode(customer: Customer, tenantId: string | undefined) {
+  const users = await this.userRepository.find({
+    where: { customerId: customer.id, tenantId },
+    select: ['id', 'name', 'email', 'role', 'status', 'createdAt'],
+  });
+
+  const userNodes = await Promise.all(
+    users.map(async (u) => {
+      const resources = await this.assignmentService.getUserResourceSummary(u.id, tenantId!);
+      return { ...u, assignedResources: resources };
+    }),
+  );
+
+  return {
+    id: customer.id,
+    name: customer.name,
+    email: customer.email,
+    status: customer.status,
+    usageCounters: customer.usageCounters,
+    allocatedLimits: customer.allocatedLimits,
+    totalUsers: users.length,
+    users: userNodes,
+  };
+}
+
+private async getSingleCustomerHierarchy(
+  tenantId: string | undefined,
+  customerId: string,
+  requestingUser: User,
+) {
+  const customer = await this.customersService.findOne(tenantId, customerId);
+  return {
+    customer: await this.buildCustomerNode(customer, tenantId),
+  };
+}
 }

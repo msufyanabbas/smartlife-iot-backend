@@ -7,15 +7,17 @@ import { CustomersModule } from '../customers/customers.module';
 import { UsersModule } from '../users/users.module';
 import { TenantsModule } from '../tenants/tenants.module';
 import { MailModule } from '../mail/mail.module';
-import { Role } from '../index.entities';
+import { CustomerUserLimit, Role } from '../index.entities';
+import { AssignmentModule } from '../assignments/assignment.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Role]),
+    TypeOrmModule.forFeature([User, Role, CustomerUserLimit]),
     forwardRef(() => CustomersModule),  // ← forwardRef here
     UsersModule,
     TenantsModule,
     MailModule,
+    AssignmentModule
   ],
   controllers: [CustomerUsersController],
   providers: [CustomerUsersService],

@@ -715,6 +715,26 @@ export class AssignmentService {
     return map[resourceType];
   }
 
+
+  async getUserResourceSummary(userId: string, tenantId: string | undefined): Promise<{
+  devices: number;
+  dashboards: number;
+  assets: number;
+  floorPlans: number;
+  automations: number;
+}> {
+  const [devices, dashboards, assets, floorPlans, automations] = await Promise.all([
+    this.userDevicesRepo.count({ where: { userId, tenantId } }),
+    this.userDashboardsRepo.count({ where: { userId, tenantId } }),
+    this.userAssetsRepo.count({ where: { userId, tenantId } }),
+    this.userFloorPlansRepo.count({ where: { userId, tenantId } }),
+    this.userAutomationsRepo.count({ where: { userId, tenantId } }),
+  ]);
+
+  return { devices, dashboards, assets, floorPlans, automations };
+}
+
+
   /**
  * Verify resource exists and belongs to tenant
  */
