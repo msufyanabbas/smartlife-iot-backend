@@ -7,7 +7,8 @@ import { Tenant } from '../tenants/entities/tenant.entity';
 import { MailModule } from '../mail/mail.module';
 import { TenantsModule } from '../tenants/tenants.module';
 import { NotificationsModule } from '../index.module';
-import { Permission, Role } from '../index.entities';
+import { Role } from '../roles/entities/roles.entity';
+import { Permission } from '../permissions/entities/permissions.entity';
 
 @Module({
   imports: [

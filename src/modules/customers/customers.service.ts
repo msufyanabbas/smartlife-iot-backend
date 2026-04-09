@@ -11,7 +11,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, DataSource } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CustomerStatus, UserRole, UserStatus } from '@/common/enums/index.enum';
-import { Customer, Subscription, Tenant, User } from '@modules/index.entities';
+import { Customer, Subscription, User } from '@modules/index.entities';
 import * as crypto from 'crypto';
 import {
   CreateCustomerDto,

@@ -12,6 +12,6 @@ import { Tenant } from '@/modules/tenants/entities/tenant.entity';
   ],
   controllers: [RolesController],
   providers: [RolesService],
-  exports: [RolesService]
+  exports: [RolesService, TypeOrmModule]
 })
 export class RolesModule {}
