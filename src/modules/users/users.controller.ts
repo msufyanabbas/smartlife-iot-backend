@@ -354,78 +354,9 @@ export class UsersController {
       data: admins,
     };
   }
+ 
 
-  /**
-   * Get user by ID
-   */
-  @Get(':id')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get user by ID' })
-  @ApiResponse({ status: 200, description: 'User retrieved successfully' })
-  @ApiResponse({ status: 404, description: 'User not found' })
-  async findOne(@Param('id') id: string) {
-    const user = await this.usersService.findOne(id);
-    return {
-      message: 'User retrieved successfully',
-      data: user,
-    };
-  }
-
-  /**
-   * Update user by ID
-   */
-  @Patch(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update user by ID' })
-  @ApiResponse({ status: 200, description: 'User updated successfully' })
-  @ApiResponse({ status: 404, description: 'User not found' })
-  async update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    const user = await this.usersService.update(id, updateUserDto);
-    return {
-      message: 'User updated successfully',
-      data: user,
-    };
-  }
-
-  /**
-   * Update user status
-   */
-  @Patch(':id/status')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update user status' })
-  @ApiResponse({ status: 200, description: 'Status updated successfully' })
-  async updateStatus(
-    @Param('id') id: string,
-    @Body() updateStatusDto: UpdateStatusDto,
-  ) {
-    const user = await this.usersService.updateStatus(id, updateStatusDto.status);
-    return {
-      message: 'Status updated successfully',
-      data: user,
-    };
-  }
-
-  /**
-   * Delete user
-   */
-  @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
-  @ApiBearerAuth()
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete user' })
-  @ApiResponse({ status: 204, description: 'User deleted successfully' })
-  @ApiResponse({ status: 404, description: 'User not found' })
-  async remove(@Param('id') id: string) {
-    await this.usersService.remove(id);
-  }
-
-  @Delete('bulk')
+@Delete('bulk')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
 @ApiBearerAuth()
@@ -493,4 +424,75 @@ async bulkSendNotification(@Body() dto: BulkSendNotificationDto) {
   const result = await this.usersService.bulkSendNotification(dto);
   return { message: 'Notifications sent', data: result };
 }
+
+ /**
+   * Delete user
+   */
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete user' })
+  @ApiResponse({ status: 204, description: 'User deleted successfully' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async remove(@Param('id') id: string) {
+    await this.usersService.remove(id);
+  }
+
+    /**
+   * Get user by ID
+   */
+  @Get(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get user by ID' })
+  @ApiResponse({ status: 200, description: 'User retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async findOne(@Param('id') id: string) {
+    const user = await this.usersService.findOne(id);
+    return {
+      message: 'User retrieved successfully',
+      data: user,
+    };
+  }
+
+  /**
+   * Update user by ID
+   */
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update user by ID' })
+  @ApiResponse({ status: 200, description: 'User updated successfully' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
+    const user = await this.usersService.update(id, updateUserDto);
+    return {
+      message: 'User updated successfully',
+      data: user,
+    };
+  }
+
+  /**
+   * Update user status
+   */
+  @Patch(':id/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update user status' })
+  @ApiResponse({ status: 200, description: 'Status updated successfully' })
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() updateStatusDto: UpdateStatusDto,
+  ) {
+    const user = await this.usersService.updateStatus(id, updateStatusDto.status);
+    return {
+      message: 'Status updated successfully',
+      data: user,
+    };
+  }
+
 }
