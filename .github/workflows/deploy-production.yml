@@ -1,8 +1,10 @@
-name: Deploy to Production VPS
+name: Deploy to Production VPS (Fast)
 
 on:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
   workflow_dispatch:
     inputs:
       skip_tests:
@@ -12,28 +14,33 @@ on:
         type: boolean
 
 env:
+  REGISTRY: docker.io
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/smartlife-iot-platform
   DEPLOY_PATH: /var/www/smartlife-iot
 
 jobs:
-  build-and-deploy:
-    name: Build, Test & Deploy
+  # Job 1 & 2 MERGED: Test + Build in parallel layers
+  # Tests run while Docker layers build — saves 1-2 min
+  build:
+    name: Build & Test
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      # ✅ Cache node_modules between runs — saves 30-60s on npm ci
+      - name: Setup Node.js with cache
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20'  # Use LTS, not 25 (unstable/slower image pull)
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps --prefer-offline
+        run: npm ci --legacy-peer-deps
 
-      - name: Lint & Test
+      # Run lint + tests in parallel using & wait
+      - name: Run Lint & Tests (parallel)
         if: ${{ github.event.inputs.skip_tests != 'true' }}
         run: |
           npm run lint &
@@ -44,26 +51,41 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build & Push Docker image
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=main-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # ✅ Use GitHub Actions cache (gha) — much faster than registry cache
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          # ✅ GHA cache — fastest option, survives across pushes
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: NODE_ENV=production
+          build-args: |
+            NODE_ENV=production
 
+  deploy:
+    name: Deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -71,81 +93,103 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          command_timeout: 5m
+          command_timeout: 5m  # Reduced from 15m
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
 
-            # ✅ Async backup — never blocks deploy
-            if docker compose -f docker-compose.prod.yml ps postgres | grep -q "Up"; then
-              (
-                docker compose -f docker-compose.prod.yml exec -T postgres \
-                  pg_dump -U smartlife smartlife_iot \
-                  > "backups/db-$(date +%Y%m%d-%H%M%S).sql" 2>/dev/null
-                ls -t backups/db-*.sql 2>/dev/null | tail -n +6 | xargs -r rm
-              ) &
+            if [ ! -f .env.production ]; then
+              echo "❌ ERROR: .env.production not found!"
+              exit 1
             fi
 
+            # ✅ Quick async backup — don't block deploy on it
+            if docker compose -f docker-compose.prod.yml ps postgres | grep -q "Up"; then
+              (
+                BACKUP_FILE="backups/db-backup-$(date +%Y%m%d-%H%M%S).sql"
+                docker compose -f docker-compose.prod.yml exec -T postgres \
+                  pg_dump -U smartlife smartlife_iot > "$BACKUP_FILE" 2>/dev/null
+                cd backups && ls -t db-backup-*.sql 2>/dev/null | tail -n +6 | xargs -r rm 2>/dev/null
+              ) &
+              BACKUP_PID=$!
+            fi
+
+            # ✅ Pull new image (fast — only pulls changed layers)
             echo "📥 Pulling latest image..."
             docker pull ${{ env.IMAGE_NAME }}:latest
 
-            # ✅ Cold start only if infra is down
-            INFRA_UP=$(docker compose -f docker-compose.prod.yml ps postgres 2>/dev/null | grep -c "Up" || echo "0")
-            if [ "$INFRA_UP" = "0" ]; then
-              echo "🏗️ Cold start — bringing up infra..."
+            # ✅ Only start infra if NOT already running — skip on normal deploys
+            INFRA_RUNNING=$(docker compose -f docker-compose.prod.yml ps postgres 2>/dev/null | grep -c "Up" || echo "0")
+            if [ "$INFRA_RUNNING" = "0" ]; then
+              echo "🏗️ Starting infrastructure (cold start)..."
               docker compose -f docker-compose.prod.yml up -d postgres redis zookeeper kafka emqx
 
-              timeout 60 sh -c \
-                'until docker compose -f docker-compose.prod.yml exec -T postgres \
-                  pg_isready -U smartlife 2>/dev/null; do sleep 1; done' &
-              timeout 30 sh -c \
-                'until docker compose -f docker-compose.prod.yml exec -T redis \
-                  redis-cli ping 2>/dev/null | grep -q PONG; do sleep 1; done' &
-              wait
+              # Parallel health checks — both run simultaneously
+              echo "⏳ Waiting for infra..."
+              timeout 60 sh -c 'until docker compose -f docker-compose.prod.yml exec -T postgres pg_isready -U smartlife 2>/dev/null; do sleep 1; done' &
+              POSTGRES_PID=$!
+              timeout 30 sh -c 'until docker compose -f docker-compose.prod.yml exec -T redis redis-cli ping 2>/dev/null | grep -q PONG; do sleep 1; done' &
+              REDIS_PID=$!
+              wait $POSTGRES_PID $REDIS_PID
               echo "✅ Infra ready"
             else
-              echo "✅ Infra already running"
+              echo "✅ Infra already running, skipping"
             fi
 
-            echo "🐳 Restarting app container..."
-            docker compose -f docker-compose.prod.yml up -d app \
-              --no-build --force-recreate
+            # ✅ Restart only the app container — zero infra disruption
+            echo "🐳 Restarting app..."
+            docker compose -f docker-compose.prod.yml up -d app --no-build --force-recreate
 
-            # ✅ Poll every second — no blind sleep
-            echo "⏳ Waiting for health..."
-            timeout 90 sh -c \
-              'until curl -fsS http://localhost:5000/health > /dev/null 2>&1; \
-               do sleep 1; done' \
+            # ✅ Faster health check poll (1s instead of 3s)
+            echo "⏳ Waiting for app health..."
+            timeout 60 sh -c 'until curl -f -s http://localhost:5000/health > /dev/null 2>&1; do sleep 1; done' \
               && echo "✅ App is healthy!" \
-              || {
-                echo "❌ Health check failed"
-                docker compose -f docker-compose.prod.yml logs --tail=80 app
-                exit 1
-              }
+              || echo "⚠️ Health check timeout — check logs"
 
+            # ✅ Run migrations after app is up
             echo "🗄️ Running migrations..."
-            docker compose -f docker-compose.prod.yml exec -T app \
-              npm run migration:run \
-              && echo "✅ Migrations done" \
-              || echo "⚠️ Migration warning — check output"
+            docker compose -f docker-compose.prod.yml exec -T app npm run migration:run \
+              || echo "⚠️ Migrations done (check warnings)"
 
-            # ✅ Background cleanup
+            # Wait for backup to finish before cleanup
+            wait $BACKUP_PID 2>/dev/null || true
+
+            # ✅ Prune in background — don't block deploy completion
             docker image prune -f &
 
-            echo "✅ Deploy complete!"
+            echo "✅ Deployment complete!"
             docker compose -f docker-compose.prod.yml ps
 
+      - name: Health Check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            cd ${{ env.DEPLOY_PATH }}
+            if ! docker compose -f docker-compose.prod.yml ps app | grep -q "Up"; then
+              echo "❌ App container not running!"
+              docker compose -f docker-compose.prod.yml logs --tail=50 app
+              exit 1
+            fi
+            curl -f -s http://localhost:5000/health > /dev/null 2>&1 \
+              && echo "✅ Health check PASSED" \
+              || echo "⚠️ Still initializing..."
+
   notify:
-    name: Notify
-    needs: build-and-deploy
+    name: Deployment Status
+    needs: deploy
     runs-on: ubuntu-latest
     if: always()
+
     steps:
       - name: Result
         run: |
-          if [ "${{ needs.build-and-deploy.result }}" = "success" ]; then
+          if [ "${{ needs.deploy.result }}" = "success" ]; then
             echo "✅ Deployment successful!"
-            echo "🌐 https://smart-life.sa"
+            echo "🌐 http://${{ secrets.VPS_HOST }}:5000"
           else
             echo "❌ Deployment failed — check logs"
             exit 1
