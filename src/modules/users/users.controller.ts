@@ -428,7 +428,7 @@ export class UsersController {
 
   @Delete('bulk')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPER_ADMIN)
+@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
 @ApiBearerAuth()
 @HttpCode(HttpStatus.OK)
 @ApiOperation({ summary: 'Bulk delete users' })
