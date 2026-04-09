@@ -1,7 +1,8 @@
-# Multi-stage build optimized for layer caching
-FROM node:25-alpine AS base
+# ===========================
+# Base Stage
+# ===========================
+FROM node:20-alpine AS base
 
-# Install ALL system dependencies once (cached layer)
 RUN apk add --no-cache \
     python3 \
     make \
@@ -9,10 +10,8 @@ RUN apk add --no-cache \
     gcc \
     libc-dev \
     linux-headers \
-    git \
-    tini \
-    curl \
     dumb-init \
+    curl \
     ca-certificates
 
 WORKDIR /app
@@ -22,40 +21,38 @@ WORKDIR /app
 # ===========================
 FROM base AS dependencies
 
-# Copy ONLY package files (this layer is cached unless package.json changes)
 COPY package*.json ./
-
-# Install dependencies (this layer is cached unless package.json changes)
-RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+RUN npm ci --legacy-peer-deps
 
 # ===========================
 # Builder Stage
 # ===========================
 FROM dependencies AS builder
 
-# Copy TypeScript config
 COPY tsconfig*.json ./
-
-# Copy source code
 COPY src ./src
 
-# Build the application
 RUN npm run build
 
-# Remove dev dependencies but keep ts-node and tsconfig-paths for seeds
-RUN npm prune --production --legacy-peer-deps && \
-    npm install --legacy-peer-deps ts-node tsconfig-paths
+# ===========================
+# Production Dependencies
+# ===========================
+FROM base AS prod-deps
+
+COPY package*.json ./
+
+# Install production deps + ts-node/tsconfig-paths for seeders/migrations
+RUN npm ci --legacy-peer-deps --omit=dev && \
+    npm install --legacy-peer-deps --no-save ts-node tsconfig-paths
 
 # ===========================
 # Production Stage
 # ===========================
-FROM node:25-alpine AS production
+FROM node:20-alpine AS production
 
-# Install only runtime utilities
 RUN apk add --no-cache \
-    tini \
-    curl \
     dumb-init \
+    curl \
     ca-certificates \
     && apk upgrade --no-cache
 
@@ -63,28 +60,26 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
+COPY tsconfig.json ./
 
-# Copy production node_modules from builder (includes ts-node & tsconfig-paths)
-COPY --from=builder /app/node_modules ./node_modules
+# Copy production node_modules (with ts-node for seeds/migrations)
+COPY --from=prod-deps /app/node_modules ./node_modules
 
-# Copy built application
+# Copy compiled output only — no raw source in prod
 COPY --from=builder /app/dist ./dist
 
-# Copy ALL source files for ts-node scripts
-COPY src ./src
-COPY tsconfig.json ./tsconfig.json
+# Copy ONLY src/database for ts-node scripts (seeds, migrations)
+# Remove this line if you run migrations from dist/
+COPY src/database ./src/database
 
-# Create necessary directories
 RUN mkdir -p logs uploads backups
 
-# Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001 && \
     chown -R nodejs:nodejs /app
 
 USER nodejs
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:5000/health || exit 1
 
