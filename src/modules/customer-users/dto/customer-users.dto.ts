@@ -26,6 +26,10 @@ export class CreateCustomerUserRequestDto implements CreateCustomerUserDto {
   @ApiProperty({ example: 'customer-uuid' })
   @IsOptional()
   customerId: string;
+
+  @ApiProperty({ example: 'role-uuid' })
+  @IsOptional()
+  roleId: string;
 }
 
 export class SetCustomerUserPasswordDto {
