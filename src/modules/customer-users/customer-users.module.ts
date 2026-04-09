@@ -7,10 +7,11 @@ import { CustomersModule } from '../customers/customers.module';
 import { UsersModule } from '../users/users.module';
 import { TenantsModule } from '../tenants/tenants.module';
 import { MailModule } from '../mail/mail.module';
+import { Role } from '../index.entities';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, Role]),
     forwardRef(() => CustomersModule),  // ← forwardRef here
     UsersModule,
     TenantsModule,

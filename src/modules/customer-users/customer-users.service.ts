@@ -18,6 +18,7 @@ import { MailService } from '../mail/mail.service';
 import { TenantsService } from '../tenants/tenants.service';
 import * as crypto from 'crypto'
 import { CreateCustomerUserDto, CreateCustomerUserRequestDto } from './dto/customer-users.dto';
+import { Role } from '../index.entities';
 
 /**
  * Service to manage relationships between Customers and Users
@@ -30,6 +31,8 @@ export class CustomerUsersService {
     @InjectRepository(User)
     private userRepository: Repository<User>,
     private customersService: CustomersService,
+    @InjectRepository(Role)                  // 👈 add this
+  private roleRepository: Repository<Role>,
     private usersService: UsersService,
      private tenantService: TenantsService,
     private mailService: MailService,
@@ -71,6 +74,18 @@ export class CustomerUsersService {
       throw new ConflictException('A user with this email already exists in this tenant');
     }
 
+      // Resolve optional custom role
+  let assignedRoles: Role[] = [];
+  if (dto.roleId) {
+    const role = await this.roleRepository.findOne({
+      where: { id: dto.roleId, tenantId: user.tenantId }, // tenant-scoped!
+    });
+    if (!role) {
+      throw new NotFoundException(`Role ${dto.roleId} not found in your tenant`);
+    }
+    assignedRoles = [role];
+  }
+
     // Generate set-password token (7-day window)
     const setPasswordToken = crypto.randomBytes(32).toString('hex');
     const setPasswordExpires = new Date();
@@ -88,6 +103,7 @@ export class CustomerUsersService {
       customerId: user.customerId || dto.customerId,
       setPasswordToken,
       setPasswordExpires,
+      roles: assignedRoles
     });
 
     const saved = await this.userRepository.save(newUser);
