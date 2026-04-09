@@ -68,27 +68,33 @@ async findAll(queryDto: QueryRoleDto, user: User) {
   const { search, isSystem, page, limit, sortBy, sortOrder } = queryDto as any;
 
   // ── Base filter builder (reused for all 3 queries) ─────────────────────────
-  const applyBaseFilters = (qb: ReturnType<typeof this.roleRepository.createQueryBuilder>) => {
-    if (search) {
-      qb.andWhere(
-        '(role.name ILIKE :search OR role.description ILIKE :search)',
-        { search: `%${search}%` },
-      );
-    }
+ const applyBaseFilters = (qb: ReturnType<typeof this.roleRepository.createQueryBuilder>) => {
+  // Always scope to: system roles OR tenant's own roles
+  if (user.tenantId) {
+    qb.andWhere(
+      '(role.isSystem = true OR role.tenantId = :tenantId)',
+      { tenantId: user.tenantId },
+    );
+  } else {
+    // Super admin — still only show system roles + unscoped roles
+    // remove this else block if super admin should see everything
+    qb.andWhere('role.isSystem = true');
+  }
 
-    if (user.tenantId) {
-      qb.andWhere(
-        '(role.isSystem = true OR role.tenantId = :tenantId)',
-        { tenantId: user.tenantId },
-      );
-    }
+  if (search) {
+    qb.andWhere(
+      '(role.name ILIKE :search OR role.description ILIKE :search)',
+      { search: `%${search}%` },
+    );
+  }
 
-    if (isSystem !== undefined) {
-      qb.andWhere('role.isSystem = :isSystem', { isSystem });
-    }
+  // isSystem filter applied ON TOP of the tenant scope above
+  if (isSystem !== undefined) {
+    qb.andWhere('role.isSystem = :isSystem', { isSystem });
+  }
 
-    return qb;
-  };
+  return qb;
+};
 
   // ── 1. Main query (paginated data + total) ─────────────────────────────────
   const mainQuery = applyBaseFilters(

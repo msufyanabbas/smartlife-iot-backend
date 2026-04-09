@@ -81,9 +81,15 @@ export class CustomerUsersService {
       // Resolve optional custom role
   let assignedRoles: Role[] = [];
   if (dto.roleId) {
-    const role = await this.roleRepository.findOne({
-      where: { id: dto.roleId, tenantId: user.tenantId, isSystem: false }, // tenant-scoped!
-    });
+   const role = await this.roleRepository.findOne({
+  where: [
+    // System roles (global)
+    { id: dto.roleId, isSystem: true },
+
+    // Custom roles (tenant-scoped)
+    { id: dto.roleId, tenantId: user.tenantId, isSystem: false },
+  ],
+});
     if (!role) {
       throw new NotFoundException(`Role ${dto.roleId} not found in your tenant`);
     }
