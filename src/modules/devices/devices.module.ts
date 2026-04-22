@@ -10,6 +10,7 @@ import { ProtocolsModule } from '../protocols/protocols.module';
 import { UsersModule } from '../users/users.module';
 import { MailModule } from '../mail/mail.module';
 import { RolesModule } from '../index.module';
+import { CodecModule } from './codecs/codec.module';
 
 
 @Module({
@@ -18,6 +19,7 @@ import { RolesModule } from '../index.module';
     SubscriptionsModule,
     RolesModule,
     ProtocolsModule,
+    CodecModule,
     UsersModule,
     MailModule,
   ],

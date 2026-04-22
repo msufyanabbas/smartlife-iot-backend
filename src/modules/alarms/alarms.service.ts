@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
@@ -20,6 +21,7 @@ import { User } from '@modules/users/entities/user.entity';
 
 @Injectable()
 export class AlarmsService {
+  private readonly logger = new Logger(AlarmsService.name);
   constructor(
     @InjectRepository(Alarm)
     private alarmRepository: Repository<Alarm>,
@@ -52,7 +54,7 @@ export class AlarmsService {
       tenantId: user.tenantId,
       customerId,
       createdBy: user.id,
-      status: AlarmStatus.ACTIVE,
+      status: AlarmStatus.INACTIVE,
     });
 
     const saved = await this.alarmRepository.save(alarm);
@@ -298,7 +300,7 @@ export class AlarmsService {
   async checkAlarmConditions(
     deviceId: string,
     telemetryKey: string,
-    value: number,
+    value: any,
   ): Promise<void> {
     // Get device to get tenantId
     const device = await this.deviceRepository.findOne({
@@ -334,51 +336,53 @@ export class AlarmsService {
   /**
    * Trigger alarm
    */
-  private async triggerAlarm(alarm: Alarm, value: number): Promise<void> {
-    const wasAlreadyActive = alarm.status === AlarmStatus.ACTIVE;
+public async triggerAlarm(alarm: Alarm, value: number): Promise<void> {
+  const wasAlreadyActive = alarm.status === AlarmStatus.ACTIVE && alarm.triggerCount > 0;
 
-    alarm.trigger(value);
-    const saved = await this.alarmRepository.save(alarm);
+  this.logger.log(`triggerAlarm — status: ${alarm.status}, triggerCount: ${alarm.triggerCount}, wasAlreadyActive: ${wasAlreadyActive}`);
 
-    // Only emit notification event if this is a new trigger
-    if (!wasAlreadyActive) {
-      this.eventEmitter.emit('alarm.triggered', { alarm: saved });
-    }
+  alarm.trigger(value);
+  const saved = await this.alarmRepository.save(alarm);
+
+  if (!wasAlreadyActive) {
+    this.logger.log(`Emitting alarm.triggered for alarm: ${saved.id}`);
+    this.eventEmitter.emit('alarm.triggered', { alarm: saved });
+  } else {
+    this.logger.log(`Skipping emit — alarm was already active`);
   }
+}
 
   /**
    * Evaluate if condition is met
    */
-  private evaluateCondition(rule: any, value: number): boolean {
-    switch (rule.condition) {
-      case AlarmCondition.GREATER_THAN:
-        return value > rule.value;
-
-      case AlarmCondition.LESS_THAN:
-        return value < rule.value;
-
-      case AlarmCondition.EQUAL:
-        return value === rule.value;
-
-      case AlarmCondition.NOT_EQUAL:
-        return value !== rule.value;
-
-      case AlarmCondition.GREATER_THAN_OR_EQUAL:
-        return value >= rule.value;
-
-      case AlarmCondition.LESS_THAN_OR_EQUAL:
-        return value <= rule.value;
-
-      case AlarmCondition.BETWEEN:
-        return value >= rule.value && value <= rule.value2;
-
-      case AlarmCondition.OUTSIDE:
-        return value < rule.value || value > rule.value2;
-
-      default:
-        return false;
-    }
+private evaluateCondition(rule: any, value: any): boolean {
+  switch (rule.condition) {
+    case AlarmCondition.GREATER_THAN:
+      return value > rule.value;
+    case AlarmCondition.LESS_THAN:
+      return value < rule.value;
+    case AlarmCondition.EQUAL:
+      return String(value) === String(rule.value); // ← String compare for non-numeric
+    case AlarmCondition.NOT_EQUAL:
+      return String(value) !== String(rule.value);
+    case AlarmCondition.GREATER_THAN_OR_EQUAL:
+      return value >= rule.value;
+    case AlarmCondition.LESS_THAN_OR_EQUAL:
+      return value <= rule.value;
+    case AlarmCondition.BETWEEN:
+      return value >= rule.value && value <= rule.value2;
+    case AlarmCondition.OUTSIDE:
+      return value < rule.value || value > rule.value2;
+    case AlarmCondition.CONTAINS:
+      return String(value).toLowerCase().includes(String(rule.value).toLowerCase());
+    case AlarmCondition.NOT_CONTAINS:
+      return !String(value).toLowerCase().includes(String(rule.value).toLowerCase());
+    case AlarmCondition.EXISTS:
+      return value !== undefined && value !== null;
+    default:
+      return false;
   }
+}
 
   /**
    * Get active alarms
@@ -624,6 +628,43 @@ export class AlarmsService {
 
     return { success, failed };
   }
+
+  async checkAlarmConditionsBatch(
+  deviceId: string,
+  flatData: Record<string, any>,
+  keys: string[],
+): Promise<void> {
+  const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+  if (!device) return;
+
+  // Single query — get all enabled alarms for this device matching any of the keys
+  const alarms = await this.alarmRepository
+    .createQueryBuilder('alarm')
+    .where('alarm.deviceId = :deviceId', { deviceId })
+    .andWhere('alarm.tenantId = :tenantId', { tenantId: device.tenantId })
+    .andWhere('alarm.isEnabled = :enabled', { enabled: true })
+    .andWhere("alarm.rule->>'telemetryKey' = ANY(:keys)", { keys })
+    .getMany();
+
+  if (alarms.length === 0) return;
+
+  for (const alarm of alarms) {
+    const telemetryKey = alarm.rule.telemetryKey as string;
+    const value = flatData[telemetryKey];
+
+    if (value === undefined) continue;
+
+    const conditionMet = this.evaluateCondition(alarm.rule, value);
+
+    if (conditionMet) {
+      await this.triggerAlarm(alarm, value);
+    } else if (alarm.autoClear && alarm.status === AlarmStatus.ACTIVE) {
+      alarm.clear();
+      await this.alarmRepository.save(alarm);
+      this.eventEmitter.emit('alarm.cleared', { alarm });
+    }
+  }
+}
 
   /**
    * Test alarm rule (simulate trigger)

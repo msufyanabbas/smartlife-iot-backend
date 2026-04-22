@@ -123,7 +123,7 @@ export class DeviceCredentialsSeeder implements ISeeder {
         // Generate credentials based on type
         switch (credentialsType) {
           case CredentialsType.ACCESS_TOKEN:
-            credentialsId = DeviceCredentials.generateAccessToken();
+            credentialsId = DeviceCredentials.generateToken();
             credentialsValue = undefined;
             break;
 
@@ -139,7 +139,7 @@ export class DeviceCredentialsSeeder implements ISeeder {
             break;
 
           default:
-            credentialsId = DeviceCredentials.generateAccessToken();
+            credentialsId = DeviceCredentials.generateToken();
             credentialsValue = undefined;
         }
 

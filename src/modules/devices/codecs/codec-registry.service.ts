@@ -1,54 +1,150 @@
 // src/modules/devices/codecs/codec-registry.service.ts
-/**
- * Codec Registry Service
- * Central registry for all device codecs
- * Automatically detects and routes to the correct codec
- */
 
 import { Injectable, Logger } from '@nestjs/common';
 import { IDeviceCodec, DecodedTelemetry } from './interfaces/base-codec.interface';
+
+export interface ManufacturerCatalog {
+  manufacturer: string;
+  models: ModelEntry[];
+}
+
+export interface ModelEntry {
+  model: string;         // e.g. "WS558"
+  codecId: string;       // e.g. "milesight-ws558"
+  protocol: string;      // e.g. "lorawan"
+  description?: string;  // optional human-readable label
+}
 
 @Injectable()
 export class CodecRegistryService {
   private readonly logger = new Logger(CodecRegistryService.name);
   private readonly codecs = new Map<string, IDeviceCodec>();
-  
-  /**
-   * Register a codec
-   */
+
+  // ── Registration ──────────────────────────────────────────────────────────
+
   registerCodec(codec: IDeviceCodec): void {
     this.codecs.set(codec.codecId, codec);
     this.logger.log(
-      `✅ Registered codec: ${codec.codecId} (${codec.manufacturer} - ${codec.supportedModels.join(', ')})`,
+      `Registered codec: ${codec.codecId} (${codec.manufacturer} — ${codec.supportedModels.join(', ')})`,
     );
   }
-  
-  /**
-   * Get codec by ID
-   */
+
+  // ── Direct lookup ─────────────────────────────────────────────────────────
+
   getCodec(codecId: string): IDeviceCodec | undefined {
     return this.codecs.get(codecId);
   }
-  
+
   /**
-   * Find codec by manufacturer and model
+   * Find the codec for a given manufacturer + model combination.
+   * Case-insensitive on both sides.
    */
   findCodec(manufacturer: string, model: string): IDeviceCodec | undefined {
+    const mfr = manufacturer.toLowerCase();
+    const mdl = model.toLowerCase();
+
     for (const codec of this.codecs.values()) {
       if (
-        codec.manufacturer.toLowerCase() === manufacturer.toLowerCase() &&
-        codec.supportedModels.some(m => m.toLowerCase() === model.toLowerCase())
+        codec.manufacturer.toLowerCase() === mfr &&
+        codec.supportedModels.some((m) => m.toLowerCase() === mdl)
       ) {
         return codec;
       }
     }
     return undefined;
   }
-  
+
   /**
-   * Auto-detect codec for payload
-   * Tries all codecs until one accepts the payload
+   * Resolve a codecId from manufacturer + model.
+   * Returns undefined if no match found.
    */
+  resolveCodecId(manufacturer: string, model: string): string | undefined {
+    return this.findCodec(manufacturer, model)?.codecId;
+  }
+
+  // ── Catalog (for frontend dropdowns) ─────────────────────────────────────
+
+  /**
+   * Returns the list of unique manufacturer names that have at least one
+   * registered codec.  Used to populate the first dropdown.
+   *
+   * Excludes 'Generic' from the list because generic devices don't go
+   * through the manufacturer/model selection flow.
+   */
+  listManufacturers(): string[] {
+    const names = new Set<string>();
+    for (const codec of this.codecs.values()) {
+      if (codec.manufacturer !== 'Generic') {
+        names.add(codec.manufacturer);
+      }
+    }
+    return Array.from(names).sort();
+  }
+
+  /**
+   * Returns all models for a given manufacturer, each entry carrying the
+   * codecId and protocol so the frontend can display useful context.
+   *
+   * For a manufacturer that has multiple codecs (e.g. Milesight with both
+   * WS558 and EM300), all models from all codecs are merged into one flat
+   * list — one entry per model.
+   */
+  listModelsForManufacturer(manufacturer: string): ModelEntry[] {
+    const models: ModelEntry[] = [];
+    const mfr = manufacturer.toLowerCase();
+
+    for (const codec of this.codecs.values()) {
+      if (codec.manufacturer.toLowerCase() !== mfr) continue;
+
+      for (const modelName of codec.supportedModels) {
+        // Skip the generic wildcard
+        if (modelName === '*') continue;
+
+        models.push({
+          model: modelName,
+          codecId: codec.codecId,
+          protocol: codec.protocol,
+        });
+      }
+    }
+
+    // Sort alphabetically by model name
+    return models.sort((a, b) => a.model.localeCompare(b.model));
+  }
+
+  /**
+   * Full catalog grouped by manufacturer — used by GET /codecs/manufacturers.
+   */
+  getCatalog(): ManufacturerCatalog[] {
+    const byManufacturer = new Map<string, ModelEntry[]>();
+
+    for (const codec of this.codecs.values()) {
+      if (codec.manufacturer === 'Generic') continue;
+
+      if (!byManufacturer.has(codec.manufacturer)) {
+        byManufacturer.set(codec.manufacturer, []);
+      }
+
+      for (const modelName of codec.supportedModels) {
+        if (modelName === '*') continue;
+        byManufacturer.get(codec.manufacturer)!.push({
+          model: modelName,
+          codecId: codec.codecId,
+          protocol: codec.protocol,
+        });
+      }
+    }
+
+    return Array.from(byManufacturer.entries())
+      .map(([manufacturer, models]) => ({
+        manufacturer,
+        models: models.sort((a, b) => a.model.localeCompare(b.model)),
+      }))
+      .sort((a, b) => a.manufacturer.localeCompare(b.manufacturer));
+  }
+
+  // ── Auto-detect ───────────────────────────────────────────────────────────
+
   detectCodec(
     payload: string | Buffer,
     metadata?: {
@@ -58,28 +154,33 @@ export class CodecRegistryService {
       model?: string;
     },
   ): IDeviceCodec | undefined {
-    // If manufacturer/model provided, try that first
+    // Prefer explicit manufacturer + model
     if (metadata?.manufacturer && metadata?.model) {
       const codec = this.findCodec(metadata.manufacturer, metadata.model);
-      if (codec && codec.canDecode(payload, metadata)) {
-        return codec;
-      }
+      if (codec?.canDecode(payload, metadata)) return codec;
     }
-    
-    // Try all registered codecs
+
+    // Fall back to canDecode probe across all codecs
     for (const codec of this.codecs.values()) {
       if (codec.canDecode(payload, metadata)) {
         this.logger.debug(`Auto-detected codec: ${codec.codecId}`);
         return codec;
       }
     }
-    
+
     return undefined;
   }
-  
+
+  // ── Decode ────────────────────────────────────────────────────────────────
+
   /**
-   * Decode payload using appropriate codec
-   * SMART: Auto-detects if decoding is needed
+   * Decode a payload using the best available codec.
+   *
+   * Resolution priority:
+   *  1. deviceMetadata.codecId  (explicit — fastest path)
+   *  2. deviceMetadata.manufacturer + model  (catalog lookup)
+   *  3. canDecode() auto-detection across all codecs  (last resort)
+   *  4. Return raw payload wrapped in { raw_data, decoded: false }
    */
   decode(
     payload: any,
@@ -89,144 +190,89 @@ export class CodecRegistryService {
       model?: string;
       fPort?: number;
       devEUI?: string;
-      gatewayType?: string;
     },
   ): DecodedTelemetry {
-    this.logger.debug(`\n🔍 Decode Request:`);
-    this.logger.debug(`Payload Type: ${typeof payload}`);
-    this.logger.debug(`Payload: ${JSON.stringify(payload).substring(0, 200)}`);
-    
-    // ============================================
-    // CASE 1: Already decoded JSON object
-    // ============================================
+    // ── Already decoded JSON object ───────────────────────────────────────
     if (typeof payload === 'object' && !Buffer.isBuffer(payload)) {
-      this.logger.debug(`✅ Payload already decoded (JSON object)`);
-      
-      // Check if it looks like decoded telemetry
-      if (this.isDecodedTelemetry(payload)) {
-        return payload as DecodedTelemetry;
-      }
-      
-      // Check if it's wrapped (e.g., {data: {...}})
-      if (payload.data && typeof payload.data === 'object') {
-        this.logger.debug(`📦 Unwrapping nested data`);
-        return payload.data as DecodedTelemetry;
-      }
-      
-      // Return as-is
+      if (this.looksLikeTelemetry(payload)) return payload as DecodedTelemetry;
+      if (payload.data && typeof payload.data === 'object') return payload.data as DecodedTelemetry;
       return payload as DecodedTelemetry;
     }
-    
-    // ============================================
-    // CASE 2: Needs decoding (hex/base64/binary)
-    // ============================================
-    this.logger.debug(`🔧 Payload needs decoding`);
-    
-    // Try to get specific codec
+
+    // ── Find codec ────────────────────────────────────────────────────────
     let codec: IDeviceCodec | undefined;
-    
+
+    // 1. Explicit codecId
     if (deviceMetadata?.codecId) {
       codec = this.getCodec(deviceMetadata.codecId);
-      this.logger.debug(`Using specified codec: ${deviceMetadata.codecId}`);
-    } else {
-      // Auto-detect codec
-      codec = this.detectCodec(payload, deviceMetadata);
-      if (codec) {
-        this.logger.debug(`Auto-detected codec: ${codec.codecId}`);
-      }
+      if (codec) this.logger.debug(`Using codec by ID: ${codec.codecId}`);
     }
-    
+
+    // 2. manufacturer + model → codecId resolution
+    if (!codec && deviceMetadata?.manufacturer && deviceMetadata?.model) {
+      codec = this.findCodec(deviceMetadata.manufacturer, deviceMetadata.model);
+      if (codec) this.logger.debug(`Using codec by manufacturer/model: ${codec.codecId}`);
+    }
+
+    // 3. Auto-detection
     if (!codec) {
-      this.logger.warn(`⚠️  No codec found, returning raw payload`);
-      return this.handleUnknownPayload(payload);
+      codec = this.detectCodec(payload, deviceMetadata);
     }
-    
-    // Decode using codec
+
+    if (!codec) {
+      this.logger.warn(`No codec found for payload — returning raw`);
+      return this.wrapRaw(payload);
+    }
+
+    // ── Decode ────────────────────────────────────────────────────────────
     try {
       const decoded = codec.decode(payload, deviceMetadata?.fPort);
-      this.logger.debug(`✅ Decoded successfully using ${codec.codecId}`);
-      this.logger.debug(`Decoded data: ${JSON.stringify(decoded)}`);
+      this.logger.debug(`Decoded with ${codec.codecId}: ${JSON.stringify(decoded)}`);
       return decoded;
-    } catch (error) {
-      this.logger.error(`❌ Decode error with ${codec.codecId}:`, error);
-      return this.handleUnknownPayload(payload);
+    } catch (err) {
+      this.logger.error(`Codec ${codec.codecId} threw: ${(err as Error).message}`);
+      return this.wrapRaw(payload);
     }
   }
-  
-  /**
-   * Encode command for device
-   */
+
+  // ── Encode ────────────────────────────────────────────────────────────────
+
   encode(
     command: { type: string; params?: any },
-    deviceMetadata: {
-      codecId: string;
-    },
-  ): any {
+    deviceMetadata: { codecId: string },
+  ): ReturnType<IDeviceCodec['encode']> {
     const codec = this.getCodec(deviceMetadata.codecId);
-    
-    if (!codec) {
-      throw new Error(`Codec not found: ${deviceMetadata.codecId}`);
-    }
-    
+    if (!codec) throw new Error(`Codec not found: ${deviceMetadata.codecId}`);
     return codec.encode(command);
   }
-  
-  /**
-   * List all registered codecs
-   */
-  listCodecs(): Array<{
-    codecId: string;
-    manufacturer: string;
-    models: string[];
-    protocol: string;
-  }> {
-    return Array.from(this.codecs.values()).map(codec => ({
-      codecId: codec.codecId,
-      manufacturer: codec.manufacturer,
-      models: codec.supportedModels,
-      protocol: codec.protocol,
+
+  // ── List (admin API) ──────────────────────────────────────────────────────
+
+  listCodecs() {
+    return Array.from(this.codecs.values()).map((c) => ({
+      codecId: c.codecId,
+      manufacturer: c.manufacturer,
+      models: c.supportedModels,
+      protocol: c.protocol,
     }));
   }
-  
-  /**
-   * Check if object looks like decoded telemetry
-   */
-  private isDecodedTelemetry(obj: any): boolean {
-    const telemetryFields = [
-      'temperature',
-      'humidity',
-      'pressure',
-      'batteryLevel',
-      'motion',
-      'occupancy',
-      'latitude',
-      'longitude',
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  private looksLikeTelemetry(obj: any): boolean {
+    const knownFields = [
+      'temperature', 'humidity', 'pressure', 'batteryLevel',
+      'motion', 'occupancy', 'latitude', 'longitude',
     ];
-    
-    return telemetryFields.some(field => field in obj);
+    return knownFields.some((f) => f in obj);
   }
-  
-  /**
-   * Handle unknown/unparseable payload
-   * Returns it as raw data
-   */
-  private handleUnknownPayload(payload: any): DecodedTelemetry {
-    this.logger.warn(`Returning payload as raw_data`);
-    
-    let rawValue: string;
-    
-    if (Buffer.isBuffer(payload)) {
-      rawValue = payload.toString('hex');
-    } else if (typeof payload === 'string') {
-      rawValue = payload;
-    } else {
-      rawValue = JSON.stringify(payload);
-    }
-    
-    return {
-      raw_data: rawValue,
-      decoded: false,
-      error: 'No codec available for this device',
-    };
+
+  private wrapRaw(payload: any): DecodedTelemetry {
+    let raw: string;
+    if (Buffer.isBuffer(payload)) raw = payload.toString('hex');
+    else if (typeof payload === 'string') raw = payload;
+    else raw = JSON.stringify(payload);
+
+    return { raw_data: raw, decoded: false, error: 'No codec available for this device' };
   }
 }

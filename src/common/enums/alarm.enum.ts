@@ -7,18 +7,22 @@ export enum AlarmSeverity {
 
 export enum AlarmStatus {
   ACTIVE = 'active',
+  INACTIVE = 'inactive',
   ACKNOWLEDGED = 'acknowledged',
   CLEARED = 'cleared',
   RESOLVED = 'resolved',
 }
 
 export enum AlarmCondition {
-  GREATER_THAN = 'gt',
-  LESS_THAN = 'lt',
-  EQUAL = 'eq',
-  NOT_EQUAL = 'neq',
-  GREATER_THAN_OR_EQUAL = 'gte',
-  LESS_THAN_OR_EQUAL = 'lte',
-  BETWEEN = 'between',
-  OUTSIDE = 'outside',
+  GREATER_THAN          = 'GREATER_THAN',
+  LESS_THAN             = 'LESS_THAN',
+  EQUAL                 = 'EQUAL',
+  NOT_EQUAL             = 'NOT_EQUAL',
+  GREATER_THAN_OR_EQUAL = 'GREATER_THAN_OR_EQUAL',
+  LESS_THAN_OR_EQUAL    = 'LESS_THAN_OR_EQUAL',
+  BETWEEN               = 'BETWEEN',
+  OUTSIDE               = 'OUTSIDE',
+  CONTAINS              = 'CONTAINS',      // ← add
+  NOT_CONTAINS          = 'NOT_CONTAINS',  // ← add
+  EXISTS                = 'EXISTS',        // ← add
 }

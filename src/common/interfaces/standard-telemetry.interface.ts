@@ -10,6 +10,7 @@ export interface StandardTelemetry {
   deviceId: string; // Your internal device ID
   deviceKey: string; // Device unique key
   tenantId?: string; // Multi-tenant support
+  customerId?: string;
 
   // Telemetry data (flexible JSON)
   data: Record<string, any>; // Any sensor data: {temperature: 25, humidity: 60}

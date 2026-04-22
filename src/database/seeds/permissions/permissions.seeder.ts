@@ -452,8 +452,8 @@ export class PermissionSeeder implements ISeeder {
       },
       {
         resource: 'alerts',
-        action: 'acknowledge',
-        description: 'Acknowledge and manage alerts',
+        action: 'read',
+        description: 'Read and manage alerts',
         isSystem: true,
         tenantId: null,
       },

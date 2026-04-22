@@ -1,4 +1,3 @@
-// src/lib/redis/redis.module.ts
 import { Module, Global } from '@nestjs/common';
 import { RedisService } from './redis.service';
 
@@ -6,19 +5,14 @@ import { RedisService } from './redis.service';
 @Module({
   providers: [
     {
-      provide: 'REDIS_SERVICE',
-      useFactory: async () => {
+      provide: RedisService,
+      useFactory: async (): Promise<RedisService> => {
         const service = new RedisService();
         await service.connect();
         return service;
       },
     },
-    {
-      provide: RedisService,
-      useFactory: (redis: RedisService) => redis,
-      inject: ['REDIS_SERVICE'],
-    },
   ],
-  exports: ['REDIS_SERVICE', RedisService],  
+  exports: [RedisService],
 })
 export class RedisModule {}

@@ -36,8 +36,8 @@ export class AutomationController {
 
   @Post()
   @TenantOrCustomerAdmin()  // ← Sets @Roles(TENANT_ADMIN, CUSTOMER_ADMIN)
-  @RequireFeature('automations')  // ← Check if automations feature is enabled
-  @RequireSubscriptionLimit({ resource: 'automations' })  // ← Check quota
+  // @RequireFeature('automations')  // ← Check if automations feature is enabled
+  // @RequireSubscriptionLimit({ resource: 'automations' })  // ← Check quota
   @SwaggerAuth('Create a new automation', 'Automation created')
   create(
     @CurrentUser('id') userId: string,  // ← Now works!

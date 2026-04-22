@@ -1,44 +1,44 @@
-// src/lib/redis/redis.service.ts
-import Redis, { Pipeline, ChainableCommander } from 'ioredis';
+import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
+import Redis, { ChainableCommander } from 'ioredis';
 
-export class RedisService {
-  public client: Redis;
+@Injectable()
+export class RedisService implements OnApplicationShutdown {
+  private readonly logger = new Logger(RedisService.name);
+
+  public readonly client: Redis;
   private isConnected = false;
+
+  // Track subscriber clients so they can be cleaned up on shutdown.
+  // A new duplicate connection is created per subscribe() call — this is
+  // required by Redis (a client in subscribe mode cannot run regular commands).
+  // We keep references here to close them properly.
+  private readonly subscribers: Redis[] = [];
 
   constructor() {
     this.client = new Redis({
       host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
       password: process.env.REDIS_PASSWORD,
-      db: parseInt(process.env.REDIS_DB || '0'),
-      retryStrategy: (times) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-      maxRetriesPerRequest: Number(process.env.REDIS_MAX_RETRIES) || 3,
+      db: parseInt(process.env.REDIS_DB || '0', 10),
+      retryStrategy: (times) => Math.min(times * 50, 2000),
+      maxRetriesPerRequest: parseInt(process.env.REDIS_MAX_RETRIES || '3', 10),
       lazyConnect: true,
     });
 
-    this.setupEventHandlers();
-  }
-
-  private setupEventHandlers(): void {
     this.client.on('connect', () => {
-      console.log('✅ Redis connected');
+      this.logger.log('Redis connected');
       this.isConnected = true;
     });
-    this.client.on('error', (error) => {
-      console.error('❌ Redis error:', error);
+    this.client.on('ready', () => this.logger.log('Redis ready'));
+    this.client.on('error', (err) => {
+      this.logger.error(`Redis error: ${err.message}`);
       this.isConnected = false;
     });
-    this.client.on('ready', () => console.log('✅ Redis ready'));
     this.client.on('close', () => {
-      console.log('🔌 Redis connection closed');
+      this.logger.warn('Redis connection closed');
       this.isConnected = false;
     });
-    this.client.on('reconnecting', () => {
-      console.log('🔄 Redis reconnecting...');
-    });
+    this.client.on('reconnecting', () => this.logger.log('Redis reconnecting...'));
   }
 
   async connect(): Promise<void> {
@@ -47,12 +47,18 @@ export class RedisService {
     }
   }
 
-  async disconnect(): Promise<void> {
+  async onApplicationShutdown(): Promise<void> {
+    for (const sub of this.subscribers) {
+      await sub.quit();
+    }
+    this.subscribers.length = 0;
     await this.client.quit();
     this.isConnected = false;
+    this.logger.log('Redis disconnected');
   }
 
-  // ============ STRING OPERATIONS ============
+  // ── String ────────────────────────────────────────────────────────────────
+
   async set(key: string, value: string, ttl?: number): Promise<void> {
     if (ttl) {
       await this.client.setex(key, ttl, value);
@@ -62,68 +68,56 @@ export class RedisService {
   }
 
   async get(key: string): Promise<string | null> {
-    return await this.client.get(key);
+    return this.client.get(key);
   }
 
   async mget(...keys: string[]): Promise<(string | null)[]> {
-    return await this.client.mget(...keys);
+    return this.client.mget(...keys);
   }
 
   async mset(data: Record<string, string>): Promise<void> {
-    const pairs: string[] = [];
-    Object.entries(data).forEach(([key, value]) => {
-      pairs.push(key, value);
-    });
-    if (pairs.length > 0) {
-      await this.client.mset(...pairs);
-    }
+    const pairs = Object.entries(data).flat();
+    if (pairs.length > 0) await this.client.mset(...pairs);
   }
 
-  async increment(key: string, by: number = 1): Promise<number> {
-    if (by === 1) {
-      return await this.client.incr(key);
-    }
-    return await this.client.incrby(key, by);
+  async increment(key: string, by = 1): Promise<number> {
+    return by === 1 ? this.client.incr(key) : this.client.incrby(key, by);
   }
 
-  async decrement(key: string, by: number = 1): Promise<number> {
-    if (by === 1) {
-      return await this.client.decr(key);
-    }
-    return await this.client.decrby(key, by);
+  async decrement(key: string, by = 1): Promise<number> {
+    return by === 1 ? this.client.decr(key) : this.client.decrby(key, by);
   }
 
   async incrby(key: string, increment: number): Promise<number> {
-    return await this.client.incrby(key, increment);
+    return this.client.incrby(key, increment);
   }
 
   async decrby(key: string, decrement: number): Promise<number> {
-    return await this.client.decrby(key, decrement);
+    return this.client.decrby(key, decrement);
   }
 
-  // ============ HASH OPERATIONS ============
+  // ── Hash ──────────────────────────────────────────────────────────────────
+
   async hset(key: string, field: string, value: string): Promise<void> {
     await this.client.hset(key, field, value);
   }
 
   async hget(key: string, field: string): Promise<string | null> {
-    return await this.client.hget(key, field);
+    return this.client.hget(key, field);
   }
 
   async hgetall(key: string): Promise<Record<string, string>> {
-    return await this.client.hgetall(key);
+    return this.client.hgetall(key);
   }
 
   async hmset(key: string, data: Record<string, any>): Promise<void> {
     const stringData: Record<string, string> = {};
-    Object.entries(data).forEach(([k, v]) => {
-      stringData[k] = String(v);
-    });
+    for (const [k, v] of Object.entries(data)) stringData[k] = String(v);
     await this.client.hmset(key, stringData);
   }
 
   async hmget(key: string, ...fields: string[]): Promise<(string | null)[]> {
-    return await this.client.hmget(key, ...fields);
+    return this.client.hmget(key, ...fields);
   }
 
   async hdel(key: string, ...fields: string[]): Promise<void> {
@@ -131,143 +125,127 @@ export class RedisService {
   }
 
   async hexists(key: string, field: string): Promise<boolean> {
-    const result = await this.client.hexists(key, field);
-    return result === 1;
+    return (await this.client.hexists(key, field)) === 1;
   }
 
   async hlen(key: string): Promise<number> {
-    return await this.client.hlen(key);
+    return this.client.hlen(key);
   }
 
   async hkeys(key: string): Promise<string[]> {
-    return await this.client.hkeys(key);
+    return this.client.hkeys(key);
   }
 
   async hvals(key: string): Promise<string[]> {
-    return await this.client.hvals(key);
+    return this.client.hvals(key);
   }
 
-  // ✅ FIXED: Hash increment operations
   async hincrby(key: string, field: string, increment: number): Promise<number> {
-    return await this.client.hincrby(key, field, increment);
+    return this.client.hincrby(key, field, increment);
   }
 
   async hincrbyfloat(key: string, field: string, increment: number): Promise<string> {
-    return await this.client.hincrbyfloat(key, field, increment);
+    return this.client.hincrbyfloat(key, field, increment);
   }
 
-  // ============ SET OPERATIONS ============
+  // ── Set ───────────────────────────────────────────────────────────────────
+
   async sadd(key: string, ...members: string[]): Promise<void> {
-    if (members.length > 0) {
-      await this.client.sadd(key, ...members);
-    }
+    if (members.length > 0) await this.client.sadd(key, ...members);
   }
 
   async srem(key: string, ...members: string[]): Promise<void> {
-    if (members.length > 0) {
-      await this.client.srem(key, ...members);
-    }
+    if (members.length > 0) await this.client.srem(key, ...members);
   }
 
   async smembers(key: string): Promise<string[]> {
-    return await this.client.smembers(key);
+    return this.client.smembers(key);
   }
 
   async sismember(key: string, member: string): Promise<boolean> {
-    const result = await this.client.sismember(key, member);
-    return result === 1;
+    return (await this.client.sismember(key, member)) === 1;
   }
 
   async scard(key: string): Promise<number> {
-    return await this.client.scard(key);
+    return this.client.scard(key);
   }
 
   async spop(key: string, count?: number): Promise<string | string[] | null> {
-    if (count) {
-      return await this.client.spop(key, count);
-    }
-    return await this.client.spop(key);
+    return count ? this.client.spop(key, count) : this.client.spop(key);
   }
 
   async srandmember(key: string, count?: number): Promise<string | string[] | null> {
-    if (count) {
-      return await this.client.srandmember(key, count);
-    }
-    return await this.client.srandmember(key);
+    return count
+      ? this.client.srandmember(key, count)
+      : this.client.srandmember(key);
   }
 
-  // ============ SORTED SET OPERATIONS ============
+  // ── Sorted set ────────────────────────────────────────────────────────────
+
   async zadd(key: string, score: number, member: string): Promise<void> {
     await this.client.zadd(key, score, member);
   }
 
   async zrem(key: string, ...members: string[]): Promise<void> {
-    if (members.length > 0) {
-      await this.client.zrem(key, ...members);
-    }
+    if (members.length > 0) await this.client.zrem(key, ...members);
   }
 
   async zrange(key: string, start: number, stop: number, withScores?: boolean): Promise<string[]> {
-    if (withScores) {
-      return await this.client.zrange(key, start, stop, 'WITHSCORES');
-    }
-    return await this.client.zrange(key, start, stop);
+    return withScores
+      ? this.client.zrange(key, start, stop, 'WITHSCORES')
+      : this.client.zrange(key, start, stop);
   }
 
   async zrevrange(key: string, start: number, stop: number, withScores?: boolean): Promise<string[]> {
-    if (withScores) {
-      return await this.client.zrevrange(key, start, stop, 'WITHSCORES');
-    }
-    return await this.client.zrevrange(key, start, stop);
+    return withScores
+      ? this.client.zrevrange(key, start, stop, 'WITHSCORES')
+      : this.client.zrevrange(key, start, stop);
   }
 
   async zrangebyscore(key: string, min: number | string, max: number | string): Promise<string[]> {
-    return await this.client.zrangebyscore(key, min, max);
+    return this.client.zrangebyscore(key, min, max);
   }
 
   async zcard(key: string): Promise<number> {
-    return await this.client.zcard(key);
+    return this.client.zcard(key);
   }
 
   async zscore(key: string, member: string): Promise<string | null> {
-    return await this.client.zscore(key, member);
+    return this.client.zscore(key, member);
   }
 
   async zincrby(key: string, increment: number, member: string): Promise<string> {
-    return await this.client.zincrby(key, increment, member);
+    return this.client.zincrby(key, increment, member);
   }
 
-  // ============ LIST OPERATIONS ============
+  // ── List ──────────────────────────────────────────────────────────────────
+
   async lpush(key: string, ...values: string[]): Promise<void> {
-    if (values.length > 0) {
-      await this.client.lpush(key, ...values);
-    }
+    if (values.length > 0) await this.client.lpush(key, ...values);
   }
 
   async rpush(key: string, ...values: string[]): Promise<void> {
-    if (values.length > 0) {
-      await this.client.rpush(key, ...values);
-    }
+    if (values.length > 0) await this.client.rpush(key, ...values);
   }
 
   async lpop(key: string): Promise<string | null> {
-    return await this.client.lpop(key);
+    return this.client.lpop(key);
   }
 
   async rpop(key: string): Promise<string | null> {
-    return await this.client.rpop(key);
+    return this.client.rpop(key);
   }
 
   async lrange(key: string, start: number, stop: number): Promise<string[]> {
-    return await this.client.lrange(key, start, stop);
+    return this.client.lrange(key, start, stop);
   }
 
   async llen(key: string): Promise<number> {
-    return await this.client.llen(key);
+    return this.client.llen(key);
   }
 
   async lindex(key: string, index: number): Promise<string | null> {
-    return await this.client.lindex(key, index);
+    return this.client.lindex(key, index);
   }
 
   async lset(key: string, index: number, value: string): Promise<void> {
@@ -282,15 +260,14 @@ export class RedisService {
     await this.client.lrem(key, count, value);
   }
 
-  // ============ KEY OPERATIONS ============
+  // ── Keys ──────────────────────────────────────────────────────────────────
+
   async del(...keys: string[]): Promise<void> {
-    if (keys.length > 0) {
-      await this.client.del(...keys);
-    }
+    if (keys.length > 0) await this.client.del(...keys);
   }
 
   async exists(...keys: string[]): Promise<number> {
-    return await this.client.exists(...keys);
+    return this.client.exists(...keys);
   }
 
   async expire(key: string, seconds: number): Promise<void> {
@@ -302,7 +279,7 @@ export class RedisService {
   }
 
   async ttl(key: string): Promise<number> {
-    return await this.client.ttl(key);
+    return this.client.ttl(key);
   }
 
   async persist(key: string): Promise<void> {
@@ -310,24 +287,14 @@ export class RedisService {
   }
 
   async keys(pattern: string): Promise<string[]> {
-    return await this.client.keys(pattern);
+    return this.client.keys(pattern);
   }
 
-  // ✅ FIXED: Scan method with proper typing
-  async scan(
-    cursor: number,
-    pattern?: string,
-    count?: number,
-  ): Promise<[string, string[]]> {
-    if (pattern && count) {
-      return await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', count);
-    } else if (pattern) {
-      return await this.client.scan(cursor, 'MATCH', pattern);
-    } else if (count) {
-      return await this.client.scan(cursor, 'COUNT', count);
-    } else {
-      return await this.client.scan(cursor);
-    }
+  async scan(cursor: number, pattern?: string, count?: number): Promise<[string, string[]]> {
+    if (pattern && count) return this.client.scan(cursor, 'MATCH', pattern, 'COUNT', count);
+    if (pattern) return this.client.scan(cursor, 'MATCH', pattern);
+    if (count) return this.client.scan(cursor, 'COUNT', count);
+    return this.client.scan(cursor);
   }
 
   async rename(oldKey: string, newKey: string): Promise<void> {
@@ -335,82 +302,69 @@ export class RedisService {
   }
 
   async type(key: string): Promise<string> {
-    return await this.client.type(key);
+    return this.client.type(key);
   }
 
-  // ✅ FIXED: Transaction operations with proper typing
-  async multi(): Promise<ChainableCommander> {
+  // ── Transactions ──────────────────────────────────────────────────────────
+
+  multi(): ChainableCommander {
     return this.client.multi();
   }
 
-  async exec(pipeline: ChainableCommander): Promise<[Error | null, any][] | null> {
-    return await pipeline.exec();
-  }
+  // ── Pub/Sub ───────────────────────────────────────────────────────────────
 
-  // ============ PUB/SUB OPERATIONS ============
   async publish(channel: string, message: string): Promise<number> {
-    return await this.client.publish(channel, message);
+    return this.client.publish(channel, message);
   }
 
+  // Each call creates one tracked duplicate connection.
+  // All are closed cleanly in onApplicationShutdown().
   async subscribe(channel: string, callback: (message: string) => void): Promise<void> {
-    const subscriber = this.client.duplicate();
-    await subscriber.subscribe(channel);
-    subscriber.on('message', (chan, msg) => {
-      if (chan === channel) {
-        callback(msg);
-      }
+    const sub = this.client.duplicate();
+    this.subscribers.push(sub);
+
+    await sub.subscribe(channel);
+    sub.on('message', (chan, msg) => {
+      if (chan === channel) callback(msg);
     });
   }
 
-  // ============ CACHE HELPERS ============
-  async cache<T>(
-    key: string,
-    fetchFn: () => Promise<T>,
-    ttl: number = 300,
-  ): Promise<T> {
-    const cached = await this.get(key);
+  // ── Cache helpers ─────────────────────────────────────────────────────────
 
+  async cache<T>(key: string, fetchFn: () => Promise<T>, ttl = 300): Promise<T> {
+    const cached = await this.get(key);
     if (cached) {
       try {
-        return JSON.parse(cached);
+        return JSON.parse(cached) as T;
       } catch {
-        // If parse fails, fetch fresh data
         await this.del(key);
       }
     }
-
     const data = await fetchFn();
     await this.set(key, JSON.stringify(data), ttl);
-
     return data;
   }
 
   async invalidateCache(pattern: string): Promise<void> {
-    const keys = await this.keys(pattern);
-    if (keys.length > 0) {
-      await this.del(...keys);
-    }
+    const matched = await this.keys(pattern);
+    if (matched.length > 0) await this.del(...matched);
   }
 
-  // ============ RATE LIMITING ============
+  // ── Rate limiting ─────────────────────────────────────────────────────────
+
   async checkRateLimit(
     key: string,
     limit: number,
     window: number,
   ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
     const current = await this.increment(key);
+    if (current === 1) await this.expire(key, window);
 
-    if (current === 1) {
-      await this.expire(key, window);
-    }
-
-    const ttl = await this.ttl(key);
-    const resetAt = Date.now() + (ttl * 1000);
-
+    const ttlSeconds = await this.ttl(key);
     return {
       allowed: current <= limit,
       remaining: Math.max(0, limit - current),
-      resetAt,
+      resetAt: Date.now() + ttlSeconds * 1000,
     };
   }
 
@@ -418,37 +372,32 @@ export class RedisService {
     await this.del(key);
   }
 
-  // ============ SESSION MANAGEMENT ============
-  async setSession(sessionId: string, data: any, ttl: number = 3600): Promise<void> {
+  // ── Sessions ──────────────────────────────────────────────────────────────
+
+  async setSession(sessionId: string, data: any, ttl = 3600): Promise<void> {
     await this.set(`session:${sessionId}`, JSON.stringify(data), ttl);
   }
 
-  async getSession(sessionId: string): Promise<any | null> {
-    const session = await this.get(`session:${sessionId}`);
-    return session ? JSON.parse(session) : null;
+  async getSession<T = any>(sessionId: string): Promise<T | null> {
+    const raw = await this.get(`session:${sessionId}`);
+    return raw ? (JSON.parse(raw) as T) : null;
   }
 
   async deleteSession(sessionId: string): Promise<void> {
     await this.del(`session:${sessionId}`);
   }
 
-  async refreshSession(sessionId: string, ttl: number = 3600): Promise<void> {
+  async refreshSession(sessionId: string, ttl = 3600): Promise<void> {
     await this.expire(`session:${sessionId}`, ttl);
   }
 
-  // ============ DISTRIBUTED LOCK ============
-  async acquireLock(
-    lockKey: string,
-    ttl: number = 10,
-    retries: number = 3,
-  ): Promise<boolean> {
+  // ── Distributed lock ──────────────────────────────────────────────────────
+
+  async acquireLock(lockKey: string, ttl = 10, retries = 3): Promise<boolean> {
     for (let i = 0; i < retries; i++) {
       const result = await this.client.set(lockKey, '1', 'EX', ttl, 'NX');
-      if (result === 'OK') {
-        return true;
-      }
-      // Wait before retry
-      await new Promise(resolve => setTimeout(resolve, 100));
+      if (result === 'OK') return true;
+      await new Promise((r) => setTimeout(r, 100));
     }
     return false;
   }
@@ -457,25 +406,22 @@ export class RedisService {
     await this.del(lockKey);
   }
 
-  // ============ HEALTH CHECK ============
+  // ── Health ────────────────────────────────────────────────────────────────
+
   async ping(): Promise<boolean> {
     try {
-      const result = await this.client.ping();
-      return result === 'PONG';
+      return (await this.client.ping()) === 'PONG';
     } catch {
       return false;
     }
   }
 
   async info(section?: string): Promise<string> {
-    if (section) {
-      return await this.client.info(section);
-    }
-    return await this.client.info();
+    return section ? this.client.info(section) : this.client.info();
   }
 
   async dbsize(): Promise<number> {
-    return await this.client.dbsize();
+    return this.client.dbsize();
   }
 
   async flushdb(): Promise<void> {
@@ -486,7 +432,6 @@ export class RedisService {
     await this.client.flushall();
   }
 
-  // ============ HELPER METHODS ============
   isHealthy(): boolean {
     return this.isConnected;
   }

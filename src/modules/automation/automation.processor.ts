@@ -6,6 +6,8 @@ import { Automation, Telemetry, Device } from '@modules/index.entities';
 import { AutomationStatus, ActionType } from '@common/enums/index.enum';
 import { AutomationService } from './automation.service';
 import axios from 'axios';
+import { GatewayService } from '../index.service';
+import { MQTTService } from '@/lib/mqtt/mqtt.service';
 
 @Injectable()
 export class AutomationProcessor {
@@ -16,7 +18,8 @@ export class AutomationProcessor {
     private automationRepo: Repository<Automation>,
     @InjectRepository(Device)
     private deviceRepo: Repository<Device>,
-    private automationService: AutomationService,
+    private readonly gatewayService: GatewayService,
+    private readonly mqttService: MQTTService,
     // TODO: Inject DeviceCommandService when you create it
     // @Inject('DEVICE_COMMAND_SERVICE')
     // private deviceCommandService: DeviceCommandService,
@@ -33,7 +36,12 @@ export class AutomationProcessor {
     this.logger.debug(`Processing telemetry for device: ${telemetry.deviceId}`);
 
     // Find all active automations watching this device
-    const automations = await this.automationService.findActiveByDevice(telemetry.deviceId);
+    const automations = await this.automationRepo
+  .createQueryBuilder('a')
+  .where("a.trigger->>'deviceId' = :deviceId", { deviceId: telemetry.deviceId })
+  .andWhere('a.enabled = :enabled', { enabled: true })
+  .andWhere('a.status != :error', { error: AutomationStatus.ERROR })
+  .getMany();
 
     if (automations.length === 0) {
       this.logger.debug(`No automations found for device: ${telemetry.deviceId}`);
@@ -73,53 +81,37 @@ export class AutomationProcessor {
   /**
    * Check if trigger condition matches telemetry data
    */
-  private evaluateTrigger(trigger: any, telemetry: Telemetry): boolean {
-    // Get value from telemetry
-    let value: any;
-    
-    if (trigger.telemetryKey) {
-      // Check telemetry data (temperature, humidity, etc.)
-      value = telemetry.data[trigger.telemetryKey];
-      
-      // Also check denormalized fields
-      if (value === undefined) {
-        value = telemetry[trigger.telemetryKey];
-      }
-    }
+private evaluateTrigger(trigger: any, telemetry: Telemetry): boolean {
+  let value: any;
 
-    if (value === undefined) {
-      this.logger.debug(`Telemetry key "${trigger.telemetryKey}" not found in data`);
-      return false;
-    }
-
-    // Evaluate operator
-    switch (trigger.operator) {
-      case 'eq':
-        return value === trigger.value;
-      
-      case 'ne':
-        return value !== trigger.value;
-      
-      case 'gt':
-        return value > trigger.value;
-      
-      case 'gte':
-        return value >= trigger.value;
-      
-      case 'lt':
-        return value < trigger.value;
-      
-      case 'lte':
-        return value <= trigger.value;
-      
-      case 'between':
-        return value >= trigger.value && value <= trigger.value2;
-      
-      default:
-        this.logger.warn(`Unknown operator: ${trigger.operator}`);
-        return false;
+  if (trigger.telemetryKey) {
+    // Support dot notation for nested keys e.g. "button_event.status"
+    const keys = trigger.telemetryKey.split('.');
+    value = telemetry.data;
+    for (const key of keys) {
+      if (value === null || value === undefined) break;
+      value = value[key];
     }
   }
+
+  if (value === undefined) {
+    this.logger.debug(`Telemetry key "${trigger.telemetryKey}" not found in data`);
+    return false;
+  }
+
+  switch (trigger.operator) {
+    case 'eq':  return value === trigger.value;
+    case 'ne':  return value !== trigger.value;
+    case 'gt':  return value > trigger.value;
+    case 'gte': return value >= trigger.value;
+    case 'lt':  return value < trigger.value;
+    case 'lte': return value <= trigger.value;
+    case 'between': return value >= trigger.value && value <= trigger.value2;
+    default:
+      this.logger.warn(`Unknown operator: ${trigger.operator}`);
+      return false;
+  }
+}
 
   // ══════════════════════════════════════════════════════════════════════════
   // EXECUTE ACTION (Do the thing!)
@@ -188,11 +180,10 @@ export class AutomationProcessor {
 
     this.logger.log(`Sending command to device ${deviceId}: ${command} = ${value}`);
 
-    // TODO: Replace with actual DeviceCommandService call
-    // await this.deviceCommandService.sendCommand(deviceId, command, value);
-
-    // For now, publish to MQTT
-    await this.publishMQTTCommand(device, command, value);
+    await this.gatewayService.sendCommand(device.deviceKey, {
+      method: command,
+      params: action.value
+    })
   }
 
   /**
@@ -200,11 +191,11 @@ export class AutomationProcessor {
    */
   private async publishMQTTCommand(device: Device, command: string, value: any): Promise<void> {
     // TODO: Inject MQTTService and publish
-    // const topic = `devices/${device.deviceKey}/commands/${command}`;
-    // await this.mqttService.publish(topic, JSON.stringify({ value }));
+    const topic = `/milesight/downlink/${device.metadata?.devEUI}`;
+    await this.mqttService.publish(topic, JSON.stringify({ value }));
     
-    this.logger.log(`[MOCK] Would publish to MQTT: devices/${device.deviceKey}/commands/${command}`);
-    this.logger.log(`[MOCK] Payload: ${JSON.stringify({ value })}`);
+    // this.logger.log(`[MOCK] Would publish to MQTT: devices/${device.deviceKey}/commands/${command}`);
+    // this.logger.log(`[MOCK] Payload: ${JSON.stringify({ value })}`);
   }
 
   /**

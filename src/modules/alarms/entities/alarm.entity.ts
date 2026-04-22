@@ -80,7 +80,7 @@ export class Alarm extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
-  currentValue?: number;  // Value that triggered the alarm
+  currentValue?: number | any;  // Value that triggered the alarm
 
   @Column({ type: 'text', nullable: true })
   message?: string;  // Auto-generated or custom message
@@ -177,7 +177,7 @@ export class Alarm extends BaseEntity {
    */
   trigger(value: number, message?: string): void {
     this.status = AlarmStatus.ACTIVE;
-    this.currentValue = value;
+    this.currentValue = typeof value === 'number' ? value : null;
     this.message = message || this.generateMessage(value);
     this.triggeredAt = this.triggeredAt || new Date(); // Set only on first trigger
     this.lastTriggeredAt = new Date();
@@ -232,26 +232,28 @@ export class Alarm extends BaseEntity {
   /**
    * Generate human-readable alarm message
    */
-  private generateMessage(value: number): string {
-    const { telemetryKey, condition, value: threshold } = this.rule;
-    const conditionText = this.getConditionText(condition);
-    return `${telemetryKey} ${conditionText} ${threshold}. Current value: ${value}`;
-  }
-
+ private generateMessage(value: any): string {
+  const { telemetryKey, condition, value: threshold } = this.rule;
+  const conditionText = this.getConditionText(condition);
+  return `${telemetryKey} ${conditionText} ${threshold}. Current value: ${value}`;
+}
   /**
    * Get human-readable condition text
    */
-  private getConditionText(condition: AlarmCondition): string {
-    const map = {
-      [AlarmCondition.GREATER_THAN]: 'is greater than',
-      [AlarmCondition.LESS_THAN]: 'is less than',
-      [AlarmCondition.EQUAL]: 'equals',
-      [AlarmCondition.NOT_EQUAL]: 'does not equal',
-      [AlarmCondition.GREATER_THAN_OR_EQUAL]: 'is greater than or equal to',
-      [AlarmCondition.LESS_THAN_OR_EQUAL]: 'is less than or equal to',
-      [AlarmCondition.BETWEEN]: 'is between',
-      [AlarmCondition.OUTSIDE]: 'is outside range',
-    };
-    return map[condition] || condition;
-  }
+private getConditionText(condition: AlarmCondition): string {
+  const map = {
+    [AlarmCondition.GREATER_THAN]: 'is greater than',
+    [AlarmCondition.LESS_THAN]: 'is less than',
+    [AlarmCondition.EQUAL]: 'equals',
+    [AlarmCondition.NOT_EQUAL]: 'does not equal',
+    [AlarmCondition.GREATER_THAN_OR_EQUAL]: 'is greater than or equal to',
+    [AlarmCondition.LESS_THAN_OR_EQUAL]: 'is less than or equal to',
+    [AlarmCondition.BETWEEN]: 'is between',
+    [AlarmCondition.OUTSIDE]: 'is outside range',
+    [AlarmCondition.CONTAINS]: 'contains',         // ← add
+    [AlarmCondition.NOT_CONTAINS]: 'does not contain', // ← add
+    [AlarmCondition.EXISTS]: 'exists',              // ← add
+  };
+  return map[condition] || condition;
+}
 }

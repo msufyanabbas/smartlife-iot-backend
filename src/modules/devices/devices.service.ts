@@ -1,6 +1,3 @@
-// src/modules/devices/devices.service.ts
-// UPDATED - Integrated with DeviceCredentialsService
-
 import {
   Injectable,
   NotFoundException,
@@ -17,23 +14,20 @@ import { DeviceStatus } from '@common/enums/index.enum';
 import { CreateDeviceDto } from '@modules/devices/dto/create-device.dto';
 import { UpdateDeviceDto } from '@modules/devices/dto/update-device.dto';
 import { DeviceCredentialsDto } from '@modules/devices/dto/device-credentials.dto';
-import {
-  PaginationDto,
-  PaginatedResponseDto,
-} from '@/common/dto/pagination.dto';
-import { generateRandomString } from '@/common/utils/helpers';
+import { PaginationDto, PaginatedResponseDto } from '@/common/dto/pagination.dto';
 import { UserRole } from '@common/enums/index.enum';
 import { DeviceCredentialsService } from './device-credentials.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { UsersService } from '../users/users.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { request } from 'axios';
-import { Request } from 'express';
+import * as crypto from 'crypto';
+import { CodecRegistryService } from './codecs/codec-registry.service';
 
 @Injectable()
 export class DevicesService {
   private readonly logger = new Logger(DevicesService.name);
+
   constructor(
     @InjectRepository(Device)
     private deviceRepository: Repository<Device>,
@@ -41,71 +35,91 @@ export class DevicesService {
     private userService: UsersService,
     private eventEmitter: EventEmitter2,
     private credentialsService: DeviceCredentialsService,
+    private codecRegistry: CodecRegistryService,
     private subscriptionsService: SubscriptionsService,
-  ) { }
+  ) {}
 
-  /**
-   * Create a new device WITH credentials
-   */
+  // ── Create ────────────────────────────────────────────────────────────────
+
   async create(
     user: User,
-    createDeviceDto: CreateDeviceDto,
+    dto: CreateDeviceDto,
   ): Promise<{ device: Device; credentials: DeviceCredentialsDto }> {
-    // Generate unique device key
-    const deviceKey = `dev_${generateRandomString(16)}`;
+    const deviceKey = `dev_${crypto.randomBytes(8).toString('hex')}`;
 
-    // Check if device key already exists
-    const existingDevice = await this.deviceRepository.findOne({
-      where: { deviceKey },
-    });
-
-    if (existingDevice) {
-      throw new ConflictException('Device key collision. Please try again.');
+    const collision = await this.deviceRepository.findOne({ where: { deviceKey } });
+    if (collision) {
+      throw new ConflictException('Device key collision — please retry');
     }
 
-    // Create device
+    // ── Resolve codecId from manufacturer + model ─────────────────────────
+    // If the caller supplied both fields we can look up the exact codec.
+    // The resolved codecId is stored in metadata so the decode pipeline can
+    // reach it directly (O(1) map lookup) on every incoming message.
+    let resolvedCodecId: string | undefined = dto.metadata?.codecId as string | undefined;
+ 
+    if (dto.manufacturer && dto.model && !resolvedCodecId) {
+      resolvedCodecId = this.codecRegistry.resolveCodecId(dto.manufacturer, dto.model);
+ 
+      if (!resolvedCodecId) {
+        // Don't hard-fail — just log a warning. The device is still created;
+        // incoming payloads will fall back to auto-detection.
+        this.logger.warn(
+          `No codec found for ${dto.manufacturer} / ${dto.model}. ` +
+          `Device will be created but payloads may not decode correctly.`,
+        );
+      }
+    }
+
     const device = this.deviceRepository.create({
-      ...createDeviceDto,
+      ...dto,
       deviceKey,
       userId: user.id,
-      status: DeviceStatus.INACTIVE,
       tenantId: user.tenantId,
-
-      // Store device-specific metadata
-      metadata: {
-        ...createDeviceDto.metadata,
-        devEUI: createDeviceDto.metadata?.devEUI,
-        deviceType: createDeviceDto.metadata?.deviceType || 'generic',
-        gatewayType: createDeviceDto.metadata?.gatewayType,
-        manufacturer: createDeviceDto.metadata?.manufacturer,
-        model: createDeviceDto.metadata?.model,
-        codecId: createDeviceDto.metadata?.codecId,
+      status: DeviceStatus.INACTIVE,
+      manufacturer: dto.manufacturer,
+      model: dto.model,
+      // protocol comes directly from the DTO (validated enum)
+      protocol: dto.protocol,
+   metadata: {
+        ...(dto.metadata ?? {}),
+        // Always keep codecId in metadata — it's the fast-path for the decode pipeline
+        ...(resolvedCodecId ? { codecId: resolvedCodecId } : {}),
+        // Also store manufacturer/model in metadata for the MQTTService
+        // buildStandardTelemetry() which reads from device.metadata
+        ...(dto.manufacturer ? { manufacturer: dto.manufacturer } : {}),
+        ...(dto.model ? { model: dto.model } : {}),
       },
     });
 
     const savedDevice = await this.deviceRepository.save(device);
 
-    this.subscriptionsService.incrementTenantUsage(
+    // Increment subscription usage (fire and forget)
+    void this.subscriptionsService.incrementTenantUsage(
       user.tenantId as any,
-      "devices",
-      1
+      'devices',
+      1,
     );
 
-    // Create credentials for the device
+    // Create credentials — pass the full user object so verifyAccess works
     await this.credentialsService.createCredentials(savedDevice);
 
-    // Get full MQTT configuration
+    // Build full MQTT config for the response (user is always the creator here)
     const credentials = await this.credentialsService.getMqttConfiguration(
       savedDevice.id,
-      { id: user.id } as User,
+      user, // full User entity — not a partial object
     );
 
     return { device: savedDevice, credentials };
   }
 
-  /**
-   * Find all devices with pagination
-   */
+  // ── Find all ──────────────────────────────────────────────────────────────
+  // Filtering logic is applied once, in priority order:
+  //   1. Guard-resolved tenantId (from JwtAuthGuard / TenantIsolationGuard)
+  //   2. Guard-resolved customerId (from CustomerAccessGuard)
+  //   3. Role-based fallback for CUSTOMER_USER
+  // We do NOT double-apply filters.
+
   async findAll(
     tenantId: string | undefined,
     customerId: string | undefined,
@@ -114,129 +128,93 @@ export class DevicesService {
   ): Promise<PaginatedResponseDto<Device>> {
     const { page, limit, search, sortBy, sortOrder } = paginationDto;
 
-    const queryBuilder = this.deviceRepository.createQueryBuilder('device');
+    const qb = this.deviceRepository.createQueryBuilder('device');
 
-    if (tenantId) {
-    queryBuilder.andWhere('device.tenantId = :tenantId', { 
-      tenantId: tenantId 
-    });
-  }
+    // SUPER_ADMIN sees everything; all other roles are tenant-scoped
+    if (user.role !== UserRole.SUPER_ADMIN) {
+      const effectiveTenantId = tenantId ?? user.tenantId;
+      if (effectiveTenantId) {
+        qb.andWhere('device.tenantId = :tenantId', { tenantId: effectiveTenantId });
+      }
+    }
 
-  // CustomerAccessGuard sets this for CUSTOMER_ADMIN / CUSTOMER_USER
-  if (customerId) {
-    queryBuilder.andWhere('device.customerId = :customerId', { 
-      customerId: customerId 
-    });
-  }
-
-    // Customer filtering logic
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (!user.customerId) {
+    // CUSTOMER_USER / CUSTOMER are additionally scoped to their customer
+    if (
+      user.role === UserRole.CUSTOMER_USER ||
+      user.role === UserRole.CUSTOMER
+    ) {
+      const effectiveCustomerId = customerId ?? user.customerId;
+      if (!effectiveCustomerId) {
         return PaginatedResponseDto.create([], page, limit, 0);
       }
-      queryBuilder.andWhere('device.customerId = :customerId', {
-        customerId: user.customerId,
+      qb.andWhere('device.customerId = :customerId', {
+        customerId: effectiveCustomerId,
       });
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      queryBuilder.andWhere('device.tenantId = :tenantId', {
-        tenantId: user.tenantId,
-      });
+    } else if (customerId) {
+      // Admin explicitly filtering by customer (e.g. customer detail page)
+      qb.andWhere('device.customerId = :customerId', { customerId });
     }
 
     if (search) {
-      queryBuilder.andWhere(
+      qb.andWhere(
         '(device.name ILIKE :search OR device.description ILIKE :search OR device.deviceKey ILIKE :search)',
         { search: `%${search}%` },
       );
     }
 
-    const sortField = sortBy || 'createdAt';
-    const sortDirection = sortOrder || 'DESC';
-    queryBuilder.orderBy(`device.${sortField}`, sortDirection);
+    qb.orderBy(`device.${sortBy ?? 'createdAt'}`, sortOrder ?? 'DESC');
+    qb.skip((page - 1) * limit).take(limit);
 
-    const skip = (page - 1) * limit;
-    queryBuilder.skip(skip).take(limit);
-
-    const [devices, total] = await queryBuilder.getManyAndCount();
-
+    const [devices, total] = await qb.getManyAndCount();
     return PaginatedResponseDto.create(devices, page, limit, total);
   }
 
-  /**
-   * Find one device
-   */
+  // ── Find one ──────────────────────────────────────────────────────────────
+
   async findOne(id: string, user: User): Promise<Device> {
-    const queryBuilder = this.deviceRepository
+    const qb = this.deviceRepository
       .createQueryBuilder('device')
       .where('device.id = :id', { id });
 
-    // Apply customer filtering
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (!user.customerId) {
-        throw new ForbiddenException('No customer assigned');
-      }
-      queryBuilder.andWhere('device.customerId = :customerId', {
-        customerId: user.customerId,
-      });
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      queryBuilder.andWhere('device.tenantId = :tenantId', {
-        tenantId: user.tenantId,
-      });
-    }
+    this.applyAccessFilter(qb, user);
 
-    const device = await queryBuilder.getOne();
+    const device = await qb.getOne();
 
     if (!device) {
-      throw new NotFoundException(`Device with ID ${id} not found`);
+      throw new NotFoundException(`Device ${id} not found`);
     }
 
     return device;
   }
 
-  /**
-   * Find device by device key (used by MQTT gateway)
-   */
-  /**
-   * Find device by deviceKey (with access control)
-   */
+  // ── Find by deviceKey ─────────────────────────────────────────────────────
+
   async findByDeviceKey(deviceKey: string, user: User): Promise<Device> {
-    const where: any = { deviceKey };
+    const qb = this.deviceRepository
+      .createQueryBuilder('device')
+      .where('device.deviceKey = :deviceKey', { deviceKey });
 
-    // Apply tenant/customer filtering
-    if (user.role !== UserRole.SUPER_ADMIN) {
-      where.tenantId = user.tenantId;
-    }
+    this.applyAccessFilter(qb, user);
 
-    if (user.role === UserRole.CUSTOMER || user.role === UserRole.CUSTOMER_USER) {
-      where.customerId = user.customerId;
-    }
-
-    const device = await this.deviceRepository.findOne({ where });
+    const device = await qb.getOne();
 
     if (!device) {
-      throw new NotFoundException('Device not found');
+      throw new NotFoundException(`Device ${deviceKey} not found`);
     }
 
     return device;
   }
 
-  /**
-   * Update device
-   */
-  async update(
-    id: string,
-    user: User,
-    updateDeviceDto: UpdateDeviceDto,
-  ): Promise<Device> {
+  // ── Update ────────────────────────────────────────────────────────────────
+
+  async update(id: string, user: User, dto: UpdateDeviceDto): Promise<Device> {
     const device = await this.findOne(id, user);
-    Object.assign(device, updateDeviceDto);
-    await this.deviceRepository.save(device);
-    return device;
+    Object.assign(device, dto);
+    return this.deviceRepository.save(device);
   }
 
-  /**
-   * Activate device
-   */
+  // ── Activate / deactivate ─────────────────────────────────────────────────
+
   async activate(id: string, user: User): Promise<Device> {
     const device = await this.findOne(id, user);
 
@@ -246,157 +224,70 @@ export class DevicesService {
 
     device.status = DeviceStatus.ACTIVE;
     device.activatedAt = new Date();
-    await this.deviceRepository.save(device);
-    return device;
+    return this.deviceRepository.save(device);
   }
 
-  /**
-   * Deactivate device
-   */
   async deactivate(id: string, user: User): Promise<Device> {
     const device = await this.findOne(id, user);
     device.status = DeviceStatus.INACTIVE;
-    await this.deviceRepository.save(device);
-    return device;
+    return this.deviceRepository.save(device);
   }
 
-  /**
-   * Delete device (and its credentials)
-   */
+  // ── Remove ────────────────────────────────────────────────────────────────
+  // Order: delete credentials first (explicit), THEN soft-remove the device.
+  // The DB-level onDelete:'CASCADE' on DeviceCredentials.deviceId would fire
+  // on a HARD delete, but soft-remove only nulls the deletedAt column so the
+  // FK row is still present — the CASCADE would not fire. We therefore always
+  // delete credentials explicitly.
+
   async remove(id: string, user: User): Promise<void> {
     const device = await this.findOne(id, user);
 
-    // Delete credentials first
+    // Delete credentials first — explicit, avoids relying on cascade behaviour
     await this.credentialsService.deleteByDeviceId(device.id);
 
-    // Then delete device
     await this.deviceRepository.softRemove(device);
   }
 
-  /**
-   * Update activity
-   */
+  // ── Credentials passthrough ───────────────────────────────────────────────
+
+  async getCredentials(id: string, user: User): Promise<DeviceCredentialsDto> {
+    await this.findOne(id, user); // access check
+    return this.credentialsService.getMqttConfiguration(id, user);
+  }
+
+  async regenerateCredentials(id: string, user: User): Promise<DeviceCredentialsDto> {
+    await this.findOne(id, user); // access check
+    return this.credentialsService.regenerateCredentials(id, user);
+  }
+
+  // ── Activity ──────────────────────────────────────────────────────────────
+
   async updateActivity(deviceKey: string): Promise<void> {
     await this.deviceRepository.increment({ deviceKey }, 'messageCount', 1);
-
     await this.deviceRepository.update(
       { deviceKey },
-      {
-        lastActivityAt: new Date(),
-        lastSeenAt: new Date(),
-      },
+      { lastActivityAt: new Date(), lastSeenAt: new Date() },
     );
   }
 
-  /**
-   * Get device statistics
-   */
-  async getStatistics(user: User): Promise<any> {
-    const queryBuilder = this.deviceRepository.createQueryBuilder('device');
+  async updateLastSeen(deviceKey: string, user: User): Promise<void> {
+    const device = await this.findByDeviceKey(deviceKey, user);
+    const wasOffline = device.status === DeviceStatus.OFFLINE;
 
-    // Apply customer filtering
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (!user.customerId) {
-        return this.getEmptyStatistics();
-      }
-      queryBuilder.where('device.customerId = :customerId', {
-        customerId: user.customerId,
-      });
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      queryBuilder.where('device.tenantId = :tenantId', {
-        tenantId: user.tenantId,
-      });
+    await this.deviceRepository.update(
+      { deviceKey },
+      { lastSeenAt: new Date(), status: DeviceStatus.ACTIVE },
+    );
+
+    if (wasOffline) {
+      const deviceUser = await this.userService.findOne(device.userId);
+      this.handleDeviceOnline(device, deviceUser);
     }
-
-    const [
-      totalDevices,
-      activeDevices,
-      inactiveDevices,
-      offlineDevices,
-    ] = await Promise.all([
-      queryBuilder.getCount(),
-      queryBuilder
-        .clone()
-        .andWhere('device.status = :status', { status: DeviceStatus.ACTIVE })
-        .getCount(),
-      queryBuilder
-        .clone()
-        .andWhere('device.status = :status', { status: DeviceStatus.INACTIVE })
-        .getCount(),
-      queryBuilder
-        .clone()
-        .andWhere('device.status = :status', { status: DeviceStatus.OFFLINE })
-        .getCount(),
-    ]);
-
-    // Get online devices (seen in last 5 minutes)
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const onlineDevices = await queryBuilder
-      .clone()
-      .andWhere('device.lastSeenAt > :fiveMinutesAgo', { fiveMinutesAgo })
-      .getCount();
-
-    // Get devices by type
-    const devicesByType = await this.getDevicesByType(user);
-
-    return {
-      totalDevices,
-      activeDevices,
-      inactiveDevices,
-      offlineDevices,
-      onlineDevices,
-      devicesByType,
-      devicesByStatus: {
-        active: activeDevices,
-        inactive: inactiveDevices,
-        offline: offlineDevices,
-      },
-    };
   }
 
-  private getEmptyStatistics() {
-    return {
-      totalDevices: 0,
-      activeDevices: 0,
-      inactiveDevices: 0,
-      offlineDevices: 0,
-      onlineDevices: 0,
-      devicesByType: {},
-      devicesByStatus: { active: 0, inactive: 0, offline: 0 },
-    };
-  }
+  // ── Verify credentials (called by MQTT gateway auth hook) ─────────────────
 
-  private async getDevicesByType(user: User): Promise<Record<string, number>> {
-    const queryBuilder = this.deviceRepository
-      .createQueryBuilder('device')
-      .select('device.type', 'type')
-      .addSelect('COUNT(*)', 'count')
-      .groupBy('device.type');
-
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (!user.customerId) {
-        return {};
-      }
-      queryBuilder.where('device.customerId = :customerId', {
-        customerId: user.customerId,
-      });
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      queryBuilder.where('device.tenantId = :tenantId', {
-        tenantId: user.tenantId,
-      });
-    }
-
-    const devices = await queryBuilder.getRawMany();
-
-    return devices.reduce((acc, { type, count }) => {
-      acc[type] = parseInt(count);
-      return acc;
-    }, {});
-  }
-
-  /**
-   * Verify device credentials (called by MQTT gateway)
-   */
   async verifyCredentials(
     credentialsId: string,
     credentialsValue?: string,
@@ -408,9 +299,71 @@ export class DevicesService {
     return device;
   }
 
-  /**
-   * Bulk update device status
-   */
+  // ── Statistics ────────────────────────────────────────────────────────────
+
+  async getStatistics(user: User): Promise<any> {
+    const qb = this.deviceRepository.createQueryBuilder('device');
+    this.applyAccessFilter(qb, user);
+
+    const [total, active, inactive, offline] = await Promise.all([
+      qb.getCount(),
+      qb.clone().andWhere('device.status = :s', { s: DeviceStatus.ACTIVE }).getCount(),
+      qb.clone().andWhere('device.status = :s', { s: DeviceStatus.INACTIVE }).getCount(),
+      qb.clone().andWhere('device.status = :s', { s: DeviceStatus.OFFLINE }).getCount(),
+    ]);
+
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const online = await qb
+      .clone()
+      .andWhere('device.lastSeenAt > :ts', { ts: fiveMinutesAgo })
+      .getCount();
+
+    return {
+      totalDevices: total,
+      activeDevices: active,
+      inactiveDevices: inactive,
+      offlineDevices: offline,
+      onlineDevices: online,
+      devicesByStatus: { active, inactive, offline },
+    };
+  }
+
+  // ── Customer assignment ───────────────────────────────────────────────────
+
+  async assignToCustomer(
+    deviceId: string,
+    customerId: string,
+    user: User,
+  ): Promise<Device> {
+    this.assertAdmin(user);
+    const device = await this.findOne(deviceId, user);
+    device.customerId = customerId;
+    return this.deviceRepository.save(device);
+  }
+
+  async unassignFromCustomer(deviceId: string, user: User): Promise<Device> {
+    this.assertAdmin(user);
+    const device = await this.findOne(deviceId, user);
+    device.customerId = undefined;
+    return this.deviceRepository.save(device);
+  }
+
+  async findByCustomer(customerId: string, user: User): Promise<Device[]> {
+    if (
+      (user.role === UserRole.CUSTOMER_USER || user.role === UserRole.CUSTOMER) &&
+      user.customerId !== customerId
+    ) {
+      throw new ForbiddenException('Access denied to this customer');
+    }
+
+    return this.deviceRepository.find({
+      where: { customerId },
+      order: { name: 'ASC' },
+    });
+  }
+
+  // ── Bulk operations ───────────────────────────────────────────────────────
+
   async bulkUpdateStatus(
     deviceIds: string[],
     userId: string,
@@ -422,147 +375,84 @@ export class DevicesService {
 
     if (devices.length !== deviceIds.length) {
       throw new BadRequestException(
-        'Some devices not found or do not belong to user',
+        'Some devices not found or do not belong to this user',
       );
     }
 
     await this.deviceRepository.update({ id: In(deviceIds) }, { status });
   }
 
-  /**
-   * Get device credentials
-   */
-  async getCredentials(id: string, user: User): Promise<DeviceCredentialsDto> {
-    await this.findOne(id, user); // Verify access
-    return this.credentialsService.getMqttConfiguration(id, user);
-  }
+  // ── Offline cron ──────────────────────────────────────────────────────────
 
-  /**
-   * Regenerate device credentials
-   */
-  async regenerateCredentials(
-    id: string,
-    user: User,
-  ): Promise<DeviceCredentialsDto> {
-    return this.credentialsService.regenerateCredentials(id, user);
-  }
-
-  /**
-   * Assign device to customer
-   */
-  async assignToCustomer(
-    deviceId: string,
-    customerId: string,
-    user: User,
-  ): Promise<Device> {
-    if (
-      user.role !== UserRole.SUPER_ADMIN &&
-      user.role !== UserRole.TENANT_ADMIN
-    ) {
-      throw new ForbiddenException('Only admins can assign devices to customers');
-    }
-
-    const device = await this.findOne(deviceId, user);
-    device.customerId = customerId;
-    return await this.deviceRepository.save(device);
-  }
-
-  /**
-   * Unassign device from customer
-   */
-  async unassignFromCustomer(deviceId: string, user: User): Promise<Device> {
-    if (
-      user.role !== UserRole.SUPER_ADMIN &&
-      user.role !== UserRole.TENANT_ADMIN
-    ) {
-      throw new ForbiddenException('Only admins can unassign devices');
-    }
-
-    const device = await this.findOne(deviceId, user);
-    device.customerId = undefined;
-    return await this.deviceRepository.save(device);
-  }
-
-  /**
-   * Get devices by customer
-   */
-  async findByCustomer(customerId: string, user: User): Promise<Device[]> {
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (user.customerId !== customerId) {
-        throw new ForbiddenException('Access denied to this customer');
-      }
-    }
-
-    return await this.deviceRepository.find({
-      where: { customerId },
-      order: { name: 'ASC' },
-    });
-  }
-
-  /**
- * ✅ Handle device going offline
- */
-  private async handleDeviceOffline(device: Device, user: User): Promise<void> {
-    this.eventEmitter.emit('device.offline', { device, user });
-    this.logger.warn(`Device ${device.name} (${device.id}) went offline`);
-  }
-
-  /**
-   * ✅ Handle device coming online
-   */
-  private async handleDeviceOnline(device: Device, user: User): Promise<void> {
-    this.eventEmitter.emit('device.connected', { device, user });
-    this.logger.log(`Device ${device.name} (${device.id}) is now online`);
-  }
-
-  /**
-   * ✅ Update updateLastSeen to emit events
-   */
-  async updateLastSeen(deviceKey: string, user: User): Promise<void> {
-    const device = await this.findByDeviceKey(deviceKey, user);
-
-    const wasOffline = device.status === DeviceStatus.OFFLINE;
-
-    await this.deviceRepository.update(
-      { deviceKey },
-      {
-        lastSeenAt: new Date(),
-        status: DeviceStatus.ACTIVE
-      },
-    );
-
-    if (wasOffline) {
-      const user = await this.userService.findOne(device.userId);
-      await this.handleDeviceOnline(device, user);
-    }
-  }
-
-  /**
-   * ✅ Add a cron job to check for offline devices
-   */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async checkOfflineDevices(): Promise<void> {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
 
-    const devices = await this.deviceRepository.find({
-      where: {
-        status: DeviceStatus.ACTIVE,
-        lastSeenAt: LessThan(fiveMinutesAgo),
-      },
+    const staleDevices = await this.deviceRepository.find({
+      where: { status: DeviceStatus.ACTIVE, lastSeenAt: LessThan(fiveMinutesAgo) },
     });
 
-    for (const device of devices) {
+    for (const device of staleDevices) {
       device.status = DeviceStatus.OFFLINE;
       await this.deviceRepository.save(device);
 
       const user = await this.userService.findOne(device.userId);
-      await this.handleDeviceOffline(device, user);
+      this.handleDeviceOffline(device, user);
     }
 
-    if (devices.length > 0) {
-      this.logger.log(`Marked ${devices.length} devices as offline`);
+    if (staleDevices.length > 0) {
+      this.logger.log(`Marked ${staleDevices.length} device(s) as offline`);
     }
   }
 
+  // ── Private helpers ───────────────────────────────────────────────────────
 
+  /**
+   * Apply tenant / customer filters to any QueryBuilder based on the
+   * requesting user's role. Call this once per query — do not add manual
+   * andWhere clauses on top of it.
+   */
+  private applyAccessFilter(
+    qb: ReturnType<Repository<Device>['createQueryBuilder']>,
+    user: User,
+  ): void {
+    if (user.role === UserRole.SUPER_ADMIN) return;
+
+    if (user.tenantId) {
+      qb.andWhere('device.tenantId = :tenantId', { tenantId: user.tenantId });
+    }
+
+    if (
+      user.role === UserRole.CUSTOMER_USER ||
+      user.role === UserRole.CUSTOMER
+    ) {
+      if (!user.customerId) {
+        // Force zero results — user has no customer assignment
+        qb.andWhere('1 = 0');
+        return;
+      }
+      qb.andWhere('device.customerId = :customerId', {
+        customerId: user.customerId,
+      });
+    }
+  }
+
+  private assertAdmin(user: User): void {
+    if (
+      user.role !== UserRole.SUPER_ADMIN &&
+      user.role !== UserRole.TENANT_ADMIN
+    ) {
+      throw new ForbiddenException('Only admins can perform this action');
+    }
+  }
+
+  private handleDeviceOffline(device: Device, user: User): void {
+    this.eventEmitter.emit('device.offline', { device, user });
+    this.logger.warn(`Device offline: ${device.name} (${device.id})`);
+  }
+
+  private handleDeviceOnline(device: Device, user: User): void {
+    this.eventEmitter.emit('device.connected', { device, user });
+    this.logger.log(`Device online: ${device.name} (${device.id})`);
+  }
 }

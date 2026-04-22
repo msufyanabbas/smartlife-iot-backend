@@ -1,36 +1,36 @@
-// src/modules/devices/codecs/generic/mqtt-json.codec.ts
+import {
+  BaseDeviceCodec,
+  DecodedTelemetry,
+  EncodedCommand,
+} from '../interfaces/base-codec.interface';
+
 /**
  * Generic MQTT JSON Codec
- * For devices that already send decoded JSON data
- * (No encoding/decoding needed - pass-through)
+ *
+ * For devices that already publish decoded JSON over MQTT (ESP32, Arduino,
+ * Shelly, custom firmware, etc.).  The payload arrives as a UTF-8 JSON string
+ * and is returned as-is after parsing.
+ *
+ * IMPORTANT — codec priority:
+ * canDecode() returns false by default so that this codec is NEVER chosen
+ * during auto-detection.  It must be selected explicitly via codecId on the
+ * device metadata (e.g. metadata.codecId = 'generic-mqtt-json').
+ *
+ * Reason: returning true for any valid JSON would greedily match LoRaWAN
+ * payloads that are already-decoded JSON wrappers (e.g. from ChirpStack),
+ * preventing the correct device-specific codec from being tried first.
  */
-
-import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../interfaces/base-codec.interface';
-
 export class GenericMqttJsonCodec extends BaseDeviceCodec {
   readonly codecId = 'generic-mqtt-json';
   readonly manufacturer = 'Generic';
-  readonly supportedModels = ['*']; // Supports any model
+  readonly supportedModels = ['*'];
   readonly protocol = 'mqtt' as const;
-  
-  /**
-   * Decode MQTT JSON payload
-   * Most MQTT devices send already-decoded JSON
-   */
-  decode(payload: string | Buffer, fPort?: number): DecodedTelemetry {
+
+  decode(payload: string | Buffer, _fPort?: number): DecodedTelemetry {
     try {
-      // Convert buffer to string if needed
-      const jsonString = Buffer.isBuffer(payload) 
-        ? payload.toString('utf-8') 
-        : payload;
-      
-      // Parse JSON
-      const parsed = JSON.parse(jsonString);
-      
-      // Return as-is (already decoded)
-      return parsed as DecodedTelemetry;
-    } catch (error) {
-      // If parsing fails, return raw
+      const str = Buffer.isBuffer(payload) ? payload.toString('utf-8') : payload;
+      return JSON.parse(str) as DecodedTelemetry;
+    } catch {
       return {
         raw_data: payload.toString(),
         decoded: false,
@@ -38,36 +38,24 @@ export class GenericMqttJsonCodec extends BaseDeviceCodec {
       };
     }
   }
-  
-  /**
-   * Encode command as JSON
-   */
+
   encode(command: { type: string; params?: any }): EncodedCommand {
-    const payload = {
-      command: command.type,
-      params: command.params,
-      timestamp: Date.now(),
-    };
-    
     return {
-      data: JSON.stringify(payload),
+      data: JSON.stringify({
+        command: command.type,
+        params: command.params,
+        timestamp: Date.now(),
+      }),
       confirmed: false,
     };
   }
-  
+
   /**
-   * Check if payload is valid JSON
+   * Always returns false — this codec must be selected explicitly via
+   * device.metadata.codecId = 'generic-mqtt-json'.
+   * It is never chosen during auto-detection.
    */
-  canDecode(payload: string | Buffer, metadata?: any): boolean {
-    try {
-      const jsonString = Buffer.isBuffer(payload) 
-        ? payload.toString('utf-8') 
-        : payload;
-      
-      JSON.parse(jsonString);
-      return true;
-    } catch {
-      return false;
-    }
+  canDecode(_payload: string | Buffer, _metadata?: any): boolean {
+    return false;
   }
 }

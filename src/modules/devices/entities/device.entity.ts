@@ -1,48 +1,67 @@
-// src/modules/devices/entities/device.entity.ts
-import { Entity, Column, ManyToOne, OneToMany, JoinColumn, Index, OneToOne } from 'typeorm';
+import {
+  Entity,
+  Column,
+  ManyToOne,
+  OneToMany,
+  JoinColumn,
+  Index,
+  OneToOne,
+} from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { User, Tenant, Customer, Asset, DeviceProfile, DeviceCredentials } from '@modules/index.entities';
-import { DeviceType, DeviceStatus, DeviceConnectionType } from '@common/enums/index.enum';
+import {
+  User,
+  Tenant,
+  Customer,
+  Asset,
+  DeviceProfile,
+  DeviceCredentials,
+} from '@modules/index.entities';
+import {
+  DeviceType,
+  DeviceStatus,
+  DeviceConnectionType,
+} from '@common/enums/index.enum';
 
+// ─── Protocol enum used for topic strategy selection ────────────────────────
+// Stored on the device so we never guess from metadata.gatewayType strings.
+export enum DeviceProtocol {
+  GENERIC_MQTT = 'generic_mqtt',
+  LORAWAN_MILESIGHT = 'lorawan_milesight',
+  LORAWAN_CHIRPSTACK = 'lorawan_chirpstack',
+  HTTP = 'http',
+  COAP = 'coap',
+}
 
 @Entity('devices')
 @Index(['tenantId', 'status'])
 @Index(['tenantId', 'customerId'])
 @Index(['tenantId', 'assetId'])
 @Index(['tenantId', 'deviceProfileId'])
+ @Index(['manufacturer', 'model'])
 @Index(['deviceKey'], { unique: true })
 export class Device extends BaseEntity {
-  // ══════════════════════════════════════════════════════════════════════════
-  // TENANT SCOPING (REQUIRED)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Tenant scoping ────────────────────────────────────────────────────────
 
   @Column()
-
   tenantId: string;
 
   @ManyToOne(() => Tenant)
   @JoinColumn({ name: 'tenantId' })
   tenant: Tenant;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // CUSTOMER SCOPING (OPTIONAL)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Customer scoping (optional) ──────────────────────────────────────────
 
   @Column({ nullable: true })
-
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
   @JoinColumn({ name: 'customerId' })
   customer?: Customer;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // BASIC INFO
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Basic info ────────────────────────────────────────────────────────────
 
   @Column({ unique: true })
-
-  deviceKey: string;  // Unique identifier (MAC address, IMEI, UUID)
+  deviceKey: string;
 
   @Column()
   name: string;
@@ -54,167 +73,127 @@ export class Device extends BaseEntity {
   type: DeviceType;
 
   @Column({ type: 'enum', enum: DeviceStatus, default: DeviceStatus.INACTIVE })
-
   status: DeviceStatus;
 
-  @Column({ type: 'enum', enum: DeviceConnectionType, default: DeviceConnectionType.WIFI })
+  @Column({
+    type: 'enum',
+    enum: DeviceConnectionType,
+    default: DeviceConnectionType.WIFI,
+  })
   connectionType: DeviceConnectionType;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // OWNERSHIP
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Protocol — drives topic strategy & codec selection ───────────────────
+  // Set at creation time from CreateDeviceDto; never changed after provisioning.
+  @Column({
+    type: 'enum',
+    enum: DeviceProtocol,
+    default: DeviceProtocol.GENERIC_MQTT,
+  })
+  protocol: DeviceProtocol;
+
+  // ── Ownership ─────────────────────────────────────────────────────────────
 
   @Column()
-
-  userId: string;  // Who created this device
+  userId: string;
 
   @ManyToOne(() => User)
   @JoinColumn({ name: 'userId' })
   user: User;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // DEVICE PROFILE (Configuration Template)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Device profile ────────────────────────────────────────────────────────
 
   @Column({ nullable: true })
-
   deviceProfileId?: string;
 
   @ManyToOne(() => DeviceProfile, { nullable: true })
   @JoinColumn({ name: 'deviceProfileId' })
   deviceProfile?: DeviceProfile;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // ASSET ASSOCIATION (1 Device → 1 Asset)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Asset association ─────────────────────────────────────────────────────
 
   @Column({ nullable: true })
-
   assetId?: string;
 
-  @ManyToOne(() => Asset, asset => asset.devices, { nullable: true })
+  @ManyToOne(() => Asset, (asset) => asset.devices, { nullable: true })
   @JoinColumn({ name: 'assetId' })
   asset?: Asset;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // NETWORK INFO (Physical connectivity)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Network info ──────────────────────────────────────────────────────────
 
   @Column({ nullable: true })
-  ipAddress?: string;  // Current IP: "192.168.1.42"
+  ipAddress?: string;
 
   @Column({ nullable: true })
-  macAddress?: string;  // MAC address: "00:1A:2B:3C:4D:5E"
+  macAddress?: string;
 
   @Column({ nullable: true })
-  firmwareVersion?: string;  // "v1.2.3"
+  firmwareVersion?: string;
 
   @Column({ nullable: true })
-  hardwareVersion?: string;  // "HW-Rev-2.0"
+  hardwareVersion?: string;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // LOCATION (GPS coordinates + human-readable)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Location ──────────────────────────────────────────────────────────────
 
   @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
-  latitude?: number;  // 24.7136
+  latitude?: number;
 
   @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
-  longitude?: number;  // 46.6753
+  longitude?: number;
 
   @Column({ nullable: true })
-  location?: string;  // "Building A, Floor 3, Room 301"
+  location?: string;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // CONFIGURATION (Device-specific settings)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Configuration (device-specific settings, e.g. reporting interval) ────
 
   @Column({ type: 'jsonb', nullable: true })
   configuration?: Record<string, any>;
-  // Example for Temperature Sensor:
-  // configuration: {
-  //   reportingInterval: 60,          // Send data every 60 seconds
-  //   sensorCalibration: {
-  //     offset: -0.5,                 // Adjust readings by -0.5°C
-  //     multiplier: 1.0
-  //   },
-  //   sleepMode: true,
-  //   wakeupInterval: 300,            // Wake every 5 minutes
-  //   temperatureUnit: 'celsius',
-  //   thresholds: {
-  //     highTemp: 35,
-  //     lowTemp: 10
-  //   }
-  // }
-  //
-  // Example for Gateway:
-  // configuration: {
-  //   maxConnectedDevices: 100,
-  //   protocol: 'lorawan',
-  //   frequencyBand: 'EU868',
-  //   dataRate: 'SF7BW125',
-  //   txPower: 14
-  // }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // METADATA (Static info about the device)
-  // ══════════════════════════════════════════════════════════════════════════
-
+  // ── Metadata (static info: manufacturer, model, devEUI, codecId, etc.) ───
+  // codecId   — which codec to use for decoding (e.g. 'milesight-ws558')
+  // devEUI    — required for LoRaWAN devices
+  // manufacturer / model — used for codec auto-detection fallback
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, any>;
-  // Example:
-  // metadata: {
-  //   manufacturer: 'Milesight',
-  //   model: 'WS202',
-  //   serialNumber: 'SN-20240115-001',
-  //   installationDate: '2024-01-15',
-  //   installedBy: 'John Doe',
-  //   warrantyExpiry: '2027-01-15',
-  //   purchasePrice: 150,
-  //   vendor: 'ABC IoT Supplies'
-  // }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // TAGS (For filtering/grouping)
-  // ══════════════════════════════════════════════════════════════════════════
+  @Column({ nullable: true })
+  manufacturer?: string;
+ 
+  @Column({ nullable: true })
+  model?: string;
+
+
+  // ── Tags ──────────────────────────────────────────────────────────────────
 
   @Column({ type: 'simple-array', nullable: true })
   tags?: string[];
-  // Example: ['critical', 'hvac', 'monitored', 'building-a', 'floor-3']
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // ACTIVITY TRACKING
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Activity tracking ─────────────────────────────────────────────────────
 
   @Column({ type: 'timestamp', nullable: true })
+  lastSeenAt?: Date;
 
-  lastSeenAt?: Date;  // Last time device was seen (heartbeat)
+  @Column({ type: 'timestamp', nullable: true })
+  lastActivityAt?: Date;
 
-  @OneToOne(() => DeviceCredentials, credentials => credentials.device, {
+  @Column({ type: 'timestamp', nullable: true })
+  activatedAt?: Date;
+
+  // ── Credentials (1:1) — cascade handled by FK, not by TypeORM cascade ────
+
+  @OneToOne(() => DeviceCredentials, (credentials) => credentials.device, {
     nullable: true,
-    cascade: true
   })
   credentials?: DeviceCredentials;
 
-  @Column({ type: 'timestamp', nullable: true })
-  lastActivityAt?: Date;  // Last time device sent data
-
-  @Column({ type: 'timestamp', nullable: true })
-  activatedAt?: Date;  // When device was first activated
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // STATISTICS
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Statistics ────────────────────────────────────────────────────────────
 
   @Column({ type: 'int', default: 0 })
-  messageCount: number;  // Total messages sent by device
+  messageCount: number;
 
   @Column({ type: 'int', default: 0 })
-  errorCount: number;  // Total errors encountered
+  errorCount: number;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // HELPER METHODS
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Helper methods ────────────────────────────────────────────────────────
 
   isOnline(): boolean {
     if (!this.lastSeenAt) return false;

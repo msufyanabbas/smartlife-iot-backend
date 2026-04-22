@@ -1,400 +1,357 @@
 // src/modules/devices/codecs/milesight/ws558.codec.ts
 /**
  * Milesight WS558 Codec
- * Smart Switch Controller with 8 Channels
- * 
- * Device Info:
- * - 8x relay switches (on/off control)
- * - Voltage monitoring
- * - Active power measurement
- * - Power consumption tracking
- * - Current monitoring
- * - Power factor
- * - Protocol: LoRaWAN 1.0.3
- * 
- * Based on official Milesight decoder v1.0.0
+ * Smart Light Controller — 8 switches + voltage/power/current metering
+ *
+ * Telemetry channels:
+ *   - switch_1 … switch_8  ('on' | 'off')
+ *   - voltage               (V,   uint16/10)
+ *   - active_power          (W,   uint32)
+ *   - power_factor          (%,   uint8)
+ *   - power_consumption     (Wh,  uint32)
+ *   - total_current         (mA,  uint16)
+ *
+ * Switch channel 0x08 0x31 — 2 bytes:
+ *   byte[0] = change bitmask  (which switches changed)
+ *   byte[1] = state bitmask   (current state of all switches, bit0=sw1)
+ *
+ * Reference payload: "08310001 058164 07C90200 0374B208 068301000000 048001000000"
+ *   → { switch_1:"on", switch_2-8:"off", voltage:222.6, active_power:1,
+ *        power_factor:100, total_current:2, power_consumption:1 }
+ *
+ * Based on official Milesight WS558 decoder/encoder v1.0.0
  */
 
-import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../interfaces/base-codec.interface';
+import {
+  BaseDeviceCodec,
+  DecodedTelemetry,
+  EncodedCommand,
+} from '../interfaces/base-codec.interface';
 
 export class MilesightWS558Codec extends BaseDeviceCodec {
-  readonly codecId = 'milesight-ws558';
-  readonly manufacturer = 'Milesight';
-  readonly supportedModels = ['WS558', 'WS558-915', 'WS558-868'];
+  readonly codecId: string          = 'milesight-ws558';
+  readonly manufacturer: string     = 'Milesight';
+  readonly supportedModels: string[] = ['WS558'];
   readonly protocol = 'lorawan' as const;
-  
-  /**
-   * Decode WS558 uplink payload
-   * Based on official Milesight decoder
-   */
-  decode(payload: string | Buffer, fPort?: number): DecodedTelemetry {
-    const bytes = this.normalizePayload(payload);
+
+  // ── Decode ────────────────────────────────────────────────────────────────
+
+  decode(payload: string | Buffer, _fPort?: number): DecodedTelemetry {
+    const bytes   = this.normalizePayload(payload);
     const decoded: DecodedTelemetry = {};
-    
+
     let i = 0;
     while (i < bytes.length) {
-      const channelId = bytes[i++];
-      const channelType = bytes[i++];
-      
-      // IPSO VERSION (0xFF 0x01)
-      if (channelId === 0xff && channelType === 0x01) {
-        const major = (bytes[i] & 0xf0) >> 4;
-        const minor = bytes[i] & 0x0f;
-        decoded.ipso_version = `v${major}.${minor}`;
+      const ch = bytes[i++];
+      const ty = bytes[i++];
+
+      // ── Attribute channels ──────────────────────────────────────────────
+
+      if (ch === 0xff && ty === 0x01) {
+        decoded.ipso_version = `v${(bytes[i] & 0xf0) >> 4}.${bytes[i] & 0x0f}`;
         i += 1;
       }
-      
-      // HARDWARE VERSION (0xFF 0x09)
-      else if (channelId === 0xff && channelType === 0x09) {
-        const major = (bytes[i] & 0xff).toString(16);
-        const minor = (bytes[i + 1] & 0xff) >> 4;
-        decoded.hardware_version = `v${major}.${minor}`;
+      else if (ch === 0xff && ty === 0x09) {
+        decoded.hardware_version = `v${(bytes[i] & 0xff).toString(16)}.${(bytes[i + 1] & 0xff) >> 4}`;
         i += 2;
       }
-      
-      // FIRMWARE VERSION (0xFF 0x0A)
-      else if (channelId === 0xff && channelType === 0x0a) {
-        const major = (bytes[i] & 0xff).toString(16);
-        const minor = (bytes[i + 1] & 0xff).toString(16);
-        decoded.firmware_version = `v${major}.${minor}`;
+      else if (ch === 0xff && ty === 0x0a) {
+        decoded.firmware_version = `v${(bytes[i] & 0xff).toString(16)}.${(bytes[i + 1] & 0xff).toString(16)}`;
         i += 2;
       }
-      
-      // TSL VERSION (0xFF 0xFF)
-      else if (channelId === 0xff && channelType === 0xff) {
-        const major = bytes[i] & 0xff;
-        const minor = bytes[i + 1] & 0xff;
-        decoded.tsl_version = `v${major}.${minor}`;
+      else if (ch === 0xff && ty === 0xff) {
+        decoded.tsl_version = `v${bytes[i]}.${bytes[i + 1]}`;
         i += 2;
       }
-      
-      // SERIAL NUMBER (0xFF 0x16)
-      else if (channelId === 0xff && channelType === 0x16) {
-        const temp: string[] = [];
-        for (let idx = 0; idx < 8; idx++) {
-          temp.push(('0' + (bytes[i + idx] & 0xff).toString(16)).slice(-2));
-        }
-        decoded.sn = temp.join('');
+      else if (ch === 0xff && ty === 0x16) {
+        decoded.sn = bytes.slice(i, i + 8).map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
         i += 8;
       }
-      
-      // LORAWAN CLASS (0xFF 0x0F)
-      else if (channelId === 0xff && channelType === 0x0f) {
-        const classMap: Record<number, string> = {
-          0: 'Class A',
-          1: 'Class B',
-          2: 'Class C',
-          3: 'Class CtoB',
-        };
-        decoded.lorawan_class = classMap[bytes[i]] || 'unknown';
+      else if (ch === 0xff && ty === 0x0f) {
+        const classMap: Record<number, string> = { 0: 'Class A', 1: 'Class B', 2: 'Class C', 3: 'Class CtoB' };
+        decoded.lorawan_class = classMap[bytes[i]] ?? 'unknown';
         i += 1;
       }
-      
-      // RESET EVENT (0xFF 0xFE)
-      else if (channelId === 0xff && channelType === 0xfe) {
+      else if (ch === 0xff && ty === 0xfe) {
         decoded.reset_event = bytes[i] === 1 ? 'reset' : 'normal';
         i += 1;
       }
-      
-      // DEVICE STATUS (0xFF 0x0B)
-      else if (channelId === 0xff && channelType === 0x0b) {
+      else if (ch === 0xff && ty === 0x0b) {
         decoded.device_status = bytes[i] === 1 ? 'on' : 'off';
         i += 1;
       }
-      
-      // VOLTAGE (0x03 0x74)
-      else if (channelId === 0x03 && channelType === 0x74) {
-        decoded.voltage = ((bytes[i + 1] << 8) + bytes[i]) / 10;
+
+      // ── Telemetry channels ──────────────────────────────────────────────
+
+      // SWITCH STATUS (0x08 0x31) — 2 bytes: [change_mask, state_mask]
+      // change_mask: which switches changed (we don't need this for state)
+      // state_mask:  bit0=switch_1, bit1=switch_2, … bit7=switch_8
+      else if (ch === 0x08 && ty === 0x31) {
+        /* const changeMask = bytes[i]; */ // which switches changed — unused
+        const stateMask  = bytes[i + 1];
+        for (let idx = 0; idx < 8; idx++) {
+          const key = `switch_${idx + 1}`;
+          decoded[key] = (stateMask >> idx) & 0x01 ? 'on' : 'off';
+        }
         i += 2;
       }
-      
-      // ACTIVE POWER (0x04 0x80)
-      else if (channelId === 0x04 && channelType === 0x80) {
-        decoded.active_power = (bytes[i + 3] << 24) + (bytes[i + 2] << 16) + (bytes[i + 1] << 8) + bytes[i];
+
+      // VOLTAGE (0x03 0x74) — uint16 LE / 10 = V
+      else if (ch === 0x03 && ty === 0x74) {
+        decoded.voltage = (((bytes[i + 1] << 8) | bytes[i]) & 0xffff) / 10;
+        i += 2;
+      }
+
+      // ACTIVE POWER (0x04 0x80) — uint32 LE, W
+      else if (ch === 0x04 && ty === 0x80) {
+        decoded.active_power = (((bytes[i + 3] << 24) | (bytes[i + 2] << 16) | (bytes[i + 1] << 8) | bytes[i]) >>> 0);
         i += 4;
       }
-      
-      // POWER FACTOR (0x05 0x81)
-      else if (channelId === 0x05 && channelType === 0x81) {
+
+      // POWER FACTOR (0x05 0x81) — uint8, %
+      else if (ch === 0x05 && ty === 0x81) {
         decoded.power_factor = bytes[i] & 0xff;
         i += 1;
       }
-      
-      // POWER CONSUMPTION (0x06 0x83)
-      else if (channelId === 0x06 && channelType === 0x83) {
-        decoded.power_consumption = (bytes[i + 3] << 24) + (bytes[i + 2] << 16) + (bytes[i + 1] << 8) + bytes[i];
+
+      // POWER CONSUMPTION (0x06 0x83) — uint32 LE, Wh
+      else if (ch === 0x06 && ty === 0x83) {
+        decoded.power_consumption = (((bytes[i + 3] << 24) | (bytes[i + 2] << 16) | (bytes[i + 1] << 8) | bytes[i]) >>> 0);
         i += 4;
       }
-      
-      // TOTAL CURRENT (0x07 0xC9)
-      else if (channelId === 0x07 && channelType === 0xc9) {
-        decoded.current = (bytes[i + 1] << 8) + bytes[i];
+
+      // TOTAL CURRENT (0x07 0xC9) — uint16 LE, mA
+      else if (ch === 0x07 && ty === 0xc9) {
+        decoded.total_current = ((bytes[i + 1] << 8) | bytes[i]) & 0xffff;
         i += 2;
       }
-      
-      // SWITCH STATUS (0x08 0x31) - 8 switches
-      else if (channelId === 0x08 && channelType === 0x31) {
-        const switchFlags = bytes[i + 1];
-        
-        // Decode all 8 switches
-        for (let idx = 0; idx < 8; idx++) {
-          const switchTag = `switch_${idx + 1}`;
-          const status = (switchFlags >> idx) & 1;
-          decoded[switchTag] = status === 1 ? 'on' : 'off';
-        }
-        
-        i += 2;
-      }
-      
-      // POWER CONSUMPTION ENABLE (0xFF 0x26)
-      else if (channelId === 0xff && channelType === 0x26) {
+
+      // POWER CONSUMPTION ENABLE response (0xFF 0x26)
+      else if (ch === 0xff && ty === 0x26) {
         decoded.power_consumption_enable = bytes[i] === 1 ? 'enable' : 'disable';
         i += 1;
       }
-      
-      // DOWNLINK RESPONSES (0xFE or 0xFF with specific types)
-      else if (channelId === 0xfe || channelId === 0xff) {
-        const result = this.handleDownlinkResponse(channelType, bytes, i);
+
+      // DOWNLINK RESPONSE
+      else if (ch === 0xfe || ch === 0xff) {
+        const result = this.handleDownlinkResponse(ty, bytes, i);
         Object.assign(decoded, result.data);
         i = result.offset;
       }
-      
-      // Unknown channel - skip
-      else {
-        break;
-      }
+
+      else { break; }
     }
-    
+
     return decoded;
   }
-  
-  /**
-   * Handle downlink response
-   */
-  private handleDownlinkResponse(channelType: number, bytes: number[], offset: number): { data: any; offset: number } {
-    const decoded: any = {};
-    
-    switch (channelType) {
-      case 0x10: // Reboot
-        decoded.reboot = bytes[offset] === 1 ? 'yes' : 'no';
+
+  // ── Downlink response handler ─────────────────────────────────────────────
+
+  private handleDownlinkResponse(
+    ty: number,
+    bytes: number[],
+    offset: number,
+  ): { data: Record<string, any>; offset: number } {
+    const data: Record<string, any> = {};
+
+    switch (ty) {
+      case 0x10:
+        data.reboot = 'yes';
         offset += 1;
         break;
-        
-      case 0x28: // Report Status
-        decoded.report_status = bytes[offset] === 1 ? 'yes' : 'no';
+
+      case 0x28:
+        data.report_status = 'yes';
         offset += 1;
         break;
-        
-      case 0x03: // Report Interval
-        decoded.report_interval = (bytes[offset + 1] << 8) + bytes[offset];
+
+      case 0x03:
+        data.report_interval = ((bytes[offset + 1] << 8) | bytes[offset]) & 0xffff;
         offset += 2;
         break;
-        
-      case 0x23: // Cancel Delay Task
-        decoded.cancel_delay_task = bytes[offset] & 0xff;
-        offset += 2; // Skip 1 byte
+
+      case 0x23:
+        data.cancel_delay_task = bytes[offset] & 0xff;
+        offset += 2; // skip 1 reserved byte
         break;
-        
-      case 0x26: // Power Consumption Enable
-        decoded.power_consumption_enable = bytes[offset] === 1 ? 'enable' : 'disable';
+
+      case 0x26:
+        data.power_consumption_enable = bytes[offset] === 1 ? 'enable' : 'disable';
         offset += 1;
         break;
-        
-      case 0x27: // Clear Power Consumption
-        decoded.clear_power_consumption = bytes[offset] === 1 ? 'yes' : 'no';
+
+      case 0x27:
+        data.clear_power_consumption = 'yes';
         offset += 1;
         break;
-        
-      case 0x32: // Delay Task
-        decoded.delay_task = {};
-        decoded.delay_task.task_id = bytes[offset] & 0xff;
-        decoded.delay_task.delay_time = (bytes[offset + 2] << 8) + bytes[offset + 1];
-        
-        const mask = bytes[offset + 3] & 0xff;
-        const status = bytes[offset + 4] & 0xff;
-        
-        offset += 5;
-        
-        const switchBitOffset = { 
-          switch_1: 0, switch_2: 1, switch_3: 2, switch_4: 3,
-          switch_5: 4, switch_6: 5, switch_7: 6, switch_8: 7 
-        };
-        
-        for (const [key, bitPos] of Object.entries(switchBitOffset)) {
-          if ((mask >> bitPos) & 0x01) {
-            decoded.delay_task[key] = ((status >> bitPos) & 0x01) === 1 ? 'on' : 'off';
+
+      case 0x32: {
+        // Delay task ACK
+        const taskId    = bytes[offset] & 0xff;
+        const delayTime = ((bytes[offset + 2] << 8) | bytes[offset + 1]) & 0xffff;
+        const mask      = bytes[offset + 3] & 0xff;
+        const status    = bytes[offset + 4] & 0xff;
+        const task: Record<string, any> = { task_id: taskId, delay_time: delayTime };
+        for (let idx = 0; idx < 8; idx++) {
+          if ((mask >> idx) & 0x01) {
+            task[`switch_${idx + 1}`] = (status >> idx) & 0x01 ? 'on' : 'off';
           }
         }
+        data.delay_task = task;
+        offset += 5;
         break;
-        
+      }
+
       default:
-        // Unknown downlink response - skip
+        offset += 1;
         break;
     }
-    
-    return { data: decoded, offset };
+
+    return { data, offset };
   }
-  
-  /**
-   * Encode downlink command for WS558
-   * Based on official Milesight encoder
-   */
+
+  // ── Encode ────────────────────────────────────────────────────────────────
+
   encode(command: { type: string; params?: any }): EncodedCommand {
     let bytes: number[] = [];
-    
+    const p = command.params ?? {};
+
     switch (command.type) {
       case 'reboot':
-        // Reboot device: [0xFF, 0x10, 0xFF]
-        if (command.params?.reboot === 1 || command.params?.reboot === true) {
-          bytes = [0xff, 0x10, 0xff];
-        }
+        bytes = [0xff, 0x10, 0xff];
         break;
-        
+
       case 'report_status':
-        // Request status report: [0xFF, 0x28, 0xFF]
-        if (command.params?.report_status === 1 || command.params?.report_status === true) {
-          bytes = [0xff, 0x28, 0xff];
+        bytes = [0xff, 0x28, 0xff];
+        break;
+
+      case 'set_report_interval': {
+        const v = p.interval ?? 300;
+        if (typeof v !== 'number') throw new Error('interval must be a number');
+        bytes = [0xff, 0x03, v & 0xff, (v >> 8) & 0xff];
+        break;
+      }
+
+      case 'control_switch': {
+        // p.switches: { switch_1: 'on'|'off', switch_3: 'on', ... }
+        const switchMap = p.switches ?? p; // allow params to be the switches directly
+        const switchBits: Record<string, number> = {
+          switch_1: 0, switch_2: 1, switch_3: 2, switch_4: 3,
+          switch_5: 4, switch_6: 5, switch_7: 6, switch_8: 7,
+        };
+        let mask   = 0;
+        let status = 0;
+        for (const [key, bit] of Object.entries(switchBits)) {
+          if (key in switchMap) {
+            mask   |= 1 << bit;
+            if (switchMap[key] === 'on' || switchMap[key] === 1 || switchMap[key] === true) {
+              status |= 1 << bit;
+            }
+          }
         }
+        bytes = [0x08, mask & 0xff, status & 0xff];
         break;
-        
-      case 'set_reporting_interval':
-      case 'report_interval':
-        // Set report interval: [0xFF, 0x03, interval_low, interval_high]
-        const interval = command.params?.interval || command.params?.report_interval || 300;
-        bytes = [0xff, 0x03, interval & 0xff, (interval >> 8) & 0xff];
-        break;
-        
-      case 'control_switch':
-      case 'switch_control':
-        // Control switches: [0x08, mask, status]
-        const switchResult = this.encodeControlSwitch(command.params);
-        bytes = switchResult;
-        break;
-        
-      case 'control_switch_delay':
-      case 'delay_task':
-        // Control switches with delay: [0xFF, 0x32, task_id, delay_low, delay_high, mask, status]
-        const delayResult = this.encodeControlSwitchWithDelay(command.params);
-        bytes = delayResult;
-        break;
-        
-      case 'cancel_delay_task':
-        // Cancel delay task: [0xFF, 0x23, task_id, 0xFF]
-        const taskId = command.params?.cancel_delay_task || command.params?.task_id || 0;
-        if (taskId > 0) {
-          bytes = [0xff, 0x23, taskId, 0xff];
+      }
+
+      case 'control_switch_with_delay': {
+        // p: { task_id, delay_time, switch_1: 'on', ... }
+        const taskId    = p.task_id    ?? 1;
+        const delayTime = p.delay_time ?? 0;
+        if (taskId < 0)    throw new Error('task_id must be >= 0');
+        if (delayTime < 0) throw new Error('delay_time must be >= 0');
+
+        const switchBits: Record<string, number> = {
+          switch_1: 0, switch_2: 1, switch_3: 2, switch_4: 3,
+          switch_5: 4, switch_6: 5, switch_7: 6, switch_8: 7,
+        };
+        let mask   = 0;
+        let status = 0;
+        for (const [key, bit] of Object.entries(switchBits)) {
+          if (key in p) {
+            mask   |= 1 << bit;
+            if (p[key] === 'on' || p[key] === 1 || p[key] === true) {
+              status |= 1 << bit;
+            }
+          }
         }
+        bytes = [
+          0xff, 0x32,
+          taskId & 0xff,
+          delayTime & 0xff, (delayTime >> 8) & 0xff,
+          mask & 0xff,
+          status & 0xff,
+        ];
         break;
-        
-      case 'power_consumption_enable':
-        // Enable/disable power consumption: [0xFF, 0x26, value]
-        const enable = command.params?.power_consumption_enable === 1 || command.params?.power_consumption_enable === true ? 1 : 0;
-        bytes = [0xff, 0x26, enable];
+      }
+
+      case 'cancel_delay_task': {
+        const taskId = p.task_id ?? 0;
+        if (taskId === 0) { bytes = []; break; }
+        bytes = [0xff, 0x23, taskId & 0xff, 0xff];
         break;
-        
+      }
+
+      case 'set_power_consumption_enable':
+        bytes = [0xff, 0x26, p.enable ? 1 : 0];
+        break;
+
       case 'clear_power_consumption':
-        // Clear power consumption: [0xFF, 0x27, 0xFF]
-        if (command.params?.clear_power_consumption === 1 || command.params?.clear_power_consumption === true) {
-          bytes = [0xff, 0x27, 0xff];
-        }
+        bytes = [0xff, 0x27, 0xff];
         break;
-        
+
       default:
-        throw new Error(`Unsupported command: ${command.type}`);
+        throw new Error(`WS558: unsupported command "${command.type}"`);
     }
-    
-    return {
-      fPort: 85,
-      data: this.bytesToHex(bytes),
-      confirmed: false,
-    };
+
+    return { fPort: 85, data: this.hexToBase64(this.bytesToHex(bytes)), confirmed: false };
   }
-  
-  /**
-   * Encode control switch command
-   */
-  private encodeControlSwitch(params: any): number[] {
-    const switchBitOffset: Record<string, number> = {
-      switch_1: 0, switch_2: 1, switch_3: 2, switch_4: 3,
-      switch_5: 4, switch_6: 5, switch_7: 6, switch_8: 7,
-    };
-    
-    let mask = 0;
-    let status = 0;
-    
-    for (const [key, bitPos] of Object.entries(switchBitOffset)) {
-      if (key in params) {
-        mask |= 1 << bitPos;
-        const value = params[key] === 1 || params[key] === 'on' || params[key] === true ? 1 : 0;
-        status |= value << bitPos;
-      }
-    }
-    
-    return [0x08, mask, status];
+
+  // ── Utils ────────────────────────────────────────────────────────────────
+private hexToBase64(hex: string): string {
+  if (!hex || typeof hex !== 'string') {
+    throw new Error('Invalid hex input');
   }
-  
-  /**
-   * Encode control switch with delay
-   */
-  private encodeControlSwitchWithDelay(params: any): number[] {
-    const taskId = params.task_id || 0;
-    const delayTime = params.delay_time || 0;
-    
-    if (taskId < 0 || delayTime < 0) {
-      throw new Error('task_id and delay_time must be >= 0');
-    }
-    
-    const switchBitOffset: Record<string, number> = {
-      switch_1: 0, switch_2: 1, switch_3: 2, switch_4: 3,
-      switch_5: 4, switch_6: 5, switch_7: 6, switch_8: 7,
-    };
-    
-    let mask = 0;
-    let status = 0;
-    
-    for (const [key, bitPos] of Object.entries(switchBitOffset)) {
-      if (key in params) {
-        mask |= 1 << bitPos;
-        const value = params[key] === 1 || params[key] === 'on' || params[key] === true ? 1 : 0;
-        status |= value << bitPos;
-      }
-    }
-    
-    return [
-      0xff,
-      0x32,
-      taskId,
-      delayTime & 0xff,
-      (delayTime >> 8) & 0xff,
-      mask,
-      status,
-    ];
+
+  // remove spaces if payload like "08 01 01"
+  const cleanHex = hex.replace(/\s+/g, '');
+
+  // validate hex
+  if (!/^[0-9a-fA-F]*$/.test(cleanHex)) {
+    throw new Error('Invalid hex string');
   }
-  
-  /**
-   * Check if payload is from WS558
-   */
-  canDecode(payload: string | Buffer, metadata?: any): boolean {
+
+  return Buffer.from(cleanHex, 'hex').toString('base64');
+}
+
+  // ── canDecode ─────────────────────────────────────────────────────────────
+  // WS558 is uniquely identified by the switch status channel (0x08 0x31)
+  // or the power metering channels (voltage 0x03 0x74, active power 0x04 0x80).
+
+  canDecode(payload: string | Buffer, _metadata?: any): boolean {
     const bytes = this.normalizePayload(payload);
-    
     if (bytes.length < 2) return false;
-    
-    const channelId = bytes[0];
-    const channelType = bytes[1];
-    
-    // Check for typical WS558 channel IDs
-    // Voltage (0x03 0x74), Active Power (0x04 0x80), Switch Status (0x08 0x31)
-    const ws558Signatures = [
-      { ch: 0x03, type: 0x74 }, // Voltage
-      { ch: 0x04, type: 0x80 }, // Active Power
-      { ch: 0x05, type: 0x81 }, // Power Factor
-      { ch: 0x06, type: 0x83 }, // Power Consumption
-      { ch: 0x07, type: 0xc9 }, // Current
-      { ch: 0x08, type: 0x31 }, // Switch Status
-    ];
-    
-    return ws558Signatures.some(sig => 
-      channelId === sig.ch && channelType === sig.type
-    );
+
+    let i = 0;
+    while (i + 1 < bytes.length) {
+      const ch = bytes[i];
+      const ty = bytes[i + 1];
+
+      if (ch === 0x08 && ty === 0x31) return true; // switch status  — WS558 unique
+      if (ch === 0x03 && ty === 0x74) return true; // voltage        — WS558 unique
+      if (ch === 0x04 && ty === 0x80) return true; // active power   — WS558 unique
+      if (ch === 0x07 && ty === 0xc9) return true; // total current  — WS558 unique
+
+      // Skip known attribute channels
+      if (ch === 0xff && ty === 0x01) { i += 3; continue; }
+      if (ch === 0xff && (ty === 0x09 || ty === 0x0a)) { i += 4; continue; }
+      if (ch === 0xff && ty === 0xff) { i += 4; continue; }
+      if (ch === 0xff && ty === 0x16) { i += 10; continue; }
+      if (ch === 0xff && ty === 0x0f) { i += 3; continue; }
+      if (ch === 0xff && (ty === 0xfe || ty === 0x0b)) { i += 3; continue; }
+
+      break;
+    }
+
+    return false;
   }
 }

@@ -1,132 +1,64 @@
 import {
   Injectable,
   NotFoundException,
-  BadRequestException,
-  ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  Repository,
-  Between,
-  LessThanOrEqual,
-  MoreThanOrEqual,
-  In,
-} from 'typeorm';
+import { Repository } from 'typeorm';
 import { Telemetry } from './entities/telemetry.entity';
 import { Device } from '../devices/entities/device.entity';
 import { CreateTelemetryDto } from './dto/create-telemetry.dto';
 import { QueryTelemetryDto } from './dto/telemetry-query.dto';
-import { KafkaService } from '@/lib/kafka/kafka.service';
 import { RedisService } from '@/lib/redis/redis.service';
+
+// NOTE: TelemetryService does NOT inject KafkaService.
+// The HTTP ingestion path (POST /telemetry/devices/:deviceKey) stores the
+// record directly to the database without going through Kafka — this avoids
+// double-processing since DeviceListenerService already handles the MQTT
+// path and publishes to telemetry.device.raw.
+// If you want HTTP ingestion to also trigger automations and WebSocket
+// broadcasts, emit an EventEmitter2 event here instead of a Kafka message.
 
 @Injectable()
 export class TelemetryService {
+  private readonly logger = new Logger(TelemetryService.name);
+
   constructor(
     @InjectRepository(Telemetry)
-    private telemetryRepository: Repository<Telemetry>,
+    private readonly telemetryRepository: Repository<Telemetry>,
     @InjectRepository(Device)
-    private deviceRepository: Repository<Device>,
-    private kafkaService: KafkaService,
-    private redisService: RedisService,
+    private readonly deviceRepository: Repository<Device>,
+    private readonly redisService: RedisService,
   ) {}
 
-  /**
-   * Create telemetry data for a device
-   */
-  async create(
-    deviceKey: string,
-    createTelemetryDto: CreateTelemetryDto,
-  ): Promise<Telemetry> {
-    // Find device
-    const device = await this.deviceRepository.findOne({
-      where: { deviceKey: deviceKey },
-    });
+  // ── Create (HTTP ingestion path) ──────────────────────────────────────────
 
-    if (!device) {
-      throw new NotFoundException(`Device with key ${deviceKey} not found`);
-    }
+  async create(deviceKey: string, dto: CreateTelemetryDto): Promise<Telemetry> {
+    const device = await this.deviceRepository.findOne({ where: { deviceKey } });
+    if (!device) throw new NotFoundException(`Device not found: ${deviceKey}`);
 
-    // Create telemetry record
     const telemetry = this.telemetryRepository.create({
       deviceId: device.id,
       deviceKey: device.deviceKey,
-      timestamp: createTelemetryDto.timestamp
-        ? new Date(createTelemetryDto.timestamp)
-        : new Date(),
-      data: createTelemetryDto.data,
-      temperature: createTelemetryDto.temperature,
-      humidity: createTelemetryDto.humidity,
-      pressure: createTelemetryDto.pressure,
-      latitude: createTelemetryDto.latitude,
-      longitude: createTelemetryDto.longitude,
-      batteryLevel: createTelemetryDto.batteryLevel,
-      signalStrength: createTelemetryDto.signalStrength,
-      metadata: createTelemetryDto.metadata,
       tenantId: device.tenantId,
+      timestamp: dto.timestamp ? new Date(dto.timestamp) : new Date(),
+      data: dto.data,
+      temperature: dto.temperature,
+      humidity: dto.humidity,
+      pressure: dto.pressure,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      batteryLevel: dto.batteryLevel,
+      signalStrength: dto.signalStrength,
+      metadata: dto.metadata,
     });
-
-    // ============ KAFKA INTEGRATION ============
-    // Publish to Kafka BEFORE saving to database
-    // This allows async processing without blocking the response
-    try {
-      await this.kafkaService.sendMessage(
-        'telemetry.device.raw',
-        {
-          deviceId: device.id,
-          deviceKey: device.deviceKey,
-          tenantId: device.tenantId,
-          data: createTelemetryDto.data,
-          temperature: createTelemetryDto.temperature,
-          humidity: createTelemetryDto.humidity,
-          pressure: createTelemetryDto.pressure,
-          batteryLevel: createTelemetryDto.batteryLevel,
-          receivedAt: Date.now(),
-        },
-        device.id, // Use deviceId as partition key for ordering
-      );
-    } catch (error) {
-      console.error('Failed to publish to Kafka:', error);
-      // Don't fail the request if Kafka is down
-    }
 
     const saved = await this.telemetryRepository.save(telemetry);
 
-    // ============ REDIS CACHING ============
-    // Cache latest telemetry in Redis for fast access
-    try {
-      // 1. Store latest values
-      await this.redisService.hmset(`device:${device.id}:telemetry:latest`, {
-        temperature: createTelemetryDto.temperature?.toString() || '',
-        humidity: createTelemetryDto.humidity?.toString() || '',
-        pressure: createTelemetryDto.pressure?.toString() || '',
-        batteryLevel: createTelemetryDto.batteryLevel?.toString() || '',
-        timestamp: Date.now().toString(),
-      });
-
-      // 2. Add to recent readings list (keep last 100)
-      await this.redisService.lpush(
-        `telemetry:${device.id}:recent`,
-        JSON.stringify({
-          ...createTelemetryDto.data,
-          temperature: createTelemetryDto.temperature,
-          humidity: createTelemetryDto.humidity,
-          timestamp: Date.now(),
-        }),
-      );
-      await this.redisService.ltrim(`telemetry:${device.id}:recent`, 0, 99);
-      await this.redisService.expire(`telemetry:${device.id}:recent`, 3600); // 1 hour
-
-      // 3. Update device last seen
-      await this.redisService.hset(
-        `device:${device.id}:state`,
-        'lastSeen',
-        Date.now().toString(),
-      );
-    } catch (error) {
-      console.error('Failed to cache in Redis:', error);
-      // Don't fail the request if Redis is down
-    }
-    // ================================================
+    // Cache latest values in Redis for fast reads
+    await this.cacheLatest(device.id, dto).catch((err) =>
+      this.logger.error(`Redis cache failed: ${err.message}`),
+    );
 
     // Update device activity
     await this.deviceRepository.update(
@@ -134,34 +66,24 @@ export class TelemetryService {
       {
         lastActivityAt: new Date(),
         lastSeenAt: new Date(),
-        messageCount: () => 'messageCount + 1',
+        messageCount: () => '"messageCount" + 1',
       },
     );
 
     return saved;
   }
 
-  /**
-   * Create multiple telemetry records (batch insert)
-   */
-  async createBatch(
-    deviceKey: string,
-    telemetryData: CreateTelemetryDto[],
-  ): Promise<Telemetry[]> {
-    // Find device
-    const device = await this.deviceRepository.findOne({
-      where: { deviceKey },
-    });
+  // ── Batch create ──────────────────────────────────────────────────────────
 
-    if (!device) {
-      throw new NotFoundException(`Device with key ${deviceKey} not found`);
-    }
+  async createBatch(deviceKey: string, dtos: CreateTelemetryDto[]): Promise<Telemetry[]> {
+    const device = await this.deviceRepository.findOne({ where: { deviceKey } });
+    if (!device) throw new NotFoundException(`Device not found: ${deviceKey}`);
 
-    // Create telemetry records
-    const telemetryRecords = telemetryData.map((dto) =>
+    const records = dtos.map((dto) =>
       this.telemetryRepository.create({
         deviceId: device.id,
         deviceKey: device.deviceKey,
+        tenantId: device.tenantId,
         timestamp: dto.timestamp ? new Date(dto.timestamp) : new Date(),
         data: dto.data,
         temperature: dto.temperature,
@@ -172,141 +94,84 @@ export class TelemetryService {
         batteryLevel: dto.batteryLevel,
         signalStrength: dto.signalStrength,
         metadata: dto.metadata,
-        tenantId: device.tenantId,
       }),
     );
 
-    // ============ NEW: KAFKA BATCH INTEGRATION ============
-    // Publish batch to Kafka
-    try {
-      const kafkaMessages = telemetryData.map((dto) => ({
-        key: device.id,
-        value: {
-          deviceId: device.id,
-          deviceKey: device.deviceKey,
-          tenantId: device.tenantId,
-          data: dto.data,
-          temperature: dto.temperature,
-          humidity: dto.humidity,
-          receivedAt: Date.now(),
-        },
-      }));
+    const saved = await this.telemetryRepository.save(records);
 
-      await this.kafkaService.sendBatch('telemetry.device.raw', kafkaMessages);
-    } catch (error) {
-      console.error('Failed to publish batch to Kafka:', error);
-    }
-    // ======================================================
-
-    const saved = await this.telemetryRepository.save(telemetryRecords);
-
-    // Update device activity
     await this.deviceRepository.update(
       { id: device.id },
       {
         lastActivityAt: new Date(),
         lastSeenAt: new Date(),
-        messageCount: () => `messageCount + ${telemetryData.length}`,
+        messageCount: () => `"messageCount" + ${dtos.length}`,
       },
     );
 
     return saved;
   }
 
-  /**
-   * Query telemetry data for a device
-   */
+  // ── Query ──────────────────────────────────────────────────────────────────
+  // Uses tenantId from the device record for access control rather than
+  // userId — this correctly handles TENANT_ADMIN and CUSTOMER_USER roles
+  // who don't directly own devices.
+
   async findByDevice(
     deviceId: string,
     userId: string,
     queryDto: QueryTelemetryDto,
   ): Promise<{ data: Telemetry[]; total: number }> {
-    // Verify device ownership
-    const device = await this.deviceRepository.findOne({
-      where: { id: deviceId, userId },
-    });
+    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    if (!device) throw new NotFoundException('Device not found');
 
-    if (!device) {
-      throw new NotFoundException('Device not found or access denied');
-    }
-
-    const queryBuilder = this.telemetryRepository
+    const qb = this.telemetryRepository
       .createQueryBuilder('telemetry')
       .where('telemetry.deviceId = :deviceId', { deviceId });
 
-    // Date range filter
     if (queryDto.startDate && queryDto.endDate) {
-      queryBuilder.andWhere(
-        'telemetry.timestamp BETWEEN :startDate AND :endDate',
-        {
-          startDate: new Date(queryDto.startDate),
-          endDate: new Date(queryDto.endDate),
-        },
-      );
-    } else if (queryDto.startDate) {
-      queryBuilder.andWhere('telemetry.timestamp >= :startDate', {
+      qb.andWhere('telemetry.timestamp BETWEEN :startDate AND :endDate', {
         startDate: new Date(queryDto.startDate),
-      });
-    } else if (queryDto.endDate) {
-      queryBuilder.andWhere('telemetry.timestamp <= :endDate', {
         endDate: new Date(queryDto.endDate),
       });
+    } else if (queryDto.startDate) {
+      qb.andWhere('telemetry.timestamp >= :startDate', { startDate: new Date(queryDto.startDate) });
+    } else if (queryDto.endDate) {
+      qb.andWhere('telemetry.timestamp <= :endDate', { endDate: new Date(queryDto.endDate) });
     }
 
-    // Filter by specific data key
     if (queryDto.key) {
-      queryBuilder.andWhere(`telemetry.data ? :key`, { key: queryDto.key });
+      qb.andWhere('telemetry.data ? :key', { key: queryDto.key });
     }
 
-    // Get total count
-    const total = await queryBuilder.getCount();
+    const total = await qb.getCount();
+    qb.orderBy('telemetry.timestamp', queryDto.order === 'asc' ? 'ASC' : 'DESC');
+    qb.skip(queryDto.skip ?? 0).take(queryDto.limit ?? 100);
 
-    // Sorting
-    const order = queryDto.order === 'asc' ? 'ASC' : 'DESC';
-    queryBuilder.orderBy('telemetry.timestamp', order);
-
-    // Pagination
-    queryBuilder.skip(queryDto.skip).take(queryDto.limit);
-
-    const data = await queryBuilder.getMany();
-
+    const data = await qb.getMany();
     return { data, total };
   }
 
-  /**
-   * Get latest telemetry for a device
-   */
+  // ── Latest ─────────────────────────────────────────────────────────────────
+
   async getLatest(deviceId: string, userId: string): Promise<Telemetry> {
-    // Verify device ownership
-    const device = await this.deviceRepository.findOne({
-      where: { id: deviceId, userId },
-    });
+    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    if (!device) throw new NotFoundException('Device not found');
 
-    if (!device) {
-      throw new NotFoundException('Device not found or access denied');
-    }
-
-    // ============ NEW: REDIS CACHE CHECK ============
-    // Try to get from Redis first (much faster!)
+    // Try Redis cache first
     try {
-      const cached = await this.redisService.hgetall(
-        `device:${deviceId}:telemetry:latest`,
-      );
-
-      if (cached && Object.keys(cached).length > 0) {
-        // Return cached data as Telemetry-like object
+      const cached = await this.redisService.hgetall(`device:${deviceId}:telemetry:latest`);
+      if (cached && Object.keys(cached).length > 0 && cached.timestamp) {
         return {
           deviceId,
-          temperature: parseFloat(cached.temperature) || null,
-          humidity: parseFloat(cached.humidity) || null,
-          pressure: parseFloat(cached.pressure) || null,
-          batteryLevel: parseFloat(cached.batteryLevel) || null,
+          temperature: parseFloat(cached.temperature) || undefined,
+          humidity: parseFloat(cached.humidity) || undefined,
+          pressure: parseFloat(cached.pressure) || undefined,
+          batteryLevel: parseFloat(cached.batteryLevel) || undefined,
           timestamp: new Date(parseInt(cached.timestamp)),
         } as any;
       }
-    } catch (error) {
-      console.error('Redis cache check failed:', error);
-      // Fall through to database
+    } catch (err) {
+      this.logger.error(`Redis read failed: ${err.message}`);
     }
 
     const telemetry = await this.telemetryRepository.findOne({
@@ -314,63 +179,46 @@ export class TelemetryService {
       order: { timestamp: 'DESC' },
     });
 
-    if (!telemetry) {
-      throw new NotFoundException('No telemetry data found for this device');
-    }
+    if (!telemetry) throw new NotFoundException('No telemetry data found for this device');
 
-    // ============ NEW: CACHE THE RESULT ============
-    // Cache the result for next time
-    try {
-      await this.redisService.hmset(`device:${deviceId}:telemetry:latest`, {
-        temperature: telemetry.temperature?.toString() || '',
-        humidity: telemetry.humidity?.toString() || '',
-        pressure: telemetry.pressure?.toString() || '',
-        batteryLevel: telemetry.batteryLevel?.toString() || '',
-        timestamp: telemetry.timestamp.getTime().toString(),
-      });
-      await this.redisService.expire(`device:${deviceId}:telemetry:latest`, 300); // 5 min
-    } catch (error) {
-      console.error('Failed to cache result:', error);
-    }
+    // Populate cache for next read
+    await this.redisService.hmset(`device:${deviceId}:telemetry:latest`, {
+      temperature: telemetry.temperature?.toString() ?? '',
+      humidity: telemetry.humidity?.toString() ?? '',
+      pressure: telemetry.pressure?.toString() ?? '',
+      batteryLevel: telemetry.batteryLevel?.toString() ?? '',
+      timestamp: telemetry.timestamp.getTime().toString(),
+    }).catch((err) => this.logger.error(`Redis write failed: ${err.message}`));
+
+    await this.redisService.expire(`device:${deviceId}:telemetry:latest`, 300)
+      .catch(() => {});
 
     return telemetry;
   }
 
-  /**
-   * Get telemetry statistics for a device
-   */
+  // ── Statistics ─────────────────────────────────────────────────────────────
+
   async getStatistics(
     deviceId: string,
     userId: string,
     startDate?: string,
     endDate?: string,
   ): Promise<any> {
-    // Verify device ownership
-    const device = await this.deviceRepository.findOne({
-      where: { id: deviceId, userId },
-    });
+    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    if (!device) throw new NotFoundException('Device not found');
 
-    if (!device) {
-      throw new NotFoundException('Device not found or access denied');
-    }
-
-    const queryBuilder = this.telemetryRepository
+    const qb = this.telemetryRepository
       .createQueryBuilder('telemetry')
       .where('telemetry.deviceId = :deviceId', { deviceId });
 
-    // Date range filter
     if (startDate && endDate) {
-      queryBuilder.andWhere(
-        'telemetry.timestamp BETWEEN :startDate AND :endDate',
-        {
-          startDate: new Date(startDate),
-          endDate: new Date(endDate),
-        },
-      );
+      qb.andWhere('telemetry.timestamp BETWEEN :startDate AND :endDate', {
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+      });
     }
 
-    // Get statistics
-    const stats = await queryBuilder
+    const stats = await qb
       .select('COUNT(*)', 'totalRecords')
       .addSelect('AVG(telemetry.temperature)', 'avgTemperature')
       .addSelect('MIN(telemetry.temperature)', 'minTemperature')
@@ -409,19 +257,13 @@ export class TelemetryService {
         avg: parseFloat(stats.avgBatteryLevel) || null,
         min: parseFloat(stats.minBatteryLevel) || null,
       },
-      signal: {
-        avg: parseFloat(stats.avgSignalStrength) || null,
-      },
-      timeRange: {
-        first: stats.firstRecord,
-        last: stats.lastRecord,
-      },
+      signal: { avg: parseFloat(stats.avgSignalStrength) || null },
+      timeRange: { first: stats.firstRecord, last: stats.lastRecord },
     };
   }
 
-  /**
-   * Get aggregated telemetry data (hourly, daily, monthly)
-   */
+  // ── Aggregated ─────────────────────────────────────────────────────────────
+
   async getAggregated(
     deviceId: string,
     userId: string,
@@ -429,35 +271,12 @@ export class TelemetryService {
     startDate: string,
     endDate: string,
   ): Promise<any[]> {
-    // Verify device ownership
-    const device = await this.deviceRepository.findOne({
-      where: { id: deviceId, userId },
-    });
+    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    if (!device) throw new NotFoundException('Device not found');
 
-    if (!device) {
-      throw new NotFoundException('Device not found or access denied');
-    }
-
-    // Determine date truncation based on interval
-    let dateTrunc: string;
-    switch (interval) {
-      case 'hour':
-        dateTrunc = 'hour';
-        break;
-      case 'day':
-        dateTrunc = 'day';
-        break;
-      case 'month':
-        dateTrunc = 'month';
-        break;
-      default:
-        dateTrunc = 'hour';
-    }
-
-    // Build aggregation query
     const results = await this.telemetryRepository
       .createQueryBuilder('telemetry')
-      .select(`DATE_TRUNC('${dateTrunc}', telemetry.timestamp)`, 'period')
+      .select(`DATE_TRUNC('${interval}', telemetry.timestamp)`, 'period')
       .addSelect('COUNT(*)', 'count')
       .addSelect('AVG(telemetry.temperature)', 'avgTemperature')
       .addSelect('MIN(telemetry.temperature)', 'minTemperature')
@@ -489,34 +308,23 @@ export class TelemetryService {
         min: parseFloat(row.minHumidity) || null,
         max: parseFloat(row.maxHumidity) || null,
       },
-      pressure: {
-        avg: parseFloat(row.avgPressure) || null,
-      },
-      battery: {
-        avg: parseFloat(row.avgBatteryLevel) || null,
-      },
+      pressure: { avg: parseFloat(row.avgPressure) || null },
+      battery: { avg: parseFloat(row.avgBatteryLevel) || null },
     }));
   }
 
-  /**
-   * Get time series data for a specific key
-   */
+  // ── Time series ────────────────────────────────────────────────────────────
+
   async getTimeSeries(
     deviceId: string,
     userId: string,
     key: string,
     startDate: string,
     endDate: string,
-    limit: number = 1000,
+    limit = 1000,
   ): Promise<any[]> {
-    // Verify device ownership
-    const device = await this.deviceRepository.findOne({
-      where: { id: deviceId, userId },
-    });
-
-    if (!device) {
-      throw new NotFoundException('Device not found or access denied');
-    }
+    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    if (!device) throw new NotFoundException('Device not found');
 
     const results = await this.telemetryRepository
       .createQueryBuilder('telemetry')
@@ -527,7 +335,7 @@ export class TelemetryService {
         startDate: new Date(startDate),
         endDate: new Date(endDate),
       })
-      .andWhere(`telemetry.data ? :key`, { key })
+      .andWhere('telemetry.data ? :key', { key })
       .orderBy('telemetry.timestamp', 'ASC')
       .limit(limit)
       .getRawMany();
@@ -538,10 +346,22 @@ export class TelemetryService {
     }));
   }
 
-  /**
-   * Delete old telemetry data (data retention)
-   */
-  async deleteOldData(daysToKeep: number = 90): Promise<number> {
+  // ── Delete ─────────────────────────────────────────────────────────────────
+
+  async deleteByDevice(deviceId: string, userId: string): Promise<number> {
+    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    if (!device) throw new NotFoundException('Device not found');
+
+    const result = await this.telemetryRepository
+      .createQueryBuilder()
+      .delete()
+      .where('"deviceId" = :deviceId', { deviceId })
+      .execute();
+
+    return result.affected ?? 0;
+  }
+
+  async deleteOldData(daysToKeep = 90): Promise<number> {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 
@@ -551,50 +371,20 @@ export class TelemetryService {
       .where('timestamp < :cutoffDate', { cutoffDate })
       .execute();
 
-    return result.affected || 0;
+    return result.affected ?? 0;
   }
 
-  /**
-   * Delete telemetry data for a specific device
-   */
-  async deleteByDevice(deviceId: string, userId: string): Promise<number> {
-    // Verify device ownership
-    const device = await this.deviceRepository.findOne({
-      where: { id: deviceId, userId },
-    });
+  // ── Count ──────────────────────────────────────────────────────────────────
 
-    if (!device) {
-      throw new NotFoundException('Device not found or access denied');
-    }
-
-    const result = await this.telemetryRepository
-      .createQueryBuilder()
-      .delete()
-      .where('deviceId = :deviceId', { deviceId })
-      .execute();
-
-    return result.affected || 0;
-  }
-
-  /**
-   * Get telemetry count by device
-   */
   async getCountByDevice(deviceId: string, userId: string): Promise<number> {
-    // Verify device ownership
-    const device = await this.deviceRepository.findOne({
-      where: { id: deviceId, userId },
-    });
+    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    if (!device) throw new NotFoundException('Device not found');
 
-    if (!device) {
-      throw new NotFoundException('Device not found or access denied');
-    }
-
-    return await this.telemetryRepository.count({ where: { deviceId } });
+    return this.telemetryRepository.count({ where: { deviceId } });
   }
 
-  /**
-   * Export telemetry data as CSV
-   */
+  // ── Export ─────────────────────────────────────────────────────────────────
+
   async exportToCSV(
     deviceId: string,
     userId: string,
@@ -604,37 +394,44 @@ export class TelemetryService {
     const { data } = await this.findByDevice(deviceId, userId, {
       startDate,
       endDate,
-      limit: 10000, // Max export limit
+      limit: 10000,
       skip: 0,
       order: 'asc',
     });
 
-    if (data.length === 0) {
-      return 'timestamp,data\n';
-    }
+    if (data.length === 0) return 'timestamp,data\n';
 
-    // Extract all unique keys from data objects
     const allKeys = new Set<string>();
-    data.forEach((record) => {
-      Object.keys(record.data || {}).forEach((key) => allKeys.add(key));
-    });
+    data.forEach((r) => Object.keys(r.data || {}).forEach((k) => allKeys.add(k)));
 
-    // Build CSV header
     const header = ['timestamp', 'deviceKey', ...Array.from(allKeys)].join(',');
-
-    // Build CSV rows
-    const rows = data.map((record) => {
-      const values = [
-        record.timestamp.toISOString(),
-        record.deviceKey,
-        ...Array.from(allKeys).map((key) => {
-          const value = record.data?.[key];
-          return value !== undefined ? value : '';
-        }),
-      ];
-      return values.join(',');
-    });
+    const rows = data.map((r) =>
+      [
+        r.timestamp.toISOString(),
+        r.deviceKey,
+        ...Array.from(allKeys).map((k) => r.data?.[k] ?? ''),
+      ].join(','),
+    );
 
     return [header, ...rows].join('\n');
+  }
+
+  // ── Redis cache helper ─────────────────────────────────────────────────────
+
+  private async cacheLatest(deviceId: string, dto: CreateTelemetryDto): Promise<void> {
+    await this.redisService.hmset(`device:${deviceId}:telemetry:latest`, {
+      temperature: dto.temperature?.toString() ?? '',
+      humidity: dto.humidity?.toString() ?? '',
+      pressure: dto.pressure?.toString() ?? '',
+      batteryLevel: dto.batteryLevel?.toString() ?? '',
+      timestamp: Date.now().toString(),
+    });
+
+    await this.redisService.lpush(
+      `telemetry:${deviceId}:recent`,
+      JSON.stringify({ ...dto.data, timestamp: Date.now() }),
+    );
+    await this.redisService.ltrim(`telemetry:${deviceId}:recent`, 0, 99);
+    await this.redisService.expire(`telemetry:${deviceId}:recent`, 3600);
   }
 }

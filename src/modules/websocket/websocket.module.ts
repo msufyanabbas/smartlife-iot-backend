@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
-import { ConfigService, ConfigModule } from '@modules/index.service';
+import { ConfigService, ConfigModule } from '@nestjs/config';
 import { WebsocketGateway } from './websocket.gateway';
 
 @Module({

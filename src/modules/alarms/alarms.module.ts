@@ -12,6 +12,7 @@ import { Device, Tenant } from '../index.entities';
 @Module({
   imports: [
     TypeOrmModule.forFeature([Alarm, Device, Tenant]),
+    ConfigModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({

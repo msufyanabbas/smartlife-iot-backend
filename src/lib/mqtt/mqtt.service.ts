@@ -1,7 +1,29 @@
-// src/lib/mqtt/mqtt.service.ts
+// lib/mqtt/mqtt.service.ts
+//
+// KEY FIX: buildStandardTelemetry() now detects LoRaWAN envelopes by SHAPE
+// (devEUI + base64 data field), not by topic prefix.
+// This fixes WS558/WS101 and all other Milesight devices whose gateway
+// publishes to devices/:deviceKey/telemetry instead of application/1/device/:devEUI/rx.
+
 import * as mqtt from 'mqtt';
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { KafkaService } from '../kafka/kafka.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Device, DeviceProtocol } from '@modules/devices/entities/device.entity';
+import { DeviceStatus } from '@common/enums/index.enum';
+import { DeviceListenerService } from '@modules/protocols/device-listener.service';
+import { StandardTelemetry } from '@common/interfaces/standard-telemetry.interface';
+
+const UPLINK_TOPICS = [
+  'devices/+/telemetry',
+  'devices/+/attributes',
+  'devices/+/status',
+  'devices/+/alerts',
+  'application/1/device/+/rx',
+  'application/1/device/+/event/+',
+  'application/+/device/+/event/up',
+  'application/+/device/+/event/+',
+];
 
 @Injectable()
 export class MQTTService implements OnModuleInit, OnModuleDestroy {
@@ -10,238 +32,276 @@ export class MQTTService implements OnModuleInit, OnModuleDestroy {
   private isConnected = false;
 
   constructor(
-    // ✅ Inject KafkaService via DI instead of importing singleton
-    private readonly kafka: KafkaService,
+    private readonly deviceListener: DeviceListenerService,
+    @InjectRepository(Device)
+    private readonly deviceRepository: Repository<Device>,
   ) {}
 
-  /**
-   * Auto-connects when NestJS starts
-   */
-  async onModuleInit() {
-    this.logger.log('🚀 Connecting to MQTT Broker...');
-    await this.connect();
-  }
+  async onModuleInit(): Promise<void> { await this.connect(); }
+  async onModuleDestroy(): Promise<void> { await this.disconnect(); }
 
-  /**
-   * Auto-disconnects when NestJS stops
-   */
-  async onModuleDestroy() {
-    this.logger.log('🛑 Disconnecting from MQTT...');
-    await this.disconnect();
-  }
+  // ── Connection ────────────────────────────────────────────────────────────
 
-  /**
-   * Connect to MQTT broker
-   */
   async connect(): Promise<void> {
-    try {
-      this.client = mqtt.connect(process.env.MQTT_BROKER_URL!, {
-        clientId: process.env.MQTT_CLIENT_ID || `smartlife-${Date.now()}`,
-        username: process.env.MQTT_USERNAME,
-        password: process.env.MQTT_PASSWORD,
-        clean: true,
-        reconnectPeriod: 5000,
-      });
+    this.client = mqtt.connect(process.env.MQTT_BROKER_URL!, {
+      clientId: process.env.MQTT_CLIENT_ID || `smartlife-platform-${Date.now()}`,
+      username: process.env.MQTT_USERNAME,
+      password: process.env.MQTT_PASSWORD,
+      clean: true,
+      reconnectPeriod: 5000,
+    });
 
-      this.client.on('connect', () => {
-        this.logger.log('✅ MQTT Broker connected');
-        this.isConnected = true;
-        this.subscribeToTopics();
-      });
+    this.client.on('connect', () => {
+      this.logger.log('MQTT broker connected');
+      this.isConnected = true;
+      this.subscribeToTopics();
+    });
 
-      this.client.on('error', (error) => {
-        this.logger.error('❌ MQTT Error:', error);
-        this.isConnected = false;
-      });
+    this.client.on('error', (err) => {
+      this.logger.error(`MQTT error: ${err.message}`);
+      this.isConnected = false;
+    });
 
-      this.client.on('message', async (topic, message) => {
-        await this.handleMessage(topic, message);
-      });
+    this.client.on('close', () => {
+      this.logger.warn('MQTT connection closed');
+      this.isConnected = false;
+    });
 
-      this.client.on('close', () => {
-        this.logger.warn('⚠️  MQTT connection closed');
-        this.isConnected = false;
-      });
-    } catch (error) {
-      this.logger.error('❌ Failed to connect to MQTT:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Subscribe to device topics
-   */
-  private subscribeToTopics(): void {
-    const topics = [
-      process.env.MQTT_TOPIC_TELEMETRY || 'devices/+/telemetry',
-      process.env.MQTT_TOPIC_COMMANDS || 'devices/+/commands',
-      process.env.MQTT_TOPIC_STATUS || 'devices/+/status',
-      process.env.MQTT_TOPIC_ALERTS || 'devices/+/alerts',
-      'lorawan/+/data',  // LoRaWAN devices
-    ].filter(Boolean);
-
-    topics.forEach((topic) => {
-      this.client?.subscribe(topic, (err) => {
-        if (err) {
-          this.logger.error(`❌ Failed to subscribe to ${topic}:`, err);
-        } else {
-          this.logger.log(`✅ Subscribed to MQTT topic: ${topic}`);
-        }
-      });
+    this.client.on('message', async (topic, message) => {
+      await this.handleMessage(topic, message);
     });
   }
 
-  /**
-   * Handle incoming MQTT messages
-   */
-  private async handleMessage(topic: string, message: Buffer): Promise<void> {
-    try {
-      this.logger.log(`📨 MQTT message received on ${topic}`);
-
-      const payload = JSON.parse(message.toString());
-      this.logger.debug('📦 Payload:', payload);
-
-      // Extract device ID from topic
-      const deviceId = this.extractDeviceId(topic);
-
-      // Parse based on topic pattern
-      let telemetryData: any;
-      if (topic.startsWith('lorawan/')) {
-        telemetryData = this.parseLoRaWANPayload(payload, deviceId);
-      } else if (topic.startsWith('devices/')) {
-        telemetryData = payload;
-      } else {
-        telemetryData = payload;
-      }
-
-      // ✅ Use injected KafkaService instead of singleton
-      await this.kafka.sendMessage(
-        'telemetry.device.raw',
-        {
-          deviceId,
-          deviceKey: deviceId,
-          tenantId: 'default',  // TODO: Extract from device credentials
-          ...telemetryData,
-          receivedAt: Date.now(),
-          source: 'mqtt',
-          topic,
-        },
-        deviceId,
-      );
-
-      this.logger.log(`✅ MQTT message forwarded to Kafka for device: ${deviceId}`);
-    } catch (error: any) {
-      this.logger.error('❌ Failed to handle MQTT message:', error);
+  private subscribeToTopics(): void {
+    for (const topic of UPLINK_TOPICS) {
+      this.client?.subscribe(topic, { qos: 1 }, (err) => {
+        if (err) this.logger.error(`Failed to subscribe to ${topic}: ${err.message}`);
+        else      this.logger.log(`Subscribed → ${topic}`);
+      });
     }
   }
 
-  /**
-   * Extract device ID from topic
-   */
-  private extractDeviceId(topic: string): string {
-    // devices/ws202-001/telemetry → ws202-001
-    // lorawan/ws202-001/data → ws202-001
-    const parts = topic.split('/');
-    return parts[1] || 'unknown';
+  // ── Message handling ──────────────────────────────────────────────────────
+
+  private async handleMessage(topic: string, rawMessage: Buffer): Promise<void> {
+    try {
+      const deviceKey = this.extractDeviceKey(topic);
+      if (!deviceKey) {
+        this.logger.warn(`Cannot extract device key from topic: ${topic}`);
+        return;
+      }
+
+      const device = await this.findDevice(topic, deviceKey);
+      if (!device) {
+        this.logger.warn(`No device for key/devEUI: ${deviceKey}`);
+        return;
+      }
+
+      void this.deviceRepository.update(
+        { id: device.id },
+        { lastSeenAt: new Date(), status: DeviceStatus.ACTIVE },
+      );
+
+      const telemetry = this.buildStandardTelemetry(topic, rawMessage, device);
+      await this.deviceListener.handleTelemetry(telemetry);
+    } catch (error) {
+      this.logger.error(`Error handling message on ${topic}: ${(error as Error).message}`);
+    }
+  }
+
+  // ── Build StandardTelemetry ───────────────────────────────────────────────
+
+  private buildStandardTelemetry(
+    topic: string,
+    rawMessage: Buffer,
+    device: Device,
+  ): StandardTelemetry {
+    let payload: any;
+
+    // Try to parse as JSON first
+    try {
+      payload = JSON.parse(rawMessage.toString('utf-8'));
+    } catch {
+      // Not JSON — pass raw hex to codec (e.g. raw binary MQTT payload)
+      const hexStr = rawMessage.toString('hex');
+      return this.buildResult(topic, device, hexStr, hexStr);
+    }
+
+    let rawPayloadForCodec: any;
+
+    // ── Detect LoRaWAN envelope by SHAPE, not by topic ────────────────────
+    // Both Milesight UG65 and ChirpStack forward:
+    //   { devEUI: string, data: "<base64>", fPort: number, ... }
+    // The topic may be devices/.../telemetry OR application/.../rx — we
+    // detect by payload shape so the codec path works regardless of topic.
+
+    if (this.isLoRaWANEnvelope(payload)) {
+      // ChirpStack v4 with pre-decoded object — skip raw byte decode
+      if (
+        device.protocol === DeviceProtocol.LORAWAN_CHIRPSTACK &&
+        payload.object &&
+        typeof payload.object === 'object'
+      ) {
+        rawPayloadForCodec = payload.object;
+      } else {
+        // Decode base64 → hex string for the Milesight IPSO codecs
+        try {
+          rawPayloadForCodec = Buffer.from(payload.data, 'base64').toString('hex');
+          this.logger.debug(
+            `LoRaWAN envelope detected — base64 '${payload.data}' → hex '${rawPayloadForCodec}'`,
+          );
+        } catch {
+          this.logger.warn(`base64 decode failed for data: ${payload.data}`);
+          rawPayloadForCodec = payload.data;
+        }
+      }
+    } else {
+      // Plain JSON device (ESP32, custom firmware, etc.) — pass object as-is
+      // The GenericMqttJsonCodec or a pre-decoded path will handle it
+      rawPayloadForCodec = payload;
+    }
+
+    return this.buildResult(topic, device, rawPayloadForCodec, payload);
   }
 
   /**
-   * Parse LoRaWAN payload
+   * A LoRaWAN envelope is any JSON object that has:
+   *   - devEUI: a non-empty string (8-byte hex EUI)
+   *   - data:   a non-empty base64 string (the actual LoRaWAN payload bytes)
+   *
+   * This covers both Milesight UG65 and ChirpStack v3/v4 formats.
+   * We do NOT check the topic — gateways may publish to any topic.
    */
-  private parseLoRaWANPayload(payload: any, deviceId: string): any {
-    const decoded = this.decodeWS202Data(payload.data);
+  private isLoRaWANEnvelope(payload: any): boolean {
+    return (
+      payload !== null &&
+      typeof payload === 'object' &&
+      typeof payload.devEUI === 'string' &&
+      payload.devEUI.length > 0 &&
+      typeof payload.data === 'string' &&
+      payload.data.length > 0 &&
+      // Valid base64: only A-Z, a-z, 0-9, +, /, =
+      /^[A-Za-z0-9+/]+=*$/.test(payload.data)
+    );
+  }
+
+  private buildResult(
+    topic: string,
+    device: Device,
+    rawPayloadForCodec: any,
+    rawPayload: any,
+  ): StandardTelemetry {
+    // fPort comes from the LoRaWAN envelope if present
+    const fPort: number | undefined =
+      typeof rawPayload?.fPort === 'number' ? rawPayload.fPort : undefined;
+
+    // Prefer the envelope timestamp; fall back to now
+    const timestamp: string =
+      rawPayload?.time ?? rawPayload?.timestamp ?? new Date().toISOString();
 
     return {
-      data: {
-        raw: payload.data,
-        deveui: payload.deveui,
-        fcnt: payload.fcnt,
-        ...decoded,
-      },
-      temperature: decoded.temperature,
-      humidity: decoded.humidity,
-      batteryLevel: decoded.battery,
-      signalStrength: payload.rssi,
+      deviceId:   device.id,
+      deviceKey:  device.deviceKey,
+      tenantId:   device.tenantId,
+      customerId: device.customerId,
+      data:       rawPayloadForCodec,
+      timestamp,
+      receivedAt: Date.now(),
+      protocol:   'mqtt',
       metadata: {
-        rssi: payload.rssi,
-        snr: payload.snr,
-        frequency: payload.freq,
+        topic,
+        protocol:     device.protocol,
+        // Codec resolution priority: device.metadata > device columns
+        codecId:      device.metadata?.codecId      as string | undefined,
+        manufacturer: device.metadata?.manufacturer as string | undefined
+                      ?? device.manufacturer,
+        model:        device.metadata?.model        as string | undefined
+                      ?? device.model,
+        devEUI:       device.metadata?.devEUI       as string | undefined
+                      ?? rawPayload?.devEUI,
+        fPort,
       },
+      rawPayload,
     };
   }
 
-  /**
-   * Decode WS202 hex data
-   */
-  private decodeWS202Data(hexData: string): any {
-    try {
-      const buffer = Buffer.from(hexData, 'hex');
-      const result: any = {};
+  // ── Device key extraction ─────────────────────────────────────────────────
 
-      let offset = 0;
-      while (offset < buffer.length) {
-        const channel = buffer.readUInt8(offset);
-        const type = buffer.readUInt8(offset + 1);
-        const value = buffer.readUInt16BE(offset + 2);
+  private extractDeviceKey(topic: string): string | null {
+    const parts = topic.split('/');
+    if (parts[0] === 'devices' && parts.length >= 3) return parts[1];
+    if (parts[0] === 'application' && parts[2] === 'device' && parts.length >= 4) return parts[3];
+    return null;
+  }
 
-        switch (type) {
-          case 0x67: // Temperature
-            result.temperature = (value / 10).toFixed(1);
-            break;
-          case 0x68: // Humidity
-            result.humidity = (value / 2).toFixed(1);
-            break;
-          case 0x75: // Battery
-            result.battery = value;
-            break;
-        }
+  private async findDevice(topic: string, keyFromTopic: string): Promise<Device | null> {
+    const parts = topic.split('/');
+    if (parts[0] === 'application') {
+      // LoRaWAN topic — keyFromTopic is the devEUI
+      return this.deviceRepository
+        .createQueryBuilder('device')
+        .where(`device.metadata->>'devEUI' = :devEUI`, { devEUI: keyFromTopic })
+        .andWhere('device.deletedAt IS NULL')
+        .getOne();
+    }
+    // Generic MQTT topic — keyFromTopic is the deviceKey
+    return this.deviceRepository.findOne({ where: { deviceKey: keyFromTopic } });
+  }
 
-        offset += 4;
+  // ── Publish ───────────────────────────────────────────────────────────────
+// ── Publish ───────────────────────────────────────────────────────────────
+async publish(topic: string, message: any): Promise<void> {
+  this.logger.debug('--- MQTT PUBLISH START ---');
+
+  // Check client existence
+  if (!this.client) {
+    this.logger.error('MQTT client is NULL');
+    throw new Error('MQTT client is not initialized');
+  }
+
+  // Check connection state
+  this.logger.debug(`MQTT connected state: ${this.isConnected}`);
+
+  if (!this.isConnected) {
+    this.logger.error('MQTT client is NOT connected');
+    throw new Error('MQTT client is not connected');
+  }
+
+  // Log topic + payload BEFORE publishing
+  let payload: string;
+  try {
+    payload = JSON.stringify(message);
+  } catch (err) {
+    this.logger.error('Failed to stringify message', err);
+    throw err;
+  }
+
+  this.logger.debug(`Publishing to topic: ${topic}`);
+  this.logger.debug(`Payload: ${payload}`);
+
+  return new Promise((resolve, reject) => {
+    this.logger.debug('Calling MQTT publish...');
+
+    this.client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        this.logger.error(`❌ Publish FAILED → ${topic}`);
+        this.logger.error(`Error: ${err.message}`, err);
+        reject(err);
+      } else {
+        this.logger.debug(`✅ Publish SUCCESS → ${topic}`);
+        resolve();
       }
-
-      return result;
-    } catch (error) {
-      this.logger.error('Failed to decode WS202 data:', error);
-      return {};
-    }
-  }
-
-  /**
-   * Publish message to MQTT (for downlink commands)
-   */
-  async publish(topic: string, message: any): Promise<void> {
-    if (!this.client || !this.isConnected) {
-      throw new Error('MQTT client not connected');
-    }
-
-    return new Promise((resolve, reject) => {
-      this.client!.publish(topic, JSON.stringify(message), (err) => {
-        if (err) {
-          this.logger.error(`❌ Failed to publish to ${topic}:`, err);
-          reject(err);
-        } else {
-          this.logger.log(`📤 Published to MQTT topic: ${topic}`);
-          resolve();
-        }
-      });
     });
-  }
+  });
+}
 
-  /**
-   * Disconnect from MQTT
-   */
   async disconnect(): Promise<void> {
     if (this.client) {
       await this.client.end();
       this.isConnected = false;
-      this.logger.log('✅ MQTT disconnected');
+      this.logger.log('MQTT disconnected');
     }
   }
 
-  /**
-   * Check if MQTT is connected
-   */
-  isClientConnected(): boolean {
-    return this.isConnected;
-  }
+  isClientConnected(): boolean { return this.isConnected; }
 }

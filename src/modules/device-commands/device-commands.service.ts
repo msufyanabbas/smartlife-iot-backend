@@ -14,8 +14,7 @@ export class DeviceCommandsService {
     private commandRepository: Repository<DeviceCommand>,
     @InjectRepository(Device)
     private deviceRepository: Repository<Device>,
-    @Inject('KAFKA_SERVICE')
-    private kafkaService: KafkaService,
+    private readonly kafkaService: KafkaService,
   ) {}
 
   // ══════════════════════════════════════════════════════════════════════════

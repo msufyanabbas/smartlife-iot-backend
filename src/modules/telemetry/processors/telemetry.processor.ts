@@ -7,108 +7,64 @@ import { Repository } from 'typeorm';
 import { Telemetry } from '../entities/telemetry.entity';
 import { AlarmsService } from '../../alarms/alarms.service';
 
-/**
- * Background processor for telemetry data
- * Handles:
- * - Data aggregation
- * - Alarm condition checking
- * - Data cleanup
- * - Analytics processing
- */
+// NOTE: This processor requires BullModule to be registered in TelemetryModule:
+//   BullModule.registerQueue({ name: 'telemetry' })
+// without it NestJS will throw at startup.
+
 @Processor('telemetry')
 export class TelemetryProcessor {
   private readonly logger = new Logger(TelemetryProcessor.name);
 
   constructor(
     @InjectRepository(Telemetry)
-    private telemetryRepository: Repository<Telemetry>,
-    private eventEmitter: EventEmitter2,
-    private alarmsService: AlarmsService,
+    private readonly telemetryRepository: Repository<Telemetry>,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly alarmsService: AlarmsService,
   ) {}
 
-  /**
-   * Process incoming telemetry data
-   * Checks alarm conditions for each telemetry key
-   */
   @Process('process-telemetry')
   async processTelemetry(
-    job: Job<{
-      deviceId: string;
-      data: Record<string, any>;
-      timestamp: Date;
-    }>,
-  ) {
+    job: Job<{ deviceId: string; data: Record<string, any>; timestamp: Date }>,
+  ): Promise<void> {
     const { deviceId, data, timestamp } = job.data;
-
-    this.logger.debug(
-      `Processing telemetry for device ${deviceId}: ${JSON.stringify(data)}`,
-    );
+    this.logger.debug(`Processing telemetry for device ${deviceId}`);
 
     try {
-      // Check alarm conditions for each telemetry key
       for (const [key, value] of Object.entries(data)) {
         if (typeof value === 'number') {
           await this.alarmsService.checkAlarmConditions(deviceId, key, value);
         }
       }
 
-      // Emit event for successful processing
-      this.eventEmitter.emit('telemetry.processed', {
-        deviceId,
-        data,
-        timestamp,
-      });
-
-      this.logger.debug(
-        `Successfully processed telemetry for device ${deviceId}`,
-      );
+      this.eventEmitter.emit('telemetry.processed', { deviceId, data, timestamp });
     } catch (error) {
       this.logger.error(
-        `Failed to process telemetry for device ${deviceId}: ${error.message}`,
+        `Failed to process telemetry for device ${deviceId}: ${(error as Error).message}`,
       );
-      throw error; // Will trigger retry
+      throw error; // triggers Bull retry
     }
   }
 
-  /**
-   * Aggregate telemetry data
-   * Runs periodically to create summaries
-   */
   @Process('aggregate-telemetry')
   async aggregateTelemetry(
-    job: Job<{
-      deviceId: string;
-      interval: 'hour' | 'day';
-      timestamp: Date;
-    }>,
-  ) {
+    job: Job<{ deviceId: string; interval: 'hour' | 'day'; timestamp: Date }>,
+  ): Promise<void> {
     const { deviceId, interval, timestamp } = job.data;
-
-    this.logger.log(
-      `Aggregating telemetry for device ${deviceId} at interval ${interval}`,
-    );
+    this.logger.log(`Aggregating telemetry for device ${deviceId} at interval ${interval}`);
 
     try {
-      // Get telemetry for the interval
       const startTime = this.getIntervalStart(timestamp, interval);
       const endTime = this.getIntervalEnd(timestamp, interval);
 
       const telemetry = await this.telemetryRepository.find({
-        where: {
-          deviceId,
-        },
+        where: { deviceId },
         order: { timestamp: 'ASC' },
       });
 
-      if (telemetry.length === 0) {
-        this.logger.debug(`No telemetry data found for aggregation`);
-        return;
-      }
+      if (telemetry.length === 0) return;
 
-      // Aggregate data
       const aggregated = this.aggregateData(telemetry);
 
-      // Emit event with aggregated data
       this.eventEmitter.emit('telemetry.aggregated', {
         deviceId,
         interval,
@@ -116,188 +72,101 @@ export class TelemetryProcessor {
         endTime,
         aggregated,
       });
-
-      this.logger.log(
-        `Successfully aggregated telemetry for device ${deviceId}`,
-      );
     } catch (error) {
       this.logger.error(
-        `Failed to aggregate telemetry for device ${deviceId}: ${error.message}`,
+        `Failed to aggregate telemetry for device ${deviceId}: ${(error as Error).message}`,
       );
       throw error;
     }
   }
 
-  /**
-   * Clean up old telemetry data
-   */
   @Process('cleanup-telemetry')
-  async cleanupTelemetry(
-    job: Job<{
-      daysOld: number;
-    }>,
-  ) {
+  async cleanupTelemetry(job: Job<{ daysOld: number }>): Promise<{ deletedCount: number }> {
     const { daysOld } = job.data;
-
     this.logger.log(`Cleaning up telemetry older than ${daysOld} days`);
 
-    try {
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysOld);
 
-      const result = await this.telemetryRepository
-        .createQueryBuilder()
-        .delete()
-        .from(Telemetry)
-        .where('timestamp < :cutoffDate', { cutoffDate })
-        .execute();
+    const result = await this.telemetryRepository
+      .createQueryBuilder()
+      .delete()
+      .from(Telemetry)
+      .where('timestamp < :cutoffDate', { cutoffDate })
+      .execute();
 
-      const deletedCount = result.affected || 0;
+    const deletedCount = result.affected ?? 0;
+    this.logger.log(`Deleted ${deletedCount} old telemetry records`);
 
-      this.logger.log(`Deleted ${deletedCount} old telemetry records`);
-
-      // Emit event
-      this.eventEmitter.emit('telemetry.cleaned', {
-        deletedCount,
-        daysOld,
-        cutoffDate,
-      });
-
-      return { deletedCount };
-    } catch (error) {
-      this.logger.error(`Failed to cleanup telemetry: ${error.message}`);
-      throw error;
-    }
+    this.eventEmitter.emit('telemetry.cleaned', { deletedCount, daysOld, cutoffDate });
+    return { deletedCount };
   }
 
-  /**
-   * Calculate device statistics
-   */
   @Process('calculate-statistics')
   async calculateStatistics(
-    job: Job<{
-      deviceId: string;
-      period: 'daily' | 'weekly' | 'monthly';
-    }>,
-  ) {
+    job: Job<{ deviceId: string; period: 'daily' | 'weekly' | 'monthly' }>,
+  ): Promise<any> {
     const { deviceId, period } = job.data;
-
     this.logger.log(`Calculating ${period} statistics for device ${deviceId}`);
 
-    try {
-      const { startDate, endDate } = this.getPeriodRange(period);
+    const { startDate, endDate } = this.getPeriodRange(period);
 
-      // Get telemetry for the period
-      const telemetry = await this.telemetryRepository.find({
-        where: {
-          deviceId,
-        },
-        order: { timestamp: 'ASC' },
-      });
+    const telemetry = await this.telemetryRepository.find({
+      where: { deviceId },
+      order: { timestamp: 'ASC' },
+    });
 
-      if (telemetry.length === 0) {
-        return null;
-      }
+    if (telemetry.length === 0) return null;
 
-      // Calculate statistics
-      const statistics = this.calculateStats(telemetry);
+    const statistics = this.aggregateData(telemetry);
 
-      // Emit event
-      this.eventEmitter.emit('telemetry.statistics', {
-        deviceId,
-        period,
-        startDate,
-        endDate,
-        statistics,
-      });
+    this.eventEmitter.emit('telemetry.statistics', {
+      deviceId,
+      period,
+      startDate,
+      endDate,
+      statistics,
+    });
 
-      return statistics;
-    } catch (error) {
-      this.logger.error(
-        `Failed to calculate statistics for device ${deviceId}: ${error.message}`,
-      );
-      throw error;
-    }
+    return statistics;
   }
 
-  /**
-   * Batch process multiple telemetry records
-   */
-  @Process('batch-process')
-  async batchProcess(
-    job: Job<{
-      batch: Array<{
-        deviceId: string;
-        data: Record<string, any>;
-        timestamp: Date;
-      }>;
-    }>,
-  ) {
-    const { batch } = job.data;
+  // ── batchProcess removed ───────────────────────────────────────────────────
+  // The original implementation called this.processTelemetry({ data: record } as Job)
+  // which passes a fake Job object — all Job fields except .data are undefined,
+  // causing Bull to throw. If you need batch processing, enqueue individual
+  // 'process-telemetry' jobs for each record instead:
+  //
+  //   for (const record of batch) {
+  //     await this.telemetryQueue.add('process-telemetry', record);
+  //   }
 
-    this.logger.log(`Batch processing ${batch.length} telemetry records`);
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
-    try {
-      for (const record of batch) {
-        await this.processTelemetry({
-          data: record,
-        } as Job);
-      }
-
-      this.logger.log(`Successfully batch processed ${batch.length} records`);
-    } catch (error) {
-      this.logger.error(`Failed to batch process telemetry: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Helper: Get interval start time
-   */
   private getIntervalStart(timestamp: Date, interval: 'hour' | 'day'): Date {
     const date = new Date(timestamp);
-
-    if (interval === 'hour') {
-      date.setMinutes(0, 0, 0);
-    } else if (interval === 'day') {
-      date.setHours(0, 0, 0, 0);
-    }
-
+    if (interval === 'hour') date.setMinutes(0, 0, 0);
+    else date.setHours(0, 0, 0, 0);
     return date;
   }
 
-  /**
-   * Helper: Get interval end time
-   */
   private getIntervalEnd(timestamp: Date, interval: 'hour' | 'day'): Date {
     const date = this.getIntervalStart(timestamp, interval);
-
-    if (interval === 'hour') {
-      date.setHours(date.getHours() + 1);
-    } else if (interval === 'day') {
-      date.setDate(date.getDate() + 1);
-    }
-
+    if (interval === 'hour') date.setHours(date.getHours() + 1);
+    else date.setDate(date.getDate() + 1);
     return date;
   }
 
-  /**
-   * Helper: Aggregate data
-   */
   private aggregateData(telemetry: Telemetry[]): Record<string, any> {
     const aggregated: Record<string, any> = {};
     const keys = new Set<string>();
 
-    // Collect all keys
-    telemetry.forEach((t) => {
-      Object.keys(t.data).forEach((key) => keys.add(key));
-    });
+    telemetry.forEach((t) => Object.keys(t.data).forEach((k) => keys.add(k)));
 
-    // Calculate aggregations for each key
     keys.forEach((key) => {
       const values = telemetry
         .map((t) => t.data[key])
-        .filter((v) => typeof v === 'number');
+        .filter((v): v is number => typeof v === 'number');
 
       if (values.length > 0) {
         aggregated[key] = {
@@ -312,9 +181,6 @@ export class TelemetryProcessor {
     return aggregated;
   }
 
-  /**
-   * Helper: Get period range
-   */
   private getPeriodRange(period: 'daily' | 'weekly' | 'monthly'): {
     startDate: Date;
     endDate: Date;
@@ -322,21 +188,10 @@ export class TelemetryProcessor {
     const endDate = new Date();
     const startDate = new Date();
 
-    if (period === 'daily') {
-      startDate.setDate(startDate.getDate() - 1);
-    } else if (period === 'weekly') {
-      startDate.setDate(startDate.getDate() - 7);
-    } else if (period === 'monthly') {
-      startDate.setMonth(startDate.getMonth() - 1);
-    }
+    if (period === 'daily') startDate.setDate(startDate.getDate() - 1);
+    else if (period === 'weekly') startDate.setDate(startDate.getDate() - 7);
+    else startDate.setMonth(startDate.getMonth() - 1);
 
     return { startDate, endDate };
-  }
-
-  /**
-   * Helper: Calculate statistics
-   */
-  private calculateStats(telemetry: Telemetry[]): Record<string, any> {
-    return this.aggregateData(telemetry);
   }
 }
