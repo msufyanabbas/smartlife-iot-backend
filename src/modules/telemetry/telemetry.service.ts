@@ -157,22 +157,22 @@ export class TelemetryService {
     const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
     if (!device) throw new NotFoundException('Device not found');
 
-    // Try Redis cache first
-    try {
-      const cached = await this.redisService.hgetall(`device:${deviceId}:telemetry:latest`);
-      if (cached && Object.keys(cached).length > 0 && cached.timestamp) {
-        return {
-          deviceId,
-          temperature: parseFloat(cached.temperature) || undefined,
-          humidity: parseFloat(cached.humidity) || undefined,
-          pressure: parseFloat(cached.pressure) || undefined,
-          batteryLevel: parseFloat(cached.batteryLevel) || undefined,
-          timestamp: new Date(parseInt(cached.timestamp)),
-        } as any;
-      }
-    } catch (err) {
-      this.logger.error(`Redis read failed: ${err.message}`);
-    }
+    // // Try Redis cache first
+    // try {
+    //   const cached = await this.redisService.hgetall(`device:${deviceId}:telemetry:latest`);
+    //   if (cached && Object.keys(cached).length > 0 && cached.timestamp) {
+    //     return {
+    //       deviceId,
+    //       temperature: parseFloat(cached.temperature) || undefined,
+    //       humidity: parseFloat(cached.humidity) || undefined,
+    //       pressure: parseFloat(cached.pressure) || undefined,
+    //       batteryLevel: parseFloat(cached.batteryLevel) || undefined,
+    //       timestamp: new Date(parseInt(cached.timestamp)),
+    //     } as any;
+    //   }
+    // } catch (err) {
+    //   this.logger.error(`Redis read failed: ${err.message}`);
+    // }
 
     const telemetry = await this.telemetryRepository.findOne({
       where: { deviceId },
