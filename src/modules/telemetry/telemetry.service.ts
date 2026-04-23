@@ -181,17 +181,17 @@ export class TelemetryService {
 
     if (!telemetry) throw new NotFoundException('No telemetry data found for this device');
 
-    // Populate cache for next read
-    await this.redisService.hmset(`device:${deviceId}:telemetry:latest`, {
-      temperature: telemetry.temperature?.toString() ?? '',
-      humidity: telemetry.humidity?.toString() ?? '',
-      pressure: telemetry.pressure?.toString() ?? '',
-      batteryLevel: telemetry.batteryLevel?.toString() ?? '',
-      timestamp: telemetry.timestamp.getTime().toString(),
-    }).catch((err) => this.logger.error(`Redis write failed: ${err.message}`));
+    // // Populate cache for next read
+    // await this.redisService.hmset(`device:${deviceId}:telemetry:latest`, {
+    //   temperature: telemetry.temperature?.toString() ?? '',
+    //   humidity: telemetry.humidity?.toString() ?? '',
+    //   pressure: telemetry.pressure?.toString() ?? '',
+    //   batteryLevel: telemetry.batteryLevel?.toString() ?? '',
+    //   timestamp: telemetry.timestamp.getTime().toString(),
+    // }).catch((err) => this.logger.error(`Redis write failed: ${err.message}`));
 
-    await this.redisService.expire(`device:${deviceId}:telemetry:latest`, 300)
-      .catch(() => {});
+    // await this.redisService.expire(`device:${deviceId}:telemetry:latest`, 300)
+    //   .catch(() => {});
 
     return telemetry;
   }
