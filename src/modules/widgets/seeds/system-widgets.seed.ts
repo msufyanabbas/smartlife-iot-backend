@@ -1,9 +1,5 @@
-import { WidgetTypeCategory } from '@/common/enums/widget-type.enum';
+import { WidgetTypeCategory } from '@common/enums/widget-type.enum';
 
-/**
- * System widgets seed data
- * These are pre-installed widgets that come with the platform
- */
 export const SYSTEM_WIDGETS = [
   {
     name: 'Time-Series Line Chart',
@@ -18,42 +14,23 @@ export const SYSTEM_WIDGETS = [
       minSizeX: 6,
       minSizeY: 4,
       resources: [
-        {
-          url: 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
-        },
+        { url: 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js' },
       ],
-      templateHtml: `
-        <div class="chart-container" style="height: 100%; width: 100%;">
-          <canvas id="lineChart"></canvas>
-        </div>
-      `,
-      templateCss: `
-        .chart-container {
-          padding: 10px;
-        }
-      `,
+      templateHtml: `<div class="chart-container" style="height:100%;width:100%;"><canvas id="lineChart"></canvas></div>`,
+      templateCss: `.chart-container { padding: 10px; }`,
       settingsSchema: {
         schema: {
           type: 'object',
           title: 'Line Chart Settings',
           properties: {
-            showLegend: {
-              type: 'boolean',
-              title: 'Show Legend',
-              default: true,
-            },
-            showGrid: { type: 'boolean', title: 'Show Grid', default: true },
-            lineWidth: { type: 'number', title: 'Line Width', default: 2 },
-            fillArea: { type: 'boolean', title: 'Fill Area', default: false },
+            showLegend: { type: 'boolean', title: 'Show Legend', default: true },
+            showGrid:   { type: 'boolean', title: 'Show Grid',   default: true },
+            lineWidth:  { type: 'number',  title: 'Line Width',  default: 2 },
+            fillArea:   { type: 'boolean', title: 'Fill Area',   default: false },
           },
         },
       },
-      defaultConfig: {
-        showLegend: true,
-        showGrid: true,
-        lineWidth: 2,
-        fillArea: false,
-      },
+      defaultConfig: { showLegend: true, showGrid: true, lineWidth: 2, fillArea: false },
     },
   },
   {
@@ -73,43 +50,19 @@ export const SYSTEM_WIDGETS = [
           <div class="card-title">{{title}}</div>
           <div class="card-value">{{value}} <span class="unit">{{unit}}</span></div>
           <div class="card-timestamp">{{timestamp}}</div>
-        </div>
-      `,
+        </div>`,
       templateCss: `
-        .value-card {
-          padding: 20px;
-          text-align: center;
-          height: 100%;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-        }
-        .card-title {
-          font-size: 14px;
-          color: #666;
-          margin-bottom: 10px;
-        }
-        .card-value {
-          font-size: 32px;
-          font-weight: bold;
-          color: #333;
-        }
-        .unit {
-          font-size: 18px;
-          color: #999;
-        }
-        .card-timestamp {
-          font-size: 12px;
-          color: #999;
-          margin-top: 10px;
-        }
-      `,
+        .value-card { padding:20px; text-align:center; height:100%; display:flex; flex-direction:column; justify-content:center; }
+        .card-title { font-size:14px; color:#666; margin-bottom:10px; }
+        .card-value { font-size:32px; font-weight:bold; color:#333; }
+        .unit { font-size:18px; color:#999; }
+        .card-timestamp { font-size:12px; color:#999; margin-top:10px; }`,
       settingsSchema: {
         schema: {
           type: 'object',
           properties: {
-            title: { type: 'string', title: 'Card Title' },
-            unit: { type: 'string', title: 'Unit' },
+            title:    { type: 'string', title: 'Card Title' },
+            unit:     { type: 'string', title: 'Unit' },
             decimals: { type: 'number', title: 'Decimal Places', default: 2 },
           },
         },
@@ -127,22 +80,16 @@ export const SYSTEM_WIDGETS = [
       sizeX: 6,
       sizeY: 6,
       resources: [
-        {
-          url: 'https://cdn.jsdelivr.net/npm/canvas-gauges@2.1.7/gauge.min.js',
-        },
+        { url: 'https://cdn.jsdelivr.net/npm/canvas-gauges@2.1.7/gauge.min.js' },
       ],
-      templateHtml: `
-        <div class="gauge-container">
-          <canvas id="temperatureGauge"></canvas>
-        </div>
-      `,
+      templateHtml: `<div class="gauge-container"><canvas id="temperatureGauge"></canvas></div>`,
       settingsSchema: {
         schema: {
           type: 'object',
           properties: {
             minValue: { type: 'number', title: 'Min Value', default: 0 },
             maxValue: { type: 'number', title: 'Max Value', default: 100 },
-            units: { type: 'string', title: 'Units', default: '°C' },
+            units:    { type: 'string', title: 'Units',     default: '°C' },
           },
         },
       },
@@ -161,49 +108,21 @@ export const SYSTEM_WIDGETS = [
       templateHtml: `
         <div class="alarms-table">
           <table>
-            <thead>
-              <tr>
-                <th>Severity</th>
-                <th>Type</th>
-                <th>Device</th>
-                <th>Status</th>
-                <th>Created</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Severity</th><th>Type</th><th>Device</th><th>Status</th><th>Created</th></tr></thead>
             <tbody id="alarmsBody"></tbody>
           </table>
-        </div>
-      `,
+        </div>`,
       templateCss: `
-        .alarms-table {
-          width: 100%;
-          height: 100%;
-          overflow: auto;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        th, td {
-          padding: 10px;
-          text-align: left;
-          border-bottom: 1px solid #ddd;
-        }
-        th {
-          background-color: #f5f5f5;
-          font-weight: 600;
-        }
-      `,
+        .alarms-table { width:100%; height:100%; overflow:auto; }
+        table { width:100%; border-collapse:collapse; }
+        th, td { padding:10px; text-align:left; border-bottom:1px solid #ddd; }
+        th { background-color:#f5f5f5; font-weight:600; }`,
       settingsSchema: {
         schema: {
           type: 'object',
           properties: {
-            pageSize: { type: 'number', title: 'Page Size', default: 10 },
-            showAcknowledged: {
-              type: 'boolean',
-              title: 'Show Acknowledged',
-              default: true,
-            },
+            pageSize:         { type: 'number',  title: 'Page Size',          default: 10 },
+            showAcknowledged: { type: 'boolean', title: 'Show Acknowledged',  default: true },
           },
         },
       },
@@ -222,29 +141,16 @@ export const SYSTEM_WIDGETS = [
       templateHtml: `
         <div class="devices-table">
           <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Last Activity</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Last Activity</th><th>Actions</th></tr></thead>
             <tbody id="devicesBody"></tbody>
           </table>
-        </div>
-      `,
+        </div>`,
       settingsSchema: {
         schema: {
           type: 'object',
           properties: {
-            showInactive: {
-              type: 'boolean',
-              title: 'Show Inactive Devices',
-              default: true,
-            },
-            pageSize: { type: 'number', title: 'Page Size', default: 10 },
+            showInactive: { type: 'boolean', title: 'Show Inactive Devices', default: true },
+            pageSize:     { type: 'number',  title: 'Page Size',             default: 10 },
           },
         },
       },
@@ -264,20 +170,14 @@ export const SYSTEM_WIDGETS = [
         { url: 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js' },
         { url: 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css' },
       ],
-      templateHtml: `
-        <div id="map" style="height: 100%; width: 100%;"></div>
-      `,
+      templateHtml: `<div id="map" style="height:100%;width:100%;"></div>`,
       settingsSchema: {
         schema: {
           type: 'object',
           properties: {
-            defaultZoom: { type: 'number', title: 'Default Zoom', default: 10 },
-            centerLat: { type: 'number', title: 'Center Latitude', default: 0 },
-            centerLng: {
-              type: 'number',
-              title: 'Center Longitude',
-              default: 0,
-            },
+            defaultZoom: { type: 'number', title: 'Default Zoom',    default: 10 },
+            centerLat:   { type: 'number', title: 'Center Latitude', default: 0 },
+            centerLng:   { type: 'number', title: 'Center Longitude',default: 0 },
           },
         },
       },
@@ -296,39 +196,18 @@ export const SYSTEM_WIDGETS = [
       templateHtml: `
         <div class="control-button-container">
           <button id="controlBtn" class="control-button">{{buttonText}}</button>
-        </div>
-      `,
+        </div>`,
       templateCss: `
-        .control-button-container {
-          height: 100%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .control-button {
-          padding: 15px 30px;
-          font-size: 16px;
-          border: none;
-          border-radius: 4px;
-          background-color: #007bff;
-          color: white;
-          cursor: pointer;
-        }
-        .control-button:hover {
-          background-color: #0056b3;
-        }
-      `,
+        .control-button-container { height:100%; display:flex; align-items:center; justify-content:center; }
+        .control-button { padding:15px 30px; font-size:16px; border:none; border-radius:4px; background-color:#007bff; color:white; cursor:pointer; }
+        .control-button:hover { background-color:#0056b3; }`,
       settingsSchema: {
         schema: {
           type: 'object',
           properties: {
-            buttonText: {
-              type: 'string',
-              title: 'Button Text',
-              default: 'Control',
-            },
-            rpcMethod: { type: 'string', title: 'RPC Method' },
-            rpcParams: { type: 'object', title: 'RPC Parameters' },
+            buttonText: { type: 'string', title: 'Button Text', default: 'Control' },
+            rpcMethod:  { type: 'string', title: 'RPC Method' },
+            rpcParams:  { type: 'object', title: 'RPC Parameters' },
           },
         },
       },
@@ -351,55 +230,15 @@ export const SYSTEM_WIDGETS = [
             <input type="checkbox" id="switchInput">
             <span class="slider"></span>
           </label>
-        </div>
-      `,
+        </div>`,
       templateCss: `
-        .switch-container {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 20px;
-        }
-        .switch {
-          position: relative;
-          display: inline-block;
-          width: 60px;
-          height: 34px;
-        }
-        .switch input {
-          opacity: 0;
-          width: 0;
-          height: 0;
-        }
-        .slider {
-          position: absolute;
-          cursor: pointer;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background-color: #ccc;
-          transition: .4s;
-          border-radius: 34px;
-        }
-        .slider:before {
-          position: absolute;
-          content: "";
-          height: 26px;
-          width: 26px;
-          left: 4px;
-          bottom: 4px;
-          background-color: white;
-          transition: .4s;
-          border-radius: 50%;
-        }
-        input:checked + .slider {
-          background-color: #2196F3;
-        }
-        input:checked + .slider:before {
-          transform: translateX(26px);
-        }
-      `,
+        .switch-container { display:flex; align-items:center; justify-content:space-between; padding:20px; }
+        .switch { position:relative; display:inline-block; width:60px; height:34px; }
+        .switch input { opacity:0; width:0; height:0; }
+        .slider { position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background-color:#ccc; transition:.4s; border-radius:34px; }
+        .slider:before { position:absolute; content:""; height:26px; width:26px; left:4px; bottom:4px; background-color:white; transition:.4s; border-radius:50%; }
+        input:checked + .slider { background-color:#2196F3; }
+        input:checked + .slider:before { transform:translateX(26px); }`,
     },
   },
   {
@@ -413,29 +252,15 @@ export const SYSTEM_WIDGETS = [
       sizeX: 12,
       sizeY: 6,
       resources: [
-        {
-          url: 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
-        },
+        { url: 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js' },
       ],
-      templateHtml: `
-        <div class="chart-container">
-          <canvas id="barChart"></canvas>
-        </div>
-      `,
+      templateHtml: `<div class="chart-container"><canvas id="barChart"></canvas></div>`,
       settingsSchema: {
         schema: {
           type: 'object',
           properties: {
-            horizontal: {
-              type: 'boolean',
-              title: 'Horizontal Bars',
-              default: false,
-            },
-            showLegend: {
-              type: 'boolean',
-              title: 'Show Legend',
-              default: true,
-            },
+            horizontal: { type: 'boolean', title: 'Horizontal Bars', default: false },
+            showLegend: { type: 'boolean', title: 'Show Legend',     default: true },
           },
         },
       },
@@ -452,29 +277,15 @@ export const SYSTEM_WIDGETS = [
       sizeX: 6,
       sizeY: 6,
       resources: [
-        {
-          url: 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
-        },
+        { url: 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js' },
       ],
-      templateHtml: `
-        <div class="chart-container">
-          <canvas id="pieChart"></canvas>
-        </div>
-      `,
+      templateHtml: `<div class="chart-container"><canvas id="pieChart"></canvas></div>`,
       settingsSchema: {
         schema: {
           type: 'object',
           properties: {
-            showLegend: {
-              type: 'boolean',
-              title: 'Show Legend',
-              default: true,
-            },
-            doughnut: {
-              type: 'boolean',
-              title: 'Doughnut Style',
-              default: false,
-            },
+            showLegend: { type: 'boolean', title: 'Show Legend',     default: true },
+            doughnut:   { type: 'boolean', title: 'Doughnut Style',  default: false },
           },
         },
       },
@@ -482,50 +293,12 @@ export const SYSTEM_WIDGETS = [
   },
 ];
 
-/**
- * System widget bundles
- */
 export const SYSTEM_BUNDLES = [
-  {
-    title: 'Charts',
-    description: 'Chart widgets for data visualization',
-    order: 1,
-    system: true,
-  },
-  {
-    title: 'Cards',
-    description: 'Card widgets for displaying key values',
-    order: 2,
-    system: true,
-  },
-  {
-    title: 'Gauges',
-    description: 'Gauge widgets for metrics display',
-    order: 3,
-    system: true,
-  },
-  {
-    title: 'Controls',
-    description: 'Control widgets for device interaction',
-    order: 4,
-    system: true,
-  },
-  {
-    title: 'Tables',
-    description: 'Table widgets for data lists',
-    order: 5,
-    system: true,
-  },
-  {
-    title: 'Alarms',
-    description: 'Alarm-related widgets',
-    order: 6,
-    system: true,
-  },
-  {
-    title: 'Maps',
-    description: 'Map widgets for location display',
-    order: 7,
-    system: true,
-  },
+  { title: 'Charts',   description: 'Chart widgets for data visualization',  order: 1, system: true },
+  { title: 'Cards',    description: 'Card widgets for displaying key values', order: 2, system: true },
+  { title: 'Gauges',   description: 'Gauge widgets for metrics display',      order: 3, system: true },
+  { title: 'Controls', description: 'Control widgets for device interaction', order: 4, system: true },
+  { title: 'Tables',   description: 'Table widgets for data lists',           order: 5, system: true },
+  { title: 'Alarms',   description: 'Alarm-related widgets',                  order: 6, system: true },
+  { title: 'Maps',     description: 'Map widgets for location display',       order: 7, system: true },
 ];
