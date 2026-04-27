@@ -7,6 +7,7 @@ import { CodecController      } from './codec.controller';
 // WS family
 import { MilesightWS558Codec  } from './milesight/ws558.codec';
 import { MilesightWS101Codec  } from './milesight/ws101.codec';
+import { MilesightGS301Codec } from './milesight/gs301.codec';
 
 // EM300 family — base codecs
 import { MilesightEM300THCodec  } from './milesight/em300/em300-th.codec';
@@ -54,6 +55,7 @@ const ALL_CODECS = [
   MilesightWS558_915Codec,
   MilesightWS101Codec,
   MilesightWS101SOSCodec,
+  MilesightGS301Codec,
   // EM300 family
   MilesightEM300THCodec,
   MilesightEM300MCSCodec,
