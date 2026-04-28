@@ -546,7 +546,7 @@ export class MilesightAM102Codec extends BaseDeviceCodec {
 
     return {
       fPort: 85,
-      data: this.bytesToHex(bytes),
+      data: this.hexToBase64(this.bytesToHex(bytes)),
       confirmed: false,
     };
   }

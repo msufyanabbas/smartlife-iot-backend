@@ -306,23 +306,6 @@ export class MilesightWS558Codec extends BaseDeviceCodec {
     return { fPort: 85, data: this.hexToBase64(this.bytesToHex(bytes)), confirmed: false };
   }
 
-  // ── Utils ────────────────────────────────────────────────────────────────
-private hexToBase64(hex: string): string {
-  if (!hex || typeof hex !== 'string') {
-    throw new Error('Invalid hex input');
-  }
-
-  // remove spaces if payload like "08 01 01"
-  const cleanHex = hex.replace(/\s+/g, '');
-
-  // validate hex
-  if (!/^[0-9a-fA-F]*$/.test(cleanHex)) {
-    throw new Error('Invalid hex string');
-  }
-
-  return Buffer.from(cleanHex, 'hex').toString('base64');
-}
-
   // ── canDecode ─────────────────────────────────────────────────────────────
   // WS558 is uniquely identified by the switch status channel (0x08 0x31)
   // or the power metering channels (voltage 0x03 0x74, active power 0x04 0x80).

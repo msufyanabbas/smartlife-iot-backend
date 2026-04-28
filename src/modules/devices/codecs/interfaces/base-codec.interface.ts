@@ -70,7 +70,7 @@ export interface IDeviceCodec {
   /**
    * Protocol type
    */
-  readonly protocol: 'lorawan' | 'mqtt' | 'http' | 'coap';
+  readonly protocol: 'lorawan' | 'mqtt' | 'http' | 'coap' | 'cellular' | 'other';
   
   /**
    * Decode uplink data (Device → Platform)
@@ -106,10 +106,20 @@ export abstract class BaseDeviceCodec implements IDeviceCodec {
   abstract readonly codecId: string;
   abstract readonly manufacturer: string;
   abstract readonly supportedModels: string[];
-  abstract readonly protocol: 'lorawan' | 'mqtt' | 'http' | 'coap';
-  
+  abstract readonly protocol: 'lorawan' | 'mqtt' | 'http' | 'coap' | 'cellular' | 'other';
+
   abstract decode(payload: string | Buffer, fPort?: number): DecodedTelemetry;
   abstract encode(command: { type: string; params?: any }): EncodedCommand;
+  protected hexToBase64(hex: string): string {
+  if (!hex || typeof hex !== 'string') {
+    throw new Error('Invalid hex input');
+  }
+  const cleanHex = hex.replace(/\s+/g, '');
+  if (!/^[0-9a-fA-F]*$/.test(cleanHex)) {
+    throw new Error('Invalid hex string');
+  }
+  return Buffer.from(cleanHex, 'hex').toString('base64');
+}
   
   /**
    * Default implementation - override if needed
