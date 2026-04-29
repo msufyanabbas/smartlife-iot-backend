@@ -134,6 +134,7 @@ import { MilesightEM500Pt100Codec } from './milesight/em/em500-pt100.codec';
 import { MilesightEM500SmtcCodec } from './milesight/em/em500-smtc.codec';
 import { MilesightEM500SwlCodec } from './milesight/em/em500-swl.codec';
 import { MilesightEM500UdlCodec } from './milesight/em/em500-udl.codec';
+import { MilesightFT101Codec } from './milesight/ft/ft101.codec';
 
 const ALL_CODECS = [
   // WS family
@@ -187,6 +188,7 @@ const ALL_CODECS = [
   MilesightEM500SmtcCodec,
   MilesightEM500SwlCodec,
   MilesightEM500UdlCodec,
+  MilesightFT101Codec,
 
   // AM family
   MilesightAM102Codec,
