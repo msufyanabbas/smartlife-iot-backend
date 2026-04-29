@@ -38,6 +38,11 @@ import {
   MilesightAM307LCodec,
   MilesightEM300ZLDCodec,
   MilesightEM300DIHALLCodec,
+  MilesightAM308LCodec,
+  MilesightAM319LCodec,
+  MilesightAM319LO3Codec,
+  MilesightEM400TldCodec,
+  MilesightEM400UdlCodec,
 } from './milesight/variants.codec';
 
 import {
@@ -112,6 +117,23 @@ import { MilesightWS202Codec } from './milesight/ws/ws202.codec';
 import { MilesightWS136Codec, MilesightWS156Codec } from './milesight/ws/ws156.codec';
 import { MilesightUC100V1Codec } from './milesight/uc/uc100v1.codec';
 import { MilesightCTH01Codec } from './milesight/cth/cth01.codec';
+import { MilesightAM308Codec } from './milesight/am/am308.codec';
+import { MilesightAM319Codec } from './milesight/am/am319.codec';
+import { MilesightAM319WellCodec } from './milesight/am/am319-well.codec';
+import { MilesightAM319O3Codec } from './milesight/am/am319-o3.codec';
+import { MilesightEM310TiltCodec } from './milesight/em/em310-tilt.codec';
+import { MilesightEM310UdlCodec } from './milesight/em/em310-udl.codec';
+import { MilesightEM320ThCodec } from './milesight/em/em320-th.codec';
+import { MilesightEM320TiltCodec } from './milesight/em/em320-tilt.codec';
+import { MilesightEM400MudCodec } from './milesight/em/em400-mud.codec';
+import { MilesightEM410RdlCodec } from './milesight/em/em410-rdl.codec';
+import { MilesightEM500Co2Codec } from './milesight/em/em500-co2.codec';
+import { MilesightEM500LgtCodec } from './milesight/em/em500-lgt.codec';
+import { MilesightEM500PpCodec } from './milesight/em/em500-pp.codec';
+import { MilesightEM500Pt100Codec } from './milesight/em/em500-pt100.codec';
+import { MilesightEM500SmtcCodec } from './milesight/em/em500-smtc.codec';
+import { MilesightEM500SwlCodec } from './milesight/em/em500-swl.codec';
+import { MilesightEM500UdlCodec } from './milesight/em/em500-udl.codec';
 
 const ALL_CODECS = [
   // WS family
@@ -150,6 +172,22 @@ const ALL_CODECS = [
   MilesightEM300DICodec,
   MilesightEM300DIHALLCodec,
   MilesightEM300CLCodec,
+  MilesightEM310TiltCodec,
+  MilesightEM310UdlCodec,
+  MilesightEM320ThCodec,
+  MilesightEM320TiltCodec,
+  MilesightEM400MudCodec,
+  MilesightEM400TldCodec,
+  MilesightEM400UdlCodec,
+  MilesightEM410RdlCodec,
+  MilesightEM500Co2Codec,
+  MilesightEM500LgtCodec,
+  MilesightEM500PpCodec,
+  MilesightEM500Pt100Codec,
+  MilesightEM500SmtcCodec,
+  MilesightEM500SwlCodec,
+  MilesightEM500UdlCodec,
+
   // AM family
   MilesightAM102Codec,
   MilesightAM102ACodec,
@@ -164,6 +202,14 @@ const ALL_CODECS = [
   MilesightAM305Codec,
   MilesightAM307Codec,
   MilesightAM307LCodec,
+  MilesightAM319Codec,
+  MilesightAM319LCodec,
+MilesightAM319WellCodec,
+MilesightAM319LO3Codec,
+MilesightAM319O3Codec,
+  MilesightAM308Codec,
+  MilesightAM308LCodec,
+
   // Generic
   GenericMqttJsonCodec,
 
