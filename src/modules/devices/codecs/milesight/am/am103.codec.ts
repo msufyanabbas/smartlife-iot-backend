@@ -24,7 +24,7 @@ import {
   BaseDeviceCodec,
   DecodedTelemetry,
   EncodedCommand,
-} from '../interfaces/base-codec.interface';
+} from '../../interfaces/base-codec.interface';
 
 const TIMEZONE_MAP: Record<string, string> = {
   '-120': 'UTC-12', '-110': 'UTC-11', '-100': 'UTC-10', '-95': 'UTC-9:30',

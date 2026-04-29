@@ -3,7 +3,7 @@
 // Channels: Temperature, Humidity, Wind Direction, Wind Speed, Pressure, Rainfall
 // Also covers WTS305 and WTS505 (same payload format)
 
-import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../interfaces/base-codec.interface';
+import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../../interfaces/base-codec.interface';
 
 export class MilesightWTS506Codec extends BaseDeviceCodec {
   readonly codecId       = 'milesight-wts506';

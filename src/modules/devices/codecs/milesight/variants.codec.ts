@@ -1,13 +1,13 @@
 // src/modules/devices/codecs/milesight/variants.codec.ts
 
-import { MilesightAM102Codec    } from './am102.codec';
-import { MilesightAM103Codec    } from './am103.codec';
-import { MilesightAM104Codec    } from './am104.codec';
-import { MilesightAM304LCodec   } from './am304l.codec';
-import { MilesightAM305LCodec   } from './am305l.codec';
-import { MilesightAM307Codec    } from './am307.codec';
-import { MilesightEM300SLDCodec } from './em300/em300-sld.codec';
-import { MilesightEM300DICodec  } from './em300/em300-di.codec';
+import { MilesightAM102Codec    } from './am/am102.codec';
+import { MilesightAM103Codec    } from './am/am103.codec';
+import { MilesightAM104Codec    } from './am/am104.codec';
+import { MilesightAM304LCodec   } from './am/am304l.codec';
+import { MilesightAM305LCodec   } from './am/am305l.codec';
+import { MilesightAM307Codec    } from './am/am307.codec';
+import { MilesightEM300SLDCodec } from './em/em300-sld.codec';
+import { MilesightEM300DICodec  } from './em/em300-di.codec';
 
 // ── AM102 family ──────────────────────────────────────────────────────────
 export class MilesightAM102ACodec extends MilesightAM102Codec {

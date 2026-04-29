@@ -26,7 +26,7 @@ import {
   BaseDeviceCodec,
   DecodedTelemetry,
   EncodedCommand,
-} from '../interfaces/base-codec.interface';
+} from '../../interfaces/base-codec.interface';
 
 export class MilesightWS558Codec extends BaseDeviceCodec {
   readonly codecId: string          = 'milesight-ws558';

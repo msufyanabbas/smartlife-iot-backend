@@ -43,7 +43,7 @@ import {
   BaseDeviceCodec,
   DecodedTelemetry,
   EncodedCommand,
-} from '../interfaces/base-codec.interface';
+} from '../../interfaces/base-codec.interface';
 
 // ── Time zone map (offset-in-tenths-of-hours → label) ─────────────────────
 const TIMEZONE_MAP: Record<number, string> = {

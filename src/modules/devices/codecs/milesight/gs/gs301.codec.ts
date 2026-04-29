@@ -1,7 +1,7 @@
 // src/modules/devices/codecs/milesight/gs301.codec.ts
 // Milesight GS301 — Bathroom Odor Detector (NH3 + H2S + Temp + Humidity)
 
-import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../interfaces/base-codec.interface';
+import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../../interfaces/base-codec.interface';
 
 export class MilesightGS301Codec extends BaseDeviceCodec {
   readonly codecId       = 'milesight-gs301';

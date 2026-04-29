@@ -68,7 +68,7 @@ const TZ_MAP: Record<number, string> = {
    840: 'UTC+14',
 };
 
-export class MilesightUC100Codec extends BaseDeviceCodec {
+export class MilesightUC100V2Codec extends BaseDeviceCodec {
   readonly codecId         = 'milesight-uc100';
   readonly manufacturer    = 'Milesight';
   readonly model           = 'UC100';
