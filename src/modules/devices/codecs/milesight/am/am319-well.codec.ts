@@ -84,6 +84,9 @@ export class MilesightAM319WellCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['AM319-HCHO'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Ambience Monitoring';
+  readonly modelFamily     = 'AM319-HCHO';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/am-series/am319-hcho-well/am319.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
