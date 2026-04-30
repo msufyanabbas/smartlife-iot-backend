@@ -86,6 +86,9 @@ export class MilesightEM500SwlCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['EM500-SWL'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Water Level Sensor';
+  readonly modelFamily     = 'EM500-SWL';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-swl/em500-swl.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

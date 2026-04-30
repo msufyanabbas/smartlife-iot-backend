@@ -70,6 +70,9 @@ export class MilesightEM320TiltCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['EM320-TILT'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Tilt Sensor';
+  readonly modelFamily     = 'EM320-TILT';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em320-tilt/em320-tilt.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

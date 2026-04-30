@@ -21,6 +21,9 @@ export class MilesightEM300MCSCodec extends BaseDeviceCodec {
   readonly manufacturer: string     = 'Milesight';
   readonly supportedModels: string[] = ['EM300-MCS'];
   readonly protocol = 'lorawan' as const;
+  readonly category        = 'Door / Window Sensor';
+  readonly modelFamily     = 'EM300-MCS';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em300-mcs/em300-mcs.png';
 
   decode(payload: string | Buffer, _fPort?: number): DecodedTelemetry {
     const bytes   = this.normalizePayload(payload);

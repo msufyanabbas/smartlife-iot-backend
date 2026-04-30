@@ -23,6 +23,9 @@ export class MilesightEM300SLDCodec extends BaseDeviceCodec {
   readonly manufacturer: string     = 'Milesight';
   readonly supportedModels: string[] = ['EM300-SLD'];
   readonly protocol = 'lorawan' as const;
+  readonly category        = 'Leak Detection';
+  readonly modelFamily     = 'EM300-SLD';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em300-sld/em300-sld.png';
 
   decode(payload: string | Buffer, _fPort?: number): DecodedTelemetry {
     const bytes   = this.normalizePayload(payload);

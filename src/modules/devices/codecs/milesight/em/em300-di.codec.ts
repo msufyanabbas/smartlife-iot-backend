@@ -27,6 +27,9 @@ export class MilesightEM300DICodec extends BaseDeviceCodec {
   readonly manufacturer: string     = 'Milesight';
   readonly supportedModels: string[] = ['EM300-DI'];
   readonly protocol = 'lorawan' as const;
+  readonly category        = 'Flow / Pulse Monitoring';
+  readonly modelFamily     = 'EM300-DI';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em300-di-hall/em300-di.png';
 
   decode(payload: string | Buffer, _fPort?: number): DecodedTelemetry {
     const bytes   = this.normalizePayload(payload);

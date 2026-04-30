@@ -81,6 +81,9 @@ export class MilesightEM500LgtCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['EM500-LGT'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Light Sensor';
+  readonly modelFamily     = 'EM500-LGT';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-lgt/em500-lgt.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

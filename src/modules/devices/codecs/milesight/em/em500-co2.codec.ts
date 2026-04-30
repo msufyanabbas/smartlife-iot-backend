@@ -101,6 +101,9 @@ export class MilesightEM500Co2Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['EM500-CO2'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'CO2 Sensor';
+  readonly modelFamily     = 'EM500-CO2';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-co2/em500-co2.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

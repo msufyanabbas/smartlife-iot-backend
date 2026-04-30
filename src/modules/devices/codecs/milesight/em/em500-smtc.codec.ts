@@ -81,6 +81,9 @@ export class MilesightEM500SmtcCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['EM500-SMTC'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Soil Sensor';
+  readonly modelFamily     = 'EM500-SMTC';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-smtc/em500-smtc.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

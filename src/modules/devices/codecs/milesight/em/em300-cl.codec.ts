@@ -23,6 +23,9 @@ export class MilesightEM300CLCodec extends BaseDeviceCodec {
   readonly manufacturer: string     = 'Milesight';
   readonly supportedModels: string[] = ['EM300-CL'];
   readonly protocol = 'lorawan' as const;
+  readonly category        = 'Liquid Monitoring';
+  readonly modelFamily     = 'EM300-CL';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em300-cl/em300-cl.png';
 
   private readonly LIQUID_MAP: Record<number, string> = {
     0: 'uncalibrated',

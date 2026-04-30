@@ -71,6 +71,9 @@ export class MilesightEM500Pt100Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['EM500-PT100'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Temperature Sensor';
+  readonly modelFamily     = 'EM500-PT100';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-pt100/em500-pt100.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

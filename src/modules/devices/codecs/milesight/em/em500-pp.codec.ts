@@ -60,6 +60,9 @@ export class MilesightEM500PpCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['EM500-PP'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Pipe Pressure Sensor';
+  readonly modelFamily     = 'EM500-PP';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-pp/em500-pp.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

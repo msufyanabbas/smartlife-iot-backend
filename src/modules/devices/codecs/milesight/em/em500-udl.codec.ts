@@ -102,6 +102,10 @@ export class MilesightEM500UdlCodec extends BaseDeviceCodec {
   readonly supportedModels = ['EM500-UDL'];
   readonly protocol        = 'lorawan' as const;
 
+  readonly category        = 'Ultrasonic Distance Sensor';
+  readonly modelFamily     = 'EM500-UDL';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-udl/em500-udl.png';
+
   // ── Decode ──────────────────────────────────────────────────────────────────
 
   decode(payload: string | Buffer, _fPort?: number): DecodedTelemetry {

@@ -61,6 +61,9 @@ export class MilesightEM400MudCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['EM400-MUD'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Multifunctional Sensor';
+  readonly modelFamily     = 'EM400-MUD';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em400-mud/em400-mud.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

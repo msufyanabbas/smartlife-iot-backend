@@ -112,6 +112,9 @@ export class MilesightEM410RdlCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['EM410-RDL'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Radar Sensor';
+  readonly modelFamily     = 'EM410-RDL';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em410-rdl/em410-rdl.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

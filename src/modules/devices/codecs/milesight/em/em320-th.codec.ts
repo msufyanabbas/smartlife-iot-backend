@@ -63,6 +63,9 @@ export class MilesightEM320ThCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['EM320-TH'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Temperature & Humidity Sensor';
+  readonly modelFamily     = 'EM320-TH';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em320-th/em320-th.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

@@ -29,6 +29,9 @@ export class MilesightEM300THCodec extends BaseDeviceCodec {
   readonly manufacturer: string     = 'Milesight';
   readonly supportedModels: string[] = ['EM300-TH'];
   readonly protocol = 'lorawan' as const;
+  readonly category        = 'Temperature & Humidity Sensor';
+  readonly modelFamily     = 'EM300-TH';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em300-th/em300-th.png';
 
   // ── Decode ────────────────────────────────────────────────────────────────
 
