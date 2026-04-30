@@ -63,7 +63,9 @@ export class MilesightAM102Codec extends BaseDeviceCodec {
   readonly codecId: string        = 'milesight-am102';
   readonly manufacturer: string   = 'Milesight';
   readonly supportedModels: string[] = ['AM102', 'AM102A', 'AM102L'];
+  readonly modelFamily?: string   = 'AM102';
   readonly protocol = 'lorawan' as const;
+  readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/am-series/am102/am102.png';
 
   // ── Decode ────────────────────────────────────────────────────────────────
 

@@ -66,6 +66,10 @@ export interface IDeviceCodec {
    * Device model(s) this codec supports
    */
   readonly supportedModels: string[];
+
+  readonly category?: string;
+  readonly modelFamily?: string;
+  readonly imageUrl?: string;
   
   /**
    * Protocol type

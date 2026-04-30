@@ -3,6 +3,30 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { IDeviceCodec, DecodedTelemetry } from './interfaces/base-codec.interface';
 
+export interface VariantEntry {
+  model: string;       // e.g. "AM102A"
+  codecId: string;     // e.g. "milesight-am102"
+  protocol: string;
+}
+
+export interface ModelFamilyEntry {
+  family: string;          // e.g. "AM102"
+  variants: VariantEntry[];
+  category?: string;       // inherited from codec, e.g. "Ambience Monitoring"
+    imageUrl?: string;           // image representing the whole family
+}
+
+export interface CategoryEntry {
+  category: string;                  // e.g. "Ambience Monitoring"
+  families: ModelFamilyEntry[];
+}
+
+export interface ManufacturerCatalogV2 {
+  manufacturer: string;
+  categories: CategoryEntry[];       // categorised view
+  uncategorized: ModelFamilyEntry[]; // families with no category set
+}
+
 export interface ManufacturerCatalog {
   manufacturer: string;
   models: ModelEntry[];
@@ -29,6 +53,184 @@ export class CodecRegistryService {
     );
   }
 
+  // ── Family derivation ─────────────────────────────────────────────────────
+
+/**
+ * Derives the base family name from a model string when no explicit
+ * modelFamily is set on the codec.
+ *
+ * "AM102A"    → "AM102"
+ * "AM102-L"   → "AM102"
+ * "WS558-868" → "WS558"
+ * "EM300-TH"  → "EM300"
+ */
+private deriveFamily(model: string, codec: IDeviceCodec): string {
+  // Explicit override always wins
+  if (codec.modelFamily) return codec.modelFamily;
+
+  return model
+    .replace(/-[A-Z0-9]+$/i, '')        // strip dash-suffix:  -L, -868, -TH
+    .replace(/([A-Z]\d+)[A-Z]+$/i, '$1'); // strip trailing letters after digit block: AM102A → AM102
+}
+
+
+// ── Core grouping utility ─────────────────────────────────────────────────
+
+/**
+ * Builds a family→variant map for a single manufacturer from all registered
+ * codecs that match. Handles the "mix of both" case:
+ *
+ *   - Multiple variants in one codec's supportedModels  → all grouped under same family
+ *   - Separate codecs for same family                   → merged into one family entry
+ */
+private buildFamilyMap(manufacturer: string): Map<string, ModelFamilyEntry> {
+  const familyMap = new Map<string, ModelFamilyEntry>();
+  const mfr = manufacturer.toLowerCase();
+
+  for (const codec of this.codecs.values()) {
+    if (codec.manufacturer.toLowerCase() !== mfr) continue;
+
+    for (const modelName of codec.supportedModels) {
+      if (modelName === '*') continue;
+
+      const family = this.deriveFamily(modelName, codec);
+
+      if (!familyMap.has(family)) {
+        familyMap.set(family, {
+          family,
+          variants: [],
+          ...(codec.category && { category: codec.category }),
+          ...(codec.imageUrl && { imageUrl: codec.imageUrl }),
+        });
+      }
+
+      const entry = familyMap.get(family)!;
+
+      if (codec.imageUrl && !entry.imageUrl) {
+  entry.imageUrl = codec.imageUrl;
+}
+
+      // If two separate codecs map to the same family, keep the category
+      // from whichever codec has it set (first-wins, warn on conflict)
+      if (codec.category && !entry.category) {
+        entry.category = codec.category;
+      } else if (codec.category && entry.category && entry.category !== codec.category) {
+        this.logger.warn(
+          `Family "${family}" has conflicting categories: ` +
+          `"${entry.category}" vs "${codec.category}" — keeping first`,
+        );
+      }
+
+      // Avoid duplicate variant entries (can happen if same model appears in
+      // two registered codecs — e.g. a legacy codec and a new one)
+      const alreadyAdded = entry.variants.some((v) => v.model === modelName);
+      if (!alreadyAdded) {
+        entry.variants.push({
+          model: modelName,
+          codecId: codec.codecId,
+          protocol: codec.protocol,
+        });
+      }
+    }
+  }
+
+  // Sort variants within each family
+  for (const entry of familyMap.values()) {
+    entry.variants.sort((a, b) => a.model.localeCompare(b.model));
+  }
+
+  return familyMap;
+}
+
+// ── Public catalog methods ────────────────────────────────────────────────
+
+/**
+ * Returns model families for a manufacturer, optionally filtered by category.
+ *
+ *   GET /codecs/manufacturers/Milesight/families
+ *   GET /codecs/manufacturers/Milesight/families?category=Ambience+Monitoring
+ */
+listModelFamiliesForManufacturer(
+  manufacturer: string,
+  category?: string,
+): ModelFamilyEntry[] {
+  const familyMap = this.buildFamilyMap(manufacturer);
+
+  let families = Array.from(familyMap.values());
+
+  if (category) {
+    const cat = category.toLowerCase();
+    families = families.filter((f) => f.category?.toLowerCase() === cat);
+  }
+
+  return families.sort((a, b) => a.family.localeCompare(b.family));
+}
+
+/**
+ * Returns the distinct categories available for a manufacturer.
+ * Used to populate a "filter by category" dropdown above the model picker.
+ *
+ *   GET /codecs/manufacturers/Milesight/categories
+ */
+listCategoriesForManufacturer(manufacturer: string): string[] {
+  const familyMap = this.buildFamilyMap(manufacturer);
+  const cats = new Set<string>();
+
+  for (const entry of familyMap.values()) {
+    if (entry.category) cats.add(entry.category);
+  }
+
+  return Array.from(cats).sort();
+}
+
+/**
+ * Full structured catalog: manufacturer → categories → families → variants.
+ * Families with no category are placed in `uncategorized`.
+ *
+ *   GET /codecs/catalog/v2
+ */
+getStructuredCatalog(): ManufacturerCatalogV2[] {
+  // Collect all unique manufacturers (excluding Generic)
+  const manufacturers = new Set<string>();
+  for (const codec of this.codecs.values()) {
+    if (codec.manufacturer !== 'Generic') manufacturers.add(codec.manufacturer);
+  }
+
+  const result: ManufacturerCatalogV2[] = [];
+
+  for (const manufacturer of Array.from(manufacturers).sort()) {
+    const familyMap = this.buildFamilyMap(manufacturer);
+    const categoryMap = new Map<string, ModelFamilyEntry[]>();
+    const uncategorized: ModelFamilyEntry[] = [];
+
+    for (const entry of familyMap.values()) {
+      if (!entry.category) {
+        uncategorized.push(entry);
+        continue;
+      }
+
+      if (!categoryMap.has(entry.category)) {
+        categoryMap.set(entry.category, []);
+      }
+      categoryMap.get(entry.category)!.push(entry);
+    }
+
+    const categories: CategoryEntry[] = Array.from(categoryMap.entries())
+      .map(([category, families]) => ({
+        category,
+        families: families.sort((a, b) => a.family.localeCompare(b.family)),
+      }))
+      .sort((a, b) => a.category.localeCompare(b.category));
+
+    result.push({
+      manufacturer,
+      categories,
+      uncategorized: uncategorized.sort((a, b) => a.family.localeCompare(b.family)),
+    });
+  }
+
+  return result;
+}
   // ── Direct lookup ─────────────────────────────────────────────────────────
 
   getCodec(codecId: string): IDeviceCodec | undefined {

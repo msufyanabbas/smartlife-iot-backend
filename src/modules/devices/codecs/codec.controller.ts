@@ -9,6 +9,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -16,6 +17,7 @@ import {
   ApiParam,
   ApiResponse,
   ApiBearerAuth,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
 import { RolesGuard } from '@/common/guards/roles.guard';
@@ -96,6 +98,83 @@ export class CodecController {
       data: this.codecRegistry.getCatalog(),
     };
   }
+
+
+  /**
+ * GET /codecs/manufacturers/:manufacturer/categories
+ *
+ * Returns distinct category names for a manufacturer.
+ * Used to drive a "filter by category" chip/dropdown above the model picker.
+ *
+ * Response: { manufacturer: "Milesight", data: ["Ambience Monitoring", "Light Control", ...] }
+ */
+@Get('manufacturers/:manufacturer/categories')
+@Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
+@ApiOperation({ summary: 'List product categories available for a manufacturer' })
+@ApiParam({ name: 'manufacturer', example: 'Milesight' })
+listCategoriesForManufacturer(@Param('manufacturer') manufacturer: string) {
+  return {
+    manufacturer,
+    data: this.codecRegistry.listCategoriesForManufacturer(manufacturer),
+  };
+}
+
+/**
+ * GET /codecs/manufacturers/:manufacturer/families
+ * GET /codecs/manufacturers/:manufacturer/families?category=Ambience+Monitoring
+ *
+ * Returns model families (with variants) for a manufacturer.
+ * Optionally filtered by category when the query param is provided.
+ *
+ * Response:
+ *   {
+ *     manufacturer: "Milesight",
+ *     category: "Ambience Monitoring",   // echoed back if filtered
+ *     data: [
+ *       {
+ *         family: "AM102",
+ *         category: "Ambience Monitoring",
+ *         variants: [
+ *           { model: "AM102",   codecId: "milesight-am102", protocol: "lorawan" },
+ *           { model: "AM102A",  codecId: "milesight-am102", protocol: "lorawan" },
+ *           { model: "AM102-L", codecId: "milesight-am102", protocol: "lorawan" },
+ *         ]
+ *       },
+ *       ...
+ *     ]
+ *   }
+ */
+@Get('manufacturers/:manufacturer/families')
+@Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
+@ApiOperation({ summary: 'List model families with variants, optionally filtered by category' })
+@ApiParam({ name: 'manufacturer', example: 'Milesight' })
+@ApiQuery({ name: 'category', required: false, example: 'Ambience Monitoring' })
+listModelFamiliesForManufacturer(
+  @Param('manufacturer') manufacturer: string,
+  @Query('category') category?: string,
+) {
+  return {
+    manufacturer,
+    ...(category && { category }),
+    data: this.codecRegistry.listModelFamiliesForManufacturer(manufacturer, category),
+  };
+}
+
+/**
+ * GET /codecs/catalog/v2
+ *
+ * Full structured catalog: manufacturer → categories → families → variants.
+ * One call to prefetch everything for an "Add Device" wizard.
+ */
+@Get('catalog/v2')
+@Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
+@ApiOperation({ summary: 'Full structured catalog grouped by manufacturer, category, and model family' })
+getStructuredCatalog() {
+  return {
+    data: this.codecRegistry.getStructuredCatalog(),
+  };
+}
+
 
   // ── Admin / debug endpoints ───────────────────────────────────────────────
 
