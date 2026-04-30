@@ -234,6 +234,9 @@ export class MilesightDS3604Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['DS3604'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Device Management';
+  readonly modelFamily     = 'DS3604';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ds-series/ds3604/ds3604.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
