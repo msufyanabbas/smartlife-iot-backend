@@ -53,6 +53,9 @@ export class MilesightTS201Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['TS201'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Temperature Sensor';
+  readonly modelFamily     = 'TS201';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ts-series/ts201/ts201.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

@@ -155,6 +155,9 @@ export class MilesightTS601Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['TS601'];
   readonly protocol        = 'cellular' as const;
+  readonly category        = 'Temperature & Humidity Sensor';
+  readonly modelFamily: string    = 'TS601';
+  readonly imageUrl: string        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ts-series/ts601/ts601.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

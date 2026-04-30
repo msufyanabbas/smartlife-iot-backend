@@ -147,7 +147,10 @@ export class MilesightUC521Codec extends BaseDeviceCodec {
   readonly codecId         = 'milesight-uc521';
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['UC521'];
+  readonly modelFamily?: string = 'UC521';
   readonly protocol        = 'lorawan' as const;
+  readonly category       = 'Electric Controller' as const;
+  readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/uc-series/uc521/uc521.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

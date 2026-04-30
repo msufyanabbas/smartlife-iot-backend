@@ -75,6 +75,9 @@ export class MilesightUC100V2Codec extends BaseDeviceCodec {
   readonly description     = 'IoT Controller / Modbus Gateway with Rule Engine';
   readonly supportedModels = ['UC100'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'IoT Controller & Modbus Gateway';
+  readonly modelFamily     = 'UC100';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/uc-series/uc100-v2/uc100-v2.png';
 
   // ── Decode uplink ─────────────────────────────────────────────────────────
 

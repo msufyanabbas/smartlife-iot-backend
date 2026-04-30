@@ -25,6 +25,9 @@ import { MilesightTS601Codec } from './ts601.codec';
 export class MilesightTS602Codec extends MilesightTS601Codec {
   override readonly codecId         = 'milesight-ts602';
   override readonly supportedModels = ['TS602'];
+  override readonly category        = 'Temperature & Humidity Sensor';
+  override readonly modelFamily     = 'TS602';
+  override readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ts-series/ts602/ts602.png';
 
   // ── Decode ─────────────────────────────────────────────────────────────────
   // Run TS601 decode, then scan for any 0x55 bytes. Since 0x55 is not a

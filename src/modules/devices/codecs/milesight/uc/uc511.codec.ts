@@ -211,6 +211,9 @@ export class MilesightUC511Codec extends BaseDeviceCodec {
   readonly manufacturer: string   = 'Milesight';
   readonly supportedModels: string[] = ['UC511', 'UC512'];
   readonly protocol      = 'lorawan';
+  readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/uc-series/uc511/uc511-v3.png';
+  readonly category = 'Valve Controller';
+  readonly modelFamily?: string = 'UC511';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

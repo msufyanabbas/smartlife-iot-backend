@@ -134,7 +134,10 @@ export class MilesightUC300Codec extends BaseDeviceCodec {
   readonly codecId         = 'milesight-uc300';
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['UC300'];
+  readonly modelFamily?: string = 'UC300';
   readonly protocol        = 'lorawan' as const;
+  readonly category       = 'IoT Controller' as const;
+  readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/uc-series/uc300/uc300.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
