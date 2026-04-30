@@ -84,6 +84,9 @@ export class MilesightCT101Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['CT101', 'CT103', 'CT105'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Current Monitoring';
+  readonly modelFamily     = 'CT101';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ct-series/ct101/ct101-2.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
