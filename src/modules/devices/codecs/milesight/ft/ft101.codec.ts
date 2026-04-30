@@ -1,148 +1,118 @@
 // src/modules/devices/codecs/milesight/ft101.codec.ts
 // Milesight FT101 — LoRaWAN Field Tester
 //
-// Protocol: IPSO channel_id + channel_type (same family as TS/GS IPSO series)
+// Protocol: Classic channel_id + channel_type (same family as GS301/WT101/UC100)
+// Read-only device — no downlink commands supported.
 //
-// Attributes:
-//   0xFF 0x01 — ipso_version
-//   0xFF 0x09 — hardware_version
-//   0xFF 0x0A — firmware_version
-//   0xFF 0xFF — tsl_version
-//   0xFF 0x16 — sn (8B hex)
-//   0xFF 0x0F — lorawan_class
-//   0xFF 0xFE — reset_event
-//   0xFF 0x0B — device_status
-//
-// Telemetry:
-//   0x03 0xA1 — longitude (int32 LE /1000000) + latitude (int32 LE /1000000)  8B
-//   0x04 0xA2 — rssi (int16 LE /10, dBm) + snr (int16 LE /10, dB)            4B
-//   0x05 0xA3 — sf (uint8, spreading factor)                                   1B
-//   0x06 0xA4 — tx_power (int16 LE /100, dBm)                                 2B
-//
-// Decode only — no downlink commands documented for this device.
-//
-// canDecode fingerprint:
-//   0x03 0xA1 (location) and/or 0x04 0xA2 (signal) are unique to FT101.
-//   0x05 0xA3 (SF) and 0x06 0xA4 (tx_power) are also FT101-exclusive channels.
+// Channels:
+//   0x03/0xA1 — GPS location (longitude + latitude, int32LE / 1,000,000)
+//   0x04/0xA2 — Signal strength (RSSI int16LE / 10, SNR int16LE / 10)
+//   0x05/0xA3 — Spreading factor (uint8)
+//   0x06/0xA4 — TX power (int16LE / 100)
 
-import {
-  BaseDeviceCodec,
-  DecodedTelemetry,
-  EncodedCommand,
-} from '../../interfaces/base-codec.interface';
-
-function i32(b: number[], i: number): number {
-  const u = (((b[i + 3] << 24) | (b[i + 2] << 16) | (b[i + 1] << 8) | b[i]) >>> 0);
-  return u > 0x7fffffff ? u - 0x100000000 : u;
-}
-function i16(b: number[], i: number): number {
-  const u = ((b[i + 1] << 8) | b[i]) & 0xffff;
-  return u > 0x7fff ? u - 0x10000 : u;
-}
+import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../../interfaces/base-codec.interface';
 
 export class MilesightFT101Codec extends BaseDeviceCodec {
   readonly codecId         = 'milesight-ft101';
   readonly manufacturer    = 'Milesight';
+  readonly model           = 'FT101';
+  readonly description     = 'LoRaWAN Field Tester — GPS, RSSI, SNR, SF, TX Power';
   readonly supportedModels = ['FT101'];
   readonly protocol        = 'lorawan' as const;
 
-  // ── Decode ──────────────────────────────────────────────────────────────────
+  // ── Decode uplink ─────────────────────────────────────────────────────────
 
-  decode(payload: string | Buffer, _fPort?: number): DecodedTelemetry {
+  decode(payload: string | Buffer, fPort?: number): DecodedTelemetry {
     const bytes   = this.normalizePayload(payload);
-    const decoded: any = {};
-    let i = 0;
+    const decoded: DecodedTelemetry = {};
 
-    while (i < bytes.length) {
-      const ch = bytes[i++];
-      const ty = bytes[i++];
+    for (let i = 0; i < bytes.length; ) {
+      const channel_id   = bytes[i++];
+      const channel_type = bytes[i++];
 
-      // ── Attributes ──────────────────────────────────────────────────────────
-      if (ch === 0xff && ty === 0x01) {
+      // ── Device attribute frames (0xFF prefix) ────────────────────────────
+
+      if (channel_id === 0xff && channel_type === 0x01) {
         const b = bytes[i++];
         decoded.ipso_version = `v${(b & 0xf0) >> 4}.${b & 0x0f}`;
       }
-      else if (ch === 0xff && ty === 0x09) {
+      else if (channel_id === 0xff && channel_type === 0x09) {
         decoded.hardware_version = `v${(bytes[i] & 0xff).toString(16)}.${(bytes[i + 1] & 0xff) >> 4}`;
         i += 2;
       }
-      else if (ch === 0xff && ty === 0x0a) {
+      else if (channel_id === 0xff && channel_type === 0x0a) {
         decoded.firmware_version = `v${(bytes[i] & 0xff).toString(16)}.${(bytes[i + 1] & 0xff).toString(16)}`;
         i += 2;
       }
-      else if (ch === 0xff && ty === 0xff) {
+      else if (channel_id === 0xff && channel_type === 0xff) {
         decoded.tsl_version = `v${bytes[i]}.${bytes[i + 1]}`; i += 2;
       }
-      else if (ch === 0xff && ty === 0x16) {
-        decoded.sn = bytes.slice(i, i + 8)
-          .map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
-        i += 8;
+      else if (channel_id === 0xff && channel_type === 0x16) {
+        decoded.sn = bytes.slice(i, i + 8).map(b => b.toString(16).padStart(2, '0')).join(''); i += 8;
       }
-      else if (ch === 0xff && ty === 0x0f) {
-        const cm: Record<number, string> = { 0:'Class A', 1:'Class B', 2:'Class C', 3:'Class CtoB' };
-        decoded.lorawan_class = cm[bytes[i]] ?? 'unknown'; i += 1;
+      else if (channel_id === 0xff && channel_type === 0x0f) {
+        decoded.lorawan_class = (['Class A', 'Class B', 'Class C', 'Class CtoB'])[bytes[i++]] ?? 'unknown';
       }
-      else if (ch === 0xff && ty === 0xfe) {
-        decoded.reset_event = bytes[i] === 1 ? 'reset' : 'normal'; i += 1;
+      else if (channel_id === 0xff && channel_type === 0xfe) {
+        decoded.reset_event = bytes[i++] === 1 ? 'reset' : 'normal';
       }
-      else if (ch === 0xff && ty === 0x0b) {
-        decoded.device_status = bytes[i] === 1 ? 'on' : 'off'; i += 1;
+      else if (channel_id === 0xff && channel_type === 0x0b) {
+        decoded.device_status = bytes[i++] === 1 ? 'on' : 'off';
       }
 
-      // ── Location (int32 LE / 1000000, degrees) ───────────────────────────────
-      else if (ch === 0x03 && ty === 0xa1) {
-        decoded.longitude = i32(bytes, i) / 1000000;
-        decoded.latitude  = i32(bytes, i + 4) / 1000000;
+      // ── Telemetry frames ─────────────────────────────────────────────────
+
+      // GPS Location — longitude(4B int32LE / 1_000_000) + latitude(4B int32LE / 1_000_000)
+      else if (channel_id === 0x03 && channel_type === 0xa1) {
+        decoded.longitude = this.i32(bytes, i)     / 1_000_000;
+        decoded.latitude  = this.i32(bytes, i + 4) / 1_000_000;
         i += 8;
       }
 
-      // ── Signal strength (int16 LE / 10) ───────────────────────────────────────
-      else if (ch === 0x04 && ty === 0xa2) {
-        decoded.rssi = i16(bytes, i) / 10;      // dBm
-        decoded.snr  = i16(bytes, i + 2) / 10;  // dB
+      // Signal Strength — RSSI(2B int16LE / 10) + SNR(2B int16LE / 10)
+      else if (channel_id === 0x04 && channel_type === 0xa2) {
+        decoded.rssi = this.i16(bytes, i)     / 10;
+        decoded.snr  = this.i16(bytes, i + 2) / 10;
         i += 4;
       }
 
-      // ── Spreading factor (uint8) ──────────────────────────────────────────────
-      else if (ch === 0x05 && ty === 0xa3) {
-        decoded.sf = bytes[i++] & 0xff;
+      // Spreading Factor — SF(1B uint8)
+      else if (channel_id === 0x05 && channel_type === 0xa3) {
+        decoded.sf = bytes[i++];
       }
 
-      // ── TX power (int16 LE / 100, dBm) ───────────────────────────────────────
-      else if (ch === 0x06 && ty === 0xa4) {
-        decoded.tx_power = i16(bytes, i) / 100;
-        i += 2;
+      // TX Power — tx_power(2B int16LE / 100)
+      else if (channel_id === 0x06 && channel_type === 0xa4) {
+        decoded.tx_power = this.i16(bytes, i) / 100; i += 2;
       }
 
       else { break; }
     }
 
-    return decoded as DecodedTelemetry;
+    return decoded;
   }
 
-  // ── Encode ──────────────────────────────────────────────────────────────────
-  // No downlink commands are defined for the FT101.
+  // ── Encode downlink ───────────────────────────────────────────────────────
+  // FT101 is a read-only field tester — no downlink commands are supported.
 
-  encode(_command: { type: string; params?: any }): EncodedCommand {
-    throw new Error('FT101: this device has no downlink commands');
+  encode(command: { type: string; params?: any }): EncodedCommand {
+    throw new Error(`FT101: this device does not support downlink commands (type: ${command.type})`);
   }
 
-  // ── canDecode ─────────────────────────────────────────────────────────────────
-  // FT101 is uniquely identified by its telemetry channel IDs:
-  //   0x03 0xA1 (location) — FT101-exclusive
-  //   0x04 0xA2 (signal)   — FT101-exclusive
-  //   0x05 0xA3 (SF)       — FT101-exclusive
-  //   0x06 0xA4 (tx_power) — FT101-exclusive
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
-  canDecode(payload: string | Buffer, _metadata?: any): boolean {
-    const bytes = this.normalizePayload(payload);
-    for (let i = 0; i + 1 < bytes.length; i++) {
-      const ch = bytes[i]; const ty = bytes[i + 1];
-      if (ch === 0x03 && ty === 0xa1) return true; // location
-      if (ch === 0x04 && ty === 0xa2) return true; // signal
-      if (ch === 0x05 && ty === 0xa3) return true; // SF
-      if (ch === 0x06 && ty === 0xa4) return true; // tx_power
-    }
-    return false;
+  private u16(bytes: number[], i: number): number {
+    return ((bytes[i + 1] << 8) | bytes[i]) & 0xffff;
+  }
+  private i16(bytes: number[], i: number): number {
+    const v = this.u16(bytes, i);
+    return v > 0x7fff ? v - 0x10000 : v;
+  }
+  private u32(bytes: number[], i: number): number {
+    return (((bytes[i + 3] << 24) | (bytes[i + 2] << 16) | (bytes[i + 1] << 8) | bytes[i]) >>> 0);
+  }
+  private i32(bytes: number[], i: number): number {
+    const v = this.u32(bytes, i);
+    return v > 0x7fffffff ? v - 0x100000000 : v;
   }
 }
