@@ -10,6 +10,9 @@ export class MilesightGS301Codec extends BaseDeviceCodec {
   readonly description   = 'Bathroom Odor Detector — NH3, H2S, Temperature, Humidity';
   readonly supportedModels = ['GS301'];
   readonly protocol      = 'lorawan' as const;
+  readonly category      = 'Gas Sensor';
+  readonly modelFamily   = 'GS301';
+  readonly imageUrl      = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/gs-series/gs301/gs301.png';
 
   // ── Decode uplink ────────────────────────────────────────────────────────
 

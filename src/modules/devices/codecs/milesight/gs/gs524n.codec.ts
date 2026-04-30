@@ -46,6 +46,9 @@ export class MilesightGS524NCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['GS524N'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Smoke Detector';
+  readonly modelFamily     = 'GS524N';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/gs-series/gs524n/gs524n.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

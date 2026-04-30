@@ -133,6 +133,9 @@ export class MilesightGS601Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['GS601'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Air Quality Sensor';
+  readonly modelFamily     = 'GS601';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/gs-series/gs601/gs601.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

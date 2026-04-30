@@ -19,6 +19,9 @@ export class MilesightFT101Codec extends BaseDeviceCodec {
   readonly description     = 'LoRaWAN Field Tester — GPS, RSSI, SNR, SF, TX Power';
   readonly supportedModels = ['FT101'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Field Tester';
+  readonly modelFamily     = 'FT101';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ft-series/ft101/ft101.png';
 
   // ── Decode uplink ─────────────────────────────────────────────────────────
 
