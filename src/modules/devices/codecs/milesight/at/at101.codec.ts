@@ -132,6 +132,9 @@ export class MilesightAT101Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['AT101'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Asset Tracking';
+  readonly modelFamily     = 'AT101';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/at-series/at101/at101.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
