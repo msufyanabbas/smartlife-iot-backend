@@ -250,6 +250,10 @@ export class MilesightUC300CellularCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['UC300-LTE', 'UC300-4G'];
   readonly protocol        = 'other' as const;
+  readonly modelFamily = 'UC300';
+  readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/uc-series/uc300/uc300.png';
+  readonly category = 'UC300';
+
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

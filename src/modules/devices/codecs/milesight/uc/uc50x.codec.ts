@@ -128,6 +128,9 @@ export class MilesightUC50xCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['UC501', 'UC502', 'UC511', 'UC512'];
   readonly protocol        = 'lorawan' as const;
+  readonly category       = 'IoT Controller' as const;
+  readonly imageUrl      = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/uc-series/uc501/uc501-v3.png';
+  readonly modelFamily?: string = 'UC50x';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
