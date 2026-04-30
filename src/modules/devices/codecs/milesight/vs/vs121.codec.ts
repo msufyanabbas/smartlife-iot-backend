@@ -405,6 +405,9 @@ export class MilesightVS121Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['VS121'];
   readonly protocol        = 'lorawan' as const;
+  readonly category = 'VS121';
+  readonly modelFamily = 'VS121';
+  readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs121/vs121.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

@@ -43,6 +43,7 @@ export class MilesightVS340Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['VS340'];
   readonly protocol        = 'lorawan' as const;
+  readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs340/vs340.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

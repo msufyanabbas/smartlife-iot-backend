@@ -58,6 +58,7 @@ export class MilesightVS360Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['VS360'];
   readonly protocol        = 'lorawan' as const;
+  readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs351/vs351.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

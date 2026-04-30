@@ -12,6 +12,7 @@ export class MilesightWTS506Codec extends BaseDeviceCodec {
   readonly description   = 'Weather Station — Temperature, Humidity, Wind, Pressure, Rainfall';
   readonly supportedModels = ['WTS506', 'WTS505', 'WTS305'];
   readonly protocol      = 'lorawan' as const;
+  readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/wts-series/wts506/wts506.png';
 
   // ── Timezone map ─────────────────────────────────────────────────────────
 

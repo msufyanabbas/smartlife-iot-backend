@@ -303,6 +303,7 @@ export class MilesightVS133Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels: string[] = ['VS133'];
   readonly protocol        = 'lorawan' as const;
+  readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs133/vs133.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
