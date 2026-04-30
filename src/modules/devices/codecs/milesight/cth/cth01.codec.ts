@@ -224,6 +224,9 @@ export class MilesightCTH01Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['CTH01'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Current Monitoring';
+  readonly modelFamily     = 'CTH01';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/cth-series/cth01/CTH01.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
