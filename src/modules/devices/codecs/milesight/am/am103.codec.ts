@@ -45,6 +45,9 @@ export class MilesightAM103Codec extends BaseDeviceCodec {
   // AM103L has identical payload — same codec, just listed as a supported model
   readonly supportedModels: string[] = ['AM103', 'AM103L'];
   readonly protocol: 'lorawan'    = 'lorawan';
+  readonly modelFamily: string    = 'AM103';
+  readonly category: string       = 'Ambience Monitoring';
+  readonly imageUrl: string       = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/am-series/am103/am103.png';
 
   // ── Decode ────────────────────────────────────────────────────────────────
 

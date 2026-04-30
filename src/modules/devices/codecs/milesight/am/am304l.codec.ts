@@ -55,6 +55,9 @@ export class MilesightAM304LCodec extends BaseDeviceCodec {
   readonly manufacturer: string = 'Milesight';
   readonly supportedModels: string[] = ['AM304L', 'AM304'];
   readonly protocol: 'lorawan' = 'lorawan';
+  readonly category: string = 'Ambience Monitoring';
+  readonly modelFamily: string = 'AM304L';
+  readonly imageUrl: string = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/am-series/am304l/am300l.png';
 
   // ── Decode ────────────────────────────────────────────────────────────────
 

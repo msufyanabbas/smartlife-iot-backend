@@ -93,6 +93,9 @@ export class MilesightAM308Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['AM308'];
   readonly protocol        = 'lorawan' as const;
+  readonly category        = 'Ambience Monitoring';
+  readonly modelFamily     = 'AM308';
+  readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/am-series/am308/am308.png';
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

@@ -57,6 +57,9 @@ function hexStr(bytes: number[], i: number, len: number): string {
 export class MilesightAM305LCodec extends MilesightAM304LCodec {
   override readonly codecId: string          = 'milesight-am305l';
   override readonly supportedModels: string[] = ['AM305L'];
+  override readonly category: string           = 'Ambience Monitoring';
+  override readonly modelFamily: string        = 'AM305L';
+  override readonly imageUrl: string           = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/am-series/am305l/am300l.png';
 
   // ── Decode ────────────────────────────────────────────────────────────────
   // Full override — AM305L has identical structure to AM304L but with extra

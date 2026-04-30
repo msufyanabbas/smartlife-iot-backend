@@ -53,6 +53,9 @@ export class MilesightAM104Codec extends BaseDeviceCodec {
   // AM107 = AM104 + CO2 + TVOC + Pressure — identical channel structure, same codec
   readonly supportedModels: string[] = ['AM104', 'AM107'];
   readonly protocol: 'lorawan'    = 'lorawan';
+  readonly category: string       = 'Ambience Monitoring';
+  readonly modelFamily: string    = 'AM104';
+  readonly imageUrl: string       = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/am-series/am104/am104.png';
 
   // ── Decode ────────────────────────────────────────────────────────────────
 
