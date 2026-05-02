@@ -37,7 +37,8 @@ import { CustomerAccessGuard } from '@common/guards/customer-access.guard';
 import { Notify } from '@common/decorators/notify.decorator';
 import { NotificationChannel, NotificationPriority, NotificationType } from '@common/enums/index.enum';
 import { Audit } from '@common/decorators/audit.decorator';
-
+import { CodecRegistryService } from './codecs/codec-registry.service';
+import { SwaggerAuth, TenantOrCustomerAdmin } from '@/common/decorators/access-control.decorator';
 // Device control endpoints (command, rpc, telemetry) live in GatewayController
 // at POST /gateway/devices/:deviceKey/command|rpc|telemetry.
 // Keeping them here would create a circular dependency:
@@ -52,6 +53,7 @@ export class DevicesController {
   constructor(
     private readonly devicesService: DevicesService,
     private readonly subscriptionsService: SubscriptionsService,
+    private readonly codecRegistry: CodecRegistryService,
   ) {}
 
   // ── Device management ─────────────────────────────────────────────────────
@@ -90,6 +92,38 @@ export class DevicesController {
   ) {
     return this.devicesService.findAll(user.tenantId, user.customerId, user, paginationDto);
   }
+
+  @Get(':id/capabilities')
+@TenantOrCustomerAdmin()
+@SwaggerAuth('Get device capabilities for automation builder and dashboard')
+async getDeviceCapabilities(
+  @CurrentUser() user: User,
+  @Param('id') id: string,
+) {
+  const device = await this.devicesService.findOne(id, user);
+ 
+  // Resolution priority: codecId → manufacturer+model → null
+  const codecId      = device.metadata?.codecId as string | undefined;
+  const manufacturer = (device.metadata?.manufacturer as string) ?? device.manufacturer;
+  const model        = (device.metadata?.model as string)        ?? device.model;
+ 
+  const capabilities =
+    (codecId      ? this.codecRegistry.getCapabilities(codecId)                    : null) ??
+    (manufacturer && model ? this.codecRegistry.getCapabilitiesByModel(manufacturer, model) : null);
+ 
+  return {
+    message: 'Device capabilities retrieved successfully',
+    data: capabilities ?? {
+      codecId:       codecId ?? null,
+      manufacturer,
+      model,
+      description:   'No capability definition available for this device',
+      telemetryKeys: [],
+      commands:      [],
+      uiComponents:  [],
+    },
+  };
+}
 
   @Get('statistics')
   @ApiOperation({ summary: 'Get device statistics' })

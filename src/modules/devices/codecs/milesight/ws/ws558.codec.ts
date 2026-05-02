@@ -22,6 +22,7 @@
  * Based on official Milesight WS558 decoder/encoder v1.0.0
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -33,6 +34,84 @@ export class MilesightWS558Codec extends BaseDeviceCodec {
   readonly manufacturer: string     = 'Milesight';
   readonly supportedModels: string[] = ['WS558'];
   readonly protocol = 'lorawan' as const;
+  readonly description     = 'Smart Light Controller — 8 independent switches with power metering';
+
+  getCapabilities(): DeviceCapability {
+  const switches = Array.from({ length: 8 }, (_, i) => i + 1);
+  const switchOptions = [
+    { label: 'On',  value: 'on'  },
+    { label: 'Off', value: 'off' },
+  ];
+ 
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS558',
+    description:  'Smart Light Controller — 8 independent switches with power metering',
+    telemetryKeys: [
+      ...switches.map(n => ({
+        key:   `switch_${n}`,
+        label: `Switch ${n}`,
+        type:  'string' as const,
+        enum:  ['on', 'off'],
+      })),
+      { key: 'voltage',           label: 'Voltage',           type: 'number' as const, unit: 'V'  },
+      { key: 'active_power',      label: 'Active Power',      type: 'number' as const, unit: 'W'  },
+      { key: 'power_factor',      label: 'Power Factor',      type: 'number' as const, unit: '%'  },
+      { key: 'power_consumption', label: 'Power Consumption', type: 'number' as const, unit: 'Wh' },
+      { key: 'total_current',     label: 'Total Current',     type: 'number' as const, unit: 'mA' },
+    ],
+    commands: [
+      {
+        type:        'control_switch',
+        label:       'Control Switch',
+        description: 'Turn one or more switches on or off',
+        params: switches.map(n => ({
+          key:      `switch_${n}`,
+          label:    `Switch ${n}`,
+          type:     'select' as const,
+          required: false,
+          options:  switchOptions,
+        })),
+      },
+      {
+        type:        'control_switch_with_delay',
+        label:       'Control Switch with Delay',
+        description: 'Turn switches on/off after a delay',
+        params: [
+          { key: 'task_id',    label: 'Task ID',         type: 'number' as const, required: false, default: 1, min: 1 },
+          { key: 'delay_time', label: 'Delay (seconds)', type: 'number' as const, required: false, default: 0, min: 0 },
+          ...switches.map(n => ({
+            key:      `switch_${n}`,
+            label:    `Switch ${n}`,
+            type:     'select' as const,
+            required: false,
+            options:  switchOptions,
+          })),
+        ],
+      },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 86400 }],
+      },
+      { type: 'reboot', label: 'Reboot Device', params: [] },
+    ],
+    uiComponents: [
+      ...switches.map(n => ({
+        type:    'toggle' as const,
+        label:   `Switch ${n}`,
+        keys:    [`switch_${n}`],
+        command: 'control_switch',
+      })),
+      { type: 'value' as const, label: 'Voltage',           keys: ['voltage'],           unit: 'V'  },
+      { type: 'value' as const, label: 'Active Power',      keys: ['active_power'],      unit: 'W'  },
+      { type: 'gauge' as const, label: 'Power Factor',      keys: ['power_factor'],      unit: '%'  },
+      { type: 'value' as const, label: 'Power Consumption', keys: ['power_consumption'], unit: 'Wh' },
+      { type: 'value' as const, label: 'Total Current',     keys: ['total_current'],     unit: 'mA' },
+    ],
+  };
+}
 
   // ── Decode ────────────────────────────────────────────────────────────────
 
@@ -337,4 +416,6 @@ export class MilesightWS558Codec extends BaseDeviceCodec {
 
     return false;
   }
+
+
 }

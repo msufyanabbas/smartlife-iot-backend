@@ -2,6 +2,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { IDeviceCodec, DecodedTelemetry } from './interfaces/base-codec.interface';
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 
 export interface VariantEntry {
   model: string;       // e.g. "AM102A"
@@ -72,6 +73,7 @@ private deriveFamily(model: string, codec: IDeviceCodec): string {
     .replace(/-[A-Z0-9]+$/i, '')        // strip dash-suffix:  -L, -868, -TH
     .replace(/([A-Z]\d+)[A-Z]+$/i, '$1'); // strip trailing letters after digit block: AM102A → AM102
 }
+
 
 
 // ── Core grouping utility ─────────────────────────────────────────────────
@@ -446,6 +448,47 @@ getStructuredCatalog(): ManufacturerCatalogV2[] {
     const codec = this.getCodec(deviceMetadata.codecId);
     if (!codec) throw new Error(`Codec not found: ${deviceMetadata.codecId}`);
     return codec.encode(command);
+  }
+
+  // ── Capabilities ──────────────────────────────────────────────────────────
+
+  /**
+   * Get capabilities for a specific codec by ID.
+   * GET /devices/:id/capabilities  →  resolve codecId from device  →  call this
+   */
+  getCapabilities(codecId: string): DeviceCapability | null {
+    const codec = this.codecs.get(codecId);
+    if (!codec) return null;
+    if (typeof codec.getCapabilities !== 'function') return null;
+    return codec.getCapabilities();
+  }
+
+  /**
+   * Get capabilities by manufacturer + model (when codecId is not known).
+   */
+  getCapabilitiesByModel(manufacturer: string, model: string): DeviceCapability | null {
+    const codec = this.findCodec(manufacturer, model);
+    if (!codec) return null;
+    if (typeof codec.getCapabilities !== 'function') return null;
+    return codec.getCapabilities();
+  }
+
+  /**
+   * Get capabilities for ALL registered codecs.
+   * GET /codecs/capabilities  →  used by automation builder to list all devices
+   */
+  getAllCapabilities(): DeviceCapability[] {
+    const result: DeviceCapability[] = [];
+    for (const codec of this.codecs.values()) {
+      if (typeof codec.getCapabilities === 'function') {
+        try {
+          result.push(codec.getCapabilities());
+        } catch (err) {
+          this.logger.warn(`getCapabilities() failed for ${codec.codecId}: ${(err as Error).message}`);
+        }
+      }
+    }
+    return result;
   }
 
   // ── List (admin API) ──────────────────────────────────────────────────────

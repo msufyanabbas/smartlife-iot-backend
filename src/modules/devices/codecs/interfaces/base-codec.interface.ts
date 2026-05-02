@@ -4,6 +4,8 @@
  * All device-specific codecs must implement this interface
  */
 
+import { DeviceCapability } from "@/common/interfaces/device-capability.interface";
+
 export interface DecodedTelemetry {
   // Standard fields (IoT best practices)
   temperature?: number;
@@ -83,7 +85,8 @@ export interface IDeviceCodec {
    * @returns Decoded telemetry object
    */
   decode(payload: string | Buffer, fPort?: number): DecodedTelemetry;
-  
+  getCapabilities(): DeviceCapability;
+
   /**
    * Encode downlink command (Platform → Device)
    * @param command - Command object with type and parameters
@@ -111,6 +114,7 @@ export abstract class BaseDeviceCodec implements IDeviceCodec {
   abstract readonly manufacturer: string;
   abstract readonly supportedModels: string[];
   abstract readonly protocol: 'lorawan' | 'mqtt' | 'http' | 'coap' | 'cellular' | 'other';
+  abstract readonly description?: string;
 
   abstract decode(payload: string | Buffer, fPort?: number): DecodedTelemetry;
   abstract encode(command: { type: string; params?: any }): EncodedCommand;
@@ -132,6 +136,17 @@ export abstract class BaseDeviceCodec implements IDeviceCodec {
     return true; // By default, assume codec can handle it
   }
   
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        this.supportedModels[0] ?? this.codecId,
+    description:  this.description ?? '',
+    telemetryKeys: [],
+    commands:     [],
+    uiComponents: [],
+  };
+}
   /**
    * Helper: Convert hex string to bytes
    */

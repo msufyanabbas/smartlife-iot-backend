@@ -24,6 +24,7 @@ import { RolesGuard } from '@/common/guards/roles.guard';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { UserRole } from '@common/enums/index.enum';
 import { CodecRegistryService } from './codec-registry.service';
+import { SwaggerAuth } from '@/common/decorators/access-control.decorator';
 
 @ApiTags('Codecs')
 @Controller('codecs')
@@ -99,6 +100,14 @@ export class CodecController {
     };
   }
 
+  @Get('capabilities')
+@SwaggerAuth('Get capabilities for all registered codecs')
+getAllCapabilities() {
+  return {
+    message: 'All codec capabilities',
+    data: this.codecRegistry.getAllCapabilities(),
+  };
+}
 
   /**
  * GET /codecs/manufacturers/:manufacturer/categories
