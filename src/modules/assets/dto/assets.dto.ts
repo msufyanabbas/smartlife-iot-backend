@@ -220,7 +220,7 @@ export class QueryAssetsDto {
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
-  page: number;
+  page: number = 1;
 
     @ApiPropertyOptional({ description: 'Sort field' })
     @IsString()
@@ -234,7 +234,7 @@ export class QueryAssetsDto {
 
   @ApiPropertyOptional({ default: 10 })
   @IsOptional()
-  limit: number;
+  limit: number = 10;
 
     get skip(): number {
     return (this.page - 1) * this.limit;
