@@ -1,19 +1,31 @@
 # Multi-stage build optimized for layer caching
-FROM node:25-alpine AS base
+# Base: Debian Bookworm Slim (required for libredwg-utils + canvas native deps)
+FROM node:25-bookworm-slim AS base
 
 # Install ALL system dependencies once (cached layer)
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # ── Build tools ───────────────────────────────────────────────────────
     python3 \
     make \
     g++ \
     gcc \
-    libc-dev \
-    linux-headers \
     git \
-    tini \
     curl \
     dumb-init \
-    ca-certificates
+    ca-certificates \
+    pkg-config \
+    # ── node-canvas native build dependencies ────────────────────────────
+    libcairo2-dev \
+    libpango1.0-dev \
+    libjpeg-dev \
+    libgif-dev \
+    librsvg2-dev \
+    libpixman-1-dev \
+    libfreetype6-dev \
+    libfontconfig1-dev \
+    # ── libredwg — provides dwg2dxf binary for DWG → DXF conversion ──────
+    libredwg-utils \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -49,15 +61,27 @@ RUN npm prune --production --legacy-peer-deps && \
 # ===========================
 # Production Stage
 # ===========================
-FROM node:25-alpine AS production
+FROM node:25-bookworm-slim AS production
 
-# Install only runtime utilities
-RUN apk add --no-cache \
-    tini \
+# Install only runtime libraries (no build tools needed here)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # ── Runtime utilities ─────────────────────────────────────────────────
     curl \
     dumb-init \
     ca-certificates \
-    && apk upgrade --no-cache
+    # ── node-canvas runtime shared libraries ──────────────────────────────
+    libcairo2 \
+    libpango1.0-0 \
+    libjpeg62-turbo \
+    libgif7 \
+    librsvg2-2 \
+    libpixman-1-0 \
+    libfreetype6 \
+    libfontconfig1 \
+    # ── libredwg runtime + dwg2dxf binary ────────────────────────────────
+    libredwg-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 WORKDIR /app
 
@@ -77,9 +101,9 @@ COPY tsconfig.json ./tsconfig.json
 # Create necessary directories
 RUN mkdir -p logs uploads backups
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001 && \
+# Create non-root user (Debian syntax)
+RUN groupadd -g 1001 nodejs && \
+    useradd -u 1001 -g nodejs -s /bin/sh -m nodejs && \
     chown -R nodejs:nodejs /app
 
 USER nodejs
