@@ -94,8 +94,7 @@ export class DevicesController {
   }
 
   @Get(':id/capabilities')
-@TenantOrCustomerAdmin()
-@SwaggerAuth('Get device capabilities for automation builder and dashboard')
+@ApiOperation({ summary: 'Get capabilities for a specific device' })
 async getDeviceCapabilities(
   @CurrentUser() user: User,
   @Param('id') id: string,

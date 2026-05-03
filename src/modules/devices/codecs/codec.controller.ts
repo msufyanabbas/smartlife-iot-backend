@@ -101,7 +101,7 @@ export class CodecController {
   }
 
   @Get('capabilities')
-@SwaggerAuth('Get capabilities for all registered codecs')
+@ApiOperation({ summary: 'Get capabilities for all registered codecs' })
 getAllCapabilities() {
   return {
     message: 'All codec capabilities',
