@@ -28,6 +28,7 @@
  * Based on official Milesight decoder/encoder v1.0.0
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -188,6 +189,90 @@ export class MilesightAM104Codec extends BaseDeviceCodec {
 
     return decoded;
   }
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'AM104',
+    description:  'Ambience Monitoring Sensor — Temperature, Humidity, PIR Activity, and Illumination',
+    telemetryKeys: [
+      { key: 'battery',              label: 'Battery',               type: 'number' as const, unit: '%'  },
+      { key: 'temperature',          label: 'Temperature',           type: 'number' as const, unit: '°C' },
+      { key: 'humidity',             label: 'Humidity',              type: 'number' as const, unit: '%'  },
+      { key: 'activity',             label: 'PIR Activity',          type: 'number' as const             },
+      { key: 'illumination',         label: 'Illumination',          type: 'number' as const, unit: 'lx' },
+      { key: 'infrared_and_visible', label: 'Infrared and Visible',  type: 'number' as const             },
+      { key: 'infrared',             label: 'Infrared',              type: 'number' as const             },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'clear_history', label: 'Clear History', params: [] },
+      { type: 'reset_battery', label: 'Reset Battery', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 86400 }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'offset', label: 'UTC Offset (tenths of hours)', type: 'number' as const, required: true, default: 0 }],
+      },
+      {
+        type:   'set_timestamp',
+        label:  'Set Timestamp',
+        params: [{ key: 'timestamp', label: 'Unix Epoch (seconds)', type: 'number' as const, required: false }],
+      },
+      {
+        type:   'set_time_sync_enable',
+        label:  'Set Time Sync',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_screen_display',
+        label:  'Set Screen Display',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_led_indicator_mode',
+        label:  'Set LED Indicator Mode',
+        params: [{ key: 'mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Off', value: 'off' }, { label: 'Blink', value: 'blink' }] }],
+      },
+      {
+        type:   'set_temperature_alarm',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'condition',     label: 'Condition',          type: 'select' as const,  required: true,  options: [{ label: 'Disable', value: 'disable' }, { label: 'Below', value: 'below' }, { label: 'Above', value: 'above' }, { label: 'Between', value: 'between' }, { label: 'Outside', value: 'outside' }] },
+          { key: 'threshold_min', label: 'Min Threshold (°C)', type: 'number' as const,  required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max Threshold (°C)', type: 'number' as const,  required: false, default: 40 },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',              keys: ['battery'],              unit: '%'  },
+      { type: 'value' as const, label: 'Temperature',          keys: ['temperature'],          unit: '°C' },
+      { type: 'value' as const, label: 'Humidity',             keys: ['humidity'],             unit: '%'  },
+      { type: 'value' as const, label: 'PIR Activity',         keys: ['activity']                         },
+      { type: 'value' as const, label: 'Illumination',         keys: ['illumination'],         unit: 'lx' },
+      { type: 'value' as const, label: 'Infrared',             keys: ['infrared']                         },
+      { type: 'value' as const, label: 'Infrared and Visible', keys: ['infrared_and_visible']             },
+    ],
+  };
+}
 
   // ── Downlink response handler ─────────────────────────────────────────────
 

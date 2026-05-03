@@ -35,6 +35,7 @@
  *   0x0B/0x0C 0x7D (PM) which AM308 would match first.
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -73,6 +74,115 @@ export class MilesightAM319Codec extends BaseDeviceCodec {
   readonly category        = 'Ambience Monitoring';
   readonly modelFamily     = 'AM319';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/am-series/am319-hcho-ir/am319.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'AM319',
+    description:  'Ambience Monitoring Sensor — Temperature, Humidity, PIR, Light Level, CO₂, TVOC, Pressure, PM2.5, PM10, and HCHO',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'      },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C'     },
+      { key: 'humidity',    label: 'Humidity',    type: 'number' as const, unit: '%'      },
+      { key: 'pir',         label: 'PIR',         type: 'string' as const, enum: ['idle', 'trigger'] },
+      { key: 'light_level', label: 'Light Level', type: 'number' as const                },
+      { key: 'co2',         label: 'CO₂',         type: 'number' as const, unit: 'ppm'   },
+      { key: 'tvoc',        label: 'TVOC',        type: 'number' as const                },
+      { key: 'tvoc_unit',   label: 'TVOC Unit',   type: 'string' as const                },
+      { key: 'pressure',    label: 'Pressure',    type: 'number' as const, unit: 'hPa'   },
+      { key: 'pm2_5',       label: 'PM2.5',       type: 'number' as const, unit: 'µg/m³' },
+      { key: 'pm10',        label: 'PM10',        type: 'number' as const, unit: 'µg/m³' },
+      { key: 'hcho',        label: 'HCHO',        type: 'number' as const, unit: 'mg/m³' },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'stop_buzzer',   label: 'Stop Buzzer',   params: [] },
+      { type: 'query_status',  label: 'Query Status',  params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit', params: [] },
+      { type: 'clear_history', label: 'Clear History', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 86400 }],
+      },
+      {
+        type:   'set_time_sync',
+        label:  'Set Time Sync',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_tvoc_unit',
+        label:  'Set TVOC Unit',
+        params: [{ key: 'unit', label: 'Unit', type: 'select' as const, required: true, options: [{ label: 'IAQ', value: 'iaq' }, { label: 'µg/m³', value: 'µg/m³' }] }],
+      },
+      {
+        type:   'set_pm2_5_collection_interval',
+        label:  'Set PM2.5 Collection Interval',
+        params: [{ key: 'pm2_5_collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300 }],
+      },
+      {
+        type:   'set_co2_abc_calibration',
+        label:  'Set CO₂ ABC Calibration',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_co2_calibration',
+        label:  'Set CO₂ Calibration',
+        params: [
+          { key: 'mode',              label: 'Mode',                    type: 'select' as const, required: true,  options: [{ label: 'Factory', value: 'factory' }, { label: 'ABC', value: 'abc' }, { label: 'Manual', value: 'manual' }, { label: 'Background', value: 'background' }, { label: 'Zero', value: 'zero' }] },
+          { key: 'calibration_value', label: 'Calibration Value (ppm)', type: 'number' as const, required: false },
+        ],
+      },
+      {
+        type:   'set_buzzer',
+        label:  'Set Buzzer',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_led_indicator',
+        label:  'Set LED Indicator',
+        params: [{ key: 'mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Off', value: 'off' }, { label: 'On', value: 'on' }, { label: 'Blink', value: 'blink' }] }],
+      },
+      {
+        type:   'set_screen_display_enable',
+        label:  'Set Screen Display',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_retransmit_enable',
+        label:  'Set Retransmit Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',     keys: ['battery'],     unit: '%'      },
+      { type: 'value' as const, label: 'Temperature', keys: ['temperature'], unit: '°C'     },
+      { type: 'value' as const, label: 'Humidity',    keys: ['humidity'],    unit: '%'      },
+      { type: 'value' as const, label: 'PIR',         keys: ['pir']                         },
+      { type: 'value' as const, label: 'Light Level', keys: ['light_level']                 },
+      { type: 'gauge' as const, label: 'CO₂',         keys: ['co2'],         unit: 'ppm'    },
+      { type: 'value' as const, label: 'TVOC',        keys: ['tvoc']                        },
+      { type: 'value' as const, label: 'Pressure',    keys: ['pressure'],    unit: 'hPa'    },
+      { type: 'value' as const, label: 'PM2.5',       keys: ['pm2_5'],       unit: 'µg/m³'  },
+      { type: 'value' as const, label: 'PM10',        keys: ['pm10'],        unit: 'µg/m³'  },
+      { type: 'value' as const, label: 'HCHO',        keys: ['hcho'],        unit: 'mg/m³'  },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

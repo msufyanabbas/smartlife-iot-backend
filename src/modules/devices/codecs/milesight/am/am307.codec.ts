@@ -30,6 +30,7 @@
  * Based on official Milesight AM307(v2) decoder/encoder
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -57,6 +58,114 @@ export class MilesightAM307Codec extends BaseDeviceCodec {
   readonly category: string = 'Ambience Monitoring';
   readonly modelFamily: string = 'AM307';
   readonly imageUrl: string = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/am-series/am307/am307.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'AM307',
+    description:  'Ambience Monitoring Sensor — Temperature, Humidity, PIR, Light Level, CO₂, TVOC, and Pressure',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'   },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C'  },
+      { key: 'humidity',    label: 'Humidity',    type: 'number' as const, unit: '%'   },
+      { key: 'pir',         label: 'PIR',         type: 'string' as const, enum: ['idle', 'trigger'] },
+      { key: 'light_level', label: 'Light Level', type: 'number' as const              },
+      { key: 'co2',         label: 'CO₂',         type: 'number' as const, unit: 'ppm' },
+      { key: 'tvoc',        label: 'TVOC',        type: 'number' as const              },
+      { key: 'tvoc_unit',   label: 'TVOC Unit',   type: 'string' as const              },
+      { key: 'pressure',    label: 'Pressure',    type: 'number' as const, unit: 'hPa' },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'stop_buzzer',   label: 'Stop Buzzer',   params: [] },
+      { type: 'query_status',  label: 'Query Status',  params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit', params: [] },
+      { type: 'clear_history', label: 'Clear History', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 86400 }],
+      },
+      {
+        type:   'set_time_sync',
+        label:  'Set Time Sync',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'offset', label: 'UTC Offset (tenths of hours)', type: 'number' as const, required: true, default: 0 }],
+      },
+      {
+        type:   'set_tvoc_unit',
+        label:  'Set TVOC Unit',
+        params: [{ key: 'unit', label: 'Unit', type: 'select' as const, required: true, options: [{ label: 'IAQ', value: 'iaq' }, { label: 'µg/m³', value: 'µg/m³' }] }],
+      },
+      {
+        type:   'set_co2_abc_calibration',
+        label:  'Set CO₂ ABC Calibration',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_co2_calibration_enable',
+        label:  'Set CO₂ Calibration Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_co2_calibration_settings',
+        label:  'Set CO₂ Calibration Settings',
+        params: [
+          { key: 'mode',              label: 'Mode',                    type: 'select' as const, required: true,  options: [{ label: 'Factory', value: 'factory' }, { label: 'ABC', value: 'abc' }, { label: 'Manual', value: 'manual' }, { label: 'Background', value: 'background' }, { label: 'Zero', value: 'zero' }] },
+          { key: 'calibration_value', label: 'Calibration Value (ppm)', type: 'number' as const, required: false },
+        ],
+      },
+      {
+        type:   'set_buzzer',
+        label:  'Set Buzzer',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_led_indicator',
+        label:  'Set LED Indicator',
+        params: [{ key: 'mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Off', value: 'off' }, { label: 'On', value: 'on' }, { label: 'Blink', value: 'blink' }] }],
+      },
+      {
+        type:   'set_screen_display',
+        label:  'Set Screen Display',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_retransmit_enable',
+        label:  'Set Retransmit Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',     keys: ['battery'],     unit: '%'   },
+      { type: 'value' as const, label: 'Temperature', keys: ['temperature'], unit: '°C'  },
+      { type: 'value' as const, label: 'Humidity',    keys: ['humidity'],    unit: '%'   },
+      { type: 'value' as const, label: 'PIR',         keys: ['pir']                      },
+      { type: 'value' as const, label: 'Light Level', keys: ['light_level']              },
+      { type: 'gauge' as const, label: 'CO₂',         keys: ['co2'],         unit: 'ppm' },
+      { type: 'value' as const, label: 'TVOC',        keys: ['tvoc']                     },
+      { type: 'value' as const, label: 'Pressure',    keys: ['pressure'],    unit: 'hPa' },
+    ],
+  };
+}
 
   // ── Decode ────────────────────────────────────────────────────────────────
 

@@ -39,6 +39,7 @@ import {
   DecodedTelemetry,
   EncodedCommand,
 } from '../../interfaces/base-codec.interface';
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 
 // Re-use helpers from parent via closure (they're defined at module level in am304l)
 function u8(bytes: number[], i: number): number  { return bytes[i] & 0xff; }
@@ -60,6 +61,116 @@ export class MilesightAM305LCodec extends MilesightAM304LCodec {
   override readonly category: string           = 'Ambience Monitoring';
   override readonly modelFamily: string        = 'AM305L';
   override readonly imageUrl: string           = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/am-series/am305l/am300l.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'AM305L',
+    description:  'Ambience Monitoring Sensor — Temperature, Humidity, PIR, Illuminance, and CO₂',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',           type: 'number' as const, unit: '%'   },
+      { key: 'temperature', label: 'Temperature',       type: 'number' as const, unit: '°C'  },
+      { key: 'humidity',    label: 'Humidity',          type: 'number' as const, unit: '%'   },
+      { key: 'als_level',   label: 'Illuminance Level', type: 'number' as const              },
+      { key: 'lux',         label: 'Illuminance',       type: 'number' as const, unit: 'lx'  },
+      { key: 'pir',         label: 'PIR',               type: 'string' as const              },
+      { key: 'co2',         label: 'CO₂',               type: 'number' as const, unit: 'ppm' },
+    ],
+    commands: [
+      { type: 'reboot',                label: 'Reboot Device',         params: [] },
+      { type: 'clear_historical_data', label: 'Clear Historical Data', params: [] },
+      { type: 'synchronize_time',      label: 'Synchronize Time',      params: [] },
+      {
+        type:   'set_reporting_interval',
+        label:  'Set Reporting Interval',
+        params: [{ key: 'interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 10, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_pir_enable',
+        label:  'Set PIR Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_illuminance_collecting',
+        label:  'Set Illuminance Collecting',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_co2_collecting',
+        label:  'Set CO₂ Collecting',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_temperature_alarm',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'enable',        label: 'Enable',              type: 'boolean' as const, required: true  },
+          { key: 'condition',     label: 'Condition',           type: 'select'  as const, required: true,  options: [{ label: 'x<A', value: 'x<A' }, { label: 'x>B', value: 'x>B' }, { label: 'A<x<B', value: 'A<x<B' }, { label: 'x<A or x>B', value: 'x<A or x>B' }] },
+          { key: 'threshold_min', label: 'Min Threshold (°C)',  type: 'number'  as const, required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max Threshold (°C)',  type: 'number'  as const, required: false, default: 40 },
+        ],
+      },
+      {
+        type:   'set_illuminance_alarm',
+        label:  'Set Illuminance Alarm',
+        params: [
+          { key: 'enable',       label: 'Enable',               type: 'boolean' as const, required: true  },
+          { key: 'dim_value',    label: 'Dim Threshold (lx)',    type: 'number'  as const, required: false, default: 300 },
+          { key: 'bright_value', label: 'Bright Threshold (lx)', type: 'number' as const, required: false, default: 700 },
+        ],
+      },
+      {
+        type:   'set_co2_alarm_rule',
+        label:  'Set CO₂ Alarm Rule',
+        params: [
+          { key: 'enable',       label: 'Enable',                type: 'boolean' as const, required: true  },
+          { key: 'level1_value', label: 'Level 1 Threshold (ppm)', type: 'number' as const, required: false, default: 5000, min: 400, max: 5000 },
+          { key: 'level2_value', label: 'Level 2 Threshold (ppm)', type: 'number' as const, required: false, default: 400,  min: 400, max: 5000 },
+        ],
+      },
+      {
+        type:   'set_co2_calibration',
+        label:  'Set CO₂ Calibration',
+        params: [
+          { key: 'enable', label: 'Enable',              type: 'boolean' as const, required: true  },
+          { key: 'value',  label: 'Calibration Value',   type: 'number'  as const, required: false, min: -4600, max: 4600 },
+        ],
+      },
+      {
+        type:   'set_co2_auto_background_calibration',
+        label:  'Set CO₂ Auto Background Calibration',
+        params: [
+          { key: 'enable',       label: 'Enable',              type: 'boolean' as const, required: true  },
+          { key: 'target_value', label: 'Target Value (ppm)',   type: 'number'  as const, required: false, default: 400  },
+          { key: 'period',       label: 'Period (hours)',       type: 'number'  as const, required: false, default: 168  },
+        ],
+      },
+      {
+        type:   'fetch_history_by_time',
+        label:  'Fetch History by Time',
+        params: [{ key: 'time', label: 'Time (Unix)', type: 'number' as const, required: true }],
+      },
+      {
+        type:   'fetch_history_by_range',
+        label:  'Fetch History by Range',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: true },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',           keys: ['battery'],     unit: '%'   },
+      { type: 'value' as const, label: 'Temperature',       keys: ['temperature'], unit: '°C'  },
+      { type: 'value' as const, label: 'Humidity',          keys: ['humidity'],    unit: '%'   },
+      { type: 'value' as const, label: 'Illuminance Level', keys: ['als_level']                },
+      { type: 'value' as const, label: 'Illuminance',       keys: ['lux'],         unit: 'lx'  },
+      { type: 'value' as const, label: 'PIR',               keys: ['pir']                      },
+      { type: 'gauge' as const, label: 'CO₂',               keys: ['co2'],         unit: 'ppm' },
+    ],
+  };
+}
 
   // ── Decode ────────────────────────────────────────────────────────────────
   // Full override — AM305L has identical structure to AM304L but with extra
