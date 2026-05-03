@@ -114,7 +114,7 @@ export abstract class BaseDeviceCodec implements IDeviceCodec {
   abstract readonly manufacturer: string;
   abstract readonly supportedModels: string[];
   abstract readonly protocol: 'lorawan' | 'mqtt' | 'http' | 'coap' | 'cellular' | 'other';
-  abstract readonly description?: string;
+  readonly description?: string;
 
   abstract decode(payload: string | Buffer, fPort?: number): DecodedTelemetry;
   abstract encode(command: { type: string; params?: any }): EncodedCommand;
