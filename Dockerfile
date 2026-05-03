@@ -1,5 +1,5 @@
 # Multi-stage build optimized for layer caching
-# Base: Debian Bookworm Slim (required for libredwg-utils + canvas native deps)
+# Base: Debian Bookworm Slim (required for canvas native deps)
 FROM node:25-bookworm-slim AS base
 
 # Install ALL system dependencies once (cached layer)
@@ -23,9 +23,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpixman-1-dev \
     libfreetype6-dev \
     libfontconfig1-dev \
-    # ── libredwg — provides dwg2dxf binary for DWG → DXF conversion ──────
-    libredwg-utils \
+    # ── libredwg build dependencies (build from source) ──────────────────
+    autoconf \
+    automake \
+    libtool \
+    libpcre2-dev \
+    swig \
     && rm -rf /var/lib/apt/lists/*
+
+# ── Build libredwg from source → provides dwg2dxf binary ─────────────────
+# libredwg is NOT in Debian Bookworm default repos, so we compile it.
+RUN git clone --depth=1 --branch 0.12.5 https://github.com/LibreDWG/libredwg.git /tmp/libredwg \
+    && cd /tmp/libredwg \
+    && sh autogen.sh \
+    && ./configure --disable-bindings --disable-python \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig \
+    && rm -rf /tmp/libredwg
 
 WORKDIR /app
 
@@ -78,10 +93,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpixman-1-0 \
     libfreetype6 \
     libfontconfig1 \
-    # ── libredwg runtime + dwg2dxf binary ────────────────────────────────
-    libredwg-utils \
+    # ── libredwg runtime dependencies ────────────────────────────────────
+    libpcre2-8-0 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
+
+# Copy dwg2dxf binary + libredwg shared libs from base stage
+COPY --from=base /usr/local/bin/dwg2dxf /usr/local/bin/dwg2dxf
+COPY --from=base /usr/local/bin/dwgread /usr/local/bin/dwgread
+COPY --from=base /usr/local/lib/libredwg* /usr/local/lib/
+RUN ldconfig
 
 WORKDIR /app
 
