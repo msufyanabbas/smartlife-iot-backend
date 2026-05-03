@@ -19,6 +19,7 @@
 //   0x43 — periodic_report_enable
 //   0x51 — clear_total_count
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -31,6 +32,51 @@ export class MilesightVS132Codec extends BaseDeviceCodec {
   readonly supportedModels = ['VS132'];
   readonly protocol        = 'lorawan' as const;
   readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs132/vs132.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'VS132',
+    description:  '3D ToF People Counting Sensor — bi-directional total and periodic counters',
+    telemetryKeys: [
+      { key: 'total_counter_in',     label: 'Total Counter In',     type: 'number' as const },
+      { key: 'total_counter_out',    label: 'Total Counter Out',    type: 'number' as const },
+      { key: 'periodic_counter_in',  label: 'Periodic Counter In',  type: 'number' as const },
+      { key: 'periodic_counter_out', label: 'Periodic Counter Out', type: 'number' as const },
+    ],
+    commands: [
+      { type: 'reboot',           label: 'Reboot Device',           params: [] },
+      { type: 'clear_total_count', label: 'Clear Total Count',      params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 60, min: 1, max: 64800 }],
+      },
+      {
+        type:   'set_periodic_report_enable',
+        label:  'Set Periodic Report Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_adr_enable',
+        label:  'Set ADR Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_wifi_enable',
+        label:  'Set Wi-Fi Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'value' as const, label: 'Total In',     keys: ['total_counter_in']     },
+      { type: 'value' as const, label: 'Total Out',    keys: ['total_counter_out']    },
+      { type: 'value' as const, label: 'Periodic In',  keys: ['periodic_counter_in']  },
+      { type: 'value' as const, label: 'Periodic Out', keys: ['periodic_counter_out'] },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

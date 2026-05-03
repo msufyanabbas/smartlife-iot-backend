@@ -52,6 +52,7 @@
 //                0x06 0x01 (valve) or 0x07 0x01 (relay) also unique to this device
 //                0x08 0x90 (life_remain) very distinctive
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -99,6 +100,65 @@ export class MilesightGS101Codec extends BaseDeviceCodec {
   readonly category        = 'Gas Sensor';
   readonly modelFamily     = 'GS101';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/gs-series/gs101/gs101.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'GS101',
+    description:  'Gas Detector — gas alarm with valve and relay control',
+    telemetryKeys: [
+      { key: 'gas_status',          label: 'Gas Status',          type: 'string' as const, enum: ['normal', 'alarm'] },
+      { key: 'valve_status',        label: 'Valve Status',        type: 'string' as const, enum: ['on', 'off']       },
+      { key: 'relay_output_status', label: 'Relay Output Status', type: 'string' as const, enum: ['on', 'off']       },
+      { key: 'life_remain',         label: 'Life Remaining',      type: 'number' as const, unit: 's'                 },
+      { key: 'alarm',               label: 'Alarm',               type: 'string' as const                            },
+    ],
+    commands: [
+      { type: 'reboot',               label: 'Reboot Device',        params: [] },
+      { type: 'query_device_status',  label: 'Query Device Status',  params: [] },
+      { type: 'clear_alarm',          label: 'Clear Alarm',          params: [] },
+      { type: 'calibration_request',  label: 'Calibration Request',  params: [] },
+      { type: 'query_life_remain',    label: 'Query Life Remaining',  params: [] },
+      {
+        type:   'set_valve_status',
+        label:  'Set Valve Status',
+        params: [{ key: 'valve_status', label: 'Status', type: 'select' as const, required: true, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] }],
+      },
+      {
+        type:   'set_relay_output_status',
+        label:  'Set Relay Output Status',
+        params: [{ key: 'relay_output_status', label: 'Status', type: 'select' as const, required: true, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] }],
+      },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+8' }],
+      },
+      {
+        type:   'set_buzzer_enable',
+        label:  'Set Buzzer Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_led_indicator_enable',
+        label:  'Set LED Indicator Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'value' as const, label: 'Gas Status',   keys: ['gas_status']          },
+      { type: 'toggle' as const, label: 'Valve',       keys: ['valve_status'],        command: 'set_valve_status'        },
+      { type: 'toggle' as const, label: 'Relay Output', keys: ['relay_output_status'], command: 'set_relay_output_status' },
+      { type: 'value' as const, label: 'Life Remaining', keys: ['life_remain'], unit: 's' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

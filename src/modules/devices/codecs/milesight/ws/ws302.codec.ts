@@ -36,6 +36,7 @@
 //
 // canDecode fingerprint: 0x05 0x5B (sound channel) — unique to WS302
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -73,6 +74,60 @@ export class MilesightWS302Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WS302'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS302',
+    description:  'Sound Level Sensor — A/Z/C frequency weighting, L / Leq / Lmax reporting',
+    telemetryKeys: [
+      { key: 'battery', label: 'Battery', type: 'number' as const, unit: '%' },
+      // Sound level fields are dynamically named (LAF, LAeq, LAFmax, etc.)
+      // Expose the most common A-weighted fast configuration
+      { key: 'LAF',    label: 'Sound Level (LAF)',    type: 'number' as const, unit: 'dB' },
+      { key: 'LAeq',   label: 'Sound Level Eq (LAeq)', type: 'number' as const, unit: 'dB' },
+      { key: 'LAFmax', label: 'Sound Level Max (LAFmax)', type: 'number' as const, unit: 'dB' },
+    ],
+    commands: [
+      { type: 'reboot', label: 'Reboot Device', params: [] },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+3' }],
+      },
+      {
+        type:   'set_weighting_type',
+        label:  'Set Weighting Type',
+        params: [
+          { key: 'frequency_weighting_type', label: 'Frequency Weighting', type: 'select' as const, required: true, options: [{ label: 'Z', value: 'Z' }, { label: 'A', value: 'A' }, { label: 'C', value: 'C' }] },
+          { key: 'time_weighting_type',      label: 'Time Weighting',      type: 'select' as const, required: true, options: [{ label: 'I (Impulse)', value: 'I' }, { label: 'F (Fast)', value: 'F' }, { label: 'S (Slow)', value: 'S' }] },
+        ],
+      },
+      {
+        type:   'set_led_indicator_enable',
+        label:  'Set LED Indicator Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_time_sync_enable',
+        label:  'Set Time Sync Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_timestamp',
+        label:  'Set Timestamp',
+        params: [{ key: 'timestamp', label: 'Unix Epoch (seconds)', type: 'number' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',         keys: ['battery'],  unit: '%'  },
+      { type: 'value' as const, label: 'Sound Level',     keys: ['LAF'],      unit: 'dB' },
+      { type: 'value' as const, label: 'Sound Level Eq',  keys: ['LAeq'],     unit: 'dB' },
+      { type: 'value' as const, label: 'Sound Level Max', keys: ['LAFmax'],   unit: 'dB' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

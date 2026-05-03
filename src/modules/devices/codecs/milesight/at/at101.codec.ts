@@ -76,6 +76,7 @@
 //   - WiFi scan: timeout signalled by mac "ff:ff:ff:ff:ff:ff"
 //   - History: longitude before latitude in the wire format (opposite of location)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -135,6 +136,121 @@ export class MilesightAT101Codec extends BaseDeviceCodec {
   readonly category        = 'Asset Tracking';
   readonly modelFamily     = 'AT101';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/at-series/at101/at101.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'AT101',
+    description:  'Outdoor Asset Tracker — GNSS/WiFi positioning with motion detection and geofencing',
+    telemetryKeys: [
+      { key: 'battery',         label: 'Battery',         type: 'number' as const, unit: '%'  },
+      { key: 'temperature',     label: 'Temperature',     type: 'number' as const, unit: '°C' },
+      { key: 'latitude',        label: 'Latitude',        type: 'number' as const              },
+      { key: 'longitude',       label: 'Longitude',       type: 'number' as const              },
+      { key: 'motion_status',   label: 'Motion Status',   type: 'string' as const, enum: ['unknown', 'start', 'moving', 'stop'] },
+      { key: 'geofence_status', label: 'Geofence Status', type: 'string' as const, enum: ['inside', 'outside', 'unset', 'unknown'] },
+      { key: 'position',        label: 'Position',        type: 'string' as const, enum: ['normal', 'tilt'] },
+      { key: 'tamper_status',   label: 'Tamper Status',   type: 'string' as const, enum: ['install', 'uninstall'] },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device',   params: [] },
+      { type: 'report_status', label: 'Report Status',   params: [] },
+      { type: 'sync_time',     label: 'Sync Time',       params: [] },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+8' }],
+      },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 20, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_motion_report_interval',
+        label:  'Set Motion Report Interval',
+        params: [{ key: 'motion_report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 20, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_report_strategy',
+        label:  'Set Report Strategy',
+        params: [{ key: 'report_strategy', label: 'Strategy', type: 'select' as const, required: true, options: [{ label: 'Periodic', value: 'periodic' }, { label: 'Motion', value: 'motion' }, { label: 'Timing', value: 'timing' }] }],
+      },
+      {
+        type:   'set_positioning_strategy',
+        label:  'Set Positioning Strategy',
+        params: [{ key: 'positioning_strategy', label: 'Strategy', type: 'select' as const, required: true, options: [{ label: 'GNSS', value: 'gnss' }, { label: 'WiFi', value: 'wifi' }, { label: 'WiFi + GNSS', value: 'wifi_gnss' }] }],
+      },
+      {
+        type:   'set_gnss_positioning_timeout',
+        label:  'Set GNSS Timeout',
+        params: [{ key: 'gnss_positioning_timeout', label: 'Timeout (minutes)', type: 'number' as const, required: true, default: 1, min: 1, max: 5 }],
+      },
+      {
+        type:   'set_geofence_center',
+        label:  'Set Geofence Center',
+        params: [
+          { key: 'latitude',  label: 'Latitude',  type: 'number' as const, required: true, default: 0 },
+          { key: 'longitude', label: 'Longitude', type: 'number' as const, required: true, default: 0 },
+        ],
+      },
+      {
+        type:   'set_geofence_radius',
+        label:  'Set Geofence Radius',
+        params: [{ key: 'radius', label: 'Radius (meters)', type: 'number' as const, required: true, default: 10, min: 1 }],
+      },
+      {
+        type:   'set_geofence_alarm_config',
+        label:  'Set Geofence Alarm Config',
+        params: [
+          { key: 'enable',   label: 'Enable',              type: 'boolean' as const, required: true  },
+          { key: 'interval', label: 'Interval (minutes)',  type: 'number'  as const, required: false, default: 20 },
+          { key: 'counts',   label: 'Alert Count',         type: 'number'  as const, required: false, default: 1  },
+        ],
+      },
+      {
+        type:   'set_tamper_detection_enable',
+        label:  'Set Tamper Detection',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_motion_detection_config',
+        label:  'Set Motion Detection Config',
+        params: [
+          { key: 'delta_g',  label: 'Delta G',           type: 'number' as const, required: false, default: 1 },
+          { key: 'duration', label: 'Duration (seconds)', type: 'number' as const, required: false, default: 60 },
+        ],
+      },
+      {
+        type:   'set_static_detection_config',
+        label:  'Set Static Detection Config',
+        params: [
+          { key: 'delta_g',  label: 'Delta G',           type: 'number' as const, required: false, default: 1 },
+          { key: 'duration', label: 'Duration (seconds)', type: 'number' as const, required: false, default: 600 },
+        ],
+      },
+      {
+        type:   'set_bluetooth_enable',
+        label:  'Set Bluetooth Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_time_sync_enable',
+        label:  'Set Time Sync Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',         keys: ['battery'],         unit: '%'  },
+      { type: 'value' as const, label: 'Temperature',     keys: ['temperature'],     unit: '°C' },
+      { type: 'value' as const, label: 'Motion Status',   keys: ['motion_status']               },
+      { type: 'value' as const, label: 'Geofence Status', keys: ['geofence_status']             },
+      { type: 'value' as const, label: 'Position',        keys: ['position']                    },
+      { type: 'value' as const, label: 'Tamper',          keys: ['tamper_status']               },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

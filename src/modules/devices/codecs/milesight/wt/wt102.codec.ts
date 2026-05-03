@@ -5,6 +5,7 @@
 // Each uplink byte is a command ID; the following bytes are the payload for that command.
 // This is a completely different wire format from WT101/GS301/WTS506.
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../../interfaces/base-codec.interface';
 
 export class MilesightWT102Codec extends BaseDeviceCodec {
@@ -14,6 +15,90 @@ export class MilesightWT102Codec extends BaseDeviceCodec {
   readonly description     = 'Smart Radiator Thermostat (Next-Gen) — Flat Command Protocol';
   readonly supportedModels = ['WT102'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WT102',
+    description:  'Smart Radiator Thermostat (Next-Gen) — flat command protocol, advanced controls',
+    telemetryKeys: [
+      { key: 'batteryLevel',            label: 'Battery',           type: 'number' as const, unit: '%'  },
+      { key: 'temperature',             label: 'Temperature',       type: 'number' as const, unit: '°C' },
+      { key: 'target_temperature',      label: 'Target Temp',       type: 'number' as const, unit: '°C' },
+      { key: 'valve_opening_degree',    label: 'Valve Opening',     type: 'number' as const, unit: '%'  },
+      { key: 'motor_position',          label: 'Motor Position',    type: 'number' as const              },
+      { key: 'motor_total_stroke',      label: 'Motor Total Stroke', type: 'number' as const             },
+    ],
+    commands: [
+      { type: 'reboot',              label: 'Reboot Device',        params: [] },
+      { type: 'query_device_status', label: 'Query Device Status',  params: [] },
+      { type: 'synchronize_time',    label: 'Synchronize Time',     params: [] },
+      { type: 'collect_data',        label: 'Collect Data',         params: [] },
+      { type: 'calibrate_motor',     label: 'Calibrate Motor',      params: [] },
+      { type: 'clear_historical_data', label: 'Clear Historical Data', params: [] },
+      {
+        type:   'set_target_valve_opening',
+        label:  'Set Target Valve Opening',
+        params: [{ key: 'value', label: 'Opening (%)', type: 'number' as const, required: true, default: 0, min: 0, max: 100 }],
+      },
+      {
+        type:   'set_target_temperature',
+        label:  'Set Target Temperature',
+        params: [{ key: 'value', label: 'Temperature (°C)', type: 'number' as const, required: true, default: 20, min: 5, max: 35 }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'timezone', label: 'Offset (minutes, UTC+3=180)', type: 'number' as const, required: true, default: 180 }],
+      },
+      {
+        type:   'set_temp_control_enable',
+        label:  'Set Temperature Control Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_freeze_protection',
+        label:  'Set Freeze Protection',
+        params: [
+          { key: 'enable',      label: 'Enable',         type: 'boolean' as const, required: true  },
+          { key: 'temperature', label: 'Temperature (°C)', type: 'number' as const, required: false, default: 3, min: 1, max: 10 },
+        ],
+      },
+      {
+        type:   'set_temperature_calibration',
+        label:  'Set Temperature Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',      type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Offset (°C)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_child_lock',
+        label:  'Set Child Lock',
+        params: [
+          { key: 'enable',        label: 'Enable',         type: 'boolean' as const, required: true  },
+          { key: 'system_button', label: 'System Button',  type: 'boolean' as const, required: false },
+          { key: 'func_button',   label: 'Function Button', type: 'boolean' as const, required: false },
+        ],
+      },
+      {
+        type:   'retrieve_historical_data_by_time_range',
+        label:  'Fetch History by Time Range',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: true  },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',       keys: ['batteryLevel']            },
+      { type: 'gauge'   as const, label: 'Temperature',   keys: ['temperature'],   unit: '°C' },
+      { type: 'gauge'   as const, label: 'Valve Opening', keys: ['valve_opening_degree'], unit: '%' },
+      { type: 'value'   as const, label: 'Target Temp',   keys: ['target_temperature'], unit: '°C' },
+    ],
+  };
+}
 
   // ── Decode uplink ─────────────────────────────────────────────────────────
 

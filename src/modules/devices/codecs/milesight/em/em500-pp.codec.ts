@@ -30,6 +30,7 @@
  *   0x03 0x7B (pressure int16, kPa) — unique to EM500-PP.
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -63,6 +64,72 @@ export class MilesightEM500PpCodec extends BaseDeviceCodec {
   readonly category        = 'Pipe Pressure Sensor';
   readonly modelFamily     = 'EM500-PP';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-pp/em500-pp.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM500-PP',
+    description:  'Pipe Pressure Sensor — signed int16 kPa, alarm, D2D, history',
+    telemetryKeys: [
+      { key: 'battery',  label: 'Battery',  type: 'number' as const, unit: '%'  },
+      { key: 'pressure', label: 'Pressure', type: 'number' as const, unit: 'kPa' },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'report_status', label: 'Report Status',  params: [] },
+      { type: 'sync_time',     label: 'Sync Time',      params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit',  params: [] },
+      { type: 'clear_history', label: 'Clear History',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_pressure_alarm',
+        label:  'Set Pressure Alarm',
+        params: [
+          { key: 'enable',               label: 'Enable',              type: 'boolean' as const, required: true  },
+          { key: 'condition',            label: 'Condition',           type: 'select'  as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'alarm_release_enable', label: 'Alarm Release Enable', type: 'boolean' as const, required: false },
+          { key: 'threshold_min',        label: 'Min (kPa)',           type: 'number'  as const, required: false, default: 0   },
+          { key: 'threshold_max',        label: 'Max (kPa)',           type: 'number'  as const, required: false, default: 1000 },
+        ],
+      },
+      {
+        type:   'set_pressure_calibration',
+        label:  'Set Pressure Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',      type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Value (kPa)', type: 'number'  as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',  keys: ['battery']  },
+      { type: 'gauge'   as const, label: 'Pressure', keys: ['pressure'], unit: 'kPa' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

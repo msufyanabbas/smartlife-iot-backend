@@ -25,6 +25,7 @@
 //
 // canDecode fingerprint: 0x01 0x75 (battery) + 0x03 0x00 (leakage) — unique to WS303
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -47,6 +48,62 @@ export class MilesightWS303Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WS303'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS303',
+    description:  'Leak Detection Sensor — water/fluid leakage alarm with buzzer and D2D',
+    telemetryKeys: [
+      { key: 'battery',        label: 'Battery',        type: 'number' as const, unit: '%' },
+      { key: 'leakage_status', label: 'Leakage Status', type: 'string' as const, enum: ['normal', 'leak'] },
+    ],
+    commands: [
+      { type: 'reboot',              label: 'Reboot Device',      params: [] },
+      { type: 'query_device_status', label: 'Query Device Status', params: [] },
+      { type: 'stop_alarming',       label: 'Stop Alarming',      params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60 }],
+      },
+      {
+        type:   'set_buzzer_enable',
+        label:  'Set Buzzer Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_leakage_alarm_config',
+        label:  'Set Leakage Alarm Config',
+        params: [
+          { key: 'enable',         label: 'Enable',                type: 'boolean' as const, required: true  },
+          { key: 'alarm_interval', label: 'Interval (seconds)',    type: 'number'  as const, required: false, default: 60 },
+          { key: 'alarm_count',    label: 'Count',                 type: 'number'  as const, required: false, default: 2  },
+        ],
+      },
+      {
+        type:   'set_find_device_enable',
+        label:  'Set Find Device Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_find_device_time',
+        label:  'Set Find Device Time',
+        params: [{ key: 'find_device_time', label: 'Duration (seconds)', type: 'number' as const, required: true, default: 60 }],
+      },
+      {
+        type:   'set_d2d_enable',
+        label:  'Set D2D Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Battery',        keys: ['battery'],        unit: '%' },
+      { type: 'status' as const, label: 'Leakage Status', keys: ['leakage_status']             },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

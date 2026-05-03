@@ -10,6 +10,7 @@
 //   0x05/0xA3 — Spreading factor (uint8)
 //   0x06/0xA4 — TX power (int16LE / 100)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../../interfaces/base-codec.interface';
 
 export class MilesightFT101Codec extends BaseDeviceCodec {
@@ -22,6 +23,32 @@ export class MilesightFT101Codec extends BaseDeviceCodec {
   readonly category        = 'Field Tester';
   readonly modelFamily     = 'FT101';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ft-series/ft101/ft101.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'FT101',
+    description:  'LoRaWAN Field Tester — GPS location, RSSI, SNR, spreading factor, and TX power',
+    telemetryKeys: [
+      { key: 'latitude',  label: 'Latitude',          type: 'number' as const              },
+      { key: 'longitude', label: 'Longitude',          type: 'number' as const              },
+      { key: 'rssi',      label: 'RSSI',               type: 'number' as const, unit: 'dBm' },
+      { key: 'snr',       label: 'SNR',                type: 'number' as const, unit: 'dB'  },
+      { key: 'sf',        label: 'Spreading Factor',   type: 'number' as const              },
+      { key: 'tx_power',  label: 'TX Power',           type: 'number' as const, unit: 'dBm' },
+    ],
+    commands: [],  // FT101 is read-only — no downlink commands
+    uiComponents: [
+      { type: 'value' as const, label: 'Latitude',        keys: ['latitude']  },
+      { type: 'value' as const, label: 'Longitude',       keys: ['longitude'] },
+      { type: 'value' as const, label: 'RSSI',            keys: ['rssi'],     unit: 'dBm' },
+      { type: 'value' as const, label: 'SNR',             keys: ['snr'],      unit: 'dB'  },
+      { type: 'value' as const, label: 'Spreading Factor', keys: ['sf']       },
+      { type: 'value' as const, label: 'TX Power',        keys: ['tx_power'], unit: 'dBm' },
+    ],
+  };
+}
 
   // ── Decode uplink ─────────────────────────────────────────────────────────
 

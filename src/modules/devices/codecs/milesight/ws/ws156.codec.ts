@@ -23,6 +23,7 @@
 //
 // canDecode fingerprint: 0xFF 0x34 (button press) — unique to WS156
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -36,6 +37,31 @@ export class MilesightWS156Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WS156'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS156',
+    description:  'Smart Scene Panel — up to 6 scene buttons with D2D command triggers (read-only)',
+    telemetryKeys: [
+      { key: 'battery',   label: 'Battery',   type: 'number' as const, unit: '%' },
+      { key: 'button_1',  label: 'Button 1',  type: 'number' as const             },
+      { key: 'button_2',  label: 'Button 2',  type: 'number' as const             },
+      { key: 'button_3',  label: 'Button 3',  type: 'number' as const             },
+      { key: 'button_4',  label: 'Button 4',  type: 'number' as const             },
+      { key: 'button_5',  label: 'Button 5',  type: 'number' as const             },
+      { key: 'button_6',  label: 'Button 6',  type: 'number' as const             },
+    ],
+    commands: [],  // WS156 is read-only
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Battery',  keys: ['battery']  },
+      { type: 'status' as const, label: 'Button 1', keys: ['button_1'] },
+      { type: 'status' as const, label: 'Button 2', keys: ['button_2'] },
+      { type: 'status' as const, label: 'Button 3', keys: ['button_3'] },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
@@ -114,4 +140,8 @@ export class MilesightWS156Codec extends BaseDeviceCodec {
 export class MilesightWS136Codec extends MilesightWS156Codec {
   override readonly codecId         = 'milesight-ws136';
   override readonly supportedModels = ['WS136'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'WS136',
+    description: 'Smart Scene Panel (3-button) — scene buttons with D2D command triggers (read-only)' };
+}
 }

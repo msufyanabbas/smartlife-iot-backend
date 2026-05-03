@@ -32,6 +32,7 @@
 //   INT32, HOLD_INT32, INPUT_INT32 → int32/uint32
 //   FLOAT → float32
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -253,6 +254,25 @@ export class MilesightUC300CellularCodec extends BaseDeviceCodec {
   readonly modelFamily = 'UC300';
   readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/uc-series/uc300/uc300.png';
   readonly category = 'UC300';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'UC300-LTE',
+    description:  'Cellular UC300 — GPIO, ADC, and Modbus over 0x7E-framed cellular transport (uplink only)',
+    telemetryKeys: [
+      { key: 'mobileSignal', label: 'Mobile Signal', type: 'number' as const           },
+      // DI/DO channels — reported as din[]/dout[] arrays; expose concept keys
+      { key: 'timestamp',    label: 'Timestamp',     type: 'number' as const           },
+    ],
+    commands: [],  // UC300 cellular has no downlink commands
+    uiComponents: [
+      { type: 'value' as const, label: 'Mobile Signal', keys: ['mobileSignal'] },
+      { type: 'value' as const, label: 'Timestamp',     keys: ['timestamp']    },
+    ],
+  };
+}
 
 
   // ── Decode ──────────────────────────────────────────────────────────────────

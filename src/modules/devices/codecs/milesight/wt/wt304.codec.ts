@@ -12,6 +12,7 @@
 //
 // All other command IDs are identical to WT303 and are inherited unchanged.
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   DecodedTelemetry,
   EncodedCommand,
@@ -21,6 +22,15 @@ import { MilesightWT303Codec } from './wt303.codec';
 export class MilesightWT304Codec extends MilesightWT303Codec {
   override readonly codecId: string         = 'milesight-wt304';
   override readonly supportedModels: string[] = ['WT304'];
+
+  getCapabilities(): DeviceCapability {
+  return {
+    ...super.getCapabilities(),  // inherits all WT303 capabilities
+    codecId:     this.codecId,
+    model:       'WT304',
+    description: 'Smart Fan Coil Thermostat (0~10V Valve + EC Fan) — analog valve output, EC fan control',
+  };
+}
 
   // ── Additional temperature paths for WT304 ────────────────────────────────
   // valve_control_settings.control_adjustment_range is treated as a temperature

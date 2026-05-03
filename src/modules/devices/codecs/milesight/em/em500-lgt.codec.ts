@@ -51,6 +51,7 @@
  *   0x03 0x94 (illumination uint32) — unique to EM500-LGT.
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -84,6 +85,69 @@ export class MilesightEM500LgtCodec extends BaseDeviceCodec {
   readonly category        = 'Light Sensor';
   readonly modelFamily     = 'EM500-LGT';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-lgt/em500-lgt.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM500-LGT',
+    description:  'Light / Illuminance Sensor — uint32 lux, alarm, D2D, history',
+    telemetryKeys: [
+      { key: 'battery',      label: 'Battery',      type: 'number' as const, unit: '%'  },
+      { key: 'illumination', label: 'Illumination', type: 'number' as const, unit: 'lux' },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'report_status', label: 'Report Status',  params: [] },
+      { type: 'sync_time',     label: 'Sync Time',      params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit',  params: [] },
+      { type: 'clear_history', label: 'Clear History',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_illuminance_alarm',
+        label:  'Set Illuminance Alarm',
+        params: [
+          { key: 'enable',               label: 'Enable',              type: 'boolean' as const, required: true  },
+          { key: 'condition',            label: 'Condition',           type: 'select'  as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'alarm_release_enable', label: 'Alarm Release Enable', type: 'boolean' as const, required: false },
+          { key: 'threshold_min',        label: 'Min (lux)',           type: 'number'  as const, required: false, default: 0      },
+          { key: 'threshold_max',        label: 'Max (lux)',           type: 'number'  as const, required: false, default: 100000 },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_d2d_enable',
+        label:  'Set D2D Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',      keys: ['battery']      },
+      { type: 'gauge'   as const, label: 'Illumination', keys: ['illumination'], unit: 'lux' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

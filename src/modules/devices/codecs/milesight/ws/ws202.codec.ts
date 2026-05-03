@@ -23,6 +23,7 @@
 //
 // SN: 0xFF 0x08, 6 bytes (legacy format)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -37,6 +38,41 @@ export class MilesightWS202Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WS202'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS202',
+    description:  'PIR & Light Sensor — motion detection and daylight/dim status',
+    telemetryKeys: [
+      { key: 'battery',  label: 'Battery',          type: 'number' as const, unit: '%' },
+      { key: 'pir',      label: 'PIR Status',        type: 'string' as const, enum: ['normal', 'trigger'] },
+      { key: 'daylight', label: 'Daylight Status',   type: 'string' as const, enum: ['dim', 'bright'] },
+    ],
+    commands: [
+      { type: 'reboot', label: 'Reboot Device', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60 }],
+      },
+      {
+        type:   'set_light_alarm_config',
+        label:  'Set Light Alarm Config',
+        params: [
+          { key: 'threshold_min', label: 'Min Threshold', type: 'number' as const, required: false, default: 0     },
+          { key: 'threshold_max', label: 'Max Threshold', type: 'number' as const, required: false, default: 65535 },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Battery',  keys: ['battery'],  unit: '%' },
+      { type: 'status' as const, label: 'PIR',      keys: ['pir']                 },
+      { type: 'status' as const, label: 'Daylight', keys: ['daylight']            },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

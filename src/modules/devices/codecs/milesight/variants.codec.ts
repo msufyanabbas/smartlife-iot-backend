@@ -13,60 +13,96 @@ import { MilesightAM319Codec } from './am/am319.codec';
 import { MilesightAM319O3Codec } from './am/am319-o3.codec';
 import { MilesightEM400MudCodec } from './em/em400-mud.codec';
 import { EncodedCommand } from '../interfaces/base-codec.interface';
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 
 // ── AM102 family ──────────────────────────────────────────────────────────
 export class MilesightAM102ACodec extends MilesightAM102Codec {
   override readonly codecId         = 'milesight-am102a';
   override readonly supportedModels = ['AM102A'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'AM102A' };
+}
 }
 export class MilesightAM102LCodec extends MilesightAM102Codec {
   override readonly codecId         = 'milesight-am102l';
   override readonly supportedModels = ['AM102L'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'AM102L' };
+}
 }
 
 // ── AM103 family ──────────────────────────────────────────────────────────
 export class MilesightAM103LCodec extends MilesightAM103Codec {
   override readonly codecId         = 'milesight-am103l';
   override readonly supportedModels = ['AM103L'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'AM103L' };
+}
 }
 
 // ── AM104/AM107 family ────────────────────────────────────────────────────
 export class MilesightAM107Codec extends MilesightAM104Codec {
   override readonly codecId         = 'milesight-am107';
   override readonly supportedModels = ['AM107'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'AM107' };
+}
 }
 
 // ── AM304 family ──────────────────────────────────────────────────────────
 export class MilesightAM304Codec extends MilesightAM304LCodec {
   override readonly codecId         = 'milesight-am304';
   override readonly supportedModels = ['AM304'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'AM304' };
+}
 }
 
 // ── AM305 family ──────────────────────────────────────────────────────────
 export class MilesightAM305Codec extends MilesightAM305LCodec {
   override readonly codecId         = 'milesight-am305';
   override readonly supportedModels = ['AM305'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'AM305' };
+}
 }
 
 // ── AM307 family ──────────────────────────────────────────────────────────
 export class MilesightAM307LCodec extends MilesightAM307Codec {
   override readonly codecId: string          = 'milesight-am307l';
   override readonly supportedModels: string[] = ['AM307L'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'AM307L' };
+}
 }
 
 // AM319L = AM319 HCHO (IR) without screen commands (0x2D, 0x3C, 0x66, 0xF0)
 export class MilesightAM319LCodec extends MilesightAM319Codec {
   override readonly codecId         = 'milesight-am319l';
   override readonly supportedModels = ['AM319L', 'AM319L-HCHO-IR'];
+  getCapabilities(): DeviceCapability {
+  return {
+    ...super.getCapabilities(),
+    codecId:      this.codecId,
+    model:        'AM319L',
+    description:  'Indoor Air Quality Sensor (AM319L) — HCHO (IR), no screen commands',
+  };
+}
 }
 
 export class MilesightAM319LO3Codec extends MilesightAM319O3Codec {
   override readonly codecId         = 'milesight-am319l-o3';
   override readonly supportedModels = ['AM319L-O3'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'AM319L-O3' };
+}
 }
 export class MilesightAM308LCodec extends MilesightAM308Codec {
   override readonly codecId         = 'milesight-am308l';
   override readonly supportedModels = ['AM308L'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'AM308L' };
+}
 }
 
 // ── EM300 family ──────────────────────────────────────────────────────────
@@ -74,11 +110,27 @@ export class MilesightAM308LCodec extends MilesightAM308Codec {
 export class MilesightEM300ZLDCodec extends MilesightEM300SLDCodec {
   override readonly codecId: string          = 'milesight-em300-zld';
   override readonly supportedModels: string[] = ['EM300-ZLD'];
+  getCapabilities(): DeviceCapability {
+  return {
+    ...super.getCapabilities(),
+    codecId:     this.codecId,
+    model:       'EM300-ZLD',
+    description: 'Zone Leak Detection Sensor — zone cable leakage with T/H and history',
+  };
+}
 }
 // DI-HALL: Hall-effect version of DI pulse counter — identical format
 export class MilesightEM300DIHALLCodec extends MilesightEM300DICodec {
   override readonly codecId: string          = 'milesight-em300-di-hall';
   override readonly supportedModels: string[] = ['EM300-DI-HALL'];
+  getCapabilities(): DeviceCapability {
+  return {
+    ...super.getCapabilities(),
+    codecId:     this.codecId,
+    model:       'EM300-DI-HALL',
+    description: 'Hall-effect Pulse Counter / Digital Input Sensor — GPIO, pulse count, water/flow metering',
+  };
+}
 }
 
 export class MilesightEM400TldCodec extends MilesightEM400MudCodec {
@@ -98,6 +150,39 @@ export class MilesightEM400TldCodec extends MilesightEM400MudCodec {
     }
     return super.encode(command);
   }
+
+  getCapabilities(): DeviceCapability {
+  const base = super.getCapabilities();
+  return {
+    ...base,
+    codecId:     this.codecId,
+    model:       'EM400-TLD',
+    description: 'Multifunctional Ultrasonic Distance/Level Sensor (TLD) — standard/bin modes, T/H, tilt (no parking mode)',
+    commands: base.commands.map(cmd => {
+      // Narrow working_mode options — no parking
+      if (cmd.type === 'set_working_mode') {
+        return {
+          ...cmd,
+          params: cmd.params.map((p: any) =>
+            p.key === 'working_mode'
+              ? { ...p, options: [{ label: 'Standard', value: 'standard' }, { label: 'Bin', value: 'bin' }] }
+              : p
+          ),
+        };
+      }
+      // Narrow install_height range
+      if (cmd.type === 'set_install_height') {
+        return {
+          ...cmd,
+          params: cmd.params.map((p: any) =>
+            p.key === 'install_height' ? { ...p, min: 20, max: 3500 } : p
+          ),
+        };
+      }
+      return cmd;
+    }),
+  };
+}
 }
 
 export class MilesightEM400UdlCodec extends MilesightEM400MudCodec {
@@ -116,4 +201,31 @@ export class MilesightEM400UdlCodec extends MilesightEM400MudCodec {
     }
     return super.encode(command);
   }
+
+  getCapabilities(): DeviceCapability {
+  const base = super.getCapabilities();
+  return {
+    ...base,
+    codecId:     this.codecId,
+    model:       'EM400-UDL',
+    description: 'Multifunctional Ultrasonic Distance/Level Sensor (UDL) — standard mode only, T/H, tilt',
+    commands: base.commands
+      // Remove unsupported commands
+      .filter(cmd => !['set_install_height', 'set_install_height_enable', 'set_bin_mode_alarm'].includes(cmd.type))
+      .map(cmd => {
+        // Restrict working mode to standard only
+        if (cmd.type === 'set_working_mode') {
+          return {
+            ...cmd,
+            params: cmd.params.map((p: any) =>
+              p.key === 'working_mode'
+                ? { ...p, options: [{ label: 'Standard', value: 'standard' }] }
+                : p
+            ),
+          };
+        }
+        return cmd;
+      }),
+  };
+}
 }

@@ -27,6 +27,7 @@
 //   0xFF / 0xFE — standard responses
 //   0xF9 / 0xF8 — extended responses (0xF8 carries a result flag byte)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -408,6 +409,80 @@ export class MilesightVS121Codec extends BaseDeviceCodec {
   readonly category = 'VS121';
   readonly modelFamily = 'VS121';
   readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs121/vs121.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'VS121',
+    description:  'AI Workplace Occupancy Sensor — people counting, flow analysis, region detection, dwell time',
+    telemetryKeys: [
+      { key: 'people_count_all',   label: 'People Count',         type: 'number' as const },
+      { key: 'people_in',          label: 'People In (period)',    type: 'number' as const },
+      { key: 'people_out',         label: 'People Out (period)',   type: 'number' as const },
+      { key: 'people_count_max',   label: 'People Count Max',      type: 'number' as const },
+      { key: 'people_total_in',    label: 'People Total In',       type: 'number' as const },
+      { key: 'people_total_out',   label: 'People Total Out',      type: 'number' as const },
+      { key: 'line_in',            label: 'Line In',               type: 'number' as const },
+      { key: 'line_out',           label: 'Line Out',              type: 'number' as const },
+      { key: 'dwell_time_avg',     label: 'Dwell Time Average',    type: 'number' as const, unit: 's' },
+      { key: 'dwell_time_max',     label: 'Dwell Time Max',        type: 'number' as const, unit: 's' },
+      { key: 'region_1_count',     label: 'Region 1 Count',        type: 'number' as const },
+      { key: 'region_2_count',     label: 'Region 2 Count',        type: 'number' as const },
+      { key: 'region_3_count',     label: 'Region 3 Count',        type: 'number' as const },
+      { key: 'region_4_count',     label: 'Region 4 Count',        type: 'number' as const },
+    ],
+    commands: [
+      { type: 'reboot',                        label: 'Reboot Device',                params: [] },
+      { type: 'clear_cumulative_count',        label: 'Clear Cumulative Count',        params: [] },
+      {
+        type:   'set_from_now_on_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 60, min: 5 }],
+      },
+      {
+        type:   'set_people_counting_report_mode',
+        label:  'Set Reporting Mode',
+        params: [{ key: 'mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Zero to Non-Zero', value: 'zero_to_nonzero' }, { label: 'Once Result Changes', value: 'once_result_change' }] }],
+      },
+      {
+        type:   'set_people_count_change_report_enable',
+        label:  'Set People Count Change Report',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_region_people_counting_enable',
+        label:  'Set Region Counting Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_line_detect_enable',
+        label:  'Set Line Detect Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_timed_reset_cumulative_enable',
+        label:  'Set Timed Reset Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_d2d_enable',
+        label:  'Set D2D Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'value' as const, label: 'People Count',       keys: ['people_count_all']  },
+      { type: 'value' as const, label: 'People In',          keys: ['people_in']         },
+      { type: 'value' as const, label: 'People Out',         keys: ['people_out']        },
+      { type: 'value' as const, label: 'People Total In',    keys: ['people_total_in']   },
+      { type: 'value' as const, label: 'People Total Out',   keys: ['people_total_out']  },
+      { type: 'value' as const, label: 'Dwell Time Average', keys: ['dwell_time_avg'],   unit: 's' },
+      { type: 'value' as const, label: 'Line In',            keys: ['line_in']           },
+      { type: 'value' as const, label: 'Line Out',           keys: ['line_out']          },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

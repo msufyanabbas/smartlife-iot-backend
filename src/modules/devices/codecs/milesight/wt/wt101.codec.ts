@@ -4,6 +4,7 @@
 //           Tamper, Window Detection, Freeze Protection
 // Downlink: Full heating schedule (v1.3+), DST, freeze, child lock, etc.
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../../interfaces/base-codec.interface';
 
 export class MilesightWT101Codec extends BaseDeviceCodec {
@@ -41,6 +42,102 @@ export class MilesightWT101Codec extends BaseDeviceCodec {
      110:   'UTC+11', 120:    'UTC+12',  127: 'UTC+12:45',  130: 'UTC+13',
      140:   'UTC+14',
   } as any;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WT101',
+    description:  'Smart Radiator Thermostat — valve, temperature, heating schedule, freeze protection',
+    telemetryKeys: [
+      { key: 'batteryLevel',      label: 'Battery',          type: 'number' as const, unit: '%'  },
+      { key: 'temperature',       label: 'Temperature',      type: 'number' as const, unit: '°C' },
+      { key: 'target_temperature',label: 'Target Temp',      type: 'number' as const, unit: '°C' },
+      { key: 'valve_opening',     label: 'Valve Opening',    type: 'number' as const, unit: '%'  },
+      { key: 'tamper_status',     label: 'Tamper Status',    type: 'string' as const, enum: ['installed', 'uninstalled'] },
+      { key: 'window_detection',  label: 'Window Detection', type: 'string' as const, enum: ['normal', 'open'] },
+      { key: 'freeze_protection', label: 'Freeze Protection',type: 'string' as const, enum: ['normal', 'triggered'] },
+      { key: 'motor_position',    label: 'Motor Position',   type: 'number' as const              },
+    ],
+    commands: [
+      { type: 'reboot',     label: 'Reboot Device', params: [] },
+      { type: 'sync_time',  label: 'Sync Time',      params: [] },
+      { type: 'report_status', label: 'Report Status', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 10, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_target_temperature',
+        label:  'Set Target Temperature',
+        params: [
+          { key: 'temperature', label: 'Temperature (°C)', type: 'number' as const, required: true, default: 20, min: 5, max: 35 },
+          { key: 'tolerance',   label: 'Tolerance (°C)',   type: 'number' as const, required: false, default: 0.5 },
+        ],
+      },
+      {
+        type:   'set_valve_opening',
+        label:  'Set Valve Opening',
+        params: [{ key: 'opening', label: 'Opening (%)', type: 'number' as const, required: true, default: 0, min: 0, max: 100 }],
+      },
+      {
+        type:   'set_temperature_control_enable',
+        label:  'Set Temperature Control Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_temperature_control_mode',
+        label:  'Set Temperature Control Mode',
+        params: [{ key: 'mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Auto', value: 'auto' }, { label: 'Manual', value: 'manual' }] }],
+      },
+      {
+        type:   'set_temperature_calibration',
+        label:  'Set Temperature Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Offset (°C)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_freeze_protection',
+        label:  'Set Freeze Protection',
+        params: [
+          { key: 'enable',      label: 'Enable',      type: 'boolean' as const, required: true  },
+          { key: 'temperature', label: 'Temperature (°C)', type: 'number' as const, required: false, default: 5, min: 1, max: 10 },
+        ],
+      },
+      {
+        type:   'set_open_window_detection',
+        label:  'Set Open Window Detection',
+        params: [
+          { key: 'enable',                label: 'Enable',           type: 'boolean' as const, required: true  },
+          { key: 'temperature_threshold', label: 'Drop Threshold (°C)', type: 'number' as const, required: false, default: 2 },
+          { key: 'time',                  label: 'Time (minutes)',   type: 'number' as const, required: false, default: 15 },
+        ],
+      },
+      { type: 'valve_calibration',             label: 'Valve Calibration',       params: [] },
+      { type: 'restore_open_window_detection', label: 'Restore Window Detection', params: [] },
+      {
+        type:   'set_child_lock',
+        label:  'Set Child Lock',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+3' }],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',          keys: ['batteryLevel']       },
+      { type: 'gauge'   as const, label: 'Temperature',      keys: ['temperature'],       unit: '°C' },
+      { type: 'gauge'   as const, label: 'Valve Opening',    keys: ['valve_opening'],     unit: '%'  },
+      { type: 'value'   as const, label: 'Target Temp',      keys: ['target_temperature'],unit: '°C' },
+      { type: 'status'  as const, label: 'Window Detection', keys: ['window_detection']              },
+    ],
+  };
+}
 
   // ── Decode uplink ─────────────────────────────────────────────────────────
 

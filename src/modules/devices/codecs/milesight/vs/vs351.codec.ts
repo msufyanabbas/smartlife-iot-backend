@@ -28,6 +28,7 @@
 //
 // Counter/alarm/history channels are identical to VS350.
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -39,6 +40,119 @@ export class MilesightVS351Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['VS351'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'VS351',
+    description:  'Mini AI Thermopile People Counter — bi-directional counting with temperature, hibernate, and advanced LoRaWAN config',
+    telemetryKeys: [
+      { key: 'battery',      label: 'Battery',      type: 'number' as const, unit: '%'  },
+      { key: 'power_status', label: 'Power Status', type: 'string' as const, enum: ['battery supply', 'external power supply', 'battery charging'] },
+      { key: 'temperature',  label: 'Temperature',  type: 'number' as const, unit: '°C' },
+      { key: 'total_in',     label: 'Total In',     type: 'number' as const              },
+      { key: 'total_out',    label: 'Total Out',    type: 'number' as const              },
+      { key: 'period_in',    label: 'Period In',    type: 'number' as const              },
+      { key: 'period_out',   label: 'Period Out',   type: 'number' as const              },
+    ],
+    commands: [
+      { type: 'reboot',               label: 'Reboot Device',        params: [] },
+      { type: 'query_device_status',  label: 'Query Device Status',  params: [] },
+      { type: 'reset_cumulative_in',  label: 'Reset Cumulative In',  params: [] },
+      { type: 'reset_cumulative_out', label: 'Reset Cumulative Out', params: [] },
+      { type: 'clear_history',        label: 'Clear History',        params: [] },
+      { type: 'stop_transmit',        label: 'Stop Transmit',        params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 60, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_installation_height',
+        label:  'Set Installation Height',
+        params: [{ key: 'installation_height', label: 'Height (mm)', type: 'number' as const, required: true, default: 2700, min: 2000, max: 3500 }],
+      },
+      {
+        type:   'set_detection_direction',
+        label:  'Set Detection Direction',
+        params: [{ key: 'detection_direction', label: 'Direction', type: 'select' as const, required: true, options: [{ label: 'Forward', value: 'forward' }, { label: 'Reverse', value: 'reverse' }] }],
+      },
+      {
+        type:   'set_reset_cumulative_enable',
+        label:  'Set Reset Cumulative Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_reset_cumulative_schedule',
+        label:  'Set Reset Cumulative Schedule',
+        params: [
+          { key: 'weekday', label: 'Weekday', type: 'select' as const, required: true, options: ['everyday','sunday','monday','tuesday','wednesday','thursday','friday','saturday'].map(v => ({ label: v, value: v })) },
+          { key: 'hour',    label: 'Hour',    type: 'number' as const, required: true, default: 0, min: 0, max: 23 },
+          { key: 'minute',  label: 'Minute',  type: 'number' as const, required: true, default: 0, min: 0, max: 59 },
+        ],
+      },
+      {
+        type:   'set_hibernate_config',
+        label:  'Set Hibernate Config',
+        params: [
+          { key: 'enable',     label: 'Enable',           type: 'boolean' as const, required: true  },
+          { key: 'start_time', label: 'Start (minutes)',  type: 'number'  as const, required: false, default: 0,    min: 0, max: 1439 },
+          { key: 'end_time',   label: 'End (minutes)',    type: 'number'  as const, required: false, default: 480,  min: 0, max: 1439 },
+        ],
+      },
+      {
+        type:   'set_temperature_alarm_config',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'condition',     label: 'Condition', type: 'select' as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'threshold_min', label: 'Min (°C)',  type: 'number' as const, required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max (°C)',  type: 'number' as const, required: false, default: 40 },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_retransmit_enable',
+        label:  'Set Retransmit Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+      {
+        type:   'set_rejoin_config',
+        label:  'Set Rejoin Config',
+        params: [
+          { key: 'enable',    label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'max_count', label: 'Max Count', type: 'number'  as const, required: false, default: 10 },
+        ],
+      },
+      {
+        type:   'set_d2d_enable',
+        label:  'Set D2D Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Battery',     keys: ['battery'],      unit: '%'  },
+      { type: 'value'  as const, label: 'Temperature', keys: ['temperature'],  unit: '°C' },
+      { type: 'value'  as const, label: 'Total In',    keys: ['total_in']                 },
+      { type: 'value'  as const, label: 'Total Out',   keys: ['total_out']                },
+      { type: 'value'  as const, label: 'Period In',   keys: ['period_in']                },
+      { type: 'value'  as const, label: 'Period Out',  keys: ['period_out']               },
+      { type: 'status' as const, label: 'Power Status',keys: ['power_status']             },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

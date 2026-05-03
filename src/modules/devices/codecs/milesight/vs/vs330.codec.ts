@@ -24,6 +24,7 @@
 //   0x72 — test_duration (uint16 LE, min, 1–30)
 //   0x7A — back_test_config: enable(1B) + distance(uint16 LE, mm, 40–3500)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -36,6 +37,62 @@ export class MilesightVS330Codec extends BaseDeviceCodec {
   readonly supportedModels = ['VS330'];
   readonly protocol        = 'lorawan' as const;
   readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs330/vs330.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'VS330',
+    description:  'Bathroom Occupancy Sensor — ToF distance-based occupancy detection',
+    telemetryKeys: [
+      { key: 'battery',             label: 'Battery',             type: 'number' as const, unit: '%'  },
+      { key: 'distance',            label: 'Distance',            type: 'number' as const, unit: 'mm' },
+      { key: 'occupancy',           label: 'Occupancy',           type: 'string' as const, enum: ['occupied', 'vacant'] },
+      { key: 'calibration_status',  label: 'Calibration Status',  type: 'string' as const, enum: ['success', 'failed'] },
+    ],
+    commands: [
+      { type: 'reboot', label: 'Reboot Device', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 5, min: 1, max: 10 }],
+      },
+      {
+        type:   'set_human_exist_height',
+        label:  'Set Human Exist Height',
+        params: [{ key: 'human_exist_height', label: 'Height (mm)', type: 'number' as const, required: true, default: 120, min: 1, max: 300 }],
+      },
+      {
+        type:   'set_test_enable',
+        label:  'Set Test Mode Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_test_duration',
+        label:  'Set Test Duration',
+        params: [{ key: 'test_duration', label: 'Duration (minutes)', type: 'number' as const, required: true, default: 10, min: 1, max: 30 }],
+      },
+      {
+        type:   'set_back_test_config',
+        label:  'Set Back Test Config',
+        params: [
+          { key: 'enable',   label: 'Enable',          type: 'boolean' as const, required: true  },
+          { key: 'distance', label: 'Distance (mm)',    type: 'number'  as const, required: false, default: 1000, min: 40, max: 3500 },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Battery',    keys: ['battery'],   unit: '%'  },
+      { type: 'status' as const, label: 'Occupancy',  keys: ['occupancy']             },
+      { type: 'value'  as const, label: 'Distance',   keys: ['distance'],  unit: 'mm' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

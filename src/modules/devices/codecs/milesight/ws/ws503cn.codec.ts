@@ -61,6 +61,7 @@
 //   0xF9 0x64 <7B>                   — set_rule_config
 //   0xF9 0x65 <rule_id | 0xFF>       — query_rule_config
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -120,6 +121,75 @@ export class MilesightWS503CNCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WS503-CN'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS503-CN',
+    description:  'Smart Wall Switch (3-gang, CN 470 MHz) — rule engine, timezone support',
+    telemetryKeys: [
+      { key: 'switch_1', label: 'Switch 1', type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'switch_2', label: 'Switch 2', type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'switch_3', label: 'Switch 3', type: 'string' as const, enum: ['on', 'off'] },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device',  params: [] },
+      { type: 'report_status', label: 'Report Status',  params: [] },
+      { type: 'sync_time',     label: 'Sync Time',      params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 1200, min: 60 }],
+      },
+      {
+        type:   'set_switch',
+        label:  'Set Switch',
+        params: [
+          { key: 'switch_id', label: 'Switch ID (1–3)', type: 'number' as const, required: true, default: 1, min: 1, max: 3 },
+          { key: 'state',     label: 'State',           type: 'select' as const, required: true, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] },
+        ],
+      },
+      {
+        type:   'set_led_mode',
+        label:  'Set LED Mode',
+        params: [{ key: 'led_mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Off', value: 'off' }, { label: 'On Inverted', value: 'on_inverted' }, { label: 'On Synced', value: 'on_synced' }] }],
+      },
+      {
+        type:   'set_child_lock_config',
+        label:  'Set Child Lock',
+        params: [
+          { key: 'enable',    label: 'Enable',       type: 'boolean' as const, required: true  },
+          { key: 'lock_time', label: 'Lock Time (minutes)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+3' }],
+      },
+      {
+        type:   'set_rule_config',
+        label:  'Set Rule Config',
+        params: [
+          { key: 'rule_id',   label: 'Rule ID (1–8)', type: 'number' as const, required: true, default: 1, min: 1, max: 8 },
+          { key: 'rule_type', label: 'Rule Type',     type: 'select' as const, required: true, options: [{ label: 'None', value: 'none' }, { label: 'Enable', value: 'enable' }, { label: 'Disable', value: 'disable' }] },
+        ],
+      },
+      {
+        type:   'query_rule_config',
+        label:  'Query Rule Config',
+        params: [{ key: 'rule_id', label: 'Rule ID (1–8)', type: 'number' as const, required: true, default: 1, min: 1, max: 8 }],
+      },
+      { type: 'query_all_rule_config', label: 'Query All Rule Configs', params: [] },
+    ],
+    uiComponents: [
+      { type: 'toggle' as const, label: 'Switch 1', keys: ['switch_1'], command: 'set_switch' },
+      { type: 'toggle' as const, label: 'Switch 2', keys: ['switch_2'], command: 'set_switch' },
+      { type: 'toggle' as const, label: 'Switch 3', keys: ['switch_3'], command: 'set_switch' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

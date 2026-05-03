@@ -30,6 +30,7 @@
 //
 // canDecode fingerprint: 0xFF 0x19 (v1 Modbus channel) — absent in v2
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../../interfaces/base-codec.interface';
 
 // ── v1 uplink data_type → byte width consumed ─────────────────────────────────
@@ -103,6 +104,95 @@ export class MilesightUC100V1Codec extends BaseDeviceCodec {
   readonly category = 'Controller';
   readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/uc-series/uc100/uc100.png';
   readonly modelFamily = 'UC100';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'UC100',
+    description:  'IoT Controller / Modbus Gateway (v1 firmware) — dynamic Modbus channel configuration',
+    telemetryKeys: [
+      // Modbus channels are dynamically named modbus_chn_N — expose the concept
+      { key: 'modbus_chn_1',  label: 'Modbus Channel 1',  type: 'number' as const },
+      { key: 'modbus_chn_2',  label: 'Modbus Channel 2',  type: 'number' as const },
+      { key: 'modbus_chn_3',  label: 'Modbus Channel 3',  type: 'number' as const },
+      { key: 'modbus_chn_4',  label: 'Modbus Channel 4',  type: 'number' as const },
+      { key: 'modbus_chn_5',  label: 'Modbus Channel 5',  type: 'number' as const },
+      { key: 'modbus_chn_6',  label: 'Modbus Channel 6',  type: 'number' as const },
+      { key: 'modbus_chn_7',  label: 'Modbus Channel 7',  type: 'number' as const },
+      { key: 'modbus_chn_8',  label: 'Modbus Channel 8',  type: 'number' as const },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'clear_history', label: 'Clear History', params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60 }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_retransmit_enable',
+        label:  'Set Retransmit Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_retransmit_interval',
+        label:  'Set Retransmit Interval',
+        params: [{ key: 'retransmit_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300 }],
+      },
+      {
+        type:   'set_resend_interval',
+        label:  'Set Resend Interval',
+        params: [{ key: 'resend_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300 }],
+      },
+      {
+        type:   'set_modbus_channel',
+        label:  'Set Modbus Channel',
+        params: [
+          { key: 'channel_id',        label: 'Channel ID',         type: 'number' as const, required: true  },
+          { key: 'slave_id',          label: 'Slave ID',           type: 'number' as const, required: true  },
+          { key: 'register_address',  label: 'Register Address',   type: 'number' as const, required: true  },
+          { key: 'register_type',     label: 'Register Type',      type: 'string' as const, required: true, default: 'MB_REG_HOLD_INT16_AB' },
+          { key: 'quantity',          label: 'Quantity',           type: 'number' as const, required: false, default: 1 },
+          { key: 'sign',              label: 'Sign',               type: 'select' as const, required: false, options: [{ label: 'Unsigned', value: 'unsigned' }, { label: 'Signed', value: 'signed' }] },
+        ],
+      },
+      {
+        type:   'set_modbus_channel_name',
+        label:  'Set Modbus Channel Name',
+        params: [
+          { key: 'channel_id', label: 'Channel ID', type: 'number' as const, required: true },
+          { key: 'name',       label: 'Name',       type: 'string' as const, required: true },
+        ],
+      },
+      {
+        type:   'remove_modbus_channel',
+        label:  'Remove Modbus Channel',
+        params: [{ key: 'channel_id', label: 'Channel ID', type: 'number' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'value' as const, label: 'Modbus Channel 1', keys: ['modbus_chn_1'] },
+      { type: 'value' as const, label: 'Modbus Channel 2', keys: ['modbus_chn_2'] },
+      { type: 'value' as const, label: 'Modbus Channel 3', keys: ['modbus_chn_3'] },
+      { type: 'value' as const, label: 'Modbus Channel 4', keys: ['modbus_chn_4'] },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

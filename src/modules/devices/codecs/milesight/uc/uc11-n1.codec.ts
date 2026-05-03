@@ -20,6 +20,7 @@
 //               channel key = "modbus_chn_{id-6}", data_type = package_type & 0x07
 //               data_type: 0,1→uint8; 2,3→uint16 LE; 4,6→uint32 LE; 5,7→float32 LE
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -40,6 +41,38 @@ export class MilesightUC11N1Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['UC11-N1'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'UC11-N1',
+    description:  'Universal Controller — GPIO inputs, ADC channels, pulse counter, and Modbus',
+    telemetryKeys: [
+      { key: 'battery',      label: 'Battery',       type: 'number' as const, unit: '%'  },
+      { key: 'gpio_1',       label: 'GPIO 1',        type: 'string' as const, enum: ['high', 'low'] },
+      { key: 'gpio_2',       label: 'GPIO 2',        type: 'string' as const, enum: ['high', 'low'] },
+      { key: 'gpio_counter', label: 'GPIO Counter',  type: 'number' as const              },
+      { key: 'adc_1',        label: 'ADC 1',         type: 'number' as const              },
+      { key: 'adc_1_min',    label: 'ADC 1 Min',     type: 'number' as const              },
+      { key: 'adc_1_max',    label: 'ADC 1 Max',     type: 'number' as const              },
+      { key: 'adc_1_avg',    label: 'ADC 1 Average', type: 'number' as const              },
+      { key: 'adc_2',        label: 'ADC 2',         type: 'number' as const              },
+      { key: 'adc_2_min',    label: 'ADC 2 Min',     type: 'number' as const              },
+      { key: 'adc_2_max',    label: 'ADC 2 Max',     type: 'number' as const              },
+      { key: 'adc_2_avg',    label: 'ADC 2 Average', type: 'number' as const              },
+    ],
+    commands: [],  // UC11-N1 has no downlink commands
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',      keys: ['battery'],      unit: '%' },
+      { type: 'value' as const, label: 'GPIO 1',       keys: ['gpio_1']                  },
+      { type: 'value' as const, label: 'GPIO 2',       keys: ['gpio_2']                  },
+      { type: 'value' as const, label: 'GPIO Counter', keys: ['gpio_counter']            },
+      { type: 'value' as const, label: 'ADC 1',        keys: ['adc_1']                   },
+      { type: 'value' as const, label: 'ADC 2',        keys: ['adc_2']                   },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

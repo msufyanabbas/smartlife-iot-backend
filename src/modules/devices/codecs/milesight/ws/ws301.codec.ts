@@ -20,6 +20,7 @@
 //   0xFF 0x28 0xFF       — query_device_status
 //   0xFF 0x03 <u16>      — set_report_interval (seconds)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -34,6 +35,34 @@ export class MilesightWS301Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WS301'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS301',
+    description:  'Magnetic Contact Switch — door/window open/close detection with tamper alarm',
+    telemetryKeys: [
+      { key: 'battery',       label: 'Battery',       type: 'number' as const, unit: '%' },
+      { key: 'magnet_status', label: 'Magnet Status', type: 'string' as const, enum: ['open', 'close'] },
+      { key: 'tamper_status', label: 'Tamper Status', type: 'string' as const, enum: ['installed', 'uninstalled'] },
+    ],
+    commands: [
+      { type: 'reboot',              label: 'Reboot Device',       params: [] },
+      { type: 'query_device_status', label: 'Query Device Status', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60 }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Battery',       keys: ['battery'],       unit: '%' },
+      { type: 'status' as const, label: 'Magnet Status', keys: ['magnet_status']             },
+      { type: 'status' as const, label: 'Tamper Status', keys: ['tamper_status']             },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

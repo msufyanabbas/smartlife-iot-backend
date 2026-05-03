@@ -19,6 +19,7 @@
  * Reference payload: "017510 FF2E01" → { battery: 16, button_event: { status: "short press" } }
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -30,6 +31,47 @@ export class MilesightWS101Codec extends BaseDeviceCodec {
   readonly manufacturer: string = 'Milesight';
   readonly supportedModels: string[] = ['WS101', 'WS101-SOS'];
   readonly protocol: 'lorawan' = 'lorawan';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS101',
+    description:  'Smart Button / SOS Button — short press, long press, double press events',
+    telemetryKeys: [
+      { key: 'battery',            label: 'Battery',      type: 'number' as const, unit: '%' },
+      { key: 'button_event.status',label: 'Button Event', type: 'string' as const, enum: ['short press', 'long press', 'double press'] },
+    ],
+    commands: [
+      { type: 'reboot',              label: 'Reboot Device',       params: [] },
+      { type: 'query_device_status', label: 'Query Device Status', params: [] },
+      {
+        type:   'set_reporting_interval',
+        label:  'Set Reporting Interval',
+        params: [{ key: 'interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_led_indicator',
+        label:  'Set LED Indicator',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_double_click',
+        label:  'Set Double Click Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_buzzer',
+        label:  'Set Buzzer Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Battery',      keys: ['battery']              },
+      { type: 'status' as const, label: 'Button Event', keys: ['button_event.status']  },
+    ],
+  };
+}
 
   // ── Decode ────────────────────────────────────────────────────────────────
 

@@ -111,6 +111,7 @@
 //
 // canDecode fingerprint: 0x05 at byte 0 (current, 37B) or 0x03 at byte 0 (thdi, 25B)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -227,6 +228,129 @@ export class MilesightCTH01Codec extends BaseDeviceCodec {
   readonly category        = 'Current Monitoring';
   readonly modelFamily     = 'CTH01';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/cth-series/cth01/CTH01.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'CTH01',
+    description:  '3-Phase Energy Meter — voltage, current, power, energy, THD, and power factor analysis',
+    telemetryKeys: [
+      { key: 'temperature',                label: 'Temperature',                  type: 'number' as const, unit: '°C'   },
+      { key: 'voltage',                    label: 'Voltage (3-phase)',            type: 'number' as const, unit: 'V'    },
+      { key: 'current',                    label: 'Current (12-channel)',         type: 'number' as const, unit: 'A'    },
+      { key: 'power_factor',               label: 'Power Factor',                 type: 'number' as const, unit: '%'    },
+      { key: 'active_power1',              label: 'Active Power 1',               type: 'number' as const, unit: 'kW'   },
+      { key: 'active_power2',              label: 'Active Power 2',               type: 'number' as const, unit: 'kW'   },
+      { key: 'reactive_power1',            label: 'Reactive Power 1',             type: 'number' as const, unit: 'kvar' },
+      { key: 'reactive_power2',            label: 'Reactive Power 2',             type: 'number' as const, unit: 'kvar' },
+      { key: 'apparent_power1',            label: 'Apparent Power 1',             type: 'number' as const, unit: 'kVA'  },
+      { key: 'apparent_power2',            label: 'Apparent Power 2',             type: 'number' as const, unit: 'kVA'  },
+      { key: 'forward_active_energy1',     label: 'Forward Active Energy 1',      type: 'number' as const, unit: 'kWh'  },
+      { key: 'forward_active_energy2',     label: 'Forward Active Energy 2',      type: 'number' as const, unit: 'kWh'  },
+      { key: 'reverse_active_energy1',     label: 'Reverse Active Energy 1',      type: 'number' as const, unit: 'kWh'  },
+      { key: 'reverse_active_energy2',     label: 'Reverse Active Energy 2',      type: 'number' as const, unit: 'kWh'  },
+      { key: 'forward_reactive_energy1',   label: 'Forward Reactive Energy 1',    type: 'number' as const, unit: 'kVArh'},
+      { key: 'forward_reactive_energy2',   label: 'Forward Reactive Energy 2',    type: 'number' as const, unit: 'kVArh'},
+      { key: 'reverse_reactive_energy1',   label: 'Reverse Reactive Energy 1',    type: 'number' as const, unit: 'kVArh'},
+      { key: 'reverse_reactive_energy2',   label: 'Reverse Reactive Energy 2',    type: 'number' as const, unit: 'kVArh'},
+      { key: 'apparent_energy1',           label: 'Apparent Energy 1',            type: 'number' as const, unit: 'kVAh' },
+      { key: 'apparent_energy2',           label: 'Apparent Energy 2',            type: 'number' as const, unit: 'kVAh' },
+      { key: 'thdi',                       label: 'THD Current (12-channel)',      type: 'number' as const, unit: '%'   },
+      { key: 'thdv',                       label: 'THD Voltage (3-phase)',         type: 'number' as const, unit: '%'   },
+      { key: 'voltage_three_phase_imbalcance', label: 'Voltage 3-Phase Imbalance', type: 'number' as const, unit: '%'  },
+    ],
+    commands: [
+      { type: 'reboot',               label: 'Reboot Device',       params: [] },
+      { type: 'reset',                label: 'Reset Device',        params: [] },
+      { type: 'query_device_status',  label: 'Query Device Status', params: [] },
+      { type: 'synchronize_time',     label: 'Synchronize Time',    params: [] },
+      { type: 'reconnect',            label: 'Reconnect',           params: [] },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Offset (minutes, e.g. UTC+8=480)', type: 'number' as const, required: true, default: 480 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [
+          { key: 'unit',            label: 'Unit',  type: 'select' as const, required: true, options: [{ label: 'Seconds', value: 0 }, { label: 'Minutes', value: 1 }] },
+          { key: 'seconds_of_time', label: 'Value', type: 'number' as const, required: false, default: 30 },
+        ],
+      },
+      {
+        type:   'set_reporting_interval',
+        label:  'Set Reporting Interval',
+        params: [
+          { key: 'unit',            label: 'Unit',  type: 'select' as const, required: true, options: [{ label: 'Seconds', value: 0 }, { label: 'Minutes', value: 1 }] },
+          { key: 'minutes_of_time', label: 'Value', type: 'number' as const, required: false, default: 10 },
+        ],
+      },
+      {
+        type:   'set_temperature_alarm_settings',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'enable',               label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'threshold_condition',  label: 'Condition', type: 'number'  as const, required: false, default: 2 },
+          { key: 'threshold_min',        label: 'Min (°C)',  type: 'number'  as const, required: false, default: 0  },
+          { key: 'threshold_max',        label: 'Max (°C)',  type: 'number'  as const, required: false, default: 60 },
+        ],
+      },
+      {
+        type:   'set_alarm_global_settings',
+        label:  'Set Alarm Global Settings',
+        params: [
+          { key: 'interval',       label: 'Interval (minutes)', type: 'number'  as const, required: false, default: 5 },
+          { key: 'times',          label: 'Times',              type: 'number'  as const, required: false, default: 3 },
+          { key: 'release_enable', label: 'Release Enable',     type: 'boolean' as const, required: false },
+        ],
+      },
+      {
+        type:   'set_data_storage',
+        label:  'Set Data Storage',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'retrieve_historical_data_by_time',
+        label:  'Fetch History by Time',
+        params: [{ key: 'time', label: 'Unix Timestamp', type: 'number' as const, required: true }],
+      },
+      {
+        type:   'retrieve_historical_data_by_time_range',
+        label:  'Fetch History by Range',
+        params: [
+          { key: 'start_time', label: 'Start (Unix)', type: 'number' as const, required: true },
+          { key: 'end_time',   label: 'End (Unix)',   type: 'number' as const, required: true },
+        ],
+      },
+      {
+        type:   'stop_historical_data_retrieval',
+        label:  'Stop History Retrieval',
+        params: [],
+      },
+      {
+        type:   'reset_energy',
+        label:  'Reset Energy',
+        params: [{ key: 'channel', label: 'Channel', type: 'number' as const, required: true, default: 0 }],
+      },
+      {
+        type:   'clear_data',
+        label:  'Clear Data',
+        params: [{ key: 'type', label: 'Type', type: 'number' as const, required: true, default: 0 }],
+      },
+    ],
+    uiComponents: [
+      { type: 'value' as const, label: 'Temperature',             keys: ['temperature'],                     unit: '°C'   },
+      { type: 'value' as const, label: 'Voltage',                 keys: ['voltage']                                        },
+      { type: 'value' as const, label: 'Current',                 keys: ['current']                                        },
+      { type: 'value' as const, label: 'Power Factor',            keys: ['power_factor']                                   },
+      { type: 'value' as const, label: 'Active Power 1',          keys: ['active_power1'],                   unit: 'kW'   },
+      { type: 'value' as const, label: 'Forward Active Energy 1', keys: ['forward_active_energy1'],          unit: 'kWh'  },
+      { type: 'value' as const, label: '3-Phase Imbalance',       keys: ['voltage_three_phase_imbalcance'],  unit: '%'    },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

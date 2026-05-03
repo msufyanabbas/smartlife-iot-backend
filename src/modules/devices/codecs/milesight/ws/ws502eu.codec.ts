@@ -53,6 +53,7 @@
 //   (0x08 0x29 alone = WS503_CN family; adding power metering = WS502_EU)
 //   WS502_EU must be listed BEFORE WS503_CN in ALL_CODECS.
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -70,6 +71,67 @@ export class MilesightWS502EUCodec extends BaseDeviceCodec {
   readonly supportedModels = ['WS502-EU'];
   readonly protocol        = 'lorawan' as const;
 
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS502-EU',
+    description:  'Smart Wall Switch (2-gang, EU 868 MHz) — power metering, delay tasks',
+    telemetryKeys: [
+      { key: 'switch_1',         label: 'Switch 1',          type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'switch_2',         label: 'Switch 2',          type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'voltage',          label: 'Voltage',           type: 'number' as const, unit: 'V'  },
+      { key: 'active_power',     label: 'Active Power',      type: 'number' as const, unit: 'W'  },
+      { key: 'power_factor',     label: 'Power Factor',      type: 'number' as const, unit: '%'  },
+      { key: 'power_consumption',label: 'Power Consumption', type: 'number' as const, unit: 'Wh' },
+      { key: 'current',          label: 'Current',           type: 'number' as const, unit: 'mA' },
+    ],
+    commands: [
+      { type: 'reboot',                   label: 'Reboot Device',          params: [] },
+      { type: 'report_status',            label: 'Report Status',          params: [] },
+      { type: 'clear_power_consumption',  label: 'Clear Power Consumption', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 1200, min: 60 }],
+      },
+      {
+        type:   'set_switch',
+        label:  'Set Switch',
+        params: [
+          { key: 'switch_id', label: 'Switch ID (1–2)', type: 'number' as const, required: true, default: 1, min: 1, max: 2 },
+          { key: 'state',     label: 'State',           type: 'select' as const, required: true, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] },
+        ],
+      },
+      {
+        type:   'set_power_consumption_enable',
+        label:  'Set Power Consumption Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_led_mode',
+        label:  'Set LED Mode',
+        params: [{ key: 'led_mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Off', value: 'off' }, { label: 'On Inverted', value: 'on_inverted' }, { label: 'On Synced', value: 'on_synced' }] }],
+      },
+      {
+        type:   'set_child_lock_config',
+        label:  'Set Child Lock',
+        params: [
+          { key: 'enable',    label: 'Enable',             type: 'boolean' as const, required: true  },
+          { key: 'lock_time', label: 'Lock Time (minutes)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'toggle' as const, label: 'Switch 1',         keys: ['switch_1'],          command: 'set_switch' },
+      { type: 'toggle' as const, label: 'Switch 2',         keys: ['switch_2'],          command: 'set_switch' },
+      { type: 'value'  as const, label: 'Voltage',          keys: ['voltage'],           unit: 'V'  },
+      { type: 'value'  as const, label: 'Active Power',     keys: ['active_power'],      unit: 'W'  },
+      { type: 'value'  as const, label: 'Power Consumption',keys: ['power_consumption'], unit: 'Wh' },
+      { type: 'value'  as const, label: 'Current',          keys: ['current'],           unit: 'mA' },
+    ],
+  };
+}
   // ── Decode ──────────────────────────────────────────────────────────────────
 
   decode(payload: string | Buffer, _fPort?: number): DecodedTelemetry {

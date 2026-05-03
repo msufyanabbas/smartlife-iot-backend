@@ -18,6 +18,7 @@
  * Based on official Milesight EM300-TH decoder v1.0.0
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -32,6 +33,48 @@ export class MilesightEM300THCodec extends BaseDeviceCodec {
   readonly category        = 'Temperature & Humidity Sensor';
   readonly modelFamily     = 'EM300-TH';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em300-th/em300-th.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM300-TH',
+    description:  'Temperature & Humidity Sensor — with history and retransmit support',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'  },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C' },
+      { key: 'humidity',    label: 'Humidity',    type: 'number' as const, unit: '%'  },
+    ],
+    commands: [
+      { type: 'reboot',       label: 'Reboot Device', params: [] },
+      { type: 'stop_transmit',label: 'Stop Transmit',  params: [] },
+      { type: 'clear_history',label: 'Clear History',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60 }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery'  as const, label: 'Battery',     keys: ['battery']     },
+      { type: 'gauge'    as const, label: 'Temperature', keys: ['temperature'], unit: '°C' },
+      { type: 'gauge'    as const, label: 'Humidity',    keys: ['humidity'],    unit: '%'  },
+    ],
+  };
+}
 
   // ── Decode ────────────────────────────────────────────────────────────────
 

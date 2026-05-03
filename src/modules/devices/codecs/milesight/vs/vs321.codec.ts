@@ -27,6 +27,7 @@
 // Downlink: 0xFF/0xFE standard, 0xF9/0xF8 extended (0xF8 carries result flag)
 // History fetch/stop via 0xFD prefix
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -261,6 +262,103 @@ export class MilesightVS321Codec extends BaseDeviceCodec {
   readonly supportedModels = ['VS321'];
   readonly protocol        = 'lorawan' as const;
   readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs321/vs321.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'VS321',
+    description:  'Wireless AI Occupancy Sensor — people count, region occupancy, temperature, humidity, illuminance',
+    telemetryKeys: [
+      { key: 'battery',             label: 'Battery',              type: 'number' as const, unit: '%'  },
+      { key: 'temperature',         label: 'Temperature',          type: 'number' as const, unit: '°C' },
+      { key: 'humidity',            label: 'Humidity',             type: 'number' as const, unit: '%'  },
+      { key: 'people_total_counts', label: 'People Total Count',   type: 'number' as const             },
+      { key: 'illuminance_status',  label: 'Illuminance Status',   type: 'string' as const, enum: ['dim', 'bright']   },
+      { key: 'detection_status',    label: 'Detection Status',     type: 'string' as const, enum: ['normal', 'unavailable'] },
+      { key: 'region_1',            label: 'Region 1 Occupancy',   type: 'string' as const, enum: ['occupied', 'vacant'] },
+      { key: 'region_2',            label: 'Region 2 Occupancy',   type: 'string' as const, enum: ['occupied', 'vacant'] },
+      { key: 'region_3',            label: 'Region 3 Occupancy',   type: 'string' as const, enum: ['occupied', 'vacant'] },
+      { key: 'region_4',            label: 'Region 4 Occupancy',   type: 'string' as const, enum: ['occupied', 'vacant'] },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device',  params: [] },
+      { type: 'detect',        label: 'Trigger Detect', params: [] },
+      { type: 'reset',         label: 'Reset Device',   params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 10, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'select' as const, required: true, options: [2,5,10,15,30,60].map(v => ({ label: `${v}s`, value: v })) }],
+      },
+      {
+        type:   'set_detection_mode',
+        label:  'Set Detection Mode',
+        params: [{ key: 'detection_mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Auto', value: 'auto' }, { label: 'On', value: 'on' }] }],
+      },
+      {
+        type:   'set_temperature_alarm_config',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'condition',     label: 'Condition',   type: 'select'  as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'threshold_min', label: 'Min (°C)',    type: 'number'  as const, required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max (°C)',    type: 'number'  as const, required: false, default: 40 },
+          { key: 'lock_time',     label: 'Lock (s)',    type: 'number'  as const, required: false, default: 0  },
+          { key: 'continue_time', label: 'Continue (s)', type: 'number' as const, required: false, default: 0  },
+        ],
+      },
+      {
+        type:   'set_humidity_alarm_config',
+        label:  'Set Humidity Alarm',
+        params: [
+          { key: 'condition',     label: 'Condition',   type: 'select' as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'threshold_min', label: 'Min (%)',     type: 'number' as const, required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max (%)',     type: 'number' as const, required: false, default: 80 },
+          { key: 'lock_time',     label: 'Lock (s)',    type: 'number' as const, required: false, default: 0  },
+          { key: 'continue_time', label: 'Continue (s)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_retransmit_enable',
+        label:  'Set Retransmit Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+      {
+        type:   'set_d2d_enable',
+        label:  'Set D2D Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Battery',         keys: ['battery'],             unit: '%'  },
+      { type: 'value'  as const, label: 'People Count',    keys: ['people_total_counts']             },
+      { type: 'value'  as const, label: 'Temperature',     keys: ['temperature'],         unit: '°C' },
+      { type: 'value'  as const, label: 'Humidity',        keys: ['humidity'],            unit: '%'  },
+      { type: 'status' as const, label: 'Illuminance',     keys: ['illuminance_status']              },
+      { type: 'status' as const, label: 'Region 1',        keys: ['region_1']                        },
+      { type: 'status' as const, label: 'Region 2',        keys: ['region_2']                        },
+      { type: 'status' as const, label: 'Detection Status',keys: ['detection_status']                },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

@@ -39,6 +39,7 @@
 //
 // canDecode fingerprint: 0x03 0x82 (distance) or 0x04 0xD6 (remaining) — unique to WS201
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -82,6 +83,68 @@ export class MilesightWS201Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WS201'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS201',
+    description:  'Smart Fill Level Monitoring Sensor — ultrasonic distance and fill percentage',
+    telemetryKeys: [
+      { key: 'battery',   label: 'Battery',         type: 'number' as const, unit: '%'  },
+      { key: 'distance',  label: 'Distance',         type: 'number' as const, unit: 'mm' },
+      { key: 'remaining', label: 'Fill Level',       type: 'number' as const, unit: '%'  },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'report_status', label: 'Report Status', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60 }],
+      },
+      {
+        type:   'set_depth',
+        label:  'Set Container Depth',
+        params: [{ key: 'depth', label: 'Depth (mm)', type: 'number' as const, required: true, default: 1000, min: 1 }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+3' }],
+      },
+      {
+        type:   'set_remaining_alarm_config',
+        label:  'Set Fill Level Alarm',
+        params: [
+          { key: 'index',               label: 'Alarm Index (1 or 2)', type: 'number'  as const, required: true, default: 1, min: 1, max: 2 },
+          { key: 'enable',              label: 'Enable',               type: 'boolean' as const, required: true  },
+          { key: 'alarm_release_enable',label: 'Alarm Release Enable', type: 'boolean' as const, required: false },
+          { key: 'threshold',           label: 'Threshold (%)',        type: 'number'  as const, required: false, default: 20, min: 0, max: 100 },
+        ],
+      },
+      {
+        type:   'set_hibernate_config',
+        label:  'Set Hibernate Config',
+        params: [
+          { key: 'enable',     label: 'Enable',           type: 'boolean' as const, required: true  },
+          { key: 'start_time', label: 'Start (minutes)',  type: 'number'  as const, required: false, default: 0   },
+          { key: 'end_time',   label: 'End (minutes)',    type: 'number'  as const, required: false, default: 480 },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',    keys: ['battery'],   unit: '%'  },
+      { type: 'gauge' as const, label: 'Fill Level', keys: ['remaining'], unit: '%'  },
+      { type: 'value' as const, label: 'Distance',   keys: ['distance'],  unit: 'mm' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

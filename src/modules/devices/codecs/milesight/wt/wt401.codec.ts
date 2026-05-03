@@ -11,6 +11,7 @@
 // processTemperature: adds celsius_* and fahrenheit_* aliases with per-field
 // precision (matches reference decoder exactly, including precision=null → 0 dp).
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -268,6 +269,111 @@ export class MilesightWT401Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WT401'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WT401',
+    description:  'Smart Thermostat with BLE + LoRa — PIR occupancy, multi-mode HVAC, dual temperature',
+    telemetryKeys: [
+      { key: 'battery',           label: 'Battery',        type: 'number' as const, unit: '%'  },
+      { key: 'temperature',       label: 'Temperature',    type: 'number' as const, unit: '°C' },
+      { key: 'humidity',          label: 'Humidity',       type: 'number' as const, unit: '%rH'},
+      { key: 'target_temperature1',label: 'Target Temp 1', type: 'number' as const, unit: '°C' },
+      { key: 'target_temperature2',label: 'Target Temp 2', type: 'number' as const, unit: '°C' },
+      { key: 'pir_status',        label: 'PIR Status',     type: 'number' as const              },
+      { key: 'temperature_mode',  label: 'Control Mode',   type: 'number' as const              },
+      { key: 'fan_mode',          label: 'Fan Mode',       type: 'number' as const              },
+      { key: 'system_status',     label: 'System Status',  type: 'number' as const              },
+    ],
+    commands: [
+      { type: 'reboot',              label: 'Reboot Device',       params: [] },
+      { type: 'query_device_status', label: 'Query Device Status', params: [] },
+      { type: 'synchronize_time',    label: 'Synchronize Time',    params: [] },
+      { type: 'reconnect',           label: 'Reconnect',           params: [] },
+      {
+        type:   'set_system_status',
+        label:  'Set System Status',
+        params: [{ key: 'system_status', label: 'Status (0=Off, 1=On)', type: 'number' as const, required: true, default: 1 }],
+      },
+      {
+        type:   'set_temperature_control_mode',
+        label:  'Set Control Mode',
+        params: [{ key: 'mode', label: 'Mode (0=heat,1=em_heat,2=cool,3=auto)', type: 'number' as const, required: true, default: 0 }],
+      },
+      {
+        type:   'set_fan_control_mode',
+        label:  'Set Fan Mode',
+        params: [{ key: 'fan_control_mode', label: 'Mode (0=auto,1=circ,2=on,3=low,4=mid,5=high)', type: 'number' as const, required: true, default: 0 }],
+      },
+      {
+        type:   'set_target_temperature_heat',
+        label:  'Set Heating Target',
+        params: [{ key: 'heat', label: 'Temperature (°C)', type: 'number' as const, required: true, default: 17, min: 5, max: 35 }],
+      },
+      {
+        type:   'set_target_temperature_cool',
+        label:  'Set Cooling Target',
+        params: [{ key: 'cool', label: 'Temperature (°C)', type: 'number' as const, required: true, default: 28, min: 5, max: 35 }],
+      },
+      {
+        type:   'set_temperature_calibration',
+        label:  'Set Temperature Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Offset (°C)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Offset (minutes, UTC+3=180)', type: 'number' as const, required: true, default: 180 }],
+      },
+      {
+        type:   'set_pir_common_enable',
+        label:  'Set PIR Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_pir_energy_enable',
+        label:  'Set PIR Energy Saving Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [
+          { key: 'unit',            label: 'Unit (0=s, 1=min)', type: 'number' as const, required: true, default: 1 },
+          { key: 'minutes_of_time', label: 'Value',             type: 'number' as const, required: true, default: 1, min: 1, max: 1440 },
+        ],
+      },
+      {
+        type:   'set_children_lock_settings',
+        label:  'Set Children Lock',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'system_status_control',
+        label:  'System Status Control (Combined)',
+        params: [
+          { key: 'on_off',      label: 'On/Off (0=off, 1=on)', type: 'number' as const, required: true, default: 1 },
+          { key: 'mode',        label: 'Mode (0–5)',           type: 'number' as const, required: true, default: 0 },
+          { key: 'temperature1',label: 'Target Temp 1 (°C)',   type: 'number' as const, required: true, default: 20 },
+          { key: 'temperature2',label: 'Target Temp 2 (°C)',   type: 'number' as const, required: false, default: 26 },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Temperature',   keys: ['temperature'],       unit: '°C'  },
+      { type: 'value'  as const, label: 'Humidity',      keys: ['humidity'],          unit: '%rH' },
+      { type: 'value'  as const, label: 'Target Temp 1', keys: ['target_temperature1'], unit: '°C' },
+      { type: 'status' as const, label: 'PIR Status',    keys: ['pir_status']                     },
+      { type: 'status' as const, label: 'System Status', keys: ['system_status']                  },
+      { type: 'status' as const, label: 'Control Mode',  keys: ['temperature_mode']               },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

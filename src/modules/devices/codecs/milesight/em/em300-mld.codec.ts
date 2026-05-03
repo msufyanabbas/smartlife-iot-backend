@@ -14,6 +14,7 @@
  *   → { history:[{ timestamp:1665561758, leakage_status:'leak' }] }
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -28,6 +29,36 @@ export class MilesightEM300MLDCodec extends BaseDeviceCodec {
   readonly category        = 'Leak Detection';
   readonly modelFamily     = 'EM300-MLD';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em300-mld/em300-mld.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM300-MLD',
+    description:  'Membrane Leak Detection Sensor — leakage detection without T/H',
+    telemetryKeys: [
+      { key: 'battery',        label: 'Battery',        type: 'number' as const, unit: '%' },
+      { key: 'leakage_status', label: 'Leakage Status', type: 'string' as const, enum: ['normal', 'leak'] },
+    ],
+    commands: [
+      { type: 'reboot', label: 'Reboot Device', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60 }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',        keys: ['battery']        },
+      { type: 'status'  as const, label: 'Leakage Status', keys: ['leakage_status'] },
+    ],
+  };
+}
 
   decode(payload: string | Buffer, _fPort?: number): DecodedTelemetry {
     const bytes   = this.normalizePayload(payload);

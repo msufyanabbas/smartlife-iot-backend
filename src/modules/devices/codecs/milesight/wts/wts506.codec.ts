@@ -3,6 +3,7 @@
 // Channels: Temperature, Humidity, Wind Direction, Wind Speed, Pressure, Rainfall
 // Also covers WTS305 and WTS505 (same payload format)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../../interfaces/base-codec.interface';
 
 export class MilesightWTS506Codec extends BaseDeviceCodec {
@@ -28,6 +29,57 @@ export class MilesightWTS506Codec extends BaseDeviceCodec {
     110: 'UTC+11',    120: 'UTC+12',     127: 'UTC+12:45', 130: 'UTC+13',
     140: 'UTC+14',
   } as any;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WTS506',
+    description:  'Weather Station — Temperature, Humidity, Wind Direction, Wind Speed, Barometric Pressure, and Rainfall',
+    telemetryKeys: [
+      { key: 'batteryLevel',    label: 'Battery',          type: 'number' as const, unit: '%'     },
+      { key: 'temperature',     label: 'Temperature',      type: 'number' as const, unit: '°C'    },
+      { key: 'humidity',        label: 'Humidity',         type: 'number' as const, unit: '%'     },
+      { key: 'wind_direction',  label: 'Wind Direction',   type: 'number' as const, unit: '°'     },
+      { key: 'wind_speed',      label: 'Wind Speed',       type: 'number' as const, unit: 'm/s'   },
+      { key: 'pressure',        label: 'Pressure',         type: 'number' as const, unit: 'hPa'   },
+      { key: 'rainfall_total',  label: 'Rainfall Total',   type: 'number' as const, unit: 'mm'    },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'clear_history', label: 'Clear History', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_timestamp',
+        label:  'Set Timestamp',
+        params: [{ key: 'timestamp', label: 'Unix Epoch (seconds)', type: 'number' as const, required: false }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+3' }],
+      },
+      {
+        type:   'set_power_on_run_mode',
+        label:  'Set Power On Run Mode',
+        params: [{ key: 'mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Off', value: 'off' }, { label: 'On', value: 'on' }, { label: 'Keep', value: 'keep' }] }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',        keys: ['batteryLevel'],   unit: '%'   },
+      { type: 'value' as const, label: 'Temperature',    keys: ['temperature'],    unit: '°C'  },
+      { type: 'value' as const, label: 'Humidity',       keys: ['humidity'],       unit: '%'   },
+      { type: 'value' as const, label: 'Wind Direction', keys: ['wind_direction'], unit: '°'   },
+      { type: 'value' as const, label: 'Wind Speed',     keys: ['wind_speed'],     unit: 'm/s' },
+      { type: 'value' as const, label: 'Pressure',       keys: ['pressure'],       unit: 'hPa' },
+      { type: 'value' as const, label: 'Rainfall Total', keys: ['rainfall_total'], unit: 'mm'  },
+    ],
+  };
+}
 
   // ── Decode uplink ─────────────────────────────────────────────────────────
 

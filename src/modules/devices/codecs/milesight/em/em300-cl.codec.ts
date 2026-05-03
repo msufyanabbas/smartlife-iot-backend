@@ -12,6 +12,7 @@
  * Reference: '017564 03ED01' → { battery:100, liquid:'full' }
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -26,6 +27,34 @@ export class MilesightEM300CLCodec extends BaseDeviceCodec {
   readonly category        = 'Liquid Monitoring';
   readonly modelFamily     = 'EM300-CL';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em300-cl/em300-cl.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM300-CL',
+    description:  'Capacitive Level Sensor — full/empty/critical level detection',
+    telemetryKeys: [
+      { key: 'battery',            label: 'Battery',            type: 'number' as const, unit: '%' },
+      { key: 'liquid',             label: 'Liquid Status',      type: 'string' as const, enum: ['uncalibrated', 'full', 'critical liquid level alert', 'error'] },
+      { key: 'calibration_result', label: 'Calibration Result', type: 'string' as const, enum: ['success', 'failed'] },
+      { key: 'liquid_alarm',       label: 'Liquid Alarm',       type: 'string' as const, enum: ['critical liquid level alarm', 'critical liquid level alarm release'] },
+    ],
+    commands: [
+      { type: 'reboot',     label: 'Reboot Device', params: [] },
+      { type: 'calibrate',  label: 'Calibrate',      params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 20, min: 1 }],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',       keys: ['battery']  },
+      { type: 'status'  as const, label: 'Liquid Status', keys: ['liquid']   },
+    ],
+  };
+}
 
   private readonly LIQUID_MAP: Record<number, string> = {
     0: 'uncalibrated',

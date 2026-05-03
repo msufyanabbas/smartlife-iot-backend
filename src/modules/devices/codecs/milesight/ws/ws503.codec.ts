@@ -44,6 +44,7 @@
 //   0xFF 0x29 — switch status (WS50x-exclusive)
 //   0xFF 0x2B — function key event (WS50x-exclusive)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -64,6 +65,57 @@ export class MilesightWS503Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WS501', 'WS502', 'WS503'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS503',
+    description:  'Smart Wall Switch (1–3 gang) — switch control, child lock, delay tasks',
+    telemetryKeys: [
+      { key: 'switch_1', label: 'Switch 1', type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'switch_2', label: 'Switch 2', type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'switch_3', label: 'Switch 3', type: 'string' as const, enum: ['on', 'off'] },
+    ],
+    commands: [
+      { type: 'reboot',           label: 'Reboot Device',    params: [] },
+      { type: 'report_status',    label: 'Report Status',    params: [] },
+      { type: 'report_attribute', label: 'Report Attribute', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 1200, min: 60 }],
+      },
+      {
+        type:   'set_switch',
+        label:  'Set Switch',
+        params: [
+          { key: 'switch_1', label: 'Switch 1', type: 'select' as const, required: false, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] },
+          { key: 'switch_2', label: 'Switch 2', type: 'select' as const, required: false, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] },
+          { key: 'switch_3', label: 'Switch 3', type: 'select' as const, required: false, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] },
+        ],
+      },
+      {
+        type:   'set_led_mode',
+        label:  'Set LED Mode',
+        params: [{ key: 'led_mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Off', value: 'off' }, { label: 'On Inverted', value: 'on_inverted' }, { label: 'On Synced', value: 'on_synced' }] }],
+      },
+      {
+        type:   'set_child_lock_config',
+        label:  'Set Child Lock',
+        params: [
+          { key: 'enable',    label: 'Enable',             type: 'boolean' as const, required: true  },
+          { key: 'lock_time', label: 'Lock Time (minutes)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'toggle' as const, label: 'Switch 1', keys: ['switch_1'], command: 'set_switch' },
+      { type: 'toggle' as const, label: 'Switch 2', keys: ['switch_2'], command: 'set_switch' },
+      { type: 'toggle' as const, label: 'Switch 3', keys: ['switch_3'], command: 'set_switch' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

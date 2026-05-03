@@ -11,6 +11,7 @@
 //
 // Also covers WT302 (same decoder, same protocol).
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../../interfaces/base-codec.interface';
 
 export class MilesightWT301Codec extends BaseDeviceCodec {
@@ -20,6 +21,69 @@ export class MilesightWT301Codec extends BaseDeviceCodec {
   readonly description     = 'Smart Fan Coil Thermostat — Framed Protocol (0x55 header)';
   readonly supportedModels: string[] = ['WT301', 'WT302'];
   readonly protocol        = 'lorawan' as const;
+  
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WT301',
+    description:  'Smart Fan Coil Thermostat — proprietary framed protocol (0x55 header), mode/fan/temp control',
+    telemetryKeys: [
+      { key: 'thermostat_status',  label: 'Thermostat Status', type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'mode',               label: 'Mode',              type: 'string' as const, enum: ['cool', 'heat', 'fan'] },
+      { key: 'fan_speed',          label: 'Fan Speed',         type: 'string' as const, enum: ['auto', 'high', 'medium', 'low'] },
+      { key: 'temperature',        label: 'Temperature',       type: 'number' as const, unit: '°C' },
+      { key: 'target_temperature', label: 'Target Temp',       type: 'number' as const, unit: '°C' },
+      { key: 'control_mode',       label: 'Control Mode',      type: 'string' as const, enum: ['auto', 'manual'] },
+      { key: 'card_mode',          label: 'Card Mode',         type: 'string' as const, enum: ['insert', 'remove'] },
+    ],
+    commands: [
+      {
+        type:   'set_thermostat_status',
+        label:  'Set Thermostat Status',
+        params: [{ key: 'status', label: 'Status', type: 'select' as const, required: true, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] }],
+      },
+      {
+        type:   'set_mode',
+        label:  'Set Mode',
+        params: [{ key: 'mode', label: 'Mode', type: 'select' as const, required: true, options: ['cool','heat','fan'].map(v => ({ label: v, value: v })) }],
+      },
+      {
+        type:   'set_fan_speed',
+        label:  'Set Fan Speed',
+        params: [{ key: 'speed', label: 'Speed', type: 'select' as const, required: true, options: ['auto','high','medium','low'].map(v => ({ label: v, value: v })) }],
+      },
+      {
+        type:   'set_target_temperature',
+        label:  'Set Target Temperature',
+        params: [{ key: 'temperature', label: 'Temperature (°C)', type: 'number' as const, required: true, default: 22, min: 10, max: 35 }],
+      },
+      {
+        type:   'set_control_mode',
+        label:  'Set Control Mode',
+        params: [{ key: 'mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Auto', value: 'auto' }, { label: 'Manual', value: 'manual' }] }],
+      },
+      {
+        type:   'set_btn_lock',
+        label:  'Set Button Lock',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_server_temperature',
+        label:  'Set Server Temperature',
+        params: [{ key: 'temperature', label: 'Temperature (°C)', type: 'number' as const, required: true, default: 22 }],
+      },
+      { type: 'query_all', label: 'Query All Status', params: [] },
+    ],
+    uiComponents: [
+      { type: 'toggle' as const, label: 'Thermostat',    keys: ['thermostat_status'], command: 'set_thermostat_status' },
+      { type: 'gauge'  as const, label: 'Temperature',   keys: ['temperature'],       unit: '°C' },
+      { type: 'value'  as const, label: 'Target Temp',   keys: ['target_temperature'],unit: '°C' },
+      { type: 'status' as const, label: 'Mode',          keys: ['mode']                           },
+      { type: 'status' as const, label: 'Fan Speed',     keys: ['fan_speed']                      },
+    ],
+  };
+}
 
   // ── Decode uplink ─────────────────────────────────────────────────────────
   // The device sends one frame per uplink. Frame:

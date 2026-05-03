@@ -39,6 +39,7 @@
 //   - mutation alarm uses 0x93/0x94 0xD7, mutation value /100 (same as TS101)
 //   - history data length varies by mask: 4B per active channel (2 temp or 2 magnet)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -88,6 +89,93 @@ export class MilesightTS301Codec extends BaseDeviceCodec {
   readonly category        = 'Temperature, Magnet & Vibration Sensor';
   readonly modelFamily     = 'TS301';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ts-series/ts301/ts301.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'TS301',
+    description:  'Dual-Channel Temperature & Magnet Sensor — two probe channels with magnet detection',
+    telemetryKeys: [
+      { key: 'battery',           label: 'Battery',            type: 'number' as const, unit: '%'  },
+      { key: 'temperature_chn1',  label: 'Temperature Ch.1',   type: 'number' as const, unit: '°C' },
+      { key: 'temperature_chn2',  label: 'Temperature Ch.2',   type: 'number' as const, unit: '°C' },
+      { key: 'magnet_chn1',       label: 'Magnet Ch.1',        type: 'string' as const, enum: ['open', 'close'] },
+      { key: 'magnet_chn2',       label: 'Magnet Ch.2',        type: 'string' as const, enum: ['open', 'close'] },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'report_status', label: 'Report Status', params: [] },
+      { type: 'sync_time',     label: 'Sync Time',     params: [] },
+      { type: 'clear_history', label: 'Clear History', params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 10, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+8' }],
+      },
+      {
+        type:   'set_temperature_alarm_config',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'enable',               label: 'Enable',              type: 'boolean' as const, required: true  },
+          { key: 'condition',            label: 'Condition',           type: 'select'  as const, required: true,  options: [{ label: 'Below', value: 'below' }, { label: 'Above', value: 'above' }, { label: 'Between', value: 'between' }, { label: 'Outside', value: 'outside' }] },
+          { key: 'threshold_min',        label: 'Min Threshold (°C)',  type: 'number'  as const, required: false, default: 0  },
+          { key: 'threshold_max',        label: 'Max Threshold (°C)',  type: 'number'  as const, required: false, default: 60 },
+          { key: 'alarm_release_enable', label: 'Release Enable',      type: 'boolean' as const, required: false },
+        ],
+      },
+      {
+        type:   'set_temperature_mutation_alarm_config',
+        label:  'Set Mutation Alarm',
+        params: [
+          { key: 'enable',               label: 'Enable',       type: 'boolean' as const, required: true  },
+          { key: 'mutation',             label: 'Mutation (°C)', type: 'number'  as const, required: false, default: 5 },
+          { key: 'alarm_release_enable', label: 'Release Enable', type: 'boolean' as const, required: false },
+        ],
+      },
+      {
+        type:   'set_temperature_calibration',
+        label:  'Set Temperature Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',                  type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Calibration Value (°C)',  type: 'number'  as const, required: false, default: 0 },
+          { key: 'idx',               label: 'Channel Index (0=Ch.1)',   type: 'number'  as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_magnet_throttle',
+        label:  'Set Magnet Throttle',
+        params: [{ key: 'magnet_throttle', label: 'Throttle (ms)', type: 'number' as const, required: true, default: 0 }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',           keys: ['battery'],          unit: '%'  },
+      { type: 'value' as const, label: 'Temperature Ch.1',  keys: ['temperature_chn1'], unit: '°C' },
+      { type: 'value' as const, label: 'Temperature Ch.2',  keys: ['temperature_chn2'], unit: '°C' },
+      { type: 'value' as const, label: 'Magnet Ch.1',       keys: ['magnet_chn1']                  },
+      { type: 'value' as const, label: 'Magnet Ch.2',       keys: ['magnet_chn2']                  },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

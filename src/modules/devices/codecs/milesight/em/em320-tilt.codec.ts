@@ -47,6 +47,7 @@
  *   0x03 0xD4 — unique to EM320-TILT (EM310-TILT uses 0x03 0xCF).
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -73,6 +74,86 @@ export class MilesightEM320TiltCodec extends BaseDeviceCodec {
   readonly category        = 'Tilt Sensor';
   readonly modelFamily     = 'EM320-TILT';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em320-tilt/em320-tilt.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM320-TILT',
+    description:  'Tilt Sensor (EM320) — 3-axis angle with packed threshold flags, report_interval/times alarm config',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'  },
+      { key: 'angle_x',     label: 'Angle X',     type: 'number' as const, unit: '°' },
+      { key: 'angle_y',     label: 'Angle Y',     type: 'number' as const, unit: '°' },
+      { key: 'angle_z',     label: 'Angle Z',     type: 'number' as const, unit: '°' },
+      { key: 'threshold_x', label: 'Threshold X', type: 'string' as const, enum: ['normal', 'trigger'] },
+      { key: 'threshold_y', label: 'Threshold Y', type: 'string' as const, enum: ['normal', 'trigger'] },
+      { key: 'threshold_z', label: 'Threshold Z', type: 'string' as const, enum: ['normal', 'trigger'] },
+    ],
+    commands: [
+      { type: 'reboot',              label: 'Reboot Device',       params: [] },
+      { type: 'query_device_status', label: 'Query Device Status', params: [] },
+      { type: 'sync_time',           label: 'Sync Time',           params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 1 }],
+      },
+      {
+        type:   'set_initial_surface',
+        label:  'Set Initial Surface',
+        params: [{ key: 'initial_surface', label: 'Surface', type: 'select' as const, required: true, options: ['current_plane','reset_zero_reference_point','set_zero_calibration','clear_zero_calibration'].map(v => ({ label: v, value: v })) }],
+      },
+      {
+        type:   'set_angle_alarm_condition',
+        label:  'Set Angle Alarm Condition',
+        params: [{ key: 'angle_alarm_condition', label: 'Condition (e.g. X&Y|Z)', type: 'string' as const, required: true, default: 'X' }],
+      },
+      {
+        type:   'set_angle_x_alarm',
+        label:  'Set Angle X Alarm',
+        params: [
+          { key: 'condition',       label: 'Condition',           type: 'select' as const, required: true, options: ['disable','below','above','between','outside','mutation'].map(v => ({ label: v, value: v })) },
+          { key: 'threshold_min',   label: 'Min (°)',             type: 'number' as const, required: false, default: -45 },
+          { key: 'threshold_max',   label: 'Max (°)',             type: 'number' as const, required: false, default: 45  },
+          { key: 'report_interval', label: 'Report Interval (min)', type: 'number' as const, required: false, default: 0  },
+          { key: 'report_times',    label: 'Report Times',         type: 'number' as const, required: false, default: 0  },
+        ],
+      },
+      {
+        type:   'set_angle_y_alarm',
+        label:  'Set Angle Y Alarm',
+        params: [
+          { key: 'condition',       label: 'Condition',           type: 'select' as const, required: true, options: ['disable','below','above','between','outside','mutation'].map(v => ({ label: v, value: v })) },
+          { key: 'threshold_min',   label: 'Min (°)',             type: 'number' as const, required: false, default: -45 },
+          { key: 'threshold_max',   label: 'Max (°)',             type: 'number' as const, required: false, default: 45  },
+          { key: 'report_interval', label: 'Report Interval (min)', type: 'number' as const, required: false, default: 0  },
+          { key: 'report_times',    label: 'Report Times',         type: 'number' as const, required: false, default: 0  },
+        ],
+      },
+      {
+        type:   'set_angle_z_alarm',
+        label:  'Set Angle Z Alarm',
+        params: [
+          { key: 'condition',       label: 'Condition',           type: 'select' as const, required: true, options: ['disable','below','above','between','outside','mutation'].map(v => ({ label: v, value: v })) },
+          { key: 'threshold_min',   label: 'Min (°)',             type: 'number' as const, required: false, default: -45 },
+          { key: 'threshold_max',   label: 'Max (°)',             type: 'number' as const, required: false, default: 45  },
+          { key: 'report_interval', label: 'Report Interval (min)', type: 'number' as const, required: false, default: 0  },
+          { key: 'report_times',    label: 'Report Times',         type: 'number' as const, required: false, default: 0  },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',     keys: ['battery']     },
+      { type: 'value'   as const, label: 'Angle X',     keys: ['angle_x'],    unit: '°' },
+      { type: 'value'   as const, label: 'Angle Y',     keys: ['angle_y'],    unit: '°' },
+      { type: 'value'   as const, label: 'Angle Z',     keys: ['angle_z'],    unit: '°' },
+      { type: 'status'  as const, label: 'Threshold X', keys: ['threshold_x']           },
+      { type: 'status'  as const, label: 'Threshold Y', keys: ['threshold_y']           },
+      { type: 'status'  as const, label: 'Threshold Z', keys: ['threshold_z']           },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

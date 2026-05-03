@@ -36,6 +36,7 @@
 //   0x43 — pir_pulse_times (0=1_times,1=2_times,2=3_times,3=4_times)
 //   0x44 — hibernate_config entry (6B): id-1(1)+enable(1)+start(2)+end(2)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -87,6 +88,105 @@ export class MilesightVS370Codec extends BaseDeviceCodec {
   readonly supportedModels = ['VS370'];
   readonly protocol        = 'lorawan' as const;
   readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs370/vs370.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'VS370',
+    description:  'Radar Human Presence Sensor — PIR + mmWave radar with illuminance detection',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%' },
+      { key: 'occupancy',   label: 'Occupancy',   type: 'string' as const, enum: ['occupied', 'vacant']         },
+      { key: 'illuminance', label: 'Illuminance', type: 'string' as const, enum: ['dim', 'bright', 'disable']   },
+    ],
+    commands: [
+      { type: 'reboot',    label: 'Reboot Device', params: [] },
+      { type: 'sync_time', label: 'Sync Time',     params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 60, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_pir_idle_interval',
+        label:  'Set PIR Idle Interval',
+        params: [{ key: 'pir_idle_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 3, min: 1, max: 60 }],
+      },
+      {
+        type:   'set_pir_sensitivity',
+        label:  'Set PIR Sensitivity',
+        params: [{ key: 'pir_sensitivity', label: 'Sensitivity', type: 'select' as const, required: true, options: [{ label: 'Low', value: 'low' }, { label: 'Medium', value: 'medium' }, { label: 'High', value: 'high' }] }],
+      },
+      {
+        type:   'set_radar_sensitivity',
+        label:  'Set Radar Sensitivity',
+        params: [{ key: 'radar_sensitivity', label: 'Sensitivity', type: 'select' as const, required: true, options: [{ label: 'Low', value: 'low' }, { label: 'Medium', value: 'medium' }, { label: 'High', value: 'high' }] }],
+      },
+      {
+        type:   'set_pir_window_time',
+        label:  'Set PIR Window Time',
+        params: [{ key: 'pir_window_time', label: 'Window', type: 'select' as const, required: true, options: ['2s','4s','6s','8s'].map(v => ({ label: v, value: v })) }],
+      },
+      {
+        type:   'set_pir_pulse_times',
+        label:  'Set PIR Pulse Times',
+        params: [{ key: 'pir_pulse_times', label: 'Pulses', type: 'select' as const, required: true, options: ['1_times','2_times','3_times','4_times'].map(v => ({ label: v.replace('_', ' '), value: v })) }],
+      },
+      {
+        type:   'set_pir_illuminance_threshold',
+        label:  'Set PIR Illuminance Threshold',
+        params: [
+          { key: 'enable',      label: 'Enable',      type: 'boolean' as const, required: true  },
+          { key: 'upper_limit', label: 'Upper (lux)', type: 'number'  as const, required: false, default: 700, min: 1, max: 8000 },
+          { key: 'lower_limit', label: 'Lower (lux)', type: 'number'  as const, required: false, default: 300, min: 1, max: 8000 },
+        ],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+3' }],
+      },
+      {
+        type:   'set_hibernate_config',
+        label:  'Set Hibernate Config',
+        params: [
+          { key: 'id',         label: 'Entry ID (1–2)', type: 'number'  as const, required: true,  default: 1, min: 1, max: 2 },
+          { key: 'enable',     label: 'Enable',         type: 'boolean' as const, required: true  },
+          { key: 'start_time', label: 'Start (minutes)',type: 'number'  as const, required: false, default: 0   },
+          { key: 'end_time',   label: 'End (minutes)',  type: 'number'  as const, required: false, default: 480 },
+        ],
+      },
+      {
+        type:   'set_bluetooth_enable',
+        label:  'Set Bluetooth Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_d2d_enable',
+        label:  'Set D2D Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_d2d_master_config',
+        label:  'Set D2D Master Config',
+        params: [
+          { key: 'mode',   label: 'Mode', type: 'select' as const, required: true, options: ['occupied','vacant','bright','dim','occupied_bright','occupied_dim'].map(v => ({ label: v.replace('_', ' '), value: v })) },
+          { key: 'enable', label: 'Enable', type: 'boolean' as const, required: true  },
+          { key: 'lora_uplink_enable', label: 'LoRa Uplink', type: 'boolean' as const, required: false },
+          { key: 'd2d_cmd',   label: 'D2D Command (4 hex)', type: 'string' as const, required: true, default: '0000' },
+          { key: 'time',      label: 'Time (s)',             type: 'number' as const, required: false, default: 0 },
+          { key: 'time_enable', label: 'Time Enable',        type: 'boolean' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Battery',     keys: ['battery'],     unit: '%' },
+      { type: 'status' as const, label: 'Occupancy',   keys: ['occupancy']              },
+      { type: 'status' as const, label: 'Illuminance', keys: ['illuminance']            },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

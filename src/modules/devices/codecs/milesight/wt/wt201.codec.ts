@@ -9,6 +9,7 @@
 // Downlink responses reuse the same channel_id/type pairs.
 // Extended responses use 0xf8/0xf9 channel_id with a result flag on 0xf8.
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../../interfaces/base-codec.interface';
 
 export class MilesightWT201Codec extends BaseDeviceCodec {
@@ -18,6 +19,102 @@ export class MilesightWT201Codec extends BaseDeviceCodec {
   readonly description     = 'Smart Thermostat v2 — IPSO Channel Protocol';
   readonly supportedModels = ['WT201'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WT201',
+    description:  'Smart Thermostat v2 — HVAC control, 7 plan types, dual temp, D2D, full wires',
+    telemetryKeys: [
+      { key: 'temperature',              label: 'Temperature',       type: 'number' as const, unit: '°C' },
+      { key: 'target_temperature',       label: 'Target Temp',       type: 'number' as const, unit: '°C' },
+      { key: 'target_temperature_2',     label: 'Target Temp 2',     type: 'number' as const, unit: '°C' },
+      { key: 'humidity',                 label: 'Humidity',          type: 'number' as const, unit: '%'  },
+      { key: 'temperature_control_mode', label: 'Control Mode',      type: 'string' as const, enum: ['heat', 'em heat', 'cool', 'auto'] },
+      { key: 'fan_mode',                 label: 'Fan Mode',          type: 'string' as const, enum: ['auto', 'on', 'circulate'] },
+      { key: 'plan_type',                label: 'Plan Type',         type: 'string' as const, enum: ['wake','away','home','sleep','occupied','vacant','eco'] },
+      { key: 'system_status',            label: 'System Status',     type: 'string' as const, enum: ['on', 'off'] },
+    ],
+    commands: [
+      { type: 'reboot',    label: 'Reboot Device', params: [] },
+      { type: 'sync_time', label: 'Sync Time',      params: [] },
+      {
+        type:   'report_status',
+        label:  'Report Status',
+        params: [{ key: 'report_status', label: 'Type', type: 'select' as const, required: true, options: ['plan','periodic','target_temperature_range'].map(v => ({ label: v, value: v })) }],
+      },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 20, min: 1 }],
+      },
+      {
+        type:   'set_temperature_control',
+        label:  'Set Temperature Control (System + Mode + Target)',
+        params: [
+          { key: 'system_status',            label: 'System Status',   type: 'select' as const, required: true, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] },
+          { key: 'temperature_control_mode', label: 'Mode',            type: 'select' as const, required: true, options: ['heat','em heat','cool','auto'].map(v => ({ label: v, value: v })) },
+          { key: 'target_temperature',       label: 'Target Temp (°C)', type: 'number' as const, required: true, default: 20, min: 5, max: 35 },
+        ],
+      },
+      {
+        type:   'set_fan_mode',
+        label:  'Set Fan Mode',
+        params: [{ key: 'fan_mode', label: 'Mode', type: 'select' as const, required: true, options: ['auto','on','circulate'].map(v => ({ label: v, value: v })) }],
+      },
+      {
+        type:   'set_plan_type',
+        label:  'Set Plan Type',
+        params: [{ key: 'plan_type', label: 'Plan', type: 'select' as const, required: true, options: ['wake','away','home','sleep','occupied','vacant','eco'].map(v => ({ label: v, value: v })) }],
+      },
+      {
+        type:   'set_freeze_protection_config',
+        label:  'Set Freeze Protection',
+        params: [
+          { key: 'enable',      label: 'Enable',         type: 'boolean' as const, required: true  },
+          { key: 'temperature', label: 'Temperature (°C)', type: 'number' as const, required: false, default: 5 },
+        ],
+      },
+      {
+        type:   'set_temperature_calibration_settings',
+        label:  'Set Temperature Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Offset (°C)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_target_temperature_dual_enable',
+        label:  'Set Dual Temperature Enable',
+        params: [{ key: 'target_temperature_dual_enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Offset (minutes, UTC+3=180)', type: 'number' as const, required: true, default: 180 }],
+      },
+      {
+        type:   'set_ob_mode',
+        label:  'Set O/B Mode',
+        params: [{ key: 'ob_mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'On Cool', value: 'on cool' }, { label: 'On Heat', value: 'on heat' }] }],
+      },
+      {
+        type:   'set_offline_control_mode',
+        label:  'Set Offline Control Mode',
+        params: [{ key: 'offline_control_mode', label: 'Mode', type: 'select' as const, required: true, options: ['keep','thermostat','off'].map(v => ({ label: v, value: v })) }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Temperature',   keys: ['temperature'],              unit: '°C' },
+      { type: 'value'  as const, label: 'Target Temp',   keys: ['target_temperature'],       unit: '°C' },
+      { type: 'value'  as const, label: 'Humidity',      keys: ['humidity'],                 unit: '%'  },
+      { type: 'status' as const, label: 'Control Mode',  keys: ['temperature_control_mode']             },
+      { type: 'status' as const, label: 'System Status', keys: ['system_status']                        },
+      { type: 'status' as const, label: 'Plan Type',     keys: ['plan_type']                            },
+    ],
+  };
+}
 
   // ── Decode uplink ─────────────────────────────────────────────────────────
 

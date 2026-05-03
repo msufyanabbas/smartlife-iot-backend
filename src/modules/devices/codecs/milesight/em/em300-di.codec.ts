@@ -16,6 +16,7 @@
  * EM300-DI-HALL shares the identical format — thin subclass.
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -30,6 +31,54 @@ export class MilesightEM300DICodec extends BaseDeviceCodec {
   readonly category        = 'Flow / Pulse Monitoring';
   readonly modelFamily     = 'EM300-DI';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em300-di-hall/em300-di.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM300-DI',
+    description:  'Pulse Counter / Digital Input Sensor — GPIO, pulse count, water/flow metering, T/H',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'      },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C'     },
+      { key: 'humidity',    label: 'Humidity',    type: 'number' as const, unit: '%'      },
+      { key: 'gpio',        label: 'GPIO',        type: 'string' as const, enum: ['high', 'low'] },
+      { key: 'pulse',       label: 'Pulse Count', type: 'number' as const                  },
+      { key: 'water',       label: 'Water',       type: 'number' as const, unit: 'L'      },
+      { key: 'water_conv',  label: 'Water Conv',  type: 'number' as const                  },
+      { key: 'pulse_conv',  label: 'Pulse Conv',  type: 'number' as const                  },
+      { key: 'gpio_alarm',  label: 'GPIO Alarm',  type: 'string' as const                  },
+      { key: 'water_alarm', label: 'Water Alarm', type: 'string' as const                  },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'clear_counter', label: 'Clear Counter',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60 }],
+      },
+      {
+        type:   'set_gpio_mode',
+        label:  'Set GPIO Mode',
+        params: [{ key: 'mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Digital', value: 'digital' }, { label: 'Counter', value: 'counter' }] }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',     keys: ['battery']     },
+      { type: 'value'   as const, label: 'Temperature', keys: ['temperature'], unit: '°C' },
+      { type: 'value'   as const, label: 'Humidity',    keys: ['humidity'],    unit: '%'  },
+      { type: 'status'  as const, label: 'GPIO',        keys: ['gpio']         },
+      { type: 'value'   as const, label: 'Pulse Count', keys: ['pulse']        },
+      { type: 'value'   as const, label: 'Water',       keys: ['water'],       unit: 'L'  },
+    ],
+  };
+}
 
   decode(payload: string | Buffer, _fPort?: number): DecodedTelemetry {
     const bytes   = this.normalizePayload(payload);

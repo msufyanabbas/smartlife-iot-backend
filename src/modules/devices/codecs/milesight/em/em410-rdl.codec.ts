@@ -76,6 +76,7 @@
  *   Also matches on 0x94 0x82 (mutation alarm) or 0xB4 0x82 (exception alarm).
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -115,6 +116,100 @@ export class MilesightEM410RdlCodec extends BaseDeviceCodec {
   readonly category        = 'Radar Sensor';
   readonly modelFamily     = 'EM410-RDL';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em410-rdl/em410-rdl.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM410-RDL',
+    description:  'Radar Distance/Level Sensor — signed distance, RSSI, mutation/exception alarms, history',
+    telemetryKeys: [
+      { key: 'battery',           label: 'Battery',           type: 'number' as const, unit: '%'   },
+      { key: 'temperature',       label: 'Temperature',       type: 'number' as const, unit: '°C'  },
+      { key: 'distance',          label: 'Distance',          type: 'number' as const, unit: 'mm'  },
+      { key: 'position',          label: 'Position',          type: 'string' as const, enum: ['normal', 'tilt'] },
+      { key: 'radar_signal_rssi', label: 'Radar Signal RSSI', type: 'number' as const               },
+    ],
+    commands: [
+      { type: 'reboot',                   label: 'Reboot Device',            params: [] },
+      { type: 'report_status',            label: 'Report Status',            params: [] },
+      { type: 'sync_time',                label: 'Sync Time',                params: [] },
+      { type: 'stop_transmit',            label: 'Stop Transmit',            params: [] },
+      { type: 'clear_history',            label: 'Clear History',            params: [] },
+      { type: 'radar_calibration',        label: 'Radar Calibration',        params: [] },
+      { type: 'radar_blind_calibration',  label: 'Radar Blind Calibration',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 20, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 60, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Offset (minutes, UTC+8=480)', type: 'number' as const, required: true, default: 180 }],
+      },
+      {
+        type:   'set_distance_mode',
+        label:  'Set Distance Mode',
+        params: [{ key: 'distance_mode', label: 'Mode', type: 'select' as const, required: true, options: ['general','rainwater','wastewater','tank'].map(v => ({ label: v, value: v })) }],
+      },
+      {
+        type:   'set_distance_alarm',
+        label:  'Set Distance Alarm',
+        params: [
+          { key: 'condition',            label: 'Condition',           type: 'select' as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'alarm_release_enable', label: 'Alarm Release Enable', type: 'boolean' as const, required: false },
+          { key: 'threshold_min',        label: 'Min (mm)',            type: 'number' as const, required: false, default: 0    },
+          { key: 'threshold_max',        label: 'Max (mm)',            type: 'number' as const, required: false, default: 5000 },
+        ],
+      },
+      {
+        type:   'set_distance_mutation_alarm',
+        label:  'Set Distance Mutation Alarm',
+        params: [
+          { key: 'enable',               label: 'Enable',              type: 'boolean' as const, required: true  },
+          { key: 'alarm_release_enable', label: 'Alarm Release Enable', type: 'boolean' as const, required: false },
+          { key: 'mutation',             label: 'Mutation (mm)',        type: 'number'  as const, required: false, default: 100 },
+        ],
+      },
+      {
+        type:   'set_peak_sorting',
+        label:  'Set Peak Sorting',
+        params: [{ key: 'peak_sorting', label: 'Method', type: 'select' as const, required: true, options: [{ label: 'Closest', value: 'closest' }, { label: 'Strongest', value: 'strongest' }] }],
+      },
+      {
+        type:   'set_blind_detection_enable',
+        label:  'Set Blind Detection Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',           keys: ['battery']           },
+      { type: 'value'   as const, label: 'Distance',          keys: ['distance'],          unit: 'mm' },
+      { type: 'value'   as const, label: 'Temperature',       keys: ['temperature'],       unit: '°C' },
+      { type: 'value'   as const, label: 'Radar Signal RSSI', keys: ['radar_signal_rssi']            },
+      { type: 'status'  as const, label: 'Position',          keys: ['position']                     },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

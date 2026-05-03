@@ -23,6 +23,7 @@
 // Downlink responses: 0xFF/0xFE standard, 0xF9/0xF8 extended (0xF8 carries result flag)
 // History fetch/stop: 0xFD prefix
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -57,6 +58,104 @@ export class MilesightVS350Codec extends BaseDeviceCodec {
   readonly supportedModels = ['VS350'];
   readonly protocol        = 'lorawan' as const;
   readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs350/vs350.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'VS350',
+    description:  'Passage People Counter — IR beam bi-directional counting with temperature',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'  },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C' },
+      { key: 'total_in',    label: 'Total In',    type: 'number' as const              },
+      { key: 'total_out',   label: 'Total Out',   type: 'number' as const              },
+      { key: 'period_in',   label: 'Period In',   type: 'number' as const              },
+      { key: 'period_out',  label: 'Period Out',  type: 'number' as const              },
+    ],
+    commands: [
+      { type: 'reboot',                   label: 'Reboot Device',             params: [] },
+      { type: 'report_status',            label: 'Report Status',             params: [] },
+      { type: 'sync_time',                label: 'Sync Time',                 params: [] },
+      { type: 'reset_cumulative_in',      label: 'Reset Cumulative In',       params: [] },
+      { type: 'reset_cumulative_out',     label: 'Reset Cumulative Out',      params: [] },
+      { type: 'stop_transmit',            label: 'Stop Transmit',             params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 60, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+3' }],
+      },
+      {
+        type:   'set_reset_cumulative_enable',
+        label:  'Set Reset Cumulative Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_reset_cumulative_interval',
+        label:  'Set Reset Cumulative Interval',
+        params: [{ key: 'reset_cumulative_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 1440, min: 1 }],
+      },
+      {
+        type:   'set_report_cumulative_enable',
+        label:  'Set Report Cumulative Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_temperature_alarm_config',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'condition',     label: 'Condition',  type: 'select' as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'threshold_min', label: 'Min (°C)',   type: 'number' as const, required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max (°C)',   type: 'number' as const, required: false, default: 40 },
+        ],
+      },
+      {
+        type:   'set_temperature_calibration',
+        label:  'Set Temperature Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',           type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Offset (°C)',      type: 'number'  as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_retransmit_enable',
+        label:  'Set Retransmit Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+      {
+        type:   'set_d2d_enable',
+        label:  'Set D2D Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',     keys: ['battery'],     unit: '%'  },
+      { type: 'value' as const, label: 'Temperature', keys: ['temperature'], unit: '°C' },
+      { type: 'value' as const, label: 'Total In',    keys: ['total_in']                },
+      { type: 'value' as const, label: 'Total Out',   keys: ['total_out']               },
+      { type: 'value' as const, label: 'Period In',   keys: ['period_in']               },
+      { type: 'value' as const, label: 'Period Out',  keys: ['period_out']              },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

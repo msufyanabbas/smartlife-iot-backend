@@ -55,6 +55,7 @@
 //   0xFF 0x06 <data> <min_u16> <max_u16> <interval_u16> <counts_u16> — set_current_chnN_alarm_config
 //   0xFF 0x06 <data> <min_i16×10> <max_i16×10> 0x00×4              — set_temperature_alarm_config
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -85,6 +86,75 @@ export class MilesightCT303Codec extends BaseDeviceCodec {
   readonly category        = 'Current Monitoring';
   readonly modelFamily     = 'CT303';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ct-series/ct303/ct303.png';
+
+  getCapabilities(): DeviceCapability {
+  const channels = [1, 2, 3];
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'CT303',
+    description:  '3-Channel Smart Current Transformer — per-channel current and cumulative energy monitoring',
+    telemetryKeys: [
+      ...channels.flatMap(n => ([
+        { key: `current_chn${n}`,       label: `Channel ${n} Current`,    type: 'number' as const, unit: 'A'  },
+        { key: `current_chn${n}_total`, label: `Channel ${n} Total (Ah)`, type: 'number' as const, unit: 'Ah' },
+      ])),
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C' },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'report_status', label: 'Report Status', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 20, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_alarm_report_interval',
+        label:  'Set Alarm Report Interval',
+        params: [{ key: 'alarm_report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 1 }],
+      },
+      {
+        type:   'set_alarm_report_counts',
+        label:  'Set Alarm Report Counts',
+        params: [{ key: 'alarm_report_counts', label: 'Count', type: 'number' as const, required: true, default: 1, min: 1, max: 1000 }],
+      },
+      {
+        type:   'clear_current_cumulative',
+        label:  'Clear Channel Cumulative',
+        params: [{ key: 'channel', label: 'Channel (1–3)', type: 'number' as const, required: true, default: 1, min: 1, max: 3 }],
+      },
+      {
+        type:   'set_current_alarm_config',
+        label:  'Set Current Alarm Config',
+        params: [
+          { key: 'channel',       label: 'Channel (1–3)',         type: 'number' as const, required: true, default: 1, min: 1, max: 3 },
+          { key: 'condition',     label: 'Condition',             type: 'select' as const, required: true, options: [{ label: 'Disable', value: 'disable' }, { label: 'Below', value: 'below' }, { label: 'Above', value: 'above' }, { label: 'Between', value: 'between' }, { label: 'Outside', value: 'outside' }] },
+          { key: 'threshold_min', label: 'Min Threshold',         type: 'number' as const, required: false, default: 0 },
+          { key: 'threshold_max', label: 'Max Threshold',         type: 'number' as const, required: false, default: 0 },
+          { key: 'alarm_interval', label: 'Alarm Interval (min)', type: 'number' as const, required: false, default: 1 },
+          { key: 'alarm_counts',   label: 'Alarm Counts',         type: 'number' as const, required: false, default: 1 },
+        ],
+      },
+      {
+        type:   'set_temperature_alarm_config',
+        label:  'Set Temperature Alarm Config',
+        params: [
+          { key: 'condition',     label: 'Condition',          type: 'select' as const, required: true,  options: [{ label: 'Disable', value: 'disable' }, { label: 'Below', value: 'below' }, { label: 'Above', value: 'above' }, { label: 'Between', value: 'between' }, { label: 'Outside', value: 'outside' }] },
+          { key: 'threshold_min', label: 'Min Threshold (°C)', type: 'number' as const, required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max Threshold (°C)', type: 'number' as const, required: false, default: 60 },
+        ],
+      },
+    ],
+    uiComponents: [
+      ...channels.flatMap(n => ([
+        { type: 'value' as const, label: `Channel ${n} Current`,    keys: [`current_chn${n}`],       unit: 'A'  },
+        { type: 'value' as const, label: `Channel ${n} Total`,      keys: [`current_chn${n}_total`], unit: 'Ah' },
+      ])),
+      { type: 'value' as const, label: 'Temperature', keys: ['temperature'], unit: '°C' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
@@ -319,9 +389,23 @@ export class MilesightCT303Codec extends BaseDeviceCodec {
 export class MilesightCT305Codec extends MilesightCT303Codec {
   override readonly codecId         = 'milesight-ct305';
   override readonly supportedModels = ['CT305'];
+  getCapabilities(): DeviceCapability {
+  return {
+    ...super.getCapabilities(),
+    codecId: this.codecId,
+    model:   this.supportedModels[0], // 'CT305'
+  };
+}
 }
 
 export class MilesightCT310Codec extends MilesightCT303Codec {
   override readonly codecId         = 'milesight-ct310';
   override readonly supportedModels = ['CT310'];
+    getCapabilities(): DeviceCapability {
+  return {
+    ...super.getCapabilities(),
+    codecId: this.codecId,
+    model:   this.supportedModels[0], // 'CT310'
+  };
+}
 }

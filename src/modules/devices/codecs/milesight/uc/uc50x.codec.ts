@@ -47,6 +47,7 @@
 //   0xFD 0x6D  — stop_transmit
 //   0x03/0x04 <status> 0xFF 0xFF — gpio_output simple control
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -131,6 +132,89 @@ export class MilesightUC50xCodec extends BaseDeviceCodec {
   readonly category       = 'IoT Controller' as const;
   readonly imageUrl      = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/uc-series/uc501/uc501-v3.png';
   readonly modelFamily?: string = 'UC50x';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'UC501',
+    description:  'Multi-Interface Controller — GPIO inputs/outputs, analog inputs, SDI-12, and Modbus',
+    telemetryKeys: [
+      { key: 'battery',          label: 'Battery',          type: 'number' as const, unit: '%'  },
+      { key: 'gpio_input_1',     label: 'GPIO Input 1',     type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'gpio_input_2',     label: 'GPIO Input 2',     type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'gpio_counter_1',   label: 'GPIO Counter 1',   type: 'number' as const              },
+      { key: 'gpio_counter_2',   label: 'GPIO Counter 2',   type: 'number' as const              },
+      { key: 'gpio_output_1',    label: 'GPIO Output 1',    type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'gpio_output_2',    label: 'GPIO Output 2',    type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'analog_input_1',   label: 'Analog Input 1',   type: 'number' as const              },
+      { key: 'analog_input_1_min', label: 'Analog 1 Min',   type: 'number' as const              },
+      { key: 'analog_input_1_max', label: 'Analog 1 Max',   type: 'number' as const              },
+      { key: 'analog_input_1_avg', label: 'Analog 1 Avg',   type: 'number' as const              },
+      { key: 'analog_input_2',   label: 'Analog Input 2',   type: 'number' as const              },
+      { key: 'analog_input_2_min', label: 'Analog 2 Min',   type: 'number' as const              },
+      { key: 'analog_input_2_max', label: 'Analog 2 Max',   type: 'number' as const              },
+      { key: 'analog_input_2_avg', label: 'Analog 2 Avg',   type: 'number' as const              },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device',  params: [] },
+      { type: 'report_status', label: 'Report Status',  params: [] },
+      { type: 'sync_time',     label: 'Sync Time',      params: [] },
+      { type: 'clear_history', label: 'Clear History',  params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit',  params: [] },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 10 }],
+      },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60 }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+8' }],
+      },
+      {
+        type:   'set_gpio_output',
+        label:  'Set GPIO Output',
+        params: [
+          { key: 'index',  label: 'Index (1 or 2)', type: 'number' as const, required: true, default: 1, min: 1, max: 2 },
+          { key: 'status', label: 'Status',          type: 'select' as const, required: true, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_retransmit_enable',
+        label:  'Set Retransmit Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',       keys: ['battery'],          unit: '%' },
+      { type: 'value' as const, label: 'GPIO Input 1',  keys: ['gpio_input_1']                },
+      { type: 'value' as const, label: 'GPIO Input 2',  keys: ['gpio_input_2']                },
+      { type: 'toggle' as const, label: 'GPIO Output 1', keys: ['gpio_output_1'], command: 'set_gpio_output' },
+      { type: 'toggle' as const, label: 'GPIO Output 2', keys: ['gpio_output_2'], command: 'set_gpio_output' },
+      { type: 'value' as const, label: 'Analog Input 1', keys: ['analog_input_1']             },
+      { type: 'value' as const, label: 'Analog Input 2', keys: ['analog_input_2']             },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

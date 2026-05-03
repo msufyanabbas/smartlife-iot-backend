@@ -16,6 +16,7 @@
 //   Otherwise same fingerprint as TS601 (0x0D tilt, 0x82 probe retransmit)
 //   In ALL_CODECS, TS602 must appear before TS601.
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   DecodedTelemetry,
   EncodedCommand,
@@ -28,6 +29,24 @@ export class MilesightTS602Codec extends MilesightTS601Codec {
   override readonly category        = 'Temperature & Humidity Sensor';
   override readonly modelFamily     = 'TS602';
   override readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ts-series/ts602/ts602.png';
+
+  // In MilesightTS602Codec:
+getCapabilities(): DeviceCapability {
+  return {
+    ...super.getCapabilities(),
+    codecId:     this.codecId,
+    model:       'TS602',
+    description: 'Cellular Temperature & Humidity Sensor — extended range (-200°C to 800°C) with display switch',
+    commands: [
+      ...super.getCapabilities().commands,
+      {
+        type:   'set_temperature_humidity_display_switch',
+        label:  'Set Display Switch',
+        params: [{ key: 'switch', label: 'Display', type: 'select' as const, required: true, options: [{ label: 'Temperature', value: 'temperature' }, { label: 'Humidity', value: 'humidity' }] }],
+      },
+    ],
+  };
+}
 
   // ── Decode ─────────────────────────────────────────────────────────────────
   // Run TS601 decode, then scan for any 0x55 bytes. Since 0x55 is not a

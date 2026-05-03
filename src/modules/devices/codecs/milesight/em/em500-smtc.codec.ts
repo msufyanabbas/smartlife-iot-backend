@@ -52,6 +52,7 @@
  *   0x05 0x7F (EC µs/cm, uint16) — unique to EM500-SMTC.
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -84,6 +85,62 @@ export class MilesightEM500SmtcCodec extends BaseDeviceCodec {
   readonly category        = 'Soil Sensor';
   readonly modelFamily     = 'EM500-SMTC';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-smtc/em500-smtc.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM500-SMTC',
+    description:  'Soil Moisture / Temperature / EC Sensor — precision agriculture monitoring',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'     },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C'    },
+      { key: 'moisture',    label: 'Moisture',    type: 'number' as const, unit: '%'     },
+      { key: 'ec',          label: 'EC',          type: 'number' as const, unit: 'µs/cm' },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'report_status', label: 'Report Status',  params: [] },
+      { type: 'sync_time',     label: 'Sync Time',      params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit',  params: [] },
+      { type: 'clear_history', label: 'Clear History',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60 }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_d2d_enable',
+        label:  'Set D2D Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',     keys: ['battery']     },
+      { type: 'gauge'   as const, label: 'Moisture',    keys: ['moisture'],    unit: '%'     },
+      { type: 'value'   as const, label: 'Temperature', keys: ['temperature'], unit: '°C'    },
+      { type: 'value'   as const, label: 'EC',          keys: ['ec'],          unit: 'µs/cm' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

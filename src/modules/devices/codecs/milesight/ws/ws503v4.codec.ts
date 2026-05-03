@@ -50,6 +50,7 @@
 //   [6] bits[7:4]=end_week_num, bits[3:0]=end_week_day
 //   [7..8] end_hour_min (u16 LE, min)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -159,6 +160,115 @@ export class MilesightWS503V4Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WS503-V4'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS503-V4',
+    description:  'Smart Wall Switch (3-gang, v4) — power metering, scheduling, D2D, DST',
+    telemetryKeys: [
+      { key: 'button_status.button1', label: 'Switch 1',          type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'button_status.button2', label: 'Switch 2',          type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'button_status.button3', label: 'Switch 3',          type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'voltage',               label: 'Voltage',           type: 'number' as const, unit: 'V'  },
+      { key: 'electric_power',        label: 'Active Power',      type: 'number' as const, unit: 'W'  },
+      { key: 'power_factor',          label: 'Power Factor',      type: 'number' as const, unit: '%'  },
+      { key: 'power_consumption',     label: 'Power Consumption', type: 'number' as const, unit: 'Wh' },
+      { key: 'current_rating',        label: 'Current',           type: 'number' as const, unit: 'mA' },
+    ],
+    commands: [
+      { type: 'reboot',              label: 'Reboot Device',       params: [] },
+      { type: 'report_status',       label: 'Report Status',       params: [] },
+      { type: 'power_consumption_clear', label: 'Clear Power Consumption', params: [] },
+      {
+        type:   'set_reporting_interval',
+        label:  'Set Reporting Interval',
+        params: [{ key: 'reporting_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 1200, min: 60 }],
+      },
+      {
+        type:   'set_button_status_control',
+        label:  'Control Switches',
+        params: [
+          { key: 'button_status1', label: 'Switch 1', type: 'select' as const, required: false, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] },
+          { key: 'button_status2', label: 'Switch 2', type: 'select' as const, required: false, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] },
+          { key: 'button_status3', label: 'Switch 3', type: 'select' as const, required: false, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] },
+        ],
+      },
+      {
+        type:   'set_button_lock_config',
+        label:  'Set Button Lock',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_led_mode',
+        label:  'Set LED Mode',
+        params: [{ key: 'led_mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Disable', value: 'disable' }, { label: 'Enable (relay closed indicator off)', value: 'Enable (relay closed indicator off)' }] }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Offset (minutes, UTC+8=480)', type: 'number' as const, required: true, default: 180 }],
+      },
+      {
+        type:   'set_overcurrent_alarm_config',
+        label:  'Set Overcurrent Alarm',
+        params: [
+          { key: 'enable',    label: 'Enable',     type: 'boolean' as const, required: true  },
+          { key: 'threshold', label: 'Threshold (A)', type: 'number' as const, required: false, default: 10 },
+        ],
+      },
+      {
+        type:   'set_overcurrent_protection',
+        label:  'Set Overcurrent Protection',
+        params: [
+          { key: 'enable',    label: 'Enable',     type: 'boolean' as const, required: true  },
+          { key: 'threshold', label: 'Threshold (A)', type: 'number' as const, required: false, default: 10 },
+        ],
+      },
+      {
+        type:   'set_power_switch_mode',
+        label:  'Set Power Switch Mode',
+        params: [{ key: 'power_switch_mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Off', value: 'off' }, { label: 'On', value: 'on' }, { label: 'Keep', value: 'keep' }] }],
+      },
+      {
+        type:   'set_d2d_settings',
+        label:  'Set D2D Settings',
+        params: [
+          { key: 'd2d_controller_enable', label: 'Controller Enable', type: 'boolean' as const, required: false },
+          { key: 'd2d_agent_enable',      label: 'Agent Enable',      type: 'boolean' as const, required: false },
+        ],
+      },
+      {
+        type:   'set_schedule',
+        label:  'Set Schedule',
+        params: [
+          { key: 'schedule_id',    label: 'Schedule ID', type: 'number'  as const, required: true, default: 1 },
+          { key: 'enable',         label: 'Enable',      type: 'select'  as const, required: true, options: [{ label: 'Enable', value: 'enable' }, { label: 'Disable', value: 'disable' }, { label: 'Not Config', value: 'not config' }] },
+          { key: 'execut_hour',    label: 'Hour',        type: 'number'  as const, required: true, default: 0, min: 0, max: 23 },
+          { key: 'execut_min',     label: 'Minute',      type: 'number'  as const, required: true, default: 0, min: 0, max: 59 },
+          { key: 'button_status1', label: 'Switch 1',    type: 'select'  as const, required: false, options: ['keep','on','off','reversal'].map(v => ({ label: v, value: v })) },
+          { key: 'button_status2', label: 'Switch 2',    type: 'select'  as const, required: false, options: ['keep','on','off','reversal'].map(v => ({ label: v, value: v })) },
+          { key: 'button_status3', label: 'Switch 3',    type: 'select'  as const, required: false, options: ['keep','on','off','reversal'].map(v => ({ label: v, value: v })) },
+        ],
+      },
+      {
+        type:   'get_schedule',
+        label:  'Query Schedule',
+        params: [{ key: 'schedule_id', label: 'Schedule ID (or "all schedules")', type: 'string' as const, required: true, default: 'all schedules' }],
+      },
+    ],
+    uiComponents: [
+      { type: 'toggle' as const, label: 'Switch 1',      keys: ['button_status.button1'], command: 'set_button_status_control' },
+      { type: 'toggle' as const, label: 'Switch 2',      keys: ['button_status.button2'], command: 'set_button_status_control' },
+      { type: 'toggle' as const, label: 'Switch 3',      keys: ['button_status.button3'], command: 'set_button_status_control' },
+      { type: 'value'  as const, label: 'Voltage',       keys: ['voltage'],               unit: 'V'  },
+      { type: 'value'  as const, label: 'Active Power',  keys: ['electric_power'],        unit: 'W'  },
+      { type: 'value'  as const, label: 'Power Consumption', keys: ['power_consumption'], unit: 'Wh' },
+      { type: 'value'  as const, label: 'Current',       keys: ['current_rating'],        unit: 'mA' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

@@ -73,6 +73,7 @@
 //   0xF9 0xAF — read_schedule_config
 //   0xF0 — multicast_command
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -214,6 +215,104 @@ export class MilesightUC511Codec extends BaseDeviceCodec {
   readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/uc-series/uc511/uc511-v3.png';
   readonly category = 'Valve Controller';
   readonly modelFamily?: string = 'UC511';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'UC511',
+    description:  'Solenoid Valve Controller — 2 valves with pulse metering, GPIO, pipe pressure, and rule engine',
+    telemetryKeys: [
+      { key: 'battery',       label: 'Battery',         type: 'number' as const, unit: '%'   },
+      { key: 'valve_1',       label: 'Valve 1',         type: 'string' as const, enum: ['open', 'close'] },
+      { key: 'valve_2',       label: 'Valve 2',         type: 'string' as const, enum: ['open', 'close'] },
+      { key: 'valve_1_pulse', label: 'Valve 1 Pulse',   type: 'number' as const              },
+      { key: 'valve_2_pulse', label: 'Valve 2 Pulse',   type: 'number' as const              },
+      { key: 'gpio_1',        label: 'GPIO 1',          type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'gpio_2',        label: 'GPIO 2',          type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'pressure',      label: 'Pipe Pressure',   type: 'number' as const, unit: 'kPa' },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device',  params: [] },
+      { type: 'report_status', label: 'Report Status',  params: [] },
+      { type: 'sync_time',     label: 'Sync Time',      params: [] },
+      { type: 'clear_history', label: 'Clear History',  params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 60, min: 60 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 60, min: 10 }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+8' }],
+      },
+      {
+        type:   'set_valve_task',
+        label:  'Set Valve Task',
+        params: [
+          { key: 'valve_index',        label: 'Valve',              type: 'select' as const,  required: true,  options: [{ label: 'Valve 1', value: 'valve 1' }, { label: 'Valve 2', value: 'valve 2' }, { label: 'All Valves', value: 'all valves' }] },
+          { key: 'valve_status',       label: 'Status',             type: 'select' as const,  required: true,  options: [{ label: 'Open', value: 'open' }, { label: 'Close', value: 'close' }] },
+          { key: 'sequence_id',        label: 'Sequence ID',        type: 'number' as const,  required: false, default: 0 },
+          { key: 'time_rule_enable',   label: 'Time Rule Enable',   type: 'boolean' as const, required: false },
+          { key: 'duration',           label: 'Duration (seconds)', type: 'number' as const,  required: false, default: 0 },
+          { key: 'pulse_rule_enable',  label: 'Pulse Rule Enable',  type: 'boolean' as const, required: false },
+          { key: 'valve_pulse',        label: 'Pulse Threshold',    type: 'number' as const,  required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_valve_pulse',
+        label:  'Set Valve Pulse',
+        params: [
+          { key: 'index', label: 'Valve (1 or 2)', type: 'number' as const, required: true, default: 1, min: 1, max: 2 },
+          { key: 'pulse', label: 'Pulse Value',    type: 'number' as const, required: true, default: 0 },
+        ],
+      },
+      {
+        type:   'clear_valve_pulse',
+        label:  'Clear Valve Pulse',
+        params: [{ key: 'index', label: 'Valve (1 or 2)', type: 'number' as const, required: true, default: 1, min: 1, max: 2 }],
+      },
+      {
+        type:   'set_pressure_calibration',
+        label:  'Set Pressure Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',                 type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Calibration Value (kPa)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const,  label: 'Battery',       keys: ['battery'],       unit: '%'   },
+      { type: 'toggle' as const, label: 'Valve 1',       keys: ['valve_1'],       command: 'set_valve_task' },
+      { type: 'toggle' as const, label: 'Valve 2',       keys: ['valve_2'],       command: 'set_valve_task' },
+      { type: 'value' as const,  label: 'Valve 1 Pulse', keys: ['valve_1_pulse']              },
+      { type: 'value' as const,  label: 'Valve 2 Pulse', keys: ['valve_2_pulse']              },
+      { type: 'value' as const,  label: 'GPIO 1',        keys: ['gpio_1']                     },
+      { type: 'value' as const,  label: 'GPIO 2',        keys: ['gpio_2']                     },
+      { type: 'value' as const,  label: 'Pipe Pressure', keys: ['pressure'],      unit: 'kPa' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
@@ -758,4 +857,7 @@ export class MilesightUC511Codec extends BaseDeviceCodec {
 export class MilesightUC512Codec extends MilesightUC511Codec {
   override readonly codecId: string          = 'milesight-uc512';
   override readonly supportedModels: string[] = ['UC512'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'UC512' };
+}
 }

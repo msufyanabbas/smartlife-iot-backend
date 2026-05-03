@@ -23,6 +23,7 @@
 //   Byte 5 CRC: sum of all bytes == 0x00 mod 256.
 //   Combined these make false-positive canDecode essentially impossible.
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -49,6 +50,28 @@ export class MilesightGS524NCodec extends BaseDeviceCodec {
   readonly category        = 'Smoke Detector';
   readonly modelFamily     = 'GS524N';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/gs-series/gs524n/gs524n.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'GS524N',
+    description:  'Smoke Detection Sensor — smoke concentration, temperature, and battery',
+    telemetryKeys: [
+      { key: 'battery',       label: 'Battery',            type: 'number' as const, unit: '%'  },
+      { key: 'concentration', label: 'Smoke Concentration', type: 'number' as const, unit: '%'  },
+      { key: 'temperature',   label: 'Temperature',        type: 'number' as const, unit: '°C' },
+      { key: 'event',         label: 'Event',              type: 'string' as const, enum: ['alarm', 'silent', 'normal', 'low battery', 'failover', 'removed', 'installed', 'testing alarm with normal battery', 'testing alarm with low battery'] },
+    ],
+    commands: [],  // GS524N has no downlink commands
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',             keys: ['battery'],       unit: '%'  },
+      { type: 'value' as const, label: 'Smoke Concentration', keys: ['concentration'], unit: '%'  },
+      { type: 'value' as const, label: 'Temperature',         keys: ['temperature'],   unit: '°C' },
+      { type: 'value' as const, label: 'Event',               keys: ['event']                     },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

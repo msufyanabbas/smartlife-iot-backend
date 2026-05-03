@@ -94,6 +94,7 @@
 //   0x82 — probe_id_retransmit_count
 //   Absence of IPSO marker (0xFF 0x01) combined with 0x04 temperature as int32
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -158,6 +159,101 @@ export class MilesightTS601Codec extends BaseDeviceCodec {
   readonly category        = 'Temperature & Humidity Sensor';
   readonly modelFamily: string    = 'TS601';
   readonly imageUrl: string        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ts-series/ts601/ts601.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'TS601',
+    description:  'Cellular Temperature & Humidity Sensor — probe with tilt detection and light sensing',
+    telemetryKeys: [
+      { key: 'battery',               label: 'Battery',           type: 'number' as const, unit: '%'  },
+      { key: 'temperature',           label: 'Temperature',       type: 'number' as const, unit: '°C' },
+      { key: 'humidity',              label: 'Humidity',          type: 'number' as const, unit: '%'  },
+      { key: 'relative_surface_info', label: 'Tilt Angles',       type: 'string' as const              },
+      { key: 'probe_connect_status',  label: 'Probe Status',      type: 'string' as const, enum: ['connect', 'disconnect'] },
+    ],
+    commands: [
+      { type: 'reboot',                         label: 'Reboot Device',         params: [] },
+      { type: 'reset',                          label: 'Reset Device',          params: [] },
+      { type: 'query_device_status',            label: 'Query Device Status',   params: [] },
+      { type: 'synchronize_time',               label: 'Synchronize Time',      params: [] },
+      { type: 'clear_historical_data',          label: 'Clear Historical Data', params: [] },
+      { type: 'stop_historical_data_retrieval', label: 'Stop History Retrieval', params: [] },
+      {
+        type:   'set_reporting_interval',
+        label:  'Set Reporting Interval',
+        params: [
+          { key: 'unit',            label: 'Unit',  type: 'select' as const, required: true, options: [{ label: 'Seconds', value: 'second' }, { label: 'Minutes', value: 'min' }] },
+          { key: 'minutes_of_time', label: 'Value', type: 'number' as const, required: false, default: 30 },
+        ],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [
+          { key: 'unit',            label: 'Unit',  type: 'select' as const, required: true, options: [{ label: 'Seconds', value: 'second' }, { label: 'Minutes', value: 'min' }] },
+          { key: 'minutes_of_time', label: 'Value', type: 'number' as const, required: false, default: 15 },
+        ],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Offset (minutes)', type: 'number' as const, required: true, default: 480 }],
+      },
+      {
+        type:   'set_temperature_alarm_settings',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'enable',              label: 'Enable',      type: 'boolean' as const, required: true  },
+          { key: 'threshold_condition', label: 'Condition',   type: 'string'  as const, required: false },
+          { key: 'threshold_min',       label: 'Min (°C)',    type: 'number'  as const, required: false, default: 0  },
+          { key: 'threshold_max',       label: 'Max (°C)',    type: 'number'  as const, required: false, default: 60 },
+        ],
+      },
+      {
+        type:   'set_humidity_alarm_settings',
+        label:  'Set Humidity Alarm',
+        params: [
+          { key: 'enable',              label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'threshold_condition', label: 'Condition', type: 'string'  as const, required: false },
+          { key: 'threshold_min',       label: 'Min (%)',   type: 'number'  as const, required: false, default: 0   },
+          { key: 'threshold_max',       label: 'Max (%)',   type: 'number'  as const, required: false, default: 100 },
+        ],
+      },
+      {
+        type:   'set_tilt_alarm_settings',
+        label:  'Set Tilt Alarm',
+        params: [
+          { key: 'enable',              label: 'Enable',        type: 'boolean' as const, required: true  },
+          { key: 'threshold_condition', label: 'Condition',     type: 'number'  as const, required: false, default: 0  },
+          { key: 'threshold_max',       label: 'Max Angle (°)', type: 'number'  as const, required: false, default: 20 },
+          { key: 'duration',            label: 'Duration',      type: 'number'  as const, required: false, default: 10 },
+        ],
+      },
+      {
+        type:   'retrieve_historical_data_by_time',
+        label:  'Fetch History by Time',
+        params: [{ key: 'time', label: 'Unix Timestamp', type: 'number' as const, required: true }],
+      },
+      {
+        type:   'retrieve_historical_data_by_time_range',
+        label:  'Fetch History by Range',
+        params: [
+          { key: 'start_time', label: 'Start (Unix)', type: 'number' as const, required: true },
+          { key: 'end_time',   label: 'End (Unix)',   type: 'number' as const, required: true },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',      keys: ['battery'],              unit: '%'  },
+      { type: 'value' as const, label: 'Temperature',  keys: ['temperature'],          unit: '°C' },
+      { type: 'value' as const, label: 'Humidity',     keys: ['humidity'],             unit: '%'  },
+      { type: 'value' as const, label: 'Probe Status', keys: ['probe_connect_status']             },
+      { type: 'value' as const, label: 'Tilt Angles',  keys: ['relative_surface_info']            },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

@@ -61,6 +61,7 @@
 //   0x04 0x98 (current)       — CT-series exclusive
 //   0x84 0x98 (current alarm) — CT-series exclusive
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -87,6 +88,65 @@ export class MilesightCT101Codec extends BaseDeviceCodec {
   readonly category        = 'Current Monitoring';
   readonly modelFamily     = 'CT101';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ct-series/ct101/ct101-2.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'CT101',
+    description:  'Smart Current Transformer — instantaneous current, cumulative energy, and temperature monitoring',
+    telemetryKeys: [
+      { key: 'current',       label: 'Current',           type: 'number' as const, unit: 'A'   },
+      { key: 'total_current', label: 'Total Current (Ah)', type: 'number' as const, unit: 'Ah'  },
+      { key: 'temperature',   label: 'Temperature',       type: 'number' as const, unit: '°C'  },
+    ],
+    commands: [
+      { type: 'reboot',                   label: 'Reboot Device',            params: [] },
+      { type: 'report_status',            label: 'Report Status',            params: [] },
+      { type: 'clear_current_cumulative', label: 'Clear Current Cumulative', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 20, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_alarm_report_interval',
+        label:  'Set Alarm Report Interval',
+        params: [{ key: 'alarm_report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 1, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_alarm_report_counts',
+        label:  'Set Alarm Report Counts',
+        params: [{ key: 'alarm_report_counts', label: 'Count', type: 'number' as const, required: true, default: 1, min: 1, max: 1000 }],
+      },
+      {
+        type:   'set_current_alarm_config',
+        label:  'Set Current Alarm Config',
+        params: [
+          { key: 'condition',     label: 'Condition',             type: 'select' as const, required: true,  options: [{ label: 'Disable', value: 'disable' }, { label: 'Below', value: 'below' }, { label: 'Above', value: 'above' }, { label: 'Between', value: 'between' }, { label: 'Outside', value: 'outside' }] },
+          { key: 'threshold_min', label: 'Min Threshold (mA)',    type: 'number' as const, required: false, default: 0 },
+          { key: 'threshold_max', label: 'Max Threshold (mA)',    type: 'number' as const, required: false, default: 0 },
+          { key: 'alarm_interval', label: 'Alarm Interval (min)', type: 'number' as const, required: false, default: 1 },
+          { key: 'alarm_counts',   label: 'Alarm Counts',         type: 'number' as const, required: false, default: 1 },
+        ],
+      },
+      {
+        type:   'set_temperature_alarm_config',
+        label:  'Set Temperature Alarm Config',
+        params: [
+          { key: 'condition',     label: 'Condition',           type: 'select' as const, required: true,  options: [{ label: 'Disable', value: 'disable' }, { label: 'Below', value: 'below' }, { label: 'Above', value: 'above' }, { label: 'Between', value: 'between' }, { label: 'Outside', value: 'outside' }] },
+          { key: 'threshold_min', label: 'Min Threshold (°C)',  type: 'number' as const, required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max Threshold (°C)',  type: 'number' as const, required: false, default: 60 },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'value' as const, label: 'Current',             keys: ['current'],       unit: 'A'  },
+      { type: 'value' as const, label: 'Total Current',       keys: ['total_current'], unit: 'Ah' },
+      { type: 'value' as const, label: 'Temperature',         keys: ['temperature'],   unit: '°C' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
@@ -319,9 +379,23 @@ export class MilesightCT101Codec extends BaseDeviceCodec {
 export class MilesightCT103Codec extends MilesightCT101Codec {
   override readonly codecId         = 'milesight-ct103';
   override readonly supportedModels = ['CT103'];
+  getCapabilities(): DeviceCapability {
+  return {
+    ...super.getCapabilities(),
+    codecId: this.codecId,
+    model:   this.supportedModels[0], // 'CT103' or 'CT105'
+  };
+}
 }
 
 export class MilesightCT105Codec extends MilesightCT101Codec {
   override readonly codecId         = 'milesight-ct105';
   override readonly supportedModels = ['CT105'];
+  getCapabilities(): DeviceCapability {
+  return {
+    ...super.getCapabilities(),
+    codecId: this.codecId,
+    model:   this.supportedModels[0], // 'CT103' or 'CT105'
+  };
+}
 }

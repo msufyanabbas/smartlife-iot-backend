@@ -38,6 +38,7 @@
 //   0xFD 0x6C  — fetch_history (start + end)
 //   0xFD 0x6D  — stop_transmit
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -80,6 +81,84 @@ export class MilesightTS101Codec extends BaseDeviceCodec {
   readonly category        = 'Temperature Sensor';
   readonly modelFamily     = 'TS101';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ts-series/ts101/ts101.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'TS101',
+    description:  'Insertion Temperature Sensor — single probe with threshold and mutation alarms',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'  },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C' },
+    ],
+    commands: [
+      { type: 'reboot',               label: 'Reboot Device',       params: [] },
+      { type: 'query_device_status',  label: 'Query Device Status', params: [] },
+      { type: 'sync_time',            label: 'Sync Time',           params: [] },
+      { type: 'clear_history',        label: 'Clear History',       params: [] },
+      { type: 'stop_transmit',        label: 'Stop Transmit',       params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60, max: 86400 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 60, min: 10 }],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+8' }],
+      },
+      {
+        type:   'set_temperature_alarm_config',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'enable',        label: 'Enable',              type: 'boolean' as const, required: true  },
+          { key: 'condition',     label: 'Condition',           type: 'select'  as const, required: true,  options: [{ label: 'Below', value: 'below' }, { label: 'Above', value: 'above' }, { label: 'Between', value: 'between' }, { label: 'Outside', value: 'outside' }] },
+          { key: 'threshold_min', label: 'Min Threshold (°C)',  type: 'number'  as const, required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max Threshold (°C)',  type: 'number'  as const, required: false, default: 60 },
+        ],
+      },
+      {
+        type:   'set_temperature_mutation_alarm_config',
+        label:  'Set Mutation Alarm',
+        params: [
+          { key: 'enable',   label: 'Enable',          type: 'boolean' as const, required: true  },
+          { key: 'mutation', label: 'Mutation (°C)',    type: 'number'  as const, required: false, default: 5 },
+        ],
+      },
+      {
+        type:   'set_temperature_calibration',
+        label:  'Set Temperature Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',                type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Calibration Value (°C)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',     keys: ['battery'],     unit: '%'  },
+      { type: 'value' as const, label: 'Temperature', keys: ['temperature'], unit: '°C' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

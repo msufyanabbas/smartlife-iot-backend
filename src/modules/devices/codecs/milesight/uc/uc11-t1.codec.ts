@@ -21,6 +21,7 @@
 //     01 67 04 01 → temperature=260/10=26.0°C
 //     02 68 7B → humidity=123/2=61.5%
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -32,6 +33,26 @@ export class MilesightUC11T1Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['UC11-T1'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'UC11-T1',
+    description:  'Temperature and Humidity Sensor — read-only, no downlink commands',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'  },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C' },
+      { key: 'humidity',    label: 'Humidity',    type: 'number' as const, unit: '%'  },
+    ],
+    commands: [],  // UC11-T1 has no downlink commands
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',     keys: ['battery'],     unit: '%'  },
+      { type: 'value' as const, label: 'Temperature', keys: ['temperature'], unit: '°C' },
+      { type: 'value' as const, label: 'Humidity',    keys: ['humidity'],    unit: '%'  },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

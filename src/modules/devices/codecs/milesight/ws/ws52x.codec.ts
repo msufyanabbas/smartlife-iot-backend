@@ -47,6 +47,7 @@
 // ── canDecode fingerprint ─────────────────────────────────────────────────────
 //   0x08 0x70 — socket_status (WS52x-exclusive, WS558 uses 0x08 0x31)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -63,6 +64,79 @@ export class MilesightWS52xCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WS521', 'WS523', 'WS525', 'WS526'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS521',
+    description:  'Smart Portable Socket — power metering, socket control, child lock',
+    telemetryKeys: [
+      { key: 'socket_status',    label: 'Socket Status',    type: 'string' as const, enum: ['on', 'off'] },
+      { key: 'voltage',          label: 'Voltage',          type: 'number' as const, unit: 'V'  },
+      { key: 'active_power',     label: 'Active Power',     type: 'number' as const, unit: 'W'  },
+      { key: 'power_factor',     label: 'Power Factor',     type: 'number' as const, unit: '%'  },
+      { key: 'power_consumption',label: 'Power Consumption',type: 'number' as const, unit: 'Wh' },
+      { key: 'current',          label: 'Current',          type: 'number' as const, unit: 'mA' },
+    ],
+    commands: [
+      { type: 'reboot',                 label: 'Reboot Device',           params: [] },
+      { type: 'report_status',          label: 'Report Status',           params: [] },
+      { type: 'reset_power_consumption',label: 'Reset Power Consumption', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60 }],
+      },
+      {
+        type:   'set_socket_status',
+        label:  'Set Socket Status',
+        params: [{ key: 'socket_status', label: 'Status', type: 'select' as const, required: true, options: [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }] }],
+      },
+      {
+        type:   'set_power_consumption_enable',
+        label:  'Set Power Consumption Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_over_current_protection',
+        label:  'Set Over Current Protection',
+        params: [
+          { key: 'enable',       label: 'Enable',          type: 'boolean' as const, required: true  },
+          { key: 'trip_current', label: 'Trip Current (A)', type: 'number'  as const, required: false, default: 16 },
+        ],
+      },
+      {
+        type:   'set_current_alarm_config',
+        label:  'Set Current Alarm Config',
+        params: [
+          { key: 'enable',    label: 'Enable',        type: 'boolean' as const, required: true  },
+          { key: 'threshold', label: 'Threshold (A)', type: 'number'  as const, required: false, default: 10 },
+        ],
+      },
+      {
+        type:   'set_child_lock_config',
+        label:  'Set Child Lock',
+        params: [
+          { key: 'enable',    label: 'Enable',             type: 'boolean' as const, required: true  },
+          { key: 'lock_time', label: 'Lock Time (minutes)', type: 'number'  as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_led_indicator_enable',
+        label:  'Set LED Indicator Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'toggle' as const, label: 'Socket',           keys: ['socket_status'],    command: 'set_socket_status' },
+      { type: 'value'  as const, label: 'Voltage',          keys: ['voltage'],          unit: 'V'  },
+      { type: 'value'  as const, label: 'Active Power',     keys: ['active_power'],     unit: 'W'  },
+      { type: 'value'  as const, label: 'Power Consumption',keys: ['power_consumption'],unit: 'Wh' },
+      { type: 'value'  as const, label: 'Current',          keys: ['current'],          unit: 'mA' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

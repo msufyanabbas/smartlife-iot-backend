@@ -13,6 +13,7 @@
 //   - processTemperature: adds celsius_* and fahrenheit_* aliases on all
 //     temperature leaf fields before returning decoded result
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -289,6 +290,121 @@ export class MilesightWT303Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WT303'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WT303',
+    description:  'Smart Fan Coil Thermostat — temperature/humidity, 3-speed fan, schedules, D2D',
+    telemetryKeys: [
+      { key: 'temperature',                    label: 'Temperature',        type: 'number' as const, unit: '°C'   },
+      { key: 'humidity',                       label: 'Humidity',           type: 'number' as const, unit: '%rH'  },
+      { key: 'heating_target_temperature',     label: 'Heat Target Temp',   type: 'number' as const, unit: '°C'   },
+      { key: 'cooling_target_temperature',     label: 'Cool Target Temp',   type: 'number' as const, unit: '°C'   },
+      { key: 'temperature_control_info.mode',  label: 'Control Mode',       type: 'number' as const               },
+      { key: 'temperature_control_info.status',label: 'Control Status',     type: 'number' as const               },
+      { key: 'fan_control_info.mode',          label: 'Fan Mode',           type: 'number' as const               },
+      { key: 'fan_control_info.status',        label: 'Fan Status',         type: 'number' as const               },
+      { key: 'system_status',                  label: 'System Status',      type: 'number' as const               },
+    ],
+    commands: [
+      { type: 'reboot',              label: 'Reboot Device',       params: [] },
+      { type: 'query_device_status', label: 'Query Device Status', params: [] },
+      { type: 'synchronize_time',    label: 'Synchronize Time',    params: [] },
+      { type: 'reconnect',           label: 'Reconnect',           params: [] },
+      {
+        type:   'set_system_status',
+        label:  'Set System Status',
+        params: [{ key: 'system_status', label: 'Status (0=Off, 1=On)', type: 'number' as const, required: true, default: 1 }],
+      },
+      {
+        type:   'set_temperature_control_mode',
+        label:  'Set Control Mode',
+        params: [{ key: 'temperature_control_mode', label: 'Mode (0=Vent, 1=Heat, 2=Cool)', type: 'number' as const, required: true, default: 0 }],
+      },
+      {
+        type:   'set_fan_control_mode',
+        label:  'Set Fan Mode',
+        params: [{ key: 'fan_control_mode', label: 'Mode (0=Auto, 1=Low, 2=Mid, 3=High)', type: 'number' as const, required: true, default: 0 }],
+      },
+      {
+        type:   'set_heating_target_temperature',
+        label:  'Set Heating Target Temperature',
+        params: [{ key: 'heating_target_temperature', label: 'Temperature (°C)', type: 'number' as const, required: true, default: 20, min: 5, max: 35 }],
+      },
+      {
+        type:   'set_cooling_target_temperature',
+        label:  'Set Cooling Target Temperature',
+        params: [{ key: 'cooling_target_temperature', label: 'Temperature (°C)', type: 'number' as const, required: true, default: 26, min: 5, max: 35 }],
+      },
+      {
+        type:   'set_temperature_calibration',
+        label:  'Set Temperature Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Offset (°C)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Offset (minutes, UTC+3=180)', type: 'number' as const, required: true, default: 180 }],
+      },
+      {
+        type:   'set_freeze_protection',
+        label:  'Set Freeze Protection',
+        params: [
+          { key: 'enable',             label: 'Enable',         type: 'boolean' as const, required: true  },
+          { key: 'target_temperature', label: 'Temperature (°C)', type: 'number' as const, required: false, default: 3, min: 1, max: 5 },
+        ],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [
+          { key: 'unit',            label: 'Unit (0=s, 1=min)', type: 'number' as const, required: true, default: 1 },
+          { key: 'minutes_of_time', label: 'Value',             type: 'number' as const, required: true, default: 1, min: 1, max: 1440 },
+        ],
+      },
+      {
+        type:   'set_reporting_interval',
+        label:  'Set Reporting Interval',
+        params: [
+          { key: 'unit',            label: 'Unit (0=s, 1=min)', type: 'number' as const, required: true, default: 1 },
+          { key: 'minutes_of_time', label: 'Value',             type: 'number' as const, required: true, default: 10, min: 1, max: 1440 },
+        ],
+      },
+      {
+        type:   'set_child_lock',
+        label:  'Set Child Lock',
+        params: [
+          { key: 'enable',              label: 'Enable',          type: 'boolean' as const, required: true  },
+          { key: 'system_button',       label: 'System Button',   type: 'boolean' as const, required: false },
+          { key: 'temperature_button',  label: 'Temp Button',     type: 'boolean' as const, required: false },
+          { key: 'fan_button',          label: 'Fan Button',      type: 'boolean' as const, required: false },
+        ],
+      },
+      {
+        type:   'set_window_opening_detection_enable',
+        label:  'Set Window Detection Enable',
+        params: [{ key: 'window_opening_detection_enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_d2d_master_enable',
+        label:  'Set D2D Master Enable',
+        params: [{ key: 'd2d_master_enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Temperature',      keys: ['temperature'],              unit: '°C'  },
+      { type: 'value'  as const, label: 'Humidity',         keys: ['humidity'],                 unit: '%rH' },
+      { type: 'value'  as const, label: 'Heat Target Temp', keys: ['heating_target_temperature'], unit: '°C' },
+      { type: 'value'  as const, label: 'Cool Target Temp', keys: ['cooling_target_temperature'], unit: '°C' },
+      { type: 'status' as const, label: 'System Status',    keys: ['system_status']                         },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

@@ -35,6 +35,7 @@
  *   0x03 0x82 (distance, mm) — unique to EM310-UDL.
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -51,6 +52,50 @@ export class MilesightEM310UdlCodec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['EM310-UDL'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM310-UDL',
+    description:  'Ultrasonic Distance/Level Sensor — distance and tilt position',
+    telemetryKeys: [
+      { key: 'battery',  label: 'Battery',  type: 'number' as const, unit: '%'  },
+      { key: 'distance', label: 'Distance', type: 'number' as const, unit: 'mm' },
+      { key: 'position', label: 'Position', type: 'string' as const, enum: ['normal', 'tilt'] },
+    ],
+    commands: [
+      { type: 'reboot', label: 'Reboot Device', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 1 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 30, min: 10, max: 60 }],
+      },
+      {
+        type:   'set_distance_alarm',
+        label:  'Set Distance Alarm',
+        params: [
+          { key: 'condition',            label: 'Condition',           type: 'select' as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'alarm_release_enable', label: 'Alarm Release Enable', type: 'boolean' as const, required: false },
+          { key: 'threshold_min',        label: 'Min (mm)',            type: 'number' as const, required: false, default: 0    },
+          { key: 'threshold_max',        label: 'Max (mm)',            type: 'number' as const, required: false, default: 5000 },
+          { key: 'lock_time',            label: 'Lock Time (s)',        type: 'number' as const, required: false, default: 0    },
+          { key: 'continue_time',        label: 'Continue Time (s)',    type: 'number' as const, required: false, default: 0    },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',  keys: ['battery']  },
+      { type: 'value'   as const, label: 'Distance', keys: ['distance'], unit: 'mm' },
+      { type: 'status'  as const, label: 'Position', keys: ['position']             },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

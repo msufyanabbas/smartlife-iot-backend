@@ -32,6 +32,7 @@
 //   set_d2d_master_config, set_d2d_enable, set_d2d_key,
 //   set_thermopile_collect_settings, set_thermopile_negative_threshold
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -44,6 +45,70 @@ export class MilesightVS340Codec extends BaseDeviceCodec {
   readonly supportedModels = ['VS340'];
   readonly protocol        = 'lorawan' as const;
   readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs340/vs340.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'VS340',
+    description:  'Desk & Seat Occupancy Sensor — PIR + thermopile occupancy detection',
+    telemetryKeys: [
+      { key: 'battery',   label: 'Battery',   type: 'number' as const, unit: '%' },
+      { key: 'occupancy', label: 'Occupancy', type: 'string' as const, enum: ['occupied', 'vacant'] },
+    ],
+    commands: [
+      { type: 'reboot',               label: 'Reboot Device',        params: [] },
+      { type: 'query_device_status',  label: 'Query Device Status',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 60, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_vacancy_reporting_interval',
+        label:  'Set Vacancy Reporting Interval',
+        params: [{ key: 'vacancy_reporting_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 10, min: 0, max: 100 }],
+      },
+      {
+        type:   'set_led_indicator_enable',
+        label:  'Set LED Indicator Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_pir_collect_settings',
+        label:  'Set PIR Collect Settings',
+        params: [
+          { key: 'enable', label: 'Enable', type: 'boolean' as const, required: true  },
+          { key: 'count',  label: 'Count',  type: 'number'  as const, required: false, default: 1, min: 1, max: 5 },
+        ],
+      },
+      {
+        type:   'set_thermopile_collect_settings',
+        label:  'Set Thermopile Collect Settings',
+        params: [
+          { key: 'enable',      label: 'Enable',          type: 'boolean' as const, required: true  },
+          { key: 'separate',    label: 'Separate (s)',     type: 'number'  as const, required: false, default: 0 },
+          { key: 'threshold_l', label: 'Low Threshold',   type: 'number'  as const, required: false, default: 0 },
+          { key: 'threshold_h', label: 'High Threshold',  type: 'number'  as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_thermopile_negative_threshold',
+        label:  'Set Thermopile Negative Threshold',
+        params: [{ key: 'thermopile_negative_threshold', label: 'Threshold (negative °C)', type: 'number' as const, required: true, default: -10, min: -128, max: -1 }],
+      },
+      {
+        type:   'set_d2d_enable',
+        label:  'Set D2D Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Battery',   keys: ['battery'],   unit: '%' },
+      { type: 'status' as const, label: 'Occupancy', keys: ['occupancy']            },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
@@ -310,4 +375,7 @@ export class MilesightVS340Codec extends BaseDeviceCodec {
 export class MilesightVS341Codec extends MilesightVS340Codec {
   override readonly codecId: string          = 'milesight-vs341';
   override readonly supportedModels: string[] = ['VS341'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'VS341' };
+}
 }

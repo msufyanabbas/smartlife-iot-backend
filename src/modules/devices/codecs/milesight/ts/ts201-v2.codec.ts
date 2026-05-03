@@ -29,6 +29,7 @@
 // canDecode fingerprint: prefers 0x04 0x68 or 0x84 0x68 or 0x94 0x68 or 0xFF 0xEB
 // (0x93 0x67 still present as in v1 but 0x04 0x68 uniquely identifies v2 vs v1)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -56,6 +57,96 @@ export class MilesightTS201V2Codec extends BaseDeviceCodec {
   readonly category        = 'Temperature & Humidity Sensor';
   readonly modelFamily     = 'TS201';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ts-series/ts201-v2/ts201-v2.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'TS201-v2',
+    description:  'Temperature & Humidity Sensor — DS18B20/SHT4X probe with threshold, mutation, and D2D alarms',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'  },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C' },
+      { key: 'humidity',    label: 'Humidity',    type: 'number' as const, unit: '%'  },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'report_status', label: 'Report Status', params: [] },
+      { type: 'sync_time',     label: 'Sync Time',     params: [] },
+      { type: 'clear_history', label: 'Clear History', params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 10, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_temperature_unit',
+        label:  'Set Temperature Unit',
+        params: [{ key: 'temperature_unit', label: 'Unit', type: 'select' as const, required: true, options: [{ label: 'Celsius', value: 'celsius' }, { label: 'Fahrenheit', value: 'fahrenheit' }] }],
+      },
+      {
+        type:   'set_temperature_alarm_config',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'enable',        label: 'Enable',              type: 'boolean' as const, required: true  },
+          { key: 'condition',     label: 'Condition',           type: 'select'  as const, required: true,  options: [{ label: 'Below', value: 'below' }, { label: 'Above', value: 'above' }, { label: 'Between', value: 'between' }, { label: 'Outside', value: 'outside' }] },
+          { key: 'threshold_min', label: 'Min Threshold (°C)',  type: 'number'  as const, required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max Threshold (°C)',  type: 'number'  as const, required: false, default: 60 },
+        ],
+      },
+      {
+        type:   'set_humidity_alarm_config',
+        label:  'Set Humidity Alarm',
+        params: [
+          { key: 'enable',        label: 'Enable',         type: 'boolean' as const, required: true  },
+          { key: 'condition',     label: 'Condition',      type: 'select'  as const, required: true,  options: [{ label: 'Below', value: 'below' }, { label: 'Above', value: 'above' }, { label: 'Between', value: 'between' }, { label: 'Outside', value: 'outside' }] },
+          { key: 'threshold_min', label: 'Min (%)' ,       type: 'number'  as const, required: false, default: 0   },
+          { key: 'threshold_max', label: 'Max (%)',         type: 'number'  as const, required: false, default: 100 },
+        ],
+      },
+      {
+        type:   'set_temperature_mutation_alarm_config',
+        label:  'Set Temperature Mutation Alarm',
+        params: [
+          { key: 'enable',    label: 'Enable',       type: 'boolean' as const, required: true  },
+          { key: 'threshold', label: 'Mutation (°C)', type: 'number'  as const, required: false, default: 5 },
+        ],
+      },
+      {
+        type:   'set_humidity_mutation_alarm_config',
+        label:  'Set Humidity Mutation Alarm',
+        params: [
+          { key: 'enable',    label: 'Enable',      type: 'boolean' as const, required: true  },
+          { key: 'threshold', label: 'Mutation (%)', type: 'number'  as const, required: false, default: 10 },
+        ],
+      },
+      {
+        type:   'set_alarm_release_enable',
+        label:  'Set Alarm Release Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',     keys: ['battery'],     unit: '%'  },
+      { type: 'value' as const, label: 'Temperature', keys: ['temperature'], unit: '°C' },
+      { type: 'value' as const, label: 'Humidity',    keys: ['humidity'],    unit: '%'  },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

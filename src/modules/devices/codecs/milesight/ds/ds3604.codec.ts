@@ -84,6 +84,7 @@
 //   0xFF 0x73 (current_template_id)      — DS3604-exclusive
 //   0xFB 0x01/0x02/0x03                  — template channels, DS3604-exclusive
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -237,6 +238,78 @@ export class MilesightDS3604Codec extends BaseDeviceCodec {
   readonly category        = 'Device Management';
   readonly modelFamily     = 'DS3604';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/ds-series/ds3604/ds3604.png';
+
+  getCapabilities(): DeviceCapability {
+  const blockOptions = [
+    'text_1', 'text_2', 'text_3', 'text_4', 'text_5',
+    'text_6', 'text_7', 'text_8', 'text_9', 'text_10',
+    'qrcode', 'image_1', 'image_2', 'battery_status', 'connect_status',
+  ].map(b => ({ label: b, value: b }));
+
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'DS3604',
+    description:  'Smart E-Ink Display — 2 templates with up to 10 text blocks, QR code, and image support',
+    telemetryKeys: [
+      { key: 'battery',              label: 'Battery',              type: 'number' as const, unit: '%' },
+      { key: 'button_status',        label: 'Button Status',        type: 'string' as const, enum: ['single_click', 'double_click', 'short_press', 'long_press'] },
+      { key: 'current_template_id',  label: 'Current Template',     type: 'number' as const             },
+    ],
+    commands: [
+      { type: 'reboot',           label: 'Reboot Device',   params: [] },
+      { type: 'beep',             label: 'Beep',            params: [] },
+      { type: 'refresh_display',  label: 'Refresh Display', params: [] },
+      { type: 'report_battery',                label: 'Report Battery',            params: [] },
+      { type: 'report_current_template_id',    label: 'Report Current Template',   params: [] },
+      { type: 'report_current_display',        label: 'Report Current Display',    params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60, max: 86400 }],
+      },
+      {
+        type:   'set_current_template',
+        label:  'Switch Template',
+        params: [{ key: 'template_id', label: 'Template (1 or 2)', type: 'number' as const, required: true, default: 1, min: 1, max: 2 }],
+      },
+      {
+        type:   'set_content',
+        label:  'Set Content',
+        params: [
+          { key: 'template_id', label: 'Template (1 or 2)', type: 'number' as const, required: true, default: 1, min: 1, max: 2 },
+          { key: 'block_name',  label: 'Block',              type: 'select' as const, required: true, options: blockOptions },
+          { key: 'text',        label: 'Text / URL',         type: 'string' as const, required: true },
+        ],
+      },
+      {
+        type:   'set_buzzer_enable',
+        label:  'Set Buzzer Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_button_enable',
+        label:  'Set Button Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_button_visible',
+        label:  'Set Button Visible',
+        params: [{ key: 'visible', label: 'Visible', type: 'select' as const, required: true, options: [{ label: 'Show', value: 'show' }, { label: 'Hide', value: 'hide' }] }],
+      },
+      {
+        type:   'set_switch_template_button_enable',
+        label:  'Set Switch Template Button',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',          keys: ['battery'],             unit: '%' },
+      { type: 'value' as const, label: 'Button Status',    keys: ['button_status']                  },
+      { type: 'value' as const, label: 'Active Template',  keys: ['current_template_id']            },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

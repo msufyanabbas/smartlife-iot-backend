@@ -24,6 +24,7 @@
 //                 data_type = package_type & 0x07
 //                 0,1→uint8; 2,3→uint16 LE; 4,6→uint32 LE; 5,7→float32 LE
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -45,6 +46,42 @@ export class MilesightUC11xxCodec extends BaseDeviceCodec {
   // multiple UC11xx variants that use this same payload format.
   readonly supportedModels = ['UC11-N1B', 'UC11-N2', 'UC11-N3'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'UC11-N1B',
+    description:  'Universal Controller — dual GPIO inputs/outputs, dual ADC channels, dual pulse counters, and Modbus',
+    telemetryKeys: [
+      { key: 'gpio_input_1',   label: 'GPIO Input 1',   type: 'string' as const, enum: ['high', 'low'] },
+      { key: 'gpio_input_2',   label: 'GPIO Input 2',   type: 'string' as const, enum: ['high', 'low'] },
+      { key: 'gpio_counter_1', label: 'GPIO Counter 1', type: 'number' as const              },
+      { key: 'gpio_counter_2', label: 'GPIO Counter 2', type: 'number' as const              },
+      { key: 'gpio_output_1',  label: 'GPIO Output 1',  type: 'string' as const, enum: ['high', 'low'] },
+      { key: 'gpio_output_2',  label: 'GPIO Output 2',  type: 'string' as const, enum: ['high', 'low'] },
+      { key: 'adc_1',          label: 'ADC 1',          type: 'number' as const              },
+      { key: 'adc_1_min',      label: 'ADC 1 Min',      type: 'number' as const              },
+      { key: 'adc_1_max',      label: 'ADC 1 Max',      type: 'number' as const              },
+      { key: 'adc_1_avg',      label: 'ADC 1 Average',  type: 'number' as const              },
+      { key: 'adc_2',          label: 'ADC 2',          type: 'number' as const              },
+      { key: 'adc_2_min',      label: 'ADC 2 Min',      type: 'number' as const              },
+      { key: 'adc_2_max',      label: 'ADC 2 Max',      type: 'number' as const              },
+      { key: 'adc_2_avg',      label: 'ADC 2 Average',  type: 'number' as const              },
+    ],
+    commands: [],  // UC11xx has no downlink commands
+    uiComponents: [
+      { type: 'value' as const, label: 'GPIO Input 1',   keys: ['gpio_input_1']    },
+      { type: 'value' as const, label: 'GPIO Input 2',   keys: ['gpio_input_2']    },
+      { type: 'value' as const, label: 'GPIO Counter 1', keys: ['gpio_counter_1']  },
+      { type: 'value' as const, label: 'GPIO Counter 2', keys: ['gpio_counter_2']  },
+      { type: 'value' as const, label: 'GPIO Output 1',  keys: ['gpio_output_1']   },
+      { type: 'value' as const, label: 'GPIO Output 2',  keys: ['gpio_output_2']   },
+      { type: 'value' as const, label: 'ADC 1',          keys: ['adc_1']           },
+      { type: 'value' as const, label: 'ADC 2',          keys: ['adc_2']           },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

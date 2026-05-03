@@ -38,6 +38,7 @@
  *   0xFF 0x1B (measuring_equipment) — unique to EM500-PT100.
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -74,6 +75,79 @@ export class MilesightEM500Pt100Codec extends BaseDeviceCodec {
   readonly category        = 'Temperature Sensor';
   readonly modelFamily     = 'EM500-PT100';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-pt100/em500-pt100.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM500-PT100',
+    description:  'Industrial Temperature Sensor (PT100 probe) — wide range, mutation alarms, calibration',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'  },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C' },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'report_status', label: 'Report Status',  params: [] },
+      { type: 'sync_time',     label: 'Sync Time',      params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit',  params: [] },
+      { type: 'clear_history', label: 'Clear History',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_temperature_alarm',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'enable',        label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'condition',     label: 'Condition', type: 'select'  as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'threshold_min', label: 'Min (°C)',  type: 'number'  as const, required: false, default: -200 },
+          { key: 'threshold_max', label: 'Max (°C)',  type: 'number'  as const, required: false, default: 850  },
+        ],
+      },
+      {
+        type:   'set_temperature_mutation_alarm',
+        label:  'Set Temperature Mutation Alarm',
+        params: [
+          { key: 'enable',   label: 'Enable',         type: 'boolean' as const, required: true  },
+          { key: 'mutation', label: 'Mutation (°C)',   type: 'number'  as const, required: false, default: 5 },
+        ],
+      },
+      {
+        type:   'set_temperature_calibration',
+        label:  'Set Temperature Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Offset (°C)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',     keys: ['battery']     },
+      { type: 'gauge'   as const, label: 'Temperature', keys: ['temperature'], unit: '°C' },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

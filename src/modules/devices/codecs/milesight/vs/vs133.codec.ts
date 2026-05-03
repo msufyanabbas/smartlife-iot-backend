@@ -25,6 +25,7 @@
 // Downlink: 0xFF/0xFE standard, 0xF9/0xF8 extended (0xF8 carries result flag)
 // History (firmware ≥ v1.0.9): fetch/stop/clear via 0xFD prefix
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -304,6 +305,92 @@ export class MilesightVS133Codec extends BaseDeviceCodec {
   readonly supportedModels: string[] = ['VS133'];
   readonly protocol        = 'lorawan' as const;
   readonly imageUrl = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/vs-series/vs133/vs133.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'VS133',
+    description:  'AI ToF People Counting Sensor — up to 4 lines, child counting, region dwell, and occlusion alarm',
+    telemetryKeys: [
+      { key: 'line_1_total_in',    label: 'Line 1 Total In',    type: 'number' as const },
+      { key: 'line_1_total_out',   label: 'Line 1 Total Out',   type: 'number' as const },
+      { key: 'line_1_period_in',   label: 'Line 1 Period In',   type: 'number' as const },
+      { key: 'line_1_period_out',  label: 'Line 1 Period Out',  type: 'number' as const },
+      { key: 'line_2_total_in',    label: 'Line 2 Total In',    type: 'number' as const },
+      { key: 'line_2_total_out',   label: 'Line 2 Total Out',   type: 'number' as const },
+      { key: 'line_2_period_in',   label: 'Line 2 Period In',   type: 'number' as const },
+      { key: 'line_2_period_out',  label: 'Line 2 Period Out',  type: 'number' as const },
+      { key: 'line_3_total_in',    label: 'Line 3 Total In',    type: 'number' as const },
+      { key: 'line_3_total_out',   label: 'Line 3 Total Out',   type: 'number' as const },
+      { key: 'line_4_total_in',    label: 'Line 4 Total In',    type: 'number' as const },
+      { key: 'line_4_total_out',   label: 'Line 4 Total Out',   type: 'number' as const },
+      { key: 'region_1_count',     label: 'Region 1 Count',     type: 'number' as const },
+      { key: 'region_2_count',     label: 'Region 2 Count',     type: 'number' as const },
+      { key: 'region_3_count',     label: 'Region 3 Count',     type: 'number' as const },
+      { key: 'region_4_count',     label: 'Region 4 Count',     type: 'number' as const },
+      { key: 'line_1_child_total_in',  label: 'Line 1 Child Total In',  type: 'number' as const },
+      { key: 'line_1_child_total_out', label: 'Line 1 Child Total Out', type: 'number' as const },
+    ],
+    commands: [
+      { type: 'reboot',           label: 'Reboot Device',    params: [] },
+      { type: 'clear_total_count', label: 'Clear Total Count', params: [] },
+      { type: 'clear_history',    label: 'Clear History',    params: [] },
+      { type: 'stop_transmit',    label: 'Stop Transmit',    params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 60, min: 1, max: 64800 }],
+      },
+      {
+        type:   'set_periodic_report_enable',
+        label:  'Set Periodic Report Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_trigger_report_enable',
+        label:  'Set Trigger Report Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_retransmit_enable',
+        label:  'Set Retransmit Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+      {
+        type:   'set_rejoin_config',
+        label:  'Set Rejoin Config',
+        params: [
+          { key: 'enable',    label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'max_count', label: 'Max Count', type: 'number'  as const, required: false, default: 10 },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'value' as const, label: 'Line 1 Total In',   keys: ['line_1_total_in']   },
+      { type: 'value' as const, label: 'Line 1 Total Out',  keys: ['line_1_total_out']  },
+      { type: 'value' as const, label: 'Line 1 Period In',  keys: ['line_1_period_in']  },
+      { type: 'value' as const, label: 'Line 1 Period Out', keys: ['line_1_period_out'] },
+      { type: 'value' as const, label: 'Line 2 Total In',   keys: ['line_2_total_in']   },
+      { type: 'value' as const, label: 'Line 2 Total Out',  keys: ['line_2_total_out']  },
+      { type: 'value' as const, label: 'Region 1 Count',    keys: ['region_1_count']    },
+      { type: 'value' as const, label: 'Region 2 Count',    keys: ['region_2_count']    },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
@@ -619,4 +706,7 @@ export class MilesightVS133Codec extends BaseDeviceCodec {
 export class MilesightVS135Codec extends MilesightVS133Codec {
   override readonly codecId         = 'milesight-vs135';
   override readonly supportedModels = ['VS135'];
+  getCapabilities(): DeviceCapability {
+  return { ...super.getCapabilities(), codecId: this.codecId, model: 'VS135' };
+}
 }

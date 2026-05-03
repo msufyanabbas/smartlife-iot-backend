@@ -58,6 +58,7 @@
 //
 // canDecode fingerprint: 0x05 0x00 (occupancy) — unique to WS203
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -113,6 +114,91 @@ export class MilesightWS203Codec extends BaseDeviceCodec {
   readonly manufacturer    = 'Milesight';
   readonly supportedModels = ['WS203'];
   readonly protocol        = 'lorawan' as const;
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'WS203',
+    description:  'Motion & Temperature/Humidity Sensor — PIR occupancy, T/H, D2D, history',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'  },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C' },
+      { key: 'humidity',    label: 'Humidity',    type: 'number' as const, unit: '%'  },
+      { key: 'occupancy',   label: 'Occupancy',   type: 'string' as const, enum: ['occupied', 'vacant'] },
+    ],
+    commands: [
+      { type: 'reboot',              label: 'Reboot Device',       params: [] },
+      { type: 'sync_time',           label: 'Sync Time',           params: [] },
+      { type: 'query_device_status', label: 'Query Device Status', params: [] },
+      { type: 'stop_transmit',       label: 'Stop Transmit',       params: [] },
+      { type: 'clear_history',       label: 'Clear History',       params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 20, min: 1, max: 1440 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (minutes)', type: 'number' as const, required: true, default: 1, min: 1 }],
+      },
+      {
+        type:   'set_vacant_reporting_interval',
+        label:  'Set Vacant Reporting Interval',
+        params: [{ key: 'vacant_reporting_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 0 }],
+      },
+      {
+        type:   'set_temperature_alarm_config',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'condition',     label: 'Condition',   type: 'select' as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'threshold_min', label: 'Min (°C)',    type: 'number' as const, required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max (°C)',    type: 'number' as const, required: false, default: 40 },
+        ],
+      },
+      {
+        type:   'set_time_zone',
+        label:  'Set Time Zone',
+        params: [{ key: 'time_zone', label: 'Time Zone', type: 'string' as const, required: true, default: 'UTC+3' }],
+      },
+      {
+        type:   'set_led_indicator_enable',
+        label:  'Set LED Indicator Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_d2d_enable',
+        label:  'Set D2D Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_retransmit_enable',
+        label:  'Set Retransmit Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge'  as const, label: 'Battery',     keys: ['battery'],     unit: '%'  },
+      { type: 'value'  as const, label: 'Temperature', keys: ['temperature'], unit: '°C' },
+      { type: 'value'  as const, label: 'Humidity',    keys: ['humidity'],    unit: '%'  },
+      { type: 'status' as const, label: 'Occupancy',   keys: ['occupancy']                },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

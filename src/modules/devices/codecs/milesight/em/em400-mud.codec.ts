@@ -43,6 +43,7 @@
  *   EM310-UDL uses 0x03 0x82 (distance on channel 3).
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -64,6 +65,84 @@ export class MilesightEM400MudCodec extends BaseDeviceCodec {
   readonly category        = 'Multifunctional Sensor';
   readonly modelFamily     = 'EM400-MUD';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em400-mud/em400-mud.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM400-MUD',
+    description:  'Multifunctional Ultrasonic Distance/Level Sensor — standard/bin/parking modes, T/H, tilt',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'  },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C' },
+      { key: 'distance',    label: 'Distance',    type: 'number' as const, unit: 'mm' },
+      { key: 'position',    label: 'Position',    type: 'string' as const, enum: ['normal', 'tilt'] },
+      { key: 'distance_alarm',    label: 'Distance Alarm',     type: 'string' as const },
+      { key: 'temperature_alarm', label: 'Temperature Alarm',  type: 'string' as const },
+    ],
+    commands: [
+      { type: 'reboot',              label: 'Reboot Device',       params: [] },
+      { type: 'sync_time',           label: 'Sync Time',           params: [] },
+      { type: 'query_device_status', label: 'Query Device Status', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_working_mode',
+        label:  'Set Working Mode',
+        params: [{ key: 'working_mode', label: 'Mode', type: 'select' as const, required: true, options: [{ label: 'Standard', value: 'standard' }, { label: 'Bin', value: 'bin' }, { label: 'Parking', value: 'parking' }] }],
+      },
+      {
+        type:   'set_install_height',
+        label:  'Set Install Height',
+        params: [{ key: 'install_height', label: 'Height (mm)', type: 'number' as const, required: true, default: 1000, min: 30, max: 4500 }],
+      },
+      {
+        type:   'set_install_height_enable',
+        label:  'Set Install Height Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_standard_mode_alarm',
+        label:  'Set Standard Mode Alarm',
+        params: [
+          { key: 'condition',            label: 'Condition',           type: 'select' as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'alarm_release_enable', label: 'Alarm Release Enable', type: 'boolean' as const, required: false },
+          { key: 'threshold_min',        label: 'Min (mm)',            type: 'number' as const, required: false, default: 0    },
+          { key: 'threshold_max',        label: 'Max (mm)',            type: 'number' as const, required: false, default: 5000 },
+        ],
+      },
+      {
+        type:   'set_bin_mode_alarm',
+        label:  'Set Bin Mode Alarm',
+        params: [
+          { key: 'condition',            label: 'Condition',           type: 'select' as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'alarm_release_enable', label: 'Alarm Release Enable', type: 'boolean' as const, required: false },
+          { key: 'threshold_min',        label: 'Min (mm)',            type: 'number' as const, required: false, default: 0    },
+          { key: 'threshold_max',        label: 'Max (mm)',            type: 'number' as const, required: false, default: 5000 },
+        ],
+      },
+      {
+        type:   'set_tilt_linkage_distance_enable',
+        label:  'Set Tilt Linkage Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',     keys: ['battery']     },
+      { type: 'value'   as const, label: 'Temperature', keys: ['temperature'], unit: '°C' },
+      { type: 'value'   as const, label: 'Distance',    keys: ['distance'],    unit: 'mm' },
+      { type: 'status'  as const, label: 'Position',    keys: ['position']                },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

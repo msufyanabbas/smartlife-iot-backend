@@ -48,6 +48,7 @@
  *   and use model metadata to disambiguate.
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -66,6 +67,68 @@ export class MilesightEM320ThCodec extends BaseDeviceCodec {
   readonly category        = 'Temperature & Humidity Sensor';
   readonly modelFamily     = 'EM320-TH';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em320-th/em320-th.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM320-TH',
+    description:  'Temperature & Humidity Sensor — alarm, history, retransmit support',
+    telemetryKeys: [
+      { key: 'battery',     label: 'Battery',     type: 'number' as const, unit: '%'  },
+      { key: 'temperature', label: 'Temperature', type: 'number' as const, unit: '°C' },
+      { key: 'humidity',    label: 'Humidity',    type: 'number' as const, unit: '%'  },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'report_status', label: 'Report Status',  params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit',  params: [] },
+      { type: 'clear_history', label: 'Clear History',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_temperature_alarm',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'condition',     label: 'Condition', type: 'select' as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'threshold_min', label: 'Min (°C)',  type: 'number' as const, required: false, default: 0  },
+          { key: 'threshold_max', label: 'Max (°C)',  type: 'number' as const, required: false, default: 40 },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_retransmit_enable',
+        label:  'Set Retransmit Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',     keys: ['battery']     },
+      { type: 'gauge'   as const, label: 'Temperature', keys: ['temperature'], unit: '°C' },
+      { type: 'gauge'   as const, label: 'Humidity',    keys: ['humidity'],    unit: '%'  },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

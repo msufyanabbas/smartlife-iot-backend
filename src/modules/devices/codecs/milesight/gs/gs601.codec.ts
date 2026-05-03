@@ -88,6 +88,7 @@
 //   - processTemperature: adds celsius_temperature & fahrenheit_temperature aliases
 //   - canDecode: vaping_index (0x01) and tvoc (0x0d) are GS601-exclusive
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -136,6 +137,85 @@ export class MilesightGS601Codec extends BaseDeviceCodec {
   readonly category        = 'Air Quality Sensor';
   readonly modelFamily     = 'GS601';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/gs-series/gs601/gs601.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'GS601',
+    description:  'Air Quality Sensor — vaping detection, PM1.0/2.5/10, TVOC, temperature, humidity, and occupancy',
+    telemetryKeys: [
+      { key: 'battery',           label: 'Battery',          type: 'number' as const, unit: '%'      },
+      { key: 'temperature',       label: 'Temperature',      type: 'number' as const, unit: '°C'     },
+      { key: 'humidity',          label: 'Humidity',         type: 'number' as const, unit: '%'      },
+      { key: 'vaping_index',      label: 'Vaping Index',     type: 'number' as const              },
+      { key: 'pm1_0',             label: 'PM1.0',            type: 'number' as const, unit: 'µg/m³' },
+      { key: 'pm2_5',             label: 'PM2.5',            type: 'number' as const, unit: 'µg/m³' },
+      { key: 'pm10',              label: 'PM10',             type: 'number' as const, unit: 'µg/m³' },
+      { key: 'tvoc',              label: 'TVOC',             type: 'number' as const, unit: 'µg/m³' },
+      { key: 'tamper_status',     label: 'Tamper Status',    type: 'number' as const              },
+      { key: 'occupancy_status',  label: 'Occupancy Status', type: 'number' as const              },
+    ],
+    commands: [
+      { type: 'reboot',                         label: 'Reboot Device',           params: [] },
+      { type: 'reset',                          label: 'Reset Device',            params: [] },
+      { type: 'synchronize_time',               label: 'Synchronize Time',        params: [] },
+      { type: 'query_device_status',            label: 'Query Device Status',     params: [] },
+      { type: 'stop_buzzer_alarm',              label: 'Stop Buzzer Alarm',       params: [] },
+      { type: 'execute_tvoc_self_clean',        label: 'Execute TVOC Self-Clean', params: [] },
+      { type: 'clear_historical_data',          label: 'Clear Historical Data',   params: [] },
+      { type: 'stop_historical_data_retrieval', label: 'Stop History Retrieval',  params: [] },
+      {
+        type:   'set_reporting_interval',
+        label:  'Set Reporting Interval',
+        params: [
+          { key: 'unit',            label: 'Unit',  type: 'select' as const, required: true, options: [{ label: 'Seconds', value: 'second' }, { label: 'Minutes', value: 'min' }] },
+          { key: 'seconds_of_time', label: 'Value', type: 'number' as const, required: false, default: 600 },
+        ],
+      },
+      {
+        type:   'set_buzzer_enable',
+        label:  'Set Buzzer Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_temperature_alarm_settings',
+        label:  'Set Temperature Alarm',
+        params: [
+          { key: 'enable',              label: 'Enable',          type: 'boolean' as const, required: true  },
+          { key: 'threshold_condition', label: 'Condition',       type: 'number'  as const, required: false, default: 0 },
+          { key: 'threshold_min',       label: 'Min (°C)',        type: 'number'  as const, required: false, default: 0  },
+          { key: 'threshold_max',       label: 'Max (°C)',        type: 'number'  as const, required: false, default: 40 },
+        ],
+      },
+      {
+        type:   'set_vaping_index_alarm_settings',
+        label:  'Set Vaping Index Alarm',
+        params: [
+          { key: 'enable',              label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'threshold_condition', label: 'Condition', type: 'number'  as const, required: false, default: 0 },
+          { key: 'threshold_min',       label: 'Min',       type: 'number'  as const, required: false, default: 0 },
+          { key: 'threshold_max',       label: 'Max',       type: 'number'  as const, required: false, default: 5 },
+        ],
+      },
+      {
+        type:   'set_alarm_reporting_times',
+        label:  'Set Alarm Reporting Times',
+        params: [{ key: 'times', label: 'Times', type: 'number' as const, required: true, default: 1, min: 1 }],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',       keys: ['battery'],          unit: '%'      },
+      { type: 'value' as const, label: 'Temperature',   keys: ['temperature'],      unit: '°C'     },
+      { type: 'value' as const, label: 'Humidity',      keys: ['humidity'],         unit: '%'      },
+      { type: 'value' as const, label: 'Vaping Index',  keys: ['vaping_index']                     },
+      { type: 'value' as const, label: 'PM2.5',         keys: ['pm2_5'],            unit: 'µg/m³'  },
+      { type: 'value' as const, label: 'PM10',          keys: ['pm10'],             unit: 'µg/m³'  },
+      { type: 'value' as const, label: 'TVOC',          keys: ['tvoc'],             unit: 'µg/m³'  },
+      { type: 'value' as const, label: 'Occupancy',     keys: ['occupancy_status']                 },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 

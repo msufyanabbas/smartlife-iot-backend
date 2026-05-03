@@ -1,6 +1,7 @@
 // src/modules/devices/codecs/milesight/gs301.codec.ts
 // Milesight GS301 — Bathroom Odor Detector (NH3 + H2S + Temp + Humidity)
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import { BaseDeviceCodec, DecodedTelemetry, EncodedCommand } from '../../interfaces/base-codec.interface';
 
 export class MilesightGS301Codec extends BaseDeviceCodec {
@@ -13,6 +14,63 @@ export class MilesightGS301Codec extends BaseDeviceCodec {
   readonly category      = 'Gas Sensor';
   readonly modelFamily   = 'GS301';
   readonly imageUrl      = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/gs-series/gs301/gs301.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'GS301',
+    description:  'Bathroom Odor Detector — NH3, H2S, Temperature, and Humidity',
+    telemetryKeys: [
+      { key: 'batteryLevel', label: 'Battery',     type: 'number' as const, unit: '%'   },
+      { key: 'temperature',  label: 'Temperature', type: 'number' as const, unit: '°C'  },
+      { key: 'humidity',     label: 'Humidity',    type: 'number' as const, unit: '%'   },
+      { key: 'nh3',          label: 'NH3',         type: 'number' as const, unit: 'ppm' },
+      { key: 'h2s',          label: 'H2S',         type: 'number' as const, unit: 'ppm' },
+    ],
+    commands: [
+      { type: 'reboot', label: 'Reboot Device', params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60, max: 86400 }],
+      },
+      {
+        type:   'set_threshold_report_interval',
+        label:  'Set Threshold Report Interval',
+        params: [{ key: 'interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 120 }],
+      },
+      {
+        type:   'set_led_indicator',
+        label:  'Set LED Indicator',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_buzzer',
+        label:  'Set Buzzer',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_alarm_config',
+        label:  'Set Alarm Config',
+        params: [
+          { key: 'enable',         label: 'Enable',          type: 'boolean' as const, required: true  },
+          { key: 'condition',      label: 'Condition',        type: 'select' as const,  required: true,  options: [{ label: 'Disable', value: 'disable' }, { label: 'Below', value: 'below' }, { label: 'Above', value: 'above' }, { label: 'Between', value: 'between' }, { label: 'Outside', value: 'outside' }] },
+          { key: 'trigger_source', label: 'Trigger Source',  type: 'select' as const,  required: false, options: [{ label: 'NH3', value: 'nh3' }, { label: 'H2S', value: 'h2s' }] },
+          { key: 'threshold_min',  label: 'Min Threshold',   type: 'number' as const,  required: false, default: 0    },
+          { key: 'threshold_max',  label: 'Max Threshold',   type: 'number' as const,  required: false, default: 1000 },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'gauge' as const, label: 'Battery',     keys: ['batteryLevel'], unit: '%'   },
+      { type: 'value' as const, label: 'Temperature', keys: ['temperature'],  unit: '°C'  },
+      { type: 'value' as const, label: 'Humidity',    keys: ['humidity'],     unit: '%'   },
+      { type: 'value' as const, label: 'NH3',         keys: ['nh3'],          unit: 'ppm' },
+      { type: 'value' as const, label: 'H2S',         keys: ['h2s'],          unit: 'ppm' },
+    ],
+  };
+}
 
   // ── Decode uplink ────────────────────────────────────────────────────────
 

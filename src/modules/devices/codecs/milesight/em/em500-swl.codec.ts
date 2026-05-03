@@ -55,6 +55,7 @@
  *   0x03 0x77 (depth uint16 /100, cm) — unique to EM500-SWL.
  */
 
+import { DeviceCapability } from '@/common/interfaces/device-capability.interface';
 import {
   BaseDeviceCodec,
   DecodedTelemetry,
@@ -89,6 +90,78 @@ export class MilesightEM500SwlCodec extends BaseDeviceCodec {
   readonly category        = 'Water Level Sensor';
   readonly modelFamily     = 'EM500-SWL';
   readonly imageUrl        = 'https://github.com/Milesight-IoT/SensorDecoders/raw/main/em-series/em500-swl/em500-swl.png';
+
+  getCapabilities(): DeviceCapability {
+  return {
+    codecId:      this.codecId,
+    manufacturer: this.manufacturer,
+    model:        'EM500-SWL',
+    description:  'Submersible Water Level Sensor — depth in cm (/100 scale), alarm, D2D, history',
+    telemetryKeys: [
+      { key: 'battery',    label: 'Battery',     type: 'number' as const, unit: '%' },
+      { key: 'depth',      label: 'Water Depth', type: 'number' as const, unit: 'cm' },
+      { key: 'depth_error',label: 'Depth Error', type: 'string' as const, enum: ['collection_failed', 'out_of_range'] },
+    ],
+    commands: [
+      { type: 'reboot',        label: 'Reboot Device', params: [] },
+      { type: 'report_status', label: 'Report Status',  params: [] },
+      { type: 'sync_time',     label: 'Sync Time',      params: [] },
+      { type: 'stop_transmit', label: 'Stop Transmit',  params: [] },
+      { type: 'clear_history', label: 'Clear History',  params: [] },
+      {
+        type:   'set_report_interval',
+        label:  'Set Report Interval',
+        params: [{ key: 'report_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 600, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_collection_interval',
+        label:  'Set Collection Interval',
+        params: [{ key: 'collection_interval', label: 'Interval (seconds)', type: 'number' as const, required: true, default: 300, min: 60, max: 64800 }],
+      },
+      {
+        type:   'set_depth_alarm',
+        label:  'Set Depth Alarm',
+        params: [
+          { key: 'enable',        label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'condition',     label: 'Condition', type: 'select'  as const, required: true, options: ['disable','below','above','between','outside'].map(v => ({ label: v, value: v })) },
+          { key: 'threshold_min', label: 'Min (cm)',  type: 'number'  as const, required: false, default: 0   },
+          { key: 'threshold_max', label: 'Max (cm)',  type: 'number'  as const, required: false, default: 500 },
+        ],
+      },
+      {
+        type:   'set_depth_calibration',
+        label:  'Set Depth Calibration',
+        params: [
+          { key: 'enable',            label: 'Enable',    type: 'boolean' as const, required: true  },
+          { key: 'calibration_value', label: 'Offset (cm)', type: 'number' as const, required: false, default: 0 },
+        ],
+      },
+      {
+        type:   'set_history_enable',
+        label:  'Set History Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'set_d2d_enable',
+        label:  'Set D2D Enable',
+        params: [{ key: 'enable', label: 'Enable', type: 'boolean' as const, required: true }],
+      },
+      {
+        type:   'fetch_history',
+        label:  'Fetch History',
+        params: [
+          { key: 'start_time', label: 'Start Time (Unix)', type: 'number' as const, required: true  },
+          { key: 'end_time',   label: 'End Time (Unix)',   type: 'number' as const, required: false },
+        ],
+      },
+    ],
+    uiComponents: [
+      { type: 'battery' as const, label: 'Battery',     keys: ['battery'] },
+      { type: 'gauge'   as const, label: 'Water Depth', keys: ['depth'],   unit: 'cm' },
+      { type: 'status'  as const, label: 'Depth Error', keys: ['depth_error']         },
+    ],
+  };
+}
 
   // ── Decode ──────────────────────────────────────────────────────────────────
 
