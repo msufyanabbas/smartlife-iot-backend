@@ -29,16 +29,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtool \
     libpcre2-dev \
     swig \
+    texinfo \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Build libredwg from source → provides dwg2dxf binary ─────────────────
 # libredwg is NOT in Debian Bookworm default repos, so we compile it.
+# We build only src + programs (skip doc, test, bindings).
 RUN git clone --depth=1 --branch 0.12.5 https://github.com/LibreDWG/libredwg.git /tmp/libredwg \
     && cd /tmp/libredwg \
     && sh autogen.sh \
-    && ./configure --disable-bindings --disable-python \
-    && make -j$(nproc) \
-    && make install \
+    && ./configure \
+        --disable-bindings \
+        --disable-python \
+        --disable-docs \
+    && make -j$(nproc) -C src \
+    && make -j$(nproc) -C programs \
+    && make install -C src \
+    && make install -C programs \
     && ldconfig \
     && rm -rf /tmp/libredwg
 
@@ -93,7 +100,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpixman-1-0 \
     libfreetype6 \
     libfontconfig1 \
-    # ── libredwg runtime dependencies ────────────────────────────────────
+    # ── libredwg runtime dependency ───────────────────────────────────────
     libpcre2-8-0 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
