@@ -13,8 +13,7 @@ RUN apk add --no-cache \
     tini \
     curl \
     dumb-init \
-    ca-certificates \
-    libredwg-utils
+    ca-certificates
 
 WORKDIR /app
 
@@ -58,7 +57,6 @@ RUN apk add --no-cache \
     curl \
     dumb-init \
     ca-certificates \
-    libredwg-utils \
     && apk upgrade --no-cache
 
 WORKDIR /app
