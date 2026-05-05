@@ -5,6 +5,8 @@ import {
   ForbiddenException,
   Logger,
   ConflictException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -28,20 +30,34 @@ import { AssignmentService } from '../assignments/assignment.service';
 @Injectable()
 export class CustomerUsersService {
    private readonly logger = new Logger(CustomerUsersService.name);
-  constructor(
-    @InjectRepository(User)
-    private userRepository: Repository<User>,
-    private customersService: CustomersService,
-    @InjectRepository(Role)                  // 👈 add this
+constructor(
+  @InjectRepository(User)
+  private userRepository: Repository<User>,
+
+  @Inject(forwardRef(() => CustomersService))
+  private customersService: CustomersService,
+
+  @InjectRepository(Role)
   private roleRepository: Repository<Role>,
-    private usersService: UsersService,
-     private tenantService: TenantsService,
-    private mailService: MailService,
-    private eventEmitter: EventEmitter2,
-    @InjectRepository(CustomerUserLimit)
+
+@Inject(forwardRef(() => UsersService))
+private usersService: UsersService,
+
+  @Inject(forwardRef(() => TenantsService))
+  private tenantService: TenantsService,
+
+  @Inject(forwardRef(() => MailService))
+  private mailService: MailService,
+
+  @Inject(forwardRef(() => EventEmitter2))
+  private eventEmitter: EventEmitter2,
+
+  @InjectRepository(CustomerUserLimit)
   private userLimitsRepository: Repository<CustomerUserLimit>,
-   private assignmentService: AssignmentService,
-  ) {}
+
+  @Inject(forwardRef(() => AssignmentService))
+  private assignmentService: AssignmentService,
+) {}
 
   
 

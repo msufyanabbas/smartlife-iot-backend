@@ -1,6 +1,8 @@
+// src/common/enums/schedule.enum.ts
 export enum ScheduleType {
-  REPORT = 'report',
-  BACKUP = 'backup',
-  CLEANUP = 'cleanup',
-  EXPORT = 'export',
+  REPORT = 'REPORT',
+  BACKUP = 'BACKUP',
+  CLEANUP = 'CLEANUP',
+  EXPORT = 'EXPORT',
+  DEVICE_COMMAND = 'DEVICE_COMMAND',
 }

@@ -14,7 +14,7 @@ import { AssignmentModule } from '../assignments/assignment.module';
   imports: [
     TypeOrmModule.forFeature([User, Role, CustomerUserLimit]),
     forwardRef(() => CustomersModule),  // ← forwardRef here
-    UsersModule,
+    forwardRef(() => UsersModule), 
     TenantsModule,
     MailModule,
     AssignmentModule

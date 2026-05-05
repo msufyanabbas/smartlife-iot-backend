@@ -5,6 +5,8 @@ import {
   BadRequestException,
   ForbiddenException,
   Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan } from 'typeorm';
@@ -19,7 +21,7 @@ import { UserRole } from '@common/enums/index.enum';
 import { DeviceCredentialsService } from './device-credentials.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { UsersService } from '../users/users.service';
+import { UsersService } from '@modules/users/users.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as crypto from 'crypto';
 import { CodecRegistryService } from './codecs/codec-registry.service';
@@ -31,11 +33,17 @@ export class DevicesService {
   constructor(
     @InjectRepository(Device)
     private deviceRepository: Repository<Device>,
+    @Inject(ConfigService)
     private configService: ConfigService,
+     @Inject(forwardRef(() => UsersService))
     private userService: UsersService,
+    @Inject(EventEmitter2)
     private eventEmitter: EventEmitter2,
+    @Inject(DeviceCredentialsService)
     private credentialsService: DeviceCredentialsService,
+    @Inject(CodecRegistryService)
     private codecRegistry: CodecRegistryService,
+    @Inject(SubscriptionsService)
     private subscriptionsService: SubscriptionsService,
   ) {}
 

@@ -5,6 +5,8 @@ import {
   ForbiddenException,
   Logger,
   BadRequestException,
+  forwardRef,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
@@ -26,7 +28,7 @@ import { PushChannel } from './channels/push.channel';
 import { NotificationsRepository } from './repositories/notifications.repository';
 import { UserRole } from '@common/enums/index.enum';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { UsersService } from '@modules/index.service';
+import { UsersService } from '@modules/users/users.service';
 
 @Injectable()
 export class NotificationsService {
@@ -36,9 +38,10 @@ export class NotificationsService {
     @InjectRepository(Notification)
     private notificationRepository: Repository<Notification>,
     private notificationsRepo: NotificationsRepository,
-    private userService: UsersService,
     private eventEmitter: EventEmitter2,
     private emailChannel: EmailChannel,
+    @Inject(forwardRef(() => UsersService))
+    private userService: UsersService,
     private smsChannel: SmsChannel,
     private pushChannel: PushChannel,
   ) { }
