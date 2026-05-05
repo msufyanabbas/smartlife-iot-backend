@@ -15,6 +15,7 @@ import {
   Asset,
   DeviceProfile,
   DeviceCredentials,
+  EdgeInstance,
 } from '@modules/index.entities';
 import {
   DeviceType,
@@ -160,6 +161,17 @@ export class Device extends BaseEntity {
  
   @Column({ nullable: true })
   model?: string;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // EDGE ASSOCIATION (OPTIONAL)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ nullable: true })
+  edgeId?: string;
+
+  @ManyToOne(() => EdgeInstance, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'edgeId' })
+  edge?: EdgeInstance;
 
 
   // ── Tags ──────────────────────────────────────────────────────────────────

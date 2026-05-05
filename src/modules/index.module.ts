@@ -17,6 +17,7 @@ export {UserSettingsModule} from './user-settings/user-settings.module';
 export { RolesModule } from './roles/roles.module';
 export { PermissionsModule } from './permissions/permissions.module';
 export { GuardsModule } from '../common/guards/guards.module';
+export { EdgeModule } from './edge/edge.module';
 
 // ============================================
 // FEATURE MODULES (application modules)
@@ -113,11 +114,13 @@ import { GuardsModule } from '../common/guards/guards.module';
 import { KafkaModule } from '@/lib/kafka/kafka.module';
 import { RedisModule } from '@/lib/redis/redis.module';
 import { MQTTModule } from '@/lib/mqtt/mqtt.module';
+import { EdgeModule } from './edge/edge.module';
 
 // ============================================
 // FEATURE MODULES ARRAY (for spreading in app.module.ts)
 // ============================================
 export const featureModules = [
+  EdgeModule,
   MQTTModule,
   KafkaModule, 
   RedisModule,

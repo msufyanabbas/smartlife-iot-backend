@@ -1,6 +1,7 @@
+// src/common/enums/edge.enum.ts
 export enum EdgeStatus {
-  ONLINE = 'online',
-  OFFLINE = 'offline',
-  SYNCING = 'syncing',
-  ERROR = 'error',
+  ONLINE  = 'ONLINE',
+  OFFLINE = 'OFFLINE',
+  SYNCING = 'SYNCING',
+  ERROR   = 'ERROR',
 }

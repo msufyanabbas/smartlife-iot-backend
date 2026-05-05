@@ -1,21 +1,32 @@
 // src/modules/edge/entities/edge-instance.entity.ts
-import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  Column,
+  Index,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+} from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, User } from '@modules/index.entities';
-import { EdgeStatus } from '@common/enums/index.enum';
+import { Tenant } from '@modules/tenants/entities/tenant.entity';
+import { Customer } from '@modules/customers/entities/customers.entity';
+import { User } from '@modules/users/entities/user.entity';
+import { EdgeStatus } from '@common/enums/edge.enum';
+import { EdgeCommand } from './edge-command.entity';
+import { EdgeMetricsSnapshot } from './edge-metrics-snapshot.entity';
 
 @Entity('edge_instances')
 @Index(['tenantId', 'status'])
 @Index(['tenantId', 'userId'])
 @Index(['tenantId', 'customerId'])
 @Index(['status'])
+@Index(['edgeToken'], { unique: true })
 export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -27,7 +38,6 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -39,7 +49,6 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-
   userId: string;
 
   @ManyToOne(() => User)
@@ -51,43 +60,49 @@ export class EdgeInstance extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  name: string;  // "Edge Gateway 1", "Factory Floor Edge"
+  name: string;
 
   @Column({ type: 'text', nullable: true })
   description?: string;
 
   @Column({ nullable: true })
-  location?: string;  // "Building A - Floor 3", "Warehouse 2"
+  location?: string;
 
   @Column({ type: 'enum', enum: EdgeStatus, default: EdgeStatus.OFFLINE })
-
   status: EdgeStatus;
 
   @Column()
-  version: string;  // "1.2.5"
+  version: string;
 
   // ══════════════════════════════════════════════════════════════════════════
   // NETWORK INFO
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  ipAddress?: string;  // "192.168.1.100"
+  ipAddress?: string;
 
   @Column({ nullable: true })
-  macAddress?: string;  // "00:1B:44:11:3A:B7"
+  macAddress?: string;
 
   @Column({ nullable: true })
-  hostname?: string;  // "edge-gateway-001"
+  hostname?: string;
 
   @Column({ type: 'timestamp', nullable: true })
   lastSeen?: Date;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // EDGE TOKEN — used by the physical agent to authenticate without a JWT
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ unique: true })
+  edgeToken: string;
 
   // ══════════════════════════════════════════════════════════════════════════
   // DEVICE COUNT
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'int', default: 0 })
-  deviceCount: number;  // How many devices connected to this edge
+  deviceCount: number;
 
   // ══════════════════════════════════════════════════════════════════════════
   // SYSTEM METRICS
@@ -95,24 +110,14 @@ export class EdgeInstance extends BaseEntity {
 
   @Column({ type: 'jsonb', nullable: true })
   metrics?: {
-    cpu: number;              // Percentage (0-100)
-    memory: number;           // Percentage (0-100)
-    storage: number;          // Percentage (0-100)
-    uptime: number;           // Seconds
-    temperature?: number;     // Celsius
-    networkIn?: number;       // Bytes per second
-    networkOut?: number;      // Bytes per second
+    cpu: number;
+    memory: number;
+    storage: number;
+    uptime: number;
+    temperature?: number;
+    networkIn?: number;
+    networkOut?: number;
   };
-  // Example:
-  // metrics: {
-  //   cpu: 45.2,
-  //   memory: 62.8,
-  //   storage: 38.5,
-  //   uptime: 864000,  // 10 days
-  //   temperature: 42,
-  //   networkIn: 1024000,
-  //   networkOut: 512000
-  // }
 
   // ══════════════════════════════════════════════════════════════════════════
   // DATA SYNCHRONIZATION
@@ -120,20 +125,12 @@ export class EdgeInstance extends BaseEntity {
 
   @Column({ type: 'jsonb', nullable: true })
   dataSync?: {
-    pending: number;          // Messages pending sync
-    lastSync?: Date;          // Last successful sync
-    syncInterval?: number;    // Seconds between syncs
-    failedAttempts?: number;  // Consecutive failed sync attempts
-    totalSynced?: number;     // Total messages synced
+    pending: number;
+    lastSync?: Date;
+    syncInterval?: number;
+    failedAttempts?: number;
+    totalSynced?: number;
   };
-  // Example:
-  // dataSync: {
-  //   pending: 42,
-  //   lastSync: new Date('2024-03-01T10:30:00Z'),
-  //   syncInterval: 60,
-  //   failedAttempts: 0,
-  //   totalSynced: 15420
-  // }
 
   // ══════════════════════════════════════════════════════════════════════════
   // CONFIGURATION
@@ -144,58 +141,47 @@ export class EdgeInstance extends BaseEntity {
     enabled: boolean;
     autoSync: boolean;
     maxDevices?: number;
-    protocols?: string[];     // ['MQTT', 'HTTP', 'Modbus']
-    storageLimit?: number;    // GB
-    retentionDays?: number;   // Days to keep data locally
+    protocols?: string[];
+    storageLimit?: number;
+    retentionDays?: number;
   };
-  // Example:
-  // config: {
-  //   enabled: true,
-  //   autoSync: true,
-  //   maxDevices: 100,
-  //   protocols: ['MQTT', 'HTTP', 'Modbus'],
-  //   storageLimit: 50,
-  //   retentionDays: 7
-  // }
 
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'simple-array', nullable: true })
-  tags?: string[];  // ['production', 'critical', 'factory-floor']
+  tags?: string[];
 
   @Column({ type: 'jsonb', nullable: true })
   additionalInfo?: Record<string, any>;
 
   // ══════════════════════════════════════════════════════════════════════════
+  // RELATIONS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @OneToMany(() => EdgeCommand, (cmd: any) => cmd.edge)
+  commands: EdgeCommand[];
+
+  @OneToMany(() => EdgeMetricsSnapshot, (snap: any) => snap.edge)
+  metricsSnapshots: EdgeMetricsSnapshot[];
+
+  // ══════════════════════════════════════════════════════════════════════════
   // HELPER METHODS
   // ══════════════════════════════════════════════════════════════════════════
 
-  /**
-   * Check if edge instance is online
-   */
   isOnline(): boolean {
     return this.status === EdgeStatus.ONLINE;
   }
 
-  /**
-   * Check if edge instance is offline
-   */
   isOffline(): boolean {
     return this.status === EdgeStatus.OFFLINE;
   }
 
-  /**
-   * Check if edge instance has pending sync
-   */
   hasPendingSync(): boolean {
     return (this.dataSync?.pending ?? 0) > 0;
   }
 
-  /**
-   * Check if edge instance is healthy (online and low pending)
-   */
   isHealthy(): boolean {
     return (
       this.status === EdgeStatus.ONLINE &&
@@ -205,43 +191,25 @@ export class EdgeInstance extends BaseEntity {
     );
   }
 
-  /**
-   * Get uptime in human-readable format
-   */
   getUptimeFormatted(): string {
     if (!this.metrics?.uptime) return 'N/A';
-
     const seconds = this.metrics.uptime;
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
-
     return `${days}d ${hours}h ${minutes}m`;
   }
 
-  /**
-   * Check if edge was seen recently (within last 5 minutes)
-   */
   wasSeenRecently(): boolean {
     if (!this.lastSeen) return false;
-    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
-    return this.lastSeen.getTime() > fiveMinutesAgo;
+    return this.lastSeen.getTime() > Date.now() - 5 * 60 * 1000;
   }
 
-  /**
-   * Update metrics
-   */
-  updateMetrics(metrics: Partial<EdgeInstance['metrics']>): void {
-    this.metrics = {
-      ...this.metrics,
-      ...metrics,
-    } as EdgeInstance['metrics'];
+  updateMetrics(metrics: Partial<NonNullable<EdgeInstance['metrics']>>): void {
+    this.metrics = { ...this.metrics, ...metrics } as EdgeInstance['metrics'];
     this.lastSeen = new Date();
   }
 
-  /**
-   * Update sync status
-   */
   updateSyncStatus(pending: number, success: boolean = true): void {
     if (!this.dataSync) {
       this.dataSync = { pending };

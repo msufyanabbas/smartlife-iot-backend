@@ -1,3 +1,4 @@
+
 // User & Auth entities
 export { User } from './users/entities/user.entity';
 export { RefreshToken } from './auth/entities/refresh-token.entity';
@@ -16,6 +17,8 @@ export { Device } from './devices/entities/device.entity';
 export { Telemetry } from './telemetry/entities/telemetry.entity';
 export { Asset } from './assets/entities/asset.entity';
 export { EdgeInstance } from './edge/entities/edge-instance.entity';
+export { EdgeCommand } from './edge/entities/edge-command.entity';
+export { EdgeMetricsSnapshot } from './edge/entities/edge-metrics-snapshot.entity';
 
 // Profile entities
 export { DeviceProfile } from './profiles/entities/device-profile.entity';
