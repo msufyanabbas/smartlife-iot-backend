@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SmartLife — WebSocket Tester</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;600;800&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --border: #1e1e2e;
+    --border-bright: #2e2e4e;
+    --accent: #00ff88;
+    --accent-dim: #00ff8822;
+    --accent-mid: #00ff8866;
+    --warn: #ffaa00;
+    --warn-dim: #ffaa0022;
+    --error: #ff4466;
+    --error-dim: #ff446622;
+    --info: #44aaff;
+    --info-dim: #44aaff22;
+    --text: #e0e0f0;
+    --text-dim: #606080;
+    --text-mid: #9090b0;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity: 0.4;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .layout {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    grid-template-rows: 60px 1fr;
+    height: 100vh;
+    gap: 0;
+  }
+
+  /* ── Header ── */
+  header {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    gap: 16px;
+    background: var(--surface);
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 16px;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+  }
+
+  .logo span { color: var(--text-dim); }
+
+  .header-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border: 1px solid var(--border-bright);
+    border-radius: 2px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .header-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .global-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: background 0.3s;
+  }
+  .dot.connected { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .dot.error { background: var(--error); box-shadow: 0 0 8px var(--error); }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel {
+    border-bottom: 1px solid var(--border);
+    padding: 16px;
+  }
+
+  .panel-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .panel-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  label {
+    display: block;
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+  }
+
+  input, textarea, select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border-bright);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 8px 10px;
+    border-radius: 3px;
+    outline: none;
+    transition: border-color 0.2s;
+    margin-bottom: 10px;
+  }
+
+  input:focus, textarea:focus, select:focus {
+    border-color: var(--accent-mid);
+  }
+
+  textarea { resize: vertical; min-height: 80px; }
+  select option { background: var(--surface); }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: 1px solid var(--border-bright);
+    background: transparent;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.15s;
+    width: 100%;
+    margin-bottom: 6px;
+  }
+
+  .btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+  .btn.primary { border-color: var(--accent-mid); color: var(--accent); background: var(--accent-dim); }
+  .btn.primary:hover { background: #00ff8833; }
+  .btn.danger { border-color: var(--error); color: var(--error); background: var(--error-dim); }
+  .btn.danger:hover { background: #ff446633; }
+  .btn.warn { border-color: var(--warn); color: var(--warn); background: var(--warn-dim); }
+  .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .btn-row { display: flex; gap: 6px; }
+  .btn-row .btn { margin-bottom: 0; }
+
+  /* NS tabs */
+  .ns-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .ns-tab {
+    flex: 1;
+    padding: 10px;
+    text-align: center;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+
+  .ns-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .ns-tab:hover { color: var(--text); }
+
+  .ns-panel { display: none; padding: 16px; }
+  .ns-panel.active { display: block; }
+
+  /* Status indicators per namespace */
+  .ns-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border-bright);
+    border-radius: 3px;
+    margin-bottom: 10px;
+    font-size: 11px;
+  }
+
+  .ns-status .dot { width: 6px; height: 6px; }
+
+  /* ── Main area ── */
+  .main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Log toolbar */
+  .log-toolbar {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    gap: 8px;
+    background: var(--surface);
+  }
+
+  .log-toolbar .panel-title { margin: 0; flex: none; }
+
+  .filter-pills {
+    display: flex;
+    gap: 4px;
+    margin-left: 8px;
+  }
+
+  .pill {
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    border: 1px solid var(--border-bright);
+    color: var(--text-dim);
+    transition: all 0.15s;
+    text-transform: uppercase;
+  }
+
+  .pill.active-all { border-color: var(--text-mid); color: var(--text); }
+  .pill.active-telemetry { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+  .pill.active-alarm { border-color: var(--error); color: var(--error); background: var(--error-dim); }
+  .pill.active-connect { border-color: var(--info); color: var(--info); background: var(--info-dim); }
+
+  .log-count {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+
+  .clear-btn {
+    padding: 3px 10px;
+    border: 1px solid var(--border-bright);
+    background: transparent;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.15s;
+  }
+
+  .clear-btn:hover { border-color: var(--error); color: var(--error); }
+
+  /* Log area */
+  .log-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    scroll-behavior: smooth;
+  }
+
+  .log-area::-webkit-scrollbar { width: 4px; }
+  .log-area::-webkit-scrollbar-track { background: transparent; }
+  .log-area::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+
+  .log-entry {
+    display: grid;
+    grid-template-columns: 80px 80px 1fr;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 3px;
+    border-left: 2px solid transparent;
+    margin-bottom: 2px;
+    transition: background 0.1s;
+    cursor: pointer;
+    animation: slideIn 0.15s ease;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-4px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .log-entry:hover { background: var(--surface); }
+
+  .log-entry.telemetry { border-left-color: var(--accent); }
+  .log-entry.alarm { border-left-color: var(--error); }
+  .log-entry.connect { border-left-color: var(--info); }
+  .log-entry.sent { border-left-color: var(--warn); }
+  .log-entry.system { border-left-color: var(--text-dim); }
+
+  .log-time { color: var(--text-dim); font-size: 11px; }
+  .log-tag {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 1px 6px;
+    border-radius: 2px;
+    align-self: center;
+    text-align: center;
+  }
+
+  .log-entry.telemetry .log-tag { background: var(--accent-dim); color: var(--accent); }
+  .log-entry.alarm .log-tag { background: var(--error-dim); color: var(--error); }
+  .log-entry.connect .log-tag { background: var(--info-dim); color: var(--info); }
+  .log-entry.sent .log-tag { background: var(--warn-dim); color: var(--warn); }
+  .log-entry.system .log-tag { background: #ffffff11; color: var(--text-dim); }
+
+  .log-msg { font-size: 12px; color: var(--text); word-break: break-all; }
+  .log-msg .key { color: var(--accent); }
+  .log-msg .val { color: var(--warn); }
+  .log-msg .ns { color: var(--info); }
+
+  /* Expandable detail */
+  .log-detail {
+    display: none;
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--text-mid);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .log-entry.expanded .log-detail { display: block; }
+
+  /* Stats bar */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .stat {
+    padding: 8px 16px;
+    border-right: 1px solid var(--border);
+    text-align: center;
+  }
+
+  .stat:last-child { border-right: none; }
+  .stat-val {
+    font-family: 'Syne', sans-serif;
+    font-size: 20px;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 2px;
+  }
+
+  .stat-val.green { color: var(--accent); }
+  .stat-val.red { color: var(--error); }
+  .stat-val.blue { color: var(--info); }
+  .stat-val.yellow { color: var(--warn); }
+  .stat-label { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.1em; }
+
+  /* Scrollable sidebar sections */
+  .sidebar-scroll {
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .sidebar-scroll::-webkit-scrollbar { width: 3px; }
+  .sidebar-scroll::-webkit-scrollbar-thumb { background: var(--border-bright); }
+
+  /* Device/Room chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .chip {
+    padding: 3px 8px;
+    border: 1px solid var(--border-bright);
+    border-radius: 2px;
+    font-size: 10px;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+  .chip .chip-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+  /* Pulse animation for active connections */
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .pulsing { animation: pulse 1.5s ease-in-out infinite; }
+
+  /* Empty state */
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: var(--text-dim);
+    font-size: 12px;
+    gap: 8px;
+  }
+
+  .empty-icon { font-size: 32px; opacity: 0.3; }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">SMART<span>LIFE</span></div>
+    <div class="header-badge">WS Tester</div>
+    <div class="header-right">
+      <div class="global-status">
+        <div class="dot" id="globalDot"></div>
+        <span id="globalStatus">Disconnected</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <!-- Connection config -->
+    <div class="panel">
+      <div class="panel-title">Connection</div>
+      <label>Server URL</label>
+      <input id="serverUrl" value="http://localhost:4000" />
+      <label>JWT Token</label>
+      <input id="jwtToken" type="password" placeholder="Bearer token..." />
+      <div class="btn-row">
+        <button class="btn primary" id="connectAllBtn" onclick="connectAll()">⚡ Connect All</button>
+        <button class="btn danger" id="disconnectAllBtn" onclick="disconnectAll()" disabled>✕ Disconnect</button>
+      </div>
+    </div>
+
+    <!-- Namespace tabs -->
+    <div class="ns-tabs">
+      <div class="ns-tab active" onclick="switchTab('telemetry')">Telemetry</div>
+      <div class="ns-tab" onclick="switchTab('alarms')">Alarms</div>
+      <div class="ns-tab" onclick="switchTab('emit')">Emit</div>
+    </div>
+
+    <div class="sidebar-scroll">
+
+      <!-- Telemetry tab -->
+      <div class="ns-panel active" id="tab-telemetry">
+        <div class="ns-status">
+          <div class="dot" id="telDot"></div>
+          <span id="telStatus" style="font-size:11px;color:var(--text-dim)">Disconnected</span>
+          <span style="margin-left:auto;font-size:10px;color:var(--text-dim)">/ws</span>
+        </div>
+
+        <label>Subscribe to Device ID</label>
+        <input id="telDeviceId" placeholder="device-uuid-here..." />
+        <div class="btn-row">
+          <button class="btn primary" onclick="subscribeDevice()">+ Subscribe</button>
+          <button class="btn" onclick="unsubscribeDevice()">− Unsub</button>
+        </div>
+
+        <label style="margin-top:10px">Dashboard Subscribe</label>
+        <input id="dashboardId" placeholder="dashboard-uuid..." />
+        <input id="dashboardDeviceIds" placeholder="device-id-1, device-id-2, ..." />
+        <button class="btn" onclick="subscribeDashboard()">+ Dashboard Subscribe</button>
+
+        <label style="margin-top:8px">Active Subscriptions</label>
+        <div class="chips" id="telChips">
+          <div class="empty" style="height:40px;font-size:11px">No subscriptions</div>
+        </div>
+      </div>
+
+      <!-- Alarms tab -->
+      <div class="ns-panel" id="tab-alarms">
+        <div class="ns-status">
+          <div class="dot" id="almDot"></div>
+          <span id="almStatus" style="font-size:11px;color:var(--text-dim)">Disconnected</span>
+          <span style="margin-left:auto;font-size:10px;color:var(--text-dim)">/alarms</span>
+        </div>
+
+        <label>Subscribe to Device Alarms</label>
+        <input id="almDeviceId" placeholder="device-uuid-here..." />
+        <button class="btn primary" onclick="subscribeDeviceAlarms()">+ Subscribe Device</button>
+
+        <label>Subscribe to Customer</label>
+        <input id="almCustomerId" placeholder="customer-uuid-here..." />
+        <button class="btn" onclick="subscribeCustomerAlarms()">+ Subscribe Customer</button>
+
+        <label style="margin-top:8px">Active Alarm Subscriptions</label>
+        <div class="chips" id="almChips">
+          <div class="empty" style="height:40px;font-size:11px">No subscriptions</div>
+        </div>
+      </div>
+
+      <!-- Emit tab -->
+      <div class="ns-panel" id="tab-emit">
+        <label>Namespace</label>
+        <select id="emitNs">
+          <option value="ws">ws (main)</option>
+          <option value="alarms">alarms</option>
+        </select>
+
+        <label>Event Name</label>
+        <input id="emitEvent" value="device:subscribe" />
+
+        <label>Payload (JSON)</label>
+        <textarea id="emitPayload" placeholder='{"deviceId":"uuid-here"}'></textarea>
+
+        <button class="btn warn" onclick="emitCustom()">▶ Emit Event</button>
+
+        <div style="margin-top:12px">
+          <div class="panel-title">Quick Emit</div>
+          <button class="btn" onclick="quickEmit('ws', 'device:subscribe', {deviceId: document.getElementById('telDeviceId').value})">📡 Device Subscribe</button>
+          <button class="btn" onclick="quickEmit('alarms', 'subscribe:device', document.getElementById('almDeviceId').value)">🔔 Alarm Sub Device</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Main log area -->
+  <div class="main">
+    <div class="log-toolbar">
+      <div class="panel-title">Event Log</div>
+      <div class="filter-pills">
+        <div class="pill active-all" onclick="setFilter('all', this)">All</div>
+        <div class="pill" onclick="setFilter('telemetry', this)">Telemetry</div>
+        <div class="pill" onclick="setFilter('alarm', this)">Alarms</div>
+        <div class="pill" onclick="setFilter('connect', this)">Conn.</div>
+        <div class="pill" onclick="setFilter('sent', this)">Sent</div>
+      </div>
+      <div class="log-count" id="logCount">0 events</div>
+      <button class="clear-btn" onclick="clearLog()">Clear</button>
+    </div>
+
+    <div class="log-area" id="logArea">
+      <div class="empty" id="emptyState">
+        <div class="empty-icon">⚡</div>
+        <div>Connect to start receiving events</div>
+      </div>
+    </div>
+
+    <div class="stats-bar">
+      <div class="stat">
+        <div class="stat-val green" id="statTelemetry">0</div>
+        <div class="stat-label">Telemetry</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val red" id="statAlarms">0</div>
+        <div class="stat-label">Alarms</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val blue" id="statConnect">0</div>
+        <div class="stat-label">Connections</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val yellow" id="statSent">0</div>
+        <div class="stat-label">Sent</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let sockets = { ws: null, alarms: null };
+let logs = [];
+let currentFilter = 'all';
+let stats = { telemetry: 0, alarms: 0, connect: 0, sent: 0 };
+let telSubs = new Set();
+let almSubs = new Set();
+
+// ── Connect / Disconnect ───────────────────────────────────────────────────
+function connectAll() {
+  const url = document.getElementById('serverUrl').value.trim();
+  const token = document.getElementById('jwtToken').value.trim();
+
+  if (!url) return alert('Enter server URL');
+
+  const opts = {
+    auth: { token },
+    transports: ['websocket'],
+    reconnection: true,
+    reconnectionDelay: 2000,
+  };
+
+  connectNS('ws', url, opts);
+  connectNS('alarms', url, opts);
+
+  document.getElementById('connectAllBtn').disabled = true;
+  document.getElementById('disconnectAllBtn').disabled = false;
+}
+
+function connectNS(ns, url, opts) {
+  if (sockets[ns]) sockets[ns].disconnect();
+
+  const socket = io(`${url}/${ns}`, opts);
+  sockets[ns] = socket;
+
+  const dotId = ns === 'ws' ? 'telDot' : 'almDot';
+  const statusId = ns === 'ws' ? 'telStatus' : 'almStatus';
+
+  socket.on('connect', () => {
+    updateDot(dotId, 'connected');
+    document.getElementById(statusId).textContent = `Connected — ${socket.id?.slice(0,8)}...`;
+    addLog('connect', ns, `Connected to /${ns}`, { socketId: socket.id });
+    stats.connect++;
+    updateStats();
+    updateGlobalStatus();
+  });
+
+  socket.on('disconnect', (reason) => {
+    updateDot(dotId, '');
+    document.getElementById(statusId).textContent = 'Disconnected';
+    addLog('connect', ns, `Disconnected from /${ns}: ${reason}`);
+    updateGlobalStatus();
+  });
+
+  socket.on('connect_error', (err) => {
+    updateDot(dotId, 'error');
+    document.getElementById(statusId).textContent = `Error: ${err.message}`;
+    addLog('system', ns, `Connection error: ${err.message}`);
+  });
+
+  // ── /ws namespace events ──
+  if (ns === 'ws') {
+    // Welcome message on connect
+    socket.on('connected', (data) => {
+      addLog('system', ns, `Welcome: ${data.message}`, data);
+    });
+
+    // Device telemetry broadcast (from broadcastDeviceTelemetry)
+    socket.on('device:telemetry', (data) => {
+      stats.telemetry++;
+      updateStats();
+      addLog('telemetry', ns, formatTelemetry(data), data);
+    });
+
+    // Device status change
+    socket.on('device:status', (data) => {
+      addLog('connect', ns, `Device ${shortId(data.deviceId)} status → ${data.status} (online: ${data.isOnline})`, data);
+    });
+
+    // Alarm from broadcastAlarm()
+    socket.on('alarm:new', (data) => {
+      stats.alarms++;
+      updateStats();
+      addLog('alarm', ns, `🚨 ALARM: ${data.severity} — ${data.message}`, data);
+    });
+
+    socket.on('device:alarm', (data) => {
+      stats.alarms++;
+      updateStats();
+      addLog('alarm', ns, `🚨 DEVICE ALARM: ${data.severity} — device ${shortId(data.deviceId)}`, data);
+    });
+
+    // Dashboard update
+    socket.on('dashboard:updated', (data) => {
+      addLog('system', ns, `Dashboard ${shortId(data.dashboardId)} updated`, data);
+    });
+
+    // Subscribe/unsubscribe ACKs
+    socket.on('stats:connections', (data) => {
+      addLog('system', ns, `Server stats — clients: ${data.connectedClients}, subs: ${data.totalSubscriptions}`, data);
+    });
+
+    // Catch-all for any other events
+    socket.onAny((event, ...args) => {
+      const known = ['connected','device:telemetry','device:status','alarm:new','device:alarm','dashboard:updated','stats:connections'];
+      if (!known.includes(event)) {
+        addLog('system', ns, `[unknown event] ${event}`, args[0]);
+      }
+    });
+  }
+
+  // ── /alarms namespace events ──
+  if (ns === 'alarms') {
+    socket.on('alarm:triggered', (data) => {
+      stats.alarms++;
+      updateStats();
+      addLog('alarm', ns, `🚨 TRIGGERED: "${data.name}" — ${data.severity} — val=${data.currentValue}`, data);
+    });
+
+    socket.on('alarm:acknowledged', (data) => {
+      addLog('alarm', ns, `✓ ACK: "${data.name}" by ${shortId(data.acknowledgedBy)}`, data);
+    });
+
+    socket.on('alarm:cleared', (data) => {
+      addLog('alarm', ns, `✓ CLEARED: "${data.name}"`, data);
+    });
+
+    socket.on('alarm:resolved', (data) => {
+      addLog('alarm', ns, `✓ RESOLVED: "${data.name}" — ${data.resolutionNote || ''}`, data);
+    });
+
+    socket.on('subscribed', (data) => {
+      addLog('system', ns, `Alarm subscribed: ${JSON.stringify(data.data)}`, data);
+    });
+
+    socket.onAny((event, ...args) => {
+      const known = ['alarm:triggered','alarm:acknowledged','alarm:cleared','alarm:resolved','subscribed'];
+      if (!known.includes(event)) {
+        addLog('system', ns, `[unknown event] ${event}`, args[0]);
+      }
+    });
+  }
+}
+
+function disconnectAll() {
+  Object.values(sockets).forEach(s => s?.disconnect());
+  sockets = { ws: null, alarms: null };
+  document.getElementById('connectAllBtn').disabled = false;
+  document.getElementById('disconnectAllBtn').disabled = true;
+  updateGlobalStatus();
+}
+
+// ── Subscriptions ──────────────────────────────────────────────────────────
+function subscribeDevice() {
+  const id = document.getElementById('telDeviceId').value.trim();
+  if (!id) return;
+  if (!sockets.ws?.connected) return alert('Connect first');
+
+  // Uses device:subscribe event (not subscribe)
+  sockets.ws.emit('device:subscribe', { deviceId: id }, (response) => {
+    addLog('system', 'ws', `Subscribe ACK: ${JSON.stringify(response)}`);
+  });
+  telSubs.add(id);
+  renderChips('telChips', telSubs, (id) => {
+    sockets.ws.emit('device:unsubscribe', { deviceId: id });
+    telSubs.delete(id);
+    renderChips('telChips', telSubs, null);
+  });
+  stats.sent++;
+  updateStats();
+  addLog('sent', 'ws', `emit device:subscribe → ${shortId(id)}`);
+}
+
+function unsubscribeDevice() {
+  const id = document.getElementById('telDeviceId').value.trim();
+  if (!id || !sockets.ws?.connected) return;
+  sockets.ws.emit('device:unsubscribe', { deviceId: id });
+  telSubs.delete(id);
+  renderChips('telChips', telSubs, null);
+  stats.sent++;
+  updateStats();
+  addLog('sent', 'ws', `emit device:unsubscribe → ${shortId(id)}`);
+}
+
+function subscribeDashboard() {
+  const id = document.getElementById('dashboardId')?.value.trim();
+  const deviceIds = (document.getElementById('dashboardDeviceIds')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!id || !sockets.ws?.connected) return;
+  sockets.ws.emit('dashboard:subscribe', { dashboardId: id, deviceIds });
+  stats.sent++;
+  updateStats();
+  addLog('sent', 'ws', `emit dashboard:subscribe → ${shortId(id)} (${deviceIds.length} devices)`);
+}
+
+function subscribeDeviceAlarms() {
+  const id = document.getElementById('almDeviceId').value.trim();
+  if (!id) return;
+  if (!sockets.alarms?.connected) return alert('Connect alarms namespace first');
+
+  sockets.alarms.emit('subscribe:device', id);
+  almSubs.add(`device:${id}`);
+  renderChips('almChips', almSubs, null);
+  stats.sent++;
+  updateStats();
+  addLog('sent', 'alarms', `emit subscribe:device → ${shortId(id)}`);
+}
+
+function subscribeCustomerAlarms() {
+  const id = document.getElementById('almCustomerId').value.trim();
+  if (!id) return;
+  if (!sockets.alarms?.connected) return alert('Connect alarms namespace first');
+
+  sockets.alarms.emit('subscribe:customer', id);
+  almSubs.add(`customer:${id}`);
+  renderChips('almChips', almSubs, null);
+  stats.sent++;
+  updateStats();
+  addLog('sent', 'alarms', `emit subscribe:customer → ${shortId(id)}`);
+}
+
+// ── Custom Emit ────────────────────────────────────────────────────────────
+function emitCustom() {
+  const ns = document.getElementById('emitNs').value;
+  const event = document.getElementById('emitEvent').value.trim();
+  const rawPayload = document.getElementById('emitPayload').value.trim();
+
+  const socket = sockets[ns];
+  if (!socket?.connected) return alert(`Connect ${ns} namespace first`);
+  if (!event) return;
+
+  let payload;
+  try { payload = JSON.parse(rawPayload); } catch { payload = rawPayload; }
+
+  socket.emit(event, payload, (ack) => {
+    if (ack) addLog('system', ns, `ACK: ${JSON.stringify(ack)}`);
+  });
+  stats.sent++;
+  updateStats();
+  addLog('sent', ns, `emit ${event} → ${JSON.stringify(payload).slice(0, 60)}`);
+}
+
+function quickEmit(ns, event, payload) {
+  const socket = sockets[ns];
+  if (!socket?.connected) return alert(`Connect ${ns} namespace first`);
+  socket.emit(event, payload, (ack) => {
+    if (ack) addLog('system', ns, `ACK: ${JSON.stringify(ack)}`);
+  });
+  stats.sent++;
+  updateStats();
+  addLog('sent', ns, `emit ${event} → ${JSON.stringify(payload)?.slice(0, 40) || 'null'}`);
+}
+
+// ── Log ────────────────────────────────────────────────────────────────────
+function addLog(type, ns, msg, detail) {
+  const entry = { type, ns, msg, detail, time: new Date() };
+  logs.push(entry);
+
+  const empty = document.getElementById('emptyState');
+  if (empty) empty.remove();
+
+  if (currentFilter !== 'all' && currentFilter !== type) {
+    document.getElementById('logCount').textContent = `${logs.length} events`;
+    return;
+  }
+
+  renderLogEntry(entry);
+  document.getElementById('logCount').textContent = `${logs.length} events`;
+
+  const area = document.getElementById('logArea');
+  area.scrollTop = area.scrollHeight;
+}
+
+function renderLogEntry(entry) {
+  const area = document.getElementById('logArea');
+  const div = document.createElement('div');
+  div.className = `log-entry ${entry.type}`;
+
+  const time = entry.time.toTimeString().slice(0, 8);
+  const detailStr = entry.detail ? JSON.stringify(entry.detail, null, 2) : '';
+  const msgFormatted = formatMsg(entry.msg, entry.type);
+
+  div.innerHTML = `
+    <div class="log-time">${time}</div>
+    <div class="log-tag">${entry.type}</div>
+    <div class="log-msg"><span class="ns">[${entry.ns}]</span> ${msgFormatted}</div>
+    ${detailStr ? `<div class="log-detail">${escHtml(detailStr)}</div>` : ''}
+  `;
+
+  if (detailStr) {
+    div.addEventListener('click', () => div.classList.toggle('expanded'));
+  }
+
+  area.appendChild(div);
+}
+
+function formatMsg(msg, type) {
+  return msg
+    .replace(/([a-f0-9-]{36})/g, '<span style="color:var(--text-mid)">$1</span>')
+    .replace(/(temperature|humidity|battery|switch_\d|active_power)(:?\s*[=→]\s*)([\d.]+)/g,
+      '<span class="key">$1</span>$2<span class="val">$3</span>');
+}
+
+function formatTelemetry(data) {
+  const id = shortId(data.deviceId);
+  const keys = Object.keys(data.data || {}).slice(0, 4);
+  const vals = keys.map(k => `${k}=${JSON.stringify(data.data[k])}`).join(' ');
+  return `device:${id} — ${vals}${Object.keys(data.data||{}).length > 4 ? '...' : ''}`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function shortId(id) {
+  if (!id) return '???';
+  return id.length > 12 ? id.slice(0, 8) + '…' : id;
+}
+
+function setFilter(f, el) {
+  currentFilter = f;
+  document.querySelectorAll('.pill').forEach(p => {
+    p.className = 'pill';
+  });
+  el.className = `pill active-${f}`;
+
+  const area = document.getElementById('logArea');
+  area.innerHTML = '';
+
+  const filtered = f === 'all' ? logs : logs.filter(l => l.type === f);
+  if (filtered.length === 0) {
+    area.innerHTML = '<div class="empty"><div class="empty-icon">🔍</div><div>No events of this type</div></div>';
+  } else {
+    filtered.forEach(renderLogEntry);
+    area.scrollTop = area.scrollHeight;
+  }
+}
+
+function clearLog() {
+  logs = [];
+  stats = { telemetry: 0, alarms: 0, connect: 0, sent: 0 };
+  updateStats();
+  document.getElementById('logArea').innerHTML =
+    '<div class="empty" id="emptyState"><div class="empty-icon">⚡</div><div>Log cleared</div></div>';
+  document.getElementById('logCount').textContent = '0 events';
+}
+
+// ── UI Helpers ──────────────────────────────────────────────────────────────
+function updateDot(id, state) {
+  const dot = document.getElementById(id);
+  dot.className = 'dot ' + state;
+}
+
+function updateGlobalStatus() {
+  const anyConnected = Object.values(sockets).some(s => s?.connected);
+  const dot = document.getElementById('globalDot');
+  const status = document.getElementById('globalStatus');
+  dot.className = anyConnected ? 'dot connected' : 'dot';
+  status.textContent = anyConnected ? 'Connected' : 'Disconnected';
+}
+
+function updateStats() {
+  document.getElementById('statTelemetry').textContent = stats.telemetry;
+  document.getElementById('statAlarms').textContent = stats.alarms;
+  document.getElementById('statConnect').textContent = stats.connect;
+  document.getElementById('statSent').textContent = stats.sent;
+}
+
+function renderChips(containerId, set, onRemove) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  if (set.size === 0) {
+    container.innerHTML = '<div class="empty" style="height:30px;font-size:10px">No subscriptions</div>';
+    return;
+  }
+  set.forEach(id => {
+    const chip = document.createElement('div');
+    chip.className = 'chip active';
+    chip.innerHTML = `<span class="chip-dot"></span>${id.slice(0, 16)}… <span style="opacity:0.5;margin-left:2px">✕</span>`;
+    if (onRemove) chip.addEventListener('click', () => onRemove(id));
+    container.appendChild(chip);
+  });
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.ns-tab').forEach((t, i) => {
+    const names = ['telemetry', 'alarms', 'emit'];
+    t.classList.toggle('active', names[i] === name);
+  });
+  document.querySelectorAll('.ns-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(`tab-${name}`).classList.add('active');
+}
+</script>
+</body>
+</html>

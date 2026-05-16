@@ -40,7 +40,7 @@ export class SolutionTemplatesController {
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Create a new solution template' })
+  @ApiOperation({ summary: 'Create a new solution temp1late' })
   @ApiResponse({ status: 201, description: 'Template created successfully' })
   create(
     @CurrentUser() user: User,

@@ -2,6 +2,8 @@
 import { AppConfig } from '@common/interfaces/common.interface';
 import { registerAs } from '@nestjs/config';
 
+//test
+
 const parseBoolean = (value: string | undefined, defaultValue = false): boolean => {
   if (!value) return defaultValue;
   return value.toLowerCase() === 'true';

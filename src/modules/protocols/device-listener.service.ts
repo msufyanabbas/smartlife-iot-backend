@@ -73,6 +73,8 @@ export class DeviceListenerService {
       this.logger.log(`standardTelemetry.data type: ${typeof standardTelemetry.data}, value: ${JSON.stringify(standardTelemetry.data).substring(0, 200)}`);
 const decodedData = this.codecRegistry.decode(standardTelemetry.data, codecMeta);
 
+
+
       // Merge decoded fields with any top-level fields from StandardTelemetry
     const finalData: Record<string, any> = {
       // ① Everything the codec decoded (device-specific + standard fields)
@@ -84,6 +86,12 @@ const decodedData = this.codecRegistry.decode(standardTelemetry.data, codecMeta)
       ...(standardTelemetry.batteryLevel !== undefined && { batteryLevel:  standardTelemetry.batteryLevel }),
       ...(standardTelemetry.signalStrength !== undefined && { signalStrength: standardTelemetry.signalStrength }),
     };
+
+// Only pipeline non-empty telemetry
+if (Object.keys(finalData).length === 0) {
+  this.logger.debug(`Heartbeat only (no data) — device: ${device.deviceKey}, raw: ${standardTelemetry.data}`);
+  return;
+}
 
       // ── 3. Update device activity ──────────────────────────────────────────
       await this.deviceRepository.update(

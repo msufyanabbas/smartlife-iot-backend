@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SmartLife Dashboard Builder</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/interact.js/1.10.27/interact.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap');
+:root{--bg:#0d0d14;--s:#13131e;--s2:#1a1a28;--b:#1e1e30;--b2:#2a2a40;--ac:#6c63ff;--ac2:#9d97ff;--gr:#00e5a0;--am:#ffb547;--rd:#ff4d6a;--bl:#4da6ff;--tx:#e8e8f5;--tx2:#8888aa;--tx3:#55556a;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--tx);font-family:'JetBrains Mono',monospace;font-size:13px;min-height:100vh;overflow-x:hidden;}
+.topbar{height:52px;background:var(--s);border-bottom:1px solid var(--b);display:flex;align-items:center;padding:0 20px;gap:16px;position:sticky;top:0;z-index:100;}
+.logo{font-family:'Syne',sans-serif;font-weight:800;font-size:17px;color:var(--ac2);letter-spacing:0.02em;flex-shrink:0;}
+.logo span{color:var(--tx3);}
+.dash-name{font-family:'Syne',sans-serif;font-size:13px;font-weight:700;color:var(--tx2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.topbar-actions{display:flex;gap:8px;margin-left:auto;align-items:center;}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border:1px solid var(--b2);background:transparent;color:var(--tx2);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;border-radius:4px;transition:all 0.15s;white-space:nowrap;}
+.btn:hover{border-color:var(--ac);color:var(--ac2);background:rgba(108,99,255,0.1);}
+.btn.primary{border-color:var(--ac);color:var(--ac2);background:rgba(108,99,255,0.12);}
+.btn.primary:hover{background:rgba(108,99,255,0.22);}
+.btn.success{border-color:var(--gr);color:var(--gr);}
+.conn-badge{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--tx3);letter-spacing:0.06em;text-transform:uppercase;}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--tx3);transition:all 0.3s;}
+.dot.ok{background:var(--gr);box-shadow:0 0 6px var(--gr);}
+.dot.err{background:var(--rd);}
+.layout{display:flex;height:calc(100vh - 52px);}
+.left-panel{width:270px;flex-shrink:0;border-right:1px solid var(--b);background:var(--s);display:flex;flex-direction:column;overflow:hidden;}
+.psec{border-bottom:1px solid var(--b);padding:14px 16px;}
+.stitle{font-family:'Syne',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--tx3);margin-bottom:10px;display:flex;align-items:center;gap:6px;}
+.stitle::after{content:'';flex:1;height:1px;background:var(--b);}
+label{display:block;font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;}
+input,select{width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--tx);font-family:'JetBrains Mono',monospace;font-size:12px;padding:7px 10px;border-radius:3px;outline:none;transition:border-color 0.15s;margin-bottom:8px;}
+input:focus,select:focus{border-color:var(--ac);}
+select option{background:var(--s2);}
+.wtypes{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.wtc{background:var(--bg);border:1px solid var(--b2);border-radius:4px;padding:8px;cursor:pointer;transition:all 0.15s;text-align:center;}
+.wtc:hover{border-color:var(--ac);background:rgba(108,99,255,0.06);}
+.wtc.sel{border-color:var(--ac);background:rgba(108,99,255,0.12);}
+.wtic{font-size:18px;margin-bottom:4px;}
+.wtn{font-size:9px;color:var(--tx2);text-transform:uppercase;letter-spacing:0.06em;}
+.pscroll{flex:1;overflow-y:auto;}
+.pscroll::-webkit-scrollbar{width:3px;}
+.pscroll::-webkit-scrollbar-thumb{background:var(--b2);}
+.canvas-area{flex:1;overflow:auto;background:var(--bg);padding:20px;position:relative;}
+.canvas-area::-webkit-scrollbar{width:4px;height:4px;}
+.canvas-area::-webkit-scrollbar-thumb{background:var(--b2);}
+.grid-canvas{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:180px;gap:12px;min-height:calc(100vh - 132px);align-content:start;}
+.wcard{background:var(--s);border:1px solid var(--b);border-radius:6px;display:flex;flex-direction:column;position:relative;overflow:hidden;transition:border-color 0.2s;min-height:160px;}
+.wcard:hover{border-color:var(--b2);}
+.wheader{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--b);gap:8px;flex-shrink:0;}
+.wtitle{font-family:'Syne',sans-serif;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--tx2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dbadge{font-size:9px;padding:2px 6px;border-radius:2px;border:1px solid var(--b2);color:var(--tx3);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dbadge.live{border-color:var(--gr);color:var(--gr);background:rgba(0,229,160,0.06);}
+.wactions{display:flex;gap:4px;}
+.wbtn{width:22px;height:22px;border:1px solid transparent;background:transparent;color:var(--tx3);border-radius:3px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;transition:all 0.15s;}
+.wbtn:hover{border-color:var(--b2);color:var(--tx);background:var(--s2);}
+.wbtn.del:hover{border-color:var(--rd);color:var(--rd);}
+.wbody{flex:1;padding:12px 14px;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.sv{font-family:'Syne',sans-serif;font-size:40px;font-weight:800;line-height:1;color:var(--tx);transition:all 0.3s;}
+.sv.up{color:var(--ac2);}
+.su{font-size:14px;color:var(--tx2);margin-left:4px;}
+.sk{font-size:10px;color:var(--tx3);margin-top:6px;letter-spacing:0.08em;text-transform:uppercase;}
+.sts{font-size:9px;color:var(--tx3);margin-top:4px;}
+.swg{display:grid;grid-template-columns:repeat(auto-fill,minmax(65px,1fr));gap:8px;width:100%;}
+.swi{display:flex;flex-direction:column;align-items:center;gap:6px;}
+.swl{font-size:9px;color:var(--tx2);text-transform:uppercase;letter-spacing:0.05em;}
+.swt{width:44px;height:24px;background:var(--b2);border-radius:12px;position:relative;cursor:pointer;transition:background 0.2s;border:1px solid var(--b2);}
+.swt.on{background:var(--gr);border-color:var(--gr);}
+.swth{width:18px;height:18px;background:var(--tx);border-radius:9px;position:absolute;top:2px;left:2px;transition:left 0.2s;}
+.swt.on .swth{left:22px;}
+.cc{width:100%;height:140px;position:relative;}
+.gc{display:flex;flex-direction:column;align-items:center;gap:4px;width:100%;}
+.gsv{width:140px;height:80px;}
+.elog{width:100%;max-height:160px;overflow-y:auto;}
+.elog::-webkit-scrollbar{width:2px;}
+.elog::-webkit-scrollbar-thumb{background:var(--b2);}
+.erow{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--b);font-size:10px;align-items:center;flex-wrap:wrap;}
+.erow:last-child{border-bottom:none;}
+.etime{color:var(--tx3);flex-shrink:0;}
+.ekey{color:var(--ac2);flex-shrink:0;}
+.eval{color:var(--gr);}
+.empty-cv{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--tx3);pointer-events:none;}
+.empty-icon{font-size:36px;opacity:0.2;}
+.modal-ov{position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:200;display:none;align-items:center;justify-content:center;}
+.modal-ov.open{display:flex;}
+.modal{background:var(--s);border:1px solid var(--b2);border-radius:8px;padding:24px;width:480px;max-height:80vh;overflow-y:auto;}
+.modal-title{font-family:'Syne',sans-serif;font-size:14px;font-weight:800;letter-spacing:0.06em;margin-bottom:18px;text-transform:uppercase;color:var(--ac2);}
+.mfooter{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--b);}
+.right-panel{width:250px;flex-shrink:0;border-left:1px solid var(--b);background:var(--s);display:flex;flex-direction:column;overflow:hidden;}
+.feed-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--b);font-size:11px;}
+.feed-row:last-child{border-bottom:none;}
+.fk{color:var(--tx2);}
+.fv{color:var(--gr);font-weight:600;}
+@keyframes flash{0%{background:rgba(108,99,255,0.2)}100%{background:transparent}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+.wcard{touch-action:none;}
+.resize-handle{position:absolute;bottom:0;right:0;width:18px;height:18px;cursor:se-resize;z-index:10;opacity:0;transition:opacity 0.15s;}
+.wcard:hover .resize-handle{opacity:1;}
+.resize-handle::before{content:'';position:absolute;bottom:3px;right:3px;width:8px;height:8px;border-right:2px solid var(--ac2);border-bottom:2px solid var(--ac2);border-radius:0 0 2px 0;}
+.wcard.resizing{border-color:var(--ac)!important;user-select:none;}
+.wcard.resizing .resize-handle{opacity:1;}
+.col-1{grid-column:span 1;}.col-2{grid-column:span 2;}.col-3{grid-column:span 3;}.col-4{grid-column:span 4;}.col-5{grid-column:span 5;}.col-6{grid-column:span 6;}.col-7{grid-column:span 7;}.col-8{grid-column:span 8;}.col-9{grid-column:span 9;}.col-10{grid-column:span 10;}.col-11{grid-column:span 11;}.col-12{grid-column:span 12;}
+.row-1{grid-row:span 1;}.row-2{grid-row:span 2;}.row-3{grid-row:span 3;}.row-4{grid-row:span 4;}.row-5{grid-row:span 5;}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo">SMART<span>LIFE</span></div>
+  <div class="dash-name" id="dashName">New Dashboard</div>
+  <div class="topbar-actions">
+    <div class="conn-badge"><div class="dot" id="cDot"></div><span id="cStat">Disconnected</span></div>
+    <button class="btn primary" onclick="openModal()">+ Widget</button>
+    <button class="btn success" onclick="saveDash()">↑ Save</button>
+  </div>
+</div>
+<div class="layout">
+  <div class="left-panel">
+    <div class="psec">
+      <div class="stitle">Widget Types</div>
+      <div class="wtypes">
+        <div class="wtc sel" onclick="selType('stat')" id="t-stat"><div class="wtic">📊</div><div class="wtn">Stat Card</div></div>
+        <div class="wtc" onclick="selType('chart')" id="t-chart"><div class="wtic">📈</div><div class="wtn">Time Series</div></div>
+        <div class="wtc" onclick="selType('gauge')" id="t-gauge"><div class="wtic">🎯</div><div class="wtn">Gauge</div></div>
+        <div class="wtc" onclick="selType('switch')" id="t-switch"><div class="wtic">🔌</div><div class="wtn">Switches</div></div>
+        <div class="wtc" onclick="selType('log')" id="t-log"><div class="wtic">📋</div><div class="wtn">Event Log</div></div>
+        <div class="wtc" onclick="selType('alarm')" id="t-alarm"><div class="wtic">🚨</div><div class="wtn">Alarms</div></div>
+      </div>
+    </div>
+    <div class="psec">
+      <div class="stitle">Connection</div>
+      <label>Server URL</label>
+      <input id="cfgUrl" value="http://localhost:4000"/>
+      <label>JWT Token</label>
+      <input id="cfgToken" type="password" placeholder="Paste JWT…"/>
+      <label>Dashboard Name</label>
+      <input id="cfgName" value="IoT Dashboard" oninput="document.getElementById('dashName').textContent=this.value"/>
+      <button class="btn primary" style="width:100%;margin-top:2px" onclick="connectAll()">⚡ Connect</button>
+    </div>
+    <div class="pscroll">
+      <div class="psec">
+        <div class="stitle">Subscribed Devices</div>
+        <div id="devList" style="font-size:11px;color:var(--tx3)">None</div>
+      </div>
+      <div class="psec">
+        <div class="stitle">Live Telemetry</div>
+        <div id="liveFeed" style="padding:0"><div style="color:var(--tx3);font-size:11px">Connect a device…</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="canvas-area" id="cvArea">
+    <div class="empty-cv" id="emptyCV"><div class="empty-icon">⬡</div><div style="font-size:12px;letter-spacing:0.05em">Click + Widget to add your first widget</div></div>
+    <div class="grid-canvas" id="gridCV"></div>
+  </div>
+  <div class="right-panel">
+    <div class="psec">
+      <div class="stitle">Active Alarms</div>
+      <div id="alarmFeed" style="font-size:11px;color:var(--tx3)">No alarms</div>
+    </div>
+    <div class="psec" style="flex:1;overflow:hidden">
+      <div class="stitle">Event Log</div>
+      <div id="gLog" style="max-height:300px;overflow-y:auto;font-size:10px"></div>
+    </div>
+  </div>
+</div>
+<div class="modal-ov" id="addModal">
+  <div class="modal">
+    <div class="modal-title">Add Widget</div>
+    <label>Widget Type</label>
+    <select id="mType" onchange="onTypeChange(this.value)">
+      <option value="stat">Stat Card — single value display</option>
+      <option value="chart">Time Series Chart</option>
+      <option value="gauge">Gauge</option>
+      <option value="switch">Switch Panel</option>
+      <option value="log">Event Log</option>
+      <option value="alarm">Alarm Status</option>
+    </select>
+    <label>Title</label>
+    <input id="mTitle" value="Temperature"/>
+    <label>Device ID</label>
+    <input id="mDevId" placeholder="device-uuid-here"/>
+    <label>Telemetry Key(s) <span style="color:var(--tx3)">(comma-separated for chart/switch)</span></label>
+    <input id="mKeys" placeholder="temperature"/>
+    <label>Unit</label>
+    <input id="mUnit" placeholder="°C"/>
+    <label>Width</label>
+    <select id="mWidth">
+      <option value="col-3">3 cols — narrow</option>
+      <option value="col-4" selected>4 cols</option>
+      <option value="col-6">6 cols — half</option>
+      <option value="col-12">12 cols — full</option>
+    </select>
+    <div id="gaugeOpts">
+      <label>Min / Max (gauge)</label>
+      <div style="display:flex;gap:8px"><input id="mMin" value="0" style="width:50%;margin:0"/><input id="mMax" value="100" style="width:50%;margin:0"/></div>
+    </div>
+    <div class="mfooter">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="doAddWidget()">+ Add Widget</button>
+    </div>
+  </div>
+</div>
+<script>
+let sockets={ws:null,alarms:null},widgets=[],devSubs=new Set(),devData={},charts={},chartDat={},alarmList=[],logLines=[];
+function connectAll(){
+  const url=document.getElementById('cfgUrl').value.trim();
+  const tok=document.getElementById('cfgToken').value.trim();
+  if(!url)return alert('Enter server URL');
+  const opts={auth:{token:tok},transports:['websocket'],reconnection:true};
+  if(sockets.ws)sockets.ws.disconnect();
+  if(sockets.alarms)sockets.alarms.disconnect();
+  sockets.ws=io(url+'/ws',opts);
+  sockets.alarms=io(url+'/alarms',opts);
+  sockets.ws.on('connect',()=>{setConn(true);log('connect','Connected /ws');devSubs.forEach(id=>subDev(id));});
+  sockets.ws.on('disconnect',()=>setConn(false));
+  sockets.ws.on('connect_error',e=>{setConn(false);log('error',e.message);});
+  sockets.ws.on('device:telemetry',d=>onTelemetry(d));
+  sockets.alarms.on('connect',()=>log('connect','Connected /alarms'));
+  sockets.alarms.on('alarm:triggered',d=>onAlarm(d));
+}
+function setConn(ok){
+  document.getElementById('cDot').className='dot '+(ok?'ok':'err');
+  document.getElementById('cStat').textContent=ok?'Connected':'Disconnected';
+}
+function subDev(id){
+  if(!sockets.ws?.connected)return;
+  sockets.ws.emit('device:subscribe',{deviceId:id},(r)=>{if(r?.success){updateDevList();log('sub','Subscribed '+id.slice(0,8)+'…');}});
+}
+function unsubDev(id){
+  if(sockets.ws?.connected)sockets.ws.emit('device:unsubscribe',{deviceId:id});
+  devSubs.delete(id);delete devData[id];updateDevList();
+}
+function updateDevList(){
+  const el=document.getElementById('devList');
+  if(devSubs.size===0){el.innerHTML='<span style="color:var(--tx3)">None</span>';return;}
+  el.innerHTML=[...devSubs].map(id=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--b)"><span style="color:var(--gr);font-size:10px">● ${id.slice(0,16)}…</span><button class="wbtn del" onclick="unsubDev('${id}')">✕</button></div>`).join('');
+}
+function onTelemetry(data){
+  const{deviceId,data:vals,timestamp}=data;
+  devData[deviceId]={...(devData[deviceId]||{}),...vals,_ts:timestamp||Date.now()};
+  updateLive(deviceId);
+  widgets.forEach(w=>{if(w.deviceId===deviceId)updateW(w,vals);});
+}
+function updateLive(id){
+  const d=devData[id]||{};
+  const keys=Object.keys(d).filter(k=>k!=='_ts').slice(0,10);
+  if(!keys.length)return;
+  document.getElementById('liveFeed').innerHTML=keys.map(k=>{
+    const v=d[k];const s=typeof v==='object'?JSON.stringify(v):String(v);
+    return`<div class="feed-row"><span class="fk">${k}</span><span class="fv">${s.slice(0,20)}</span></div>`;
+  }).join('');
+}
+function onAlarm(d){
+  alarmList.unshift({...d,at:new Date()});
+  if(alarmList.length>20)alarmList.pop();
+  renderAlarms();log('alarm','🚨 '+d.severity+': '+(d.name||''));
+  widgets.forEach(w=>{if(w.type==='alarm')renderAlarmW(w);});
+}
+function renderAlarms(){
+  const el=document.getElementById('alarmFeed');
+  if(!alarmList.length){el.innerHTML='<span style="color:var(--tx3)">No alarms</span>';return;}
+  el.innerHTML=alarmList.slice(0,6).map(a=>`<div style="padding:5px 0;border-bottom:1px solid var(--b)"><div style="display:flex;justify-content:space-between"><span style="color:${sc(a.severity)};font-size:10px;text-transform:uppercase;font-weight:600">${a.severity}</span><span style="color:var(--tx3);font-size:9px">${ago(a.at)}</span></div><div style="color:var(--tx);font-size:11px;margin-top:2px">${a.name||''}</div></div>`).join('');
+}
+function sc(s){return{CRITICAL:'var(--rd)',ERROR:'var(--rd)',WARNING:'var(--am)',INFO:'var(--bl)'}[(s||'').toUpperCase()]||'var(--tx2)';}
+function ago(d){const s=Math.floor((Date.now()-new Date(d))/1000);return s<60?s+'s':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h';}
+function log(type,msg){
+  logLines.unshift({type,msg,t:new Date()});if(logLines.length>50)logLines.pop();
+  document.getElementById('gLog').innerHTML=logLines.slice(0,20).map(e=>`<div style="padding:3px 0;border-bottom:1px solid var(--b)"><span style="color:var(--tx3)">${e.t.toTimeString().slice(0,8)}</span><span style="color:${e.type==='alarm'?'var(--rd)':e.type==='error'?'var(--rd)':'var(--tx2)'};margin-left:6px">${e.msg}</span></div>`).join('');
+}
+let selT='stat';
+function selType(t){
+  selT=t;document.querySelectorAll('.wtc').forEach(el=>el.classList.remove('sel'));
+  document.getElementById('t-'+t)?.classList.add('sel');document.getElementById('mType').value=t;onTypeChange(t);
+}
+function onTypeChange(t){
+  document.getElementById('gaugeOpts').style.display=t==='gauge'?'block':'none';
+}
+function openModal(){document.getElementById('addModal').classList.add('open');}
+function closeModal(){document.getElementById('addModal').classList.remove('open');}
+function doAddWidget(){
+  const type=document.getElementById('mType').value;
+  const title=document.getElementById('mTitle').value.trim()||'Widget';
+  const deviceId=document.getElementById('mDevId').value.trim();
+  const keys=document.getElementById('mKeys').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const unit=document.getElementById('mUnit').value.trim();
+  const width=document.getElementById('mWidth').value;
+  const min=parseFloat(document.getElementById('mMin').value)||0;
+  const max=parseFloat(document.getElementById('mMax').value)||100;
+  const w={id:'w'+Date.now(),type,title,deviceId,keys,unit,width,min,max};
+  widgets.push(w);
+  if(deviceId&&!devSubs.has(deviceId)){devSubs.add(deviceId);subDev(deviceId);updateDevList();}
+  renderW(w);closeModal();
+  document.getElementById('emptyCV').style.display='none';
+}
+function renderW(w){
+  const g=document.getElementById('gridCV');
+  const d=document.createElement('div');
+  const rowClass = w.rows && w.rows > 1 ? ` row-${w.rows}` : '';
+  d.className=`wcard ${w.width}${rowClass}`;d.id=w.id;
+  const badge=w.deviceId?`<span class="dbadge" id="b_${w.id}">${w.deviceId.slice(0,8)}…</span>`:'';
+  d.innerHTML=`<div class="wheader"><div class="wtitle">${w.title}</div>${badge}<div class="wactions"><button class="wbtn del" onclick="delW('${w.id}')">✕</button></div></div><div class="wbody" id="wb_${w.id}">${buildBody(w)}</div><div class="resize-handle" title="Drag to resize"></div>`;
+  g.appendChild(d);
+  if(w.type==='chart')initChart(w);
+  initResize(d,w);
+}
+function buildBody(w){
+  if(w.type==='stat')return`<div style="text-align:center;width:100%"><div class="sv" id="sv_${w.id}">—</div><div class="sk">${w.keys[0]||'key'}<span class="su">${w.unit}</span></div><div class="sts" id="sts_${w.id}">No data</div></div>`;
+  if(w.type==='chart')return`<div class="cc"><canvas id="ch_${w.id}"></canvas></div>`;
+  if(w.type==='gauge')return`<div class="gc"><svg class="gsv" viewBox="0 0 140 80" id="gs_${w.id}"><path d="M10 75 A60 60 0 0 1 130 75" fill="none" stroke="var(--b2)" stroke-width="10" stroke-linecap="round"/><path d="M10 75 A60 60 0 0 1 130 75" fill="none" stroke="var(--ac)" stroke-width="10" stroke-linecap="round" stroke-dasharray="188.5" stroke-dashoffset="188.5" id="gf_${w.id}" style="transition:stroke-dashoffset 0.4s,stroke 0.4s"/><text x="70" y="68" text-anchor="middle" fill="var(--tx)" font-family="Syne,sans-serif" font-size="18" font-weight="800" id="gv_${w.id}">—</text></svg><div style="font-size:10px;color:var(--tx3)">${w.keys[0]||'key'} <span style="color:var(--ac2)">${w.unit}</span></div></div>`;
+  if(w.type==='switch'){const ks=w.keys.length?w.keys:['switch_1','switch_2','switch_3','switch_4'];return`<div class="swg">${ks.map(k=>`<div class="swi"><div class="swl">${k.replace('switch_','SW')}</div><div class="swt" id="sw_${w.id}_${k}"><div class="swth"></div></div></div>`).join('')}</div>`;}
+  if(w.type==='log')return`<div class="elog" id="el_${w.id}"><div style="color:var(--tx3);font-size:11px;text-align:center;padding:20px 0">Waiting…</div></div>`;
+  if(w.type==='alarm')return`<div style="width:100%;font-size:11px" id="aw_${w.id}"><div style="color:var(--tx3);text-align:center;padding:16px">No alarms</div></div>`;
+  return'';
+}
+function initChart(w){
+  const cv=document.getElementById('ch_'+w.id);if(!cv)return;
+  const colors=['#9d97ff','#00e5a0','#ffb547','#4da6ff'];
+  chartDat[w.id]={labels:[],datasets:w.keys.map((k,i)=>({label:k,data:[],borderColor:colors[i%4],borderWidth:1.5,pointRadius:0,tension:0.3,fill:false}))};
+  charts[w.id]=new Chart(cv,{type:'line',data:chartDat[w.id],options:{responsive:true,maintainAspectRatio:false,animation:{duration:150},plugins:{legend:{display:w.keys.length>1,labels:{color:'rgba(136,136,170,0.8)',font:{size:10,family:'JetBrains Mono'},boxWidth:12}},tooltip:{bodyFont:{family:'JetBrains Mono',size:11},titleFont:{family:'JetBrains Mono',size:10}}},scales:{x:{ticks:{color:'rgba(85,85,106,0.8)',font:{size:9,family:'JetBrains Mono'},maxTicksLimit:6},grid:{color:'rgba(30,30,48,0.8)'}},y:{ticks:{color:'rgba(85,85,106,0.8)',font:{size:9,family:'JetBrains Mono'}},grid:{color:'rgba(30,30,48,0.8)'}}}}}); 
+}
+function updateW(w,vals){
+  const card=document.getElementById(w.id);
+  if(w.type==='stat'){
+    const k=w.keys[0];
+    const v=getVal(vals,k);
+    if(k&&v!==undefined){
+      const el=document.getElementById('sv_'+w.id);const ts=document.getElementById('sts_'+w.id);
+      if(el){const s=typeof v==='object'?JSON.stringify(v):String(v);el.textContent=s;el.classList.add('up');setTimeout(()=>el.classList.remove('up'),600);}
+      if(ts)ts.textContent=new Date().toTimeString().slice(0,8);
+      document.getElementById('b_'+w.id)?.classList.add('live');
+    }
+  }else if(w.type==='chart'){
+    const cd=chartDat[w.id];const ci=charts[w.id];if(!cd||!ci)return;
+    cd.labels.push(new Date().toTimeString().slice(0,8));if(cd.labels.length>40)cd.labels.shift();
+    cd.datasets.forEach((ds,i)=>{
+      const v=getVal(vals,w.keys[i]);  // ← getVal not vals[k]
+      ds.data.push(v!==undefined?parseFloat(v)||0:ds.data[ds.data.length-1]??0);
+      if(ds.data.length>40)ds.data.shift();
+    });
+    ci.update('quiet');
+  }else if(w.type==='gauge'){
+    const k=w.keys[0];
+    const v=getVal(vals,k);  // ← getVal not vals[k]
+    if(k&&v!==undefined){
+      const gv=parseFloat(v)||0;const pct=Math.min(1,Math.max(0,(gv-w.min)/(w.max-w.min)));
+      const fill=document.getElementById('gf_'+w.id);const gvEl=document.getElementById('gv_'+w.id);
+      if(fill){fill.setAttribute('stroke-dashoffset',(188.5-(pct*188.5)).toFixed(1));const h=pct<0.5?160:pct<0.8?48:0;fill.setAttribute('stroke',`hsl(${h},90%,60%)`);}
+      if(gvEl)gvEl.textContent=gv.toFixed(1);
+    }
+  }else if(w.type==='switch'){
+    w.keys.forEach(k=>{
+      const v=getVal(vals,k);  // ← getVal not vals[k]
+      const el=document.getElementById(`sw_${w.id}_${k}`);
+      if(el&&v!==undefined){const on=v===true||v===1||v==='on';el.classList.toggle('on',on);}
+    });
+  }else if(w.type==='log'){
+    const el=document.getElementById('el_'+w.id);if(el){
+      const rel=w.keys.length
+        ?Object.fromEntries(w.keys.map(k=>[k,getVal(vals,k)]).filter(([,v])=>v!==undefined))  // ← getVal
+        :vals;
+      if(Object.keys(rel).length){
+        const row=document.createElement('div');row.className='erow';
+        row.innerHTML=`<span class="etime">${new Date().toTimeString().slice(0,8)}</span>`+Object.entries(rel).map(([k,v])=>`<span class="ekey">${k}</span><span class="eval">${typeof v==='object'?JSON.stringify(v):v}</span>`).join(' ');
+        el.insertBefore(row,el.firstChild);if(el.children.length>25)el.removeChild(el.lastChild);
+      }
+    }
+  }
+  if(card){card.style.animation='none';void card.offsetHeight;card.style.animation='flash 0.4s ease-out';}
+}
+function renderAlarmW(w){
+  const el=document.getElementById('aw_'+w.id);if(!el)return;
+  const rel=w.deviceId?alarmList.filter(a=>a.deviceId===w.deviceId):alarmList;
+  if(!rel.length){el.innerHTML='<div style="color:var(--gr);text-align:center;padding:16px">✓ No active alarms</div>';return;}
+  el.innerHTML=rel.slice(0,4).map(a=>`<div style="padding:5px 0;border-bottom:1px solid var(--b)"><div style="display:flex;justify-content:space-between;align-items:center"><span style="color:${sc(a.severity)};font-size:10px;text-transform:uppercase;font-weight:600">${a.severity}</span><span style="color:var(--tx3);font-size:9px">${ago(a.at)}</span></div><div style="color:var(--tx);font-size:11px;margin-top:2px">${a.name||''}</div></div>`).join('');
+}
+function delW(id){
+  const i=widgets.findIndex(w=>w.id===id);if(i<0)return;
+  const w=widgets[i];if(charts[id]){charts[id].destroy();delete charts[id];}delete chartDat[id];
+  widgets.splice(i,1);document.getElementById(id)?.remove();
+  if(w.deviceId&&!widgets.some(x=>x.deviceId===w.deviceId))unsubDev(w.deviceId);
+  if(!widgets.length)document.getElementById('emptyCV').style.display='flex';
+}
+function saveDash(){
+  const state={name:document.getElementById('cfgName').value,widgets:widgets.map(w=>({...w}))};
+  localStorage.setItem('sl_dash',JSON.stringify(state));
+  const btn=event.target;btn.textContent='✓ Saved';setTimeout(()=>btn.textContent='↑ Save',1500);
+}
+function loadDash(){
+  try{
+    const saved=localStorage.getItem('sl_dash');if(!saved)return;
+    const state=JSON.parse(saved);
+    document.getElementById('cfgName').value=state.name||'';
+    document.getElementById('dashName').textContent=state.name||'IoT Dashboard';
+    state.widgets?.forEach(w=>{widgets.push(w);if(w.deviceId)devSubs.add(w.deviceId);renderW(w);});
+    if(widgets.length)document.getElementById('emptyCV').style.display='none';
+    updateDevList();
+  }catch(e){}
+}
+// ── Dot-notation key resolver ──────────────────────────────────────────────
+function getVal(obj,dotKey){
+  if(!dotKey)return undefined;
+  if(obj[dotKey]!==undefined)return obj[dotKey];
+  return dotKey.split('.').reduce((o,k)=>(o&&o[k]!==undefined?o[k]:undefined),obj);
+}
+
+// ── Resize via interact.js ─────────────────────────────────────────────────
+function initResize(el, w) {
+  const grid = document.getElementById('gridCV');
+
+  interact(el).resizable({
+    edges: { bottom: true, right: '.resize-handle', bottomRight: '.resize-handle' },
+    listeners: {
+      start(e) {
+        e.target.classList.add('resizing');
+      },
+      move(e) {
+        const t = e.target;
+        // Apply pixel dimensions during drag for smooth feel
+        t.style.width = e.rect.width + 'px';
+        t.style.height = e.rect.height + 'px';
+        t.style.minHeight = 'unset';
+        // Notify chart to resize
+        const ci = charts[w.id];
+        if (ci) ci.resize();
+      },
+      end(e) {
+        const t = e.target;
+        t.classList.remove('resizing');
+
+        // Snap width to nearest grid column
+        const gridWidth = grid.getBoundingClientRect().width;
+        const colWidth = (gridWidth + 12) / 12; // include gap
+        const newCols = Math.min(12, Math.max(2, Math.round(e.rect.width / colWidth)));
+
+        // Snap height to row units (each row ~180px)
+        const rowHeight = 180;
+        const newRows = Math.max(1, Math.round(e.rect.height / rowHeight));
+
+        // Remove old col/row classes
+        t.className = t.className.replace(/col-\d+/g, '').replace(/row-\d+/g, '').trim();
+        t.classList.add(`col-${newCols}`);
+        if (newRows > 1) t.classList.add(`row-${newRows}`);
+
+        // Clear inline styles — let grid take over
+        t.style.width = '';
+        t.style.height = '';
+        t.style.minHeight = '';
+
+        // Persist to widget state
+        w.width = `col-${newCols}`;
+        w.rows = newRows;
+
+        // Resize chart after grid reflow
+        const ci = charts[w.id];
+        if (ci) setTimeout(() => ci.resize(), 50);
+      }
+    },
+    modifiers: [
+      interact.modifiers.restrictSize({ min: { width: 160, height: 140 } })
+    ]
+  });
+}
+
+loadDash();
+</script>
+</body>
+</html>
