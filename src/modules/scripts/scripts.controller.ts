@@ -30,8 +30,12 @@ export class ScriptsController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new script' })
-  create(@CurrentUser() user: User, @Body() createScriptDto: CreateScriptDto) {
-    return this.scriptsService.create(user.id, createScriptDto);
+  create(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('tenantId') tenantId: string,
+    @Body() createScriptDto: CreateScriptDto,
+  ) {
+    return this.scriptsService.create(userId, tenantId, createScriptDto);
   }
 
   @Get()

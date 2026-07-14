@@ -13,40 +13,79 @@ on:
         default: false
         type: boolean
 
+# Supersede an in-flight deploy when a newer commit lands on the same ref.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: docker.io
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/smartlife-iot-platform
   DEPLOY_PATH: /var/www/smartlife-iot
 
 jobs:
-  # Job 1 & 2 MERGED: Test + Build in parallel layers
-  # Tests run while Docker layers build — saves 1-2 min
-  build:
-    name: Build & Test
+  # ─────────────────────────────────────────────────────────────────────────
+  # Lint + unit tests. Runs IN PARALLEL with `build` and is deliberately NOT
+  # a dependency of `deploy`, so it stays off the critical path.
+  #
+  # NOTE: `continue-on-error` preserves the previous behaviour, where lint and
+  # test failures never blocked a deploy (the old step combined them with a
+  # bare `wait`, which always returned 0, plus continue-on-error). Unlike
+  # before, failures are now at least VISIBLE as a red job. To make quality a
+  # real gate, drop `continue-on-error` here and add `quality` to deploy.needs.
+  # ─────────────────────────────────────────────────────────────────────────
+  quality:
+    name: Lint & Unit Tests
     runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.skip_tests != 'true' }}
+    continue-on-error: true
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ✅ Cache node_modules between runs — saves 30-60s on npm ci
-      - name: Setup Node.js with cache
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'  # Use LTS, not 25 (unstable/slower image pull)
+          node-version: '20'
           cache: 'npm'
 
+      # Cache the resolved node_modules tree, not just the npm download cache.
+      # Keyed on the lockfile, so it is only rebuilt when deps actually change.
+      - name: Cache node_modules
+        id: npm-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node20-
+
+      # --legacy-peer-deps is REQUIRED by this repo's dependency graph.
       - name: Install dependencies
+        if: steps.npm-cache.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
-      # Run lint + tests in parallel using & wait
-      - name: Run Lint & Tests (parallel)
-        if: ${{ github.event.inputs.skip_tests != 'true' }}
-        run: |
-          npm run lint &
-          npm run test:unit &
-          wait
-        continue-on-error: true
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test:unit
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Build & push the image. Runs in parallel with `quality`.
+  #
+  # This job intentionally does NOT run `npm ci` on the runner: the Docker
+  # `dependencies` stage installs its own node_modules, so a runner-side
+  # install was pure duplicated work on the critical path.
+  # ─────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -66,7 +105,18 @@ jobs:
             type=sha,prefix=main-
             type=raw,value=latest,enable={{is_default_branch}}
 
-      # ✅ Use GitHub Actions cache (gha) — much faster than registry cache
+      # Layer cache strategy.
+      #
+      # The GitHub Actions cache (type=gha) is capped at 10 GB per repo with LRU
+      # eviction. With mode=max this multi-stage image (Debian + build toolchain
+      # + compiled libredwg + two node_modules trees) exceeds that budget, so it
+      # evicted itself between runs — every build recompiled libredwg from source
+      # and rebuilt canvas. That is the main reason builds stayed at ~16 min
+      # despite caching "being configured".
+      #
+      # A registry-backed cache has no such size cap, so the expensive base and
+      # dependencies layers now actually survive between runs. gha is kept first
+      # as a fast local hit; registry is the durable fallback.
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -75,8 +125,13 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
+          provenance: false
           build-args: |
             NODE_ENV=production
 
@@ -93,7 +148,7 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          command_timeout: 5m  # Reduced from 15m
+          command_timeout: 5m
           script: |
             set -e
             cd ${{ env.DEPLOY_PATH }}
@@ -103,7 +158,7 @@ jobs:
               exit 1
             fi
 
-            # ✅ Quick async backup — don't block deploy on it
+            # Quick async backup — don't block deploy on it
             if docker compose -f docker-compose.prod.yml ps postgres | grep -q "Up"; then
               (
                 BACKUP_FILE="backups/db-backup-$(date +%Y%m%d-%H%M%S).sql"
@@ -114,11 +169,11 @@ jobs:
               BACKUP_PID=$!
             fi
 
-            # ✅ Pull new image (fast — only pulls changed layers)
+            # Pull new image (fast — only pulls changed layers)
             echo "📥 Pulling latest image..."
             docker pull ${{ env.IMAGE_NAME }}:latest
 
-            # ✅ Only start infra if NOT already running — skip on normal deploys
+            # Only start infra if NOT already running — skip on normal deploys
             INFRA_RUNNING=$(docker compose -f docker-compose.prod.yml ps postgres 2>/dev/null | grep -c "Up" || echo "0")
             if [ "$INFRA_RUNNING" = "0" ]; then
               echo "🏗️ Starting infrastructure (cold start)..."
@@ -136,17 +191,17 @@ jobs:
               echo "✅ Infra already running, skipping"
             fi
 
-            # ✅ Restart only the app container — zero infra disruption
+            # Restart only the app container — zero infra disruption
             echo "🐳 Restarting app..."
             docker compose -f docker-compose.prod.yml up -d app --no-build --force-recreate
 
-            # ✅ Faster health check poll (1s instead of 3s)
+            # Faster health check poll (1s instead of 3s)
             echo "⏳ Waiting for app health..."
             timeout 60 sh -c 'until curl -f -s http://localhost:5000/health > /dev/null 2>&1; do sleep 1; done' \
               && echo "✅ App is healthy!" \
               || echo "⚠️ Health check timeout — check logs"
 
-            # ✅ Run migrations after app is up
+            # Run migrations after app is up
             echo "🗄️ Running migrations..."
             docker compose -f docker-compose.prod.yml exec -T app npm run migration:run \
               || echo "⚠️ Migrations done (check warnings)"
@@ -154,7 +209,7 @@ jobs:
             # Wait for backup to finish before cleanup
             wait $BACKUP_PID 2>/dev/null || true
 
-            # ✅ Prune in background — don't block deploy completion
+            # Prune in background — don't block deploy completion
             docker image prune -f &
 
             echo "✅ Deployment complete!"

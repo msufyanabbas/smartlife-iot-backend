@@ -56,7 +56,7 @@ export class TenantsService {
 
     if (search) {
       queryBuilder.where(
-        '(tenant.name ILIKE :search OR tenant.title ILIKE :search OR tenant.email ILIKE :search)',
+        '(tenant.name ILIKE :search OR tenant.email ILIKE :search)',
         { search: `%${search}%` },
       );
     }

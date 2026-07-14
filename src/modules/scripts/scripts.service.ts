@@ -15,12 +15,14 @@ export class ScriptsService {
 
   async create(
     userId: string,
+    tenantId: string,
     createScriptDto: CreateScriptDto,
   ): Promise<Script> {
     const lines = createScriptDto.code.split('\n').length;
 
     const script = this.scriptRepository.create({
       ...createScriptDto,
+      tenantId,
       userId,
       createdBy: userId,
       lines,

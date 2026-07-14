@@ -1,8 +1,3 @@
-nano .dockerignore
-```
-
-Paste this content:
-```
 # Dependencies
 node_modules
 npm-debug.log
@@ -14,6 +9,8 @@ dist
 build
 coverage
 .next
+.swc
+*.tsbuildinfo
 
 # Environment files
 .env
@@ -64,9 +61,13 @@ tmp
 temp
 .cache
 
-# Uploads (if you have local uploads during dev)
+# Uploads / local artifacts (incl. firmware test blobs)
 uploads
 backups
+
+# Local scratch / non-app files
+implementation-status.xlsx
+__pycache__
 
 # OS files
 Thumbs.db
