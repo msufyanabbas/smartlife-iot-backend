@@ -128,11 +128,13 @@ export class AlarmsService {
     // Order by severity (critical first), then by triggered date
     queryBuilder
       .addSelect(
-        `CASE 
-           WHEN alarm.severity = 'CRITICAL' THEN 1
-           WHEN alarm.severity = 'ERROR' THEN 2
-           WHEN alarm.severity = 'WARNING' THEN 3
-           WHEN alarm.severity = 'INFO' THEN 4
+        // Values MUST match alarms_severity_enum (lowercase: info/warning/error/critical).
+        // Uppercase literals throw "invalid input value for enum alarms_severity_enum".
+        `CASE
+           WHEN alarm.severity = 'critical' THEN 1
+           WHEN alarm.severity = 'error' THEN 2
+           WHEN alarm.severity = 'warning' THEN 3
+           WHEN alarm.severity = 'info' THEN 4
            ELSE 5
          END`,
         'severity_order',
