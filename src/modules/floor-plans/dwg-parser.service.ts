@@ -190,7 +190,7 @@ function insUnitsToMeters(insUnits: number): number {
     case 11: return 1e-10;   // angstroms
     case 12: return 1e-9;    // nanometers
     case 13: return 1e-6;    // microns
-    case 14: return 100.0;   // decimeters → wait, dm = 0.1m
+    case 14: return 0.1;     // decimeters
     default: return 0.001;   // fallback: mm
   }
 }
@@ -756,9 +756,12 @@ export class DWGParserService {
             entity.endAngle   ?? Math.PI * 2,
           );
           if (category !== 'door') {
+            // FIX 4: carry the arc's centre elevation onto its sampled points
+            // instead of hardcoding z: 0.
+            const arcZ = (entity.center.z ?? 0) * scale;
             geometry.walls.push({
               id:        nextId('wall'),
-              points:    arcPts.map(p => ({ x: p.x, y: p.y, z: 0 })),
+              points:    arcPts.map(p => ({ x: p.x, y: p.y, z: arcZ })),
               thickness: 0.2,
               height:    3.0,
               material:  layerRaw || 'default',
@@ -868,7 +871,53 @@ export class DWGParserService {
       }
     }
 
+    geometry.building = this.computeBuildingMetrics(geometry);
+
     return geometry;
+  }
+
+  /**
+   * FIX 4: summarise the drawing's Z data.
+   *
+   * Most architectural floor plans are drawn flat at z=0, so `hasElevationData`
+   * is false and `floorHeight` is null — the caller should then fall back to the
+   * user-supplied Building3DMetadata.floorHeight rather than trusting a guess.
+   *
+   * When elevations ARE present, floorHeight is inferred only if the non-zero
+   * wall elevations agree with each other (within 1cm); a drawing with walls
+   * scattered across many elevations has no single floor height.
+   */
+  private computeBuildingMetrics(geometry: DWGGeometry): NonNullable<DWGGeometry['building']> {
+    const zs: number[] = [];
+
+    for (const w of geometry.walls) {
+      for (const p of w.points) if (typeof p.z === 'number') zs.push(p.z);
+    }
+    for (const d of geometry.doors) if (typeof d.position.z === 'number') zs.push(d.position.z);
+    for (const w of geometry.windows) if (typeof w.position.z === 'number') zs.push(w.position.z);
+
+    if (zs.length === 0) {
+      return { hasElevationData: false, floorHeight: null, minElevation: 0, maxElevation: 0 };
+    }
+
+    const minElevation = Math.min(...zs);
+    const maxElevation = Math.max(...zs);
+    const EPS = 0.01; // 1cm
+    const hasElevationData = zs.some((z) => Math.abs(z) > EPS);
+
+    let floorHeight: number | null = null;
+    if (hasElevationData) {
+      // Distinct non-zero elevations, rounded to the cm.
+      const levels = [...new Set(zs.filter((z) => Math.abs(z) > EPS).map((z) => Math.round(z * 100) / 100))];
+      if (levels.length === 1) {
+        // All raised geometry sits at one consistent height above the base.
+        floorHeight = Math.abs(levels[0] - minElevation) || levels[0];
+      } else if (maxElevation - minElevation > EPS) {
+        floorHeight = Math.round((maxElevation - minElevation) * 100) / 100;
+      }
+    }
+
+    return { hasElevationData, floorHeight, minElevation, maxElevation };
   }
 
   // ── Private: layer classification ─────────────────────────────────────────
@@ -996,7 +1045,7 @@ export class DWGParserService {
       {
         x: (wa.points[0].x + wb.points[0].x) / 2,
         y: (wa.points[0].y + wb.points[0].y) / 2,
-        z: (wa.points[0].z ?? 0 + (wb.points[0].z ?? 0)) / 2,
+        z: ((wa.points[0].z ?? 0) + (wb.points[0].z ?? 0)) / 2,
       },
       {
         x: (wa.points[1].x + wb.points[1].x) / 2,
@@ -1200,6 +1249,8 @@ export class DWGParserService {
       });
     }
 
+    geometry.building = this.computeBuildingMetrics(geometry);
+
     return geometry;
   }
 
@@ -1270,6 +1321,12 @@ export class DWGParserService {
       rooms:     [],
       stairs:    [],
       furniture: [],
+      building:  {
+        hasElevationData: false,
+        floorHeight:      null,
+        minElevation:     0,
+        maxElevation:     0,
+      },
     };
   }
 }

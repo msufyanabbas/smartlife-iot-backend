@@ -13,7 +13,9 @@ export interface AlarmMessage {
   deviceName: string;
   tenantId: string;
   userId: string;
-  severity: 'INFO' | 'WARNING' | 'MINOR' | 'MAJOR' | 'CRITICAL';
+  // Deserialized from the Kafka payload; runtime values are the lowercase
+  // AlarmSeverity values (info/warning/error/critical).
+  severity: string;
   type: string;
   title: string;
   message: string;
@@ -174,9 +176,10 @@ export class AlarmConsumer {
     console.log('📢 Processing alarm escalation...');
 
     // Update alarm severity
+    // Table is "alarms" (plural); enum value is lowercase 'critical' (alarms_severity_enum).
     await this.db.query(
-      `UPDATE alarm 
-       SET severity = 'CRITICAL',
+      `UPDATE alarms
+       SET severity = 'critical',
            escalated_at = NOW()
        WHERE id = $1`,
       [alarm.id],
@@ -289,7 +292,7 @@ export class AlarmConsumer {
       }
 
       // Send SMS (if configured)
-      if (preferences.sms && alarm.severity === 'CRITICAL') {
+      if (preferences.sms && alarm.severity === 'critical') {
         await this.sendSMSNotification(alarm, preferences.phoneNumbers);
       }
 
@@ -398,10 +401,10 @@ export class AlarmConsumer {
       return JSON.parse(cached);
     }
 
-    // Get from database
+    // Get from database (table is "tenants", plural)
     const result = await this.db.query(
-      `SELECT notification_preferences 
-       FROM tenant 
+      `SELECT notification_preferences
+       FROM tenants
        WHERE id = $1`,
       [tenantId],
     );
@@ -409,7 +412,7 @@ export class AlarmConsumer {
     const prefs = result.rows[0]?.notification_preferences || {
       email: true,
       recipients: ['admin@example.com'],
-      sms: severity === 'CRITICAL',
+      sms: severity === 'critical',
       phoneNumbers: [],
       webhook: false,
       webhookUrl: '',

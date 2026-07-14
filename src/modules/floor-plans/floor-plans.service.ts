@@ -5,18 +5,25 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { FloorPlan } from './entities/floor-plan.entity';
+import { FloorPlanDevice } from './entities/floor-plan-device.entity';
+import { Asset } from '../assets/entities/asset.entity';
+import { Device } from '../devices/entities/device.entity';
+import { Telemetry } from '../telemetry/entities/telemetry.entity';
+import { Alarm } from '../alarms/entities/alarm.entity';
 import {
-  FloorPlan,
-} from './entities/floor-plan.entity';
-import { FloorPlanStatus, DeviceAnimationType } from '@common/enums/index.enum';
+  FloorPlanStatus,
+  DeviceAnimationType,
+  AlarmStatus,
+} from '@common/enums/index.enum';
 import { Device3DData } from '@common/interfaces/index.interface';
 import {
   CreateFloorPlanDto,
-  AddDeviceToFloorPlanDto,
   AddZoneDto,
   Building3DMetadataDto,
 } from './dto/create-floor-plan.dto';
+import { PlaceDeviceDto, UpdatePlacementDto } from './dto/place-device.dto';
 import { UpdateFloorPlanDto } from './dto/update-floor-plan.dto';
 import { UpdateFloorPlanSettingsDto } from './dto/floor-plan-settings.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -25,15 +32,52 @@ import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
+/** Caller identity, taken from the JWT — never from the request body. */
+export interface Actor {
+  userId: string;
+  tenantId: string;
+}
+
+/** Columns a client is allowed to sort by (prevents ORDER BY injection). */
+const SORTABLE = new Set([
+  'createdAt',
+  'updatedAt',
+  'name',
+  'building',
+  'floor',
+  'floorNumber',
+  'status',
+]);
+
+export const ALLOWED_MODEL_EXTENSIONS = ['obj', 'gltf', 'glb', 'fbx'] as const;
+
+const MODEL_CONTENT_TYPES: Record<string, string> = {
+  obj: 'model/obj',
+  gltf: 'model/gltf+json',
+  glb: 'model/gltf-binary',
+  fbx: 'application/octet-stream',
+};
+
 @Injectable()
 export class FloorPlansService {
   private readonly logger = new Logger(FloorPlansService.name);
   private readonly uploadDir = process.env.UPLOAD_PATH || './uploads/floor-plans';
   private readonly dwgDir = path.join(this.uploadDir, 'dwg');
+  private readonly modelDir = path.join(this.uploadDir, 'models');
 
   constructor(
     @InjectRepository(FloorPlan)
     private readonly floorPlanRepository: Repository<FloorPlan>,
+    @InjectRepository(FloorPlanDevice)
+    private readonly placementRepository: Repository<FloorPlanDevice>,
+    @InjectRepository(Asset)
+    private readonly assetRepository: Repository<Asset>,
+    @InjectRepository(Device)
+    private readonly deviceRepository: Repository<Device>,
+    @InjectRepository(Telemetry)
+    private readonly telemetryRepository: Repository<Telemetry>,
+    @InjectRepository(Alarm)
+    private readonly alarmRepository: Repository<Alarm>,
     private readonly dwgParserService: DWGParserService,
   ) {
     this.ensureUploadDirectories();
@@ -43,20 +87,53 @@ export class FloorPlansService {
     try {
       await fs.mkdir(this.uploadDir, { recursive: true });
       await fs.mkdir(this.dwgDir, { recursive: true });
+      await fs.mkdir(this.modelDir, { recursive: true });
       this.logger.log('Upload directories initialized');
     } catch (error) {
       this.logger.error('Failed to create upload directories', error);
     }
   }
 
-  async create(
-    userId: string,
-    createFloorPlanDto: CreateFloorPlanDto,
-  ): Promise<FloorPlan> {
+  // ══════════════════════════════════════════════════════════════════════════
+  // VALIDATION HELPERS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** FIX 1: the asset must exist AND belong to the caller's tenant. */
+  private async assertAsset(assetId: string, tenantId: string): Promise<Asset> {
+    const asset = await this.assetRepository.findOne({
+      where: { id: assetId, tenantId },
+    });
+    if (!asset) {
+      throw new NotFoundException('Asset not found');
+    }
+    return asset;
+  }
+
+  /** The device must exist AND belong to the caller's tenant. */
+  private async assertDevice(deviceId: string, tenantId: string): Promise<Device> {
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId, tenantId },
+    });
+    if (!device) {
+      throw new NotFoundException('Device not found');
+    }
+    return device;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // CRUD
+  // ══════════════════════════════════════════════════════════════════════════
+
+  async create(actor: Actor, dto: CreateFloorPlanDto): Promise<FloorPlan> {
+    // Previously tenantId was never set, so every insert violated the NOT NULL
+    // constraint on floor_plans.tenantId and POST /floor-plans always 500'd.
+    await this.assertAsset(dto.assetId, actor.tenantId);
+
     const floorPlan = this.floorPlanRepository.create({
-      ...createFloorPlanDto,
-      userId,
-      createdBy: userId,
+      ...dto,
+      tenantId: actor.tenantId,
+      userId: actor.userId,
+      createdBy: actor.userId,
       devices: [],
       zones: [],
     });
@@ -64,7 +141,7 @@ export class FloorPlansService {
     return await this.floorPlanRepository.save(floorPlan);
   }
 
-  async findAll(userId: string, paginationDto: PaginationDto) {
+  async findAll(tenantId: string, paginationDto: PaginationDto, assetId?: string) {
     const {
       page = 1,
       limit = 10,
@@ -74,23 +151,28 @@ export class FloorPlansService {
     } = paginationDto;
     const skip = (page - 1) * limit;
 
-    const queryBuilder = this.floorPlanRepository
+    const sortColumn = SORTABLE.has(sortBy) ? sortBy : 'createdAt';
+    const direction = String(sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+    const qb = this.floorPlanRepository
       .createQueryBuilder('floorPlan')
-      .where('floorPlan.userId = :userId', { userId });
+      .leftJoinAndSelect('floorPlan.asset', 'asset')
+      .where('floorPlan.tenantId = :tenantId', { tenantId });
+
+    if (assetId) {
+      qb.andWhere('floorPlan.assetId = :assetId', { assetId });
+    }
 
     if (search) {
-      queryBuilder.andWhere(
+      qb.andWhere(
         '(floorPlan.name ILIKE :search OR floorPlan.building ILIKE :search OR floorPlan.floor ILIKE :search)',
         { search: `%${search}%` },
       );
     }
 
-    queryBuilder
-      .orderBy(`floorPlan.${sortBy}`, sortOrder as 'ASC' | 'DESC')
-      .skip(skip)
-      .take(limit);
+    qb.orderBy(`floorPlan.${sortColumn}`, direction).skip(skip).take(limit);
 
-    const [data, total] = await queryBuilder.getManyAndCount();
+    const [data, total] = await qb.getManyAndCount();
 
     return {
       data,
@@ -101,9 +183,11 @@ export class FloorPlansService {
     };
   }
 
-  async findOne(id: string, userId: string): Promise<FloorPlan> {
+  /** Raw entity fetch, tenant-scoped, with the asset joined. */
+  async findOne(id: string, tenantId: string): Promise<FloorPlan> {
     const floorPlan = await this.floorPlanRepository.findOne({
-      where: { id, userId },
+      where: { id, tenantId },
+      relations: ['asset'],
     });
 
     if (!floorPlan) {
@@ -113,73 +197,328 @@ export class FloorPlansService {
     return floorPlan;
   }
 
-  async findByAsset(assetId: string, userId: string): Promise<FloorPlan[]> {
+  /** FIX 3: enriched single floor plan (asset + placed devices + telemetry). */
+  async findOneEnriched(id: string, tenantId: string) {
+    const floorPlan = await this.findOne(id, tenantId);
+    const placedDevices = await this.getPlacedDevices(id, tenantId);
+
+    return {
+      ...floorPlan,
+      asset: floorPlan.asset
+        ? {
+            id: (floorPlan.asset as any).id,
+            name: (floorPlan.asset as any).name,
+            type: (floorPlan.asset as any).type,
+            description: (floorPlan.asset as any).description,
+          }
+        : null,
+      // Legacy shape, reconstructed from the relational placements so existing
+      // 3D clients reading `devices[]` keep working.
+      devices: placedDevices.map((p) => p.legacy),
+      placedDevices: placedDevices.map(({ legacy, ...rest }) => rest),
+      deviceCount: placedDevices.length,
+      previewUrl: floorPlan.thumbnailUrl ?? null,
+      modelUrl: floorPlan.modelFileUrl ?? null,
+    };
+  }
+
+  async findByAsset(assetId: string, tenantId: string): Promise<FloorPlan[]> {
     return await this.floorPlanRepository.find({
-      where: { assetId, userId },
+      where: { assetId, tenantId },
+      relations: ['asset'],
       order: { floorNumber: 'ASC' },
     });
   }
 
   async update(
     id: string,
-    userId: string,
-    updateFloorPlanDto: UpdateFloorPlanDto,
+    actor: Actor,
+    dto: UpdateFloorPlanDto,
   ): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
+    const floorPlan = await this.findOne(id, actor.tenantId);
 
-    Object.assign(floorPlan, updateFloorPlanDto);
-    floorPlan.updatedBy = userId;
+    // FIX 1: re-validate the asset when it is being reassigned.
+    if (dto.assetId && dto.assetId !== floorPlan.assetId) {
+      await this.assertAsset(dto.assetId, actor.tenantId);
+    }
+
+    Object.assign(floorPlan, dto);
+    floorPlan.updatedBy = actor.userId;
 
     return await this.floorPlanRepository.save(floorPlan);
   }
 
-  async remove(id: string, userId: string): Promise<void> {
-    const floorPlan = await this.findOne(id, userId);
+  async remove(id: string, actor: Actor): Promise<void> {
+    const floorPlan = await this.findOne(id, actor.tenantId);
 
-    // Clean up associated files
-    if (floorPlan.dwgFileUrl) {
-      await this.deleteFile(floorPlan.dwgFileUrl);
-    }
-    if (floorPlan.thumbnailUrl) {
-      await this.deleteFile(floorPlan.thumbnailUrl);
-    }
+    if (floorPlan.dwgFileUrl) await this.deleteFile(floorPlan.dwgFileUrl);
+    if (floorPlan.thumbnailUrl) await this.deleteFile(floorPlan.thumbnailUrl);
+    if (floorPlan.modelFileUrl) await this.deleteFile(floorPlan.modelFileUrl);
 
     await this.floorPlanRepository.softRemove(floorPlan);
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // DEVICE PLACEMENT (FIX 2)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  private coords(dto: PlaceDeviceDto | UpdatePlacementDto) {
+    // `position` (legacy) wins over flat x/y/z when both are supplied.
+    return {
+      x: dto.position?.x ?? dto.x,
+      y: dto.position?.y ?? dto.y,
+      z: dto.position?.z ?? dto.z,
+    };
+  }
+
+  /** POST /floor-plans/:id/devices — place (or reposition) a device. */
+  async placeDevice(floorPlanId: string, actor: Actor, dto: PlaceDeviceDto) {
+    const floorPlan = await this.findOne(floorPlanId, actor.tenantId);
+    const device = await this.assertDevice(dto.deviceId, actor.tenantId);
+
+    // Not an error: placement is allowed, but the caller is told about it.
+    const linkedToAsset = device.assetId === floorPlan.assetId;
+    const warning = linkedToAsset
+      ? undefined
+      : `Device is not linked to this floor plan's asset (${floorPlan.assetId}); placed anyway.`;
+
+    const { x, y, z } = this.coords(dto);
+
+    let placement = await this.placementRepository.findOne({
+      where: { floorPlanId, deviceId: dto.deviceId, tenantId: actor.tenantId },
+    });
+
+    if (placement) {
+      // Already placed → reposition instead of creating a duplicate.
+      placement.x = x ?? placement.x;
+      placement.y = y ?? placement.y;
+      placement.z = z ?? placement.z;
+      if (dto.rotation) placement.rotation = dto.rotation;
+      if (dto.scale) placement.scale = dto.scale;
+      if (dto.metadata) placement.metadata = dto.metadata;
+      if (dto.animationType) placement.animationType = dto.animationType;
+      if (dto.animationConfig) placement.animationConfig = dto.animationConfig;
+      if (dto.telemetryBindings) placement.telemetryBindings = dto.telemetryBindings;
+      placement.updatedBy = actor.userId;
+    } else {
+      placement = this.placementRepository.create({
+        tenantId: actor.tenantId,
+        floorPlanId,
+        deviceId: dto.deviceId,
+        x: x ?? 0,
+        y: y ?? 0,
+        z: z ?? 0,
+        rotation: dto.rotation ?? { x: 0, y: 0, z: 0 },
+        scale: dto.scale ?? { x: 1, y: 1, z: 1 },
+        metadata: dto.metadata,
+        displayName: dto.name ?? device.name,
+        deviceTypeLabel: dto.type ?? String(device.type),
+        model3DUrl: dto.model3DUrl,
+        animationType: dto.animationType ?? DeviceAnimationType.NONE,
+        animationConfig:
+          dto.animationConfig ??
+          this.getDefaultAnimationConfig(dto.animationType ?? DeviceAnimationType.NONE),
+        telemetryBindings: dto.telemetryBindings,
+        createdBy: actor.userId,
+      });
+    }
+
+    const saved = await this.placementRepository.save(placement);
+    const [enriched] = await this.enrich([saved], actor.tenantId);
+
+    const { legacy, ...placementView } = enriched;
+    return { ...placementView, linkedToAsset, ...(warning ? { warning } : {}) };
+  }
+
+  /** PATCH /floor-plans/:id/devices/:deviceId — move / update a placement. */
+  async updatePlacement(
+    floorPlanId: string,
+    deviceId: string,
+    actor: Actor,
+    dto: UpdatePlacementDto,
+  ) {
+    await this.findOne(floorPlanId, actor.tenantId);
+
+    const placement = await this.placementRepository.findOne({
+      where: { floorPlanId, deviceId, tenantId: actor.tenantId },
+    });
+    if (!placement) {
+      throw new NotFoundException('Device is not placed on this floor plan');
+    }
+
+    const { x, y, z } = this.coords(dto);
+    if (x !== undefined) placement.x = x;
+    if (y !== undefined) placement.y = y;
+    if (z !== undefined) placement.z = z;
+    if (dto.rotation) placement.rotation = dto.rotation;
+    if (dto.scale) placement.scale = dto.scale;
+    if (dto.metadata) placement.metadata = dto.metadata;
+    if (dto.animationType) placement.animationType = dto.animationType;
+    if (dto.animationConfig) {
+      placement.animationConfig = { ...placement.animationConfig, ...dto.animationConfig };
+    }
+    if (dto.telemetryBindings) placement.telemetryBindings = dto.telemetryBindings;
+    placement.updatedBy = actor.userId;
+
+    const saved = await this.placementRepository.save(placement);
+    const [enriched] = await this.enrich([saved], actor.tenantId);
+    const { legacy, ...placementView } = enriched;
+    return placementView;
+  }
+
+  /** DELETE /floor-plans/:id/devices/:deviceId */
+  async removePlacement(
+    floorPlanId: string,
+    deviceId: string,
+    actor: Actor,
+  ): Promise<{ removed: true }> {
+    await this.findOne(floorPlanId, actor.tenantId);
+
+    const placement = await this.placementRepository.findOne({
+      where: { floorPlanId, deviceId, tenantId: actor.tenantId },
+    });
+    if (!placement) {
+      throw new NotFoundException('Device is not placed on this floor plan');
+    }
+
+    await this.placementRepository.remove(placement);
+    return { removed: true };
+  }
+
+  /** GET /floor-plans/:id/devices — placements + device info + telemetry + alarms. */
+  async getPlacedDevices(floorPlanId: string, tenantId: string) {
+    await this.findOne(floorPlanId, tenantId);
+
+    const placements = await this.placementRepository.find({
+      where: { floorPlanId, tenantId },
+      order: { createdAt: 'ASC' },
+    });
+
+    return this.enrich(placements, tenantId);
+  }
+
   /**
-   * DWG FILE UPLOAD AND PROCESSING
+   * Batch-enrich placements with device info, latest telemetry and active alarm
+   * counts. Deliberately 3 queries total regardless of placement count — the
+   * naive per-device loop would be an N+1 on a floor plan with 200 sensors.
    */
+  private async enrich(placements: FloorPlanDevice[], tenantId: string) {
+    if (placements.length === 0) return [];
+
+    const deviceIds = [...new Set(placements.map((p) => p.deviceId))];
+
+    const devices = await this.deviceRepository.find({
+      where: { id: In(deviceIds), tenantId },
+    });
+    const deviceById = new Map(devices.map((d) => [d.id, d]));
+
+    // Latest telemetry row per device, in one round trip.
+    const latestRows: Array<{ deviceId: string; data: any; timestamp: Date }> =
+      await this.telemetryRepository
+        .createQueryBuilder('t')
+        .distinctOn(['t.deviceId'])
+        .select(['t.deviceId AS "deviceId"', 't.data AS data', 't.timestamp AS timestamp'])
+        .where('t.tenantId = :tenantId', { tenantId })
+        .andWhere('t.deviceId IN (:...deviceIds)', { deviceIds })
+        .orderBy('t.deviceId')
+        .addOrderBy('t.timestamp', 'DESC')
+        .getRawMany();
+    const telemetryByDevice = new Map(latestRows.map((r) => [r.deviceId, r]));
+
+    // Active (unacknowledged) alarm counts, in one round trip.
+    const alarmRows: Array<{ deviceId: string; count: string }> =
+      await this.alarmRepository
+        .createQueryBuilder('a')
+        .select('a.deviceId', 'deviceId')
+        .addSelect('COUNT(*)', 'count')
+        .where('a.tenantId = :tenantId', { tenantId })
+        .andWhere('a.deviceId IN (:...deviceIds)', { deviceIds })
+        .andWhere('a.status = :status', { status: AlarmStatus.ACTIVE })
+        .groupBy('a.deviceId')
+        .getRawMany();
+    const alarmsByDevice = new Map(
+      alarmRows.map((r) => [r.deviceId, parseInt(r.count, 10) || 0]),
+    );
+
+    return placements.map((p) => {
+      const device = deviceById.get(p.deviceId);
+      const tele = telemetryByDevice.get(p.deviceId);
+
+      const legacy: Device3DData = {
+        deviceId: p.deviceId,
+        name: p.displayName ?? device?.name ?? '',
+        type: p.deviceTypeLabel ?? String(device?.type ?? ''),
+        position: { x: p.x, y: p.y, z: p.z },
+        rotation: p.rotation ?? { x: 0, y: 0, z: 0 },
+        scale: p.scale ?? { x: 1, y: 1, z: 1 },
+        model3DUrl: p.model3DUrl,
+        animationType: p.animationType ?? DeviceAnimationType.NONE,
+        animationConfig: p.animationConfig,
+        telemetryBindings: p.telemetryBindings,
+        status: (device?.status as any) ?? 'offline',
+      } as Device3DData;
+
+      return {
+        placementId: p.id,
+        deviceId: p.deviceId,
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        rotation: p.rotation ?? null,
+        scale: p.scale ?? null,
+        metadata: p.metadata ?? null,
+        device: device
+          ? {
+              id: device.id,
+              name: device.name,
+              type: device.type,
+              status: device.status,
+              deviceKey: device.deviceKey,
+            }
+          : null,
+        latestTelemetry: tele?.data ?? null,
+        activeAlarms: alarmsByDevice.get(p.deviceId) ?? 0,
+        lastSeen: device?.lastSeenAt ?? tele?.timestamp ?? null,
+        // internal: used to rebuild the legacy `devices[]` array; stripped by callers
+        legacy,
+      };
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DWG UPLOAD / PARSING
+  // ══════════════════════════════════════════════════════════════════════════
 
   async uploadDWGFile(
     id: string,
-    userId: string,
+    actor: Actor,
     file: Express.Multer.File,
   ): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
+    const floorPlan = await this.findOne(id, actor.tenantId);
 
-    // Validate file type
-    if (!file.originalname.toLowerCase().endsWith('.dwg')) {
-      throw new BadRequestException('Only DWG files are supported');
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext !== '.dwg' && ext !== '.dxf') {
+      throw new BadRequestException('Only DWG and DXF files are supported');
     }
 
     try {
-      // Save file
-      const fileName = `${uuidv4()}_${file.originalname}`;
+      // Never interpolate the client-supplied filename into a shell command or a
+      // path: the parser shells out to dwg2dxf. Use a UUID and keep the extension.
+      const fileName = `${uuidv4()}${ext}`;
       const filePath = path.join(this.dwgDir, fileName);
       await fs.writeFile(filePath, file.buffer);
 
-      // Update floor plan with file info
       floorPlan.dwgFileUrl = `/uploads/floor-plans/dwg/${fileName}`;
       floorPlan.dwgFileSizeBytes = file.size;
       floorPlan.dwgUploadedAt = new Date();
       floorPlan.status = FloorPlanStatus.PROCESSING;
-      floorPlan.updatedBy = userId;
+      floorPlan.updatedBy = actor.userId;
 
       await this.floorPlanRepository.save(floorPlan);
 
-      // Parse DWG file asynchronously
-      this.parseDWGFileAsync(id, userId, filePath);
+      void this.parseDWGFileAsync(id, actor, filePath).catch((err) =>
+        this.logger.error(`Unhandled DWG parse failure: ${err?.message}`, err?.stack),
+      );
 
       return floorPlan;
     } catch (error) {
@@ -188,73 +527,75 @@ export class FloorPlansService {
     }
   }
 
-  /**
-   * Async DWG parsing (runs in background)
-   */
   private async parseDWGFileAsync(
     floorPlanId: string,
-    userId: string,
+    actor: Actor,
     filePath: string,
   ): Promise<void> {
     try {
       this.logger.log(`Starting async DWG parsing for floor plan: ${floorPlanId}`);
 
-      // Parse DWG file
       const geometry = await this.dwgParserService.parseDWGFile(filePath);
 
-      // Validate geometry
       const validation = this.dwgParserService.validateGeometry(geometry);
       if (!validation.valid) {
         throw new Error(`Invalid DWG geometry: ${validation.errors.join(', ')}`);
       }
 
-      // Generate thumbnail
-      const thumbnailPath = filePath.replace('.dwg', '_thumb.png');
-      await this.dwgParserService.generateThumbnail(geometry, thumbnailPath);
+      // Thumbnail: previously generated but never persisted, leaving the PNG
+      // orphaned on disk and thumbnailUrl null.
+      const thumbName = `${path.parse(filePath).name}_thumb.png`;
+      const thumbPath = path.join(this.dwgDir, thumbName);
+      let thumbnailUrl: string | undefined;
+      try {
+        await this.dwgParserService.generateThumbnail(geometry, thumbPath);
+        await fs.access(thumbPath);
+        thumbnailUrl = `/uploads/floor-plans/dwg/${thumbName}`;
+      } catch {
+        this.logger.warn(`Thumbnail generation failed for ${floorPlanId}`);
+      }
 
-      // Update floor plan with parsed data
-      const floorPlan = await this.findOne(floorPlanId, userId);
+      const floorPlan = await this.findOne(floorPlanId, actor.tenantId);
       floorPlan.parsedGeometry = geometry;
       floorPlan.status = FloorPlanStatus.ACTIVE;
-      floorPlan.parsingError = "";
+      floorPlan.parsingError = null as any;
+      if (thumbnailUrl) floorPlan.thumbnailUrl = thumbnailUrl;
 
-      // Update dimensions from parsed geometry
       if (geometry.rooms && geometry.rooms.length > 0) {
         const bounds = this.calculateBounds(geometry);
-        floorPlan.dimensions = {
-          width: bounds.width,
-          height: bounds.height,
-          unit: floorPlan.dimensions.unit || 'meters',
-        };
+        if (Number.isFinite(bounds.width) && Number.isFinite(bounds.height)) {
+          floorPlan.dimensions = {
+            width: bounds.width,
+            height: bounds.height,
+            unit: floorPlan.dimensions?.unit || 'meters',
+          };
+        }
       }
 
       await this.floorPlanRepository.save(floorPlan);
-
       this.logger.log(`DWG parsing completed for floor plan: ${floorPlanId}`);
     } catch (error) {
       this.logger.error(
         `DWG parsing failed for floor plan ${floorPlanId}: ${error.message}`,
         error.stack,
       );
-
-      // Update floor plan with error
-      const floorPlan = await this.floorPlanRepository.findOne({
-        where: { id: floorPlanId },
-      });
-
-      if (floorPlan) {
-        floorPlan.status = FloorPlanStatus.FAILED;
-        floorPlan.parsingError = error.message;
-        await this.floorPlanRepository.save(floorPlan);
+      try {
+        const floorPlan = await this.floorPlanRepository.findOne({
+          where: { id: floorPlanId },
+        });
+        if (floorPlan) {
+          floorPlan.status = FloorPlanStatus.FAILED;
+          floorPlan.parsingError = error.message;
+          await this.floorPlanRepository.save(floorPlan);
+        }
+      } catch (inner) {
+        this.logger.error(`Failed to record parsing error: ${inner?.message}`);
       }
     }
   }
 
-  /**
-   * Get parsed DWG geometry for 3D rendering
-   */
-  async getParsedGeometry(id: string, userId: string) {
-    const floorPlan = await this.findOne(id, userId);
+  async getParsedGeometry(id: string, tenantId: string) {
+    const floorPlan = await this.findOne(id, tenantId);
 
     if (!floorPlan.parsedGeometry) {
       throw new NotFoundException('Floor plan has not been parsed yet');
@@ -270,123 +611,80 @@ export class FloorPlansService {
     };
   }
 
-  /**
-   * DEVICE MANAGEMENT WITH 3D DATA
-   */
+  // ══════════════════════════════════════════════════════════════════════════
+  // 3D MODEL FILE (FIX 5)
+  // ══════════════════════════════════════════════════════════════════════════
 
-  async addDevice(
+  async uploadModel(
     id: string,
-    userId: string,
-    deviceDto: AddDeviceToFloorPlanDto,
+    actor: Actor,
+    file: Express.Multer.File,
   ): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
+    const floorPlan = await this.findOne(id, actor.tenantId);
 
-    // Check if device already exists
-    const existingDevice = floorPlan.devices.find(
-      (d) => d.deviceId === deviceDto.deviceId,
-    );
-    if (existingDevice) {
-      throw new BadRequestException('Device already exists on this floor plan');
+    const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
+    if (!(ALLOWED_MODEL_EXTENSIONS as readonly string[]).includes(ext)) {
+      throw new BadRequestException(
+        `Unsupported model format '${ext}'. Allowed: ${ALLOWED_MODEL_EXTENSIONS.join(', ')}`,
+      );
     }
 
-    // Create 3D device data
-    const device3D: Device3DData = {
-      deviceId: deviceDto.deviceId,
-      name: deviceDto.name,
-      type: deviceDto.type,
-      position: deviceDto.position,
-      rotation: deviceDto.rotation || { x: 0, y: 0, z: 0 },
-      scale: deviceDto.scale || { x: 1, y: 1, z: 1 },
-      model3DUrl: deviceDto.model3DUrl,
-      animationType: deviceDto.animationType,
-      animationConfig: deviceDto.animationConfig || this.getDefaultAnimationConfig(deviceDto.animationType),
-      telemetryBindings: deviceDto.telemetryBindings,
-      status: 'offline',
+    // Filename is derived from the floor plan id, never from client input.
+    const fileName = `${floorPlan.id}.${ext}`;
+    const filePath = path.join(this.modelDir, fileName);
+    await fs.writeFile(filePath, file.buffer);
+
+    // Remove a previously uploaded model with a different extension.
+    if (floorPlan.modelFileUrl && floorPlan.modelFileType !== ext) {
+      await this.deleteFile(floorPlan.modelFileUrl);
+    }
+
+    floorPlan.modelFileUrl = `/uploads/floor-plans/models/${fileName}`;
+    floorPlan.modelFileType = ext;
+    floorPlan.modelFileSize = file.size;
+    floorPlan.updatedBy = actor.userId;
+
+    return await this.floorPlanRepository.save(floorPlan);
+  }
+
+  /** Returns the absolute path + content type for streaming the model file. */
+  async getModelFile(id: string, tenantId: string) {
+    const floorPlan = await this.findOne(id, tenantId);
+
+    if (!floorPlan.modelFileUrl || !floorPlan.modelFileType) {
+      throw new NotFoundException('No 3D model uploaded for this floor plan');
+    }
+
+    const absolutePath = path.join(
+      this.modelDir,
+      `${floorPlan.id}.${floorPlan.modelFileType}`,
+    );
+
+    try {
+      await fs.access(absolutePath);
+    } catch {
+      throw new NotFoundException('Model file is missing from storage');
+    }
+
+    return {
+      path: absolutePath,
+      contentType:
+        MODEL_CONTENT_TYPES[floorPlan.modelFileType] ?? 'application/octet-stream',
+      fileName: `${floorPlan.name}.${floorPlan.modelFileType}`,
     };
-
-    floorPlan.devices.push(device3D);
-    floorPlan.updatedBy = userId;
-
-    return await this.floorPlanRepository.save(floorPlan);
   }
 
-  async updateDevicePosition(
-    id: string,
-    deviceId: string,
-    userId: string,
-    position: { x: number; y: number; z: number },
-  ): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
+  // ══════════════════════════════════════════════════════════════════════════
+  // 3D SIMULATION
+  // ══════════════════════════════════════════════════════════════════════════
 
-    const device = floorPlan.devices.find((d) => d.deviceId === deviceId);
-    if (!device) {
-      throw new NotFoundException('Device not found on floor plan');
-    }
-
-    device.position = position;
-    floorPlan.updatedBy = userId;
-
-    return await this.floorPlanRepository.save(floorPlan);
-  }
-
-  async updateDeviceAnimation(
-    id: string,
-    deviceId: string,
-    userId: string,
-    animationData: Partial<Device3DData>,
-  ): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
-
-    const device = floorPlan.devices.find((d) => d.deviceId === deviceId);
-    if (!device) {
-      throw new NotFoundException('Device not found on floor plan');
-    }
-
-    // Update animation properties
-    if (animationData.animationType !== undefined) {
-      device.animationType = animationData.animationType;
-    }
-    if (animationData.animationConfig) {
-      device.animationConfig = {
-        ...device.animationConfig,
-        ...animationData.animationConfig,
-      };
-    }
-    if (animationData.telemetryBindings) {
-      device.telemetryBindings = animationData.telemetryBindings;
-    }
-
-    floorPlan.updatedBy = userId;
-
-    return await this.floorPlanRepository.save(floorPlan);
-  }
-
-  async removeDevice(
-    id: string,
-    deviceId: string,
-    userId: string,
-  ): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
-
-    floorPlan.devices = floorPlan.devices.filter(
-      (d) => d.deviceId !== deviceId,
-    );
-    floorPlan.updatedBy = userId;
-
-    return await this.floorPlanRepository.save(floorPlan);
-  }
-
-  /**
-   * Get 3D simulation data for frontend
-   */
-  async get3DSimulationData(assetId: string, userId: string) {
-    const floorPlans = await this.findByAsset(assetId, userId);
+  async get3DSimulationData(assetId: string, tenantId: string) {
+    const floorPlans = await this.findByAsset(assetId, tenantId);
 
     if (floorPlans.length === 0) {
       throw new NotFoundException('No floor plans found for this asset');
     }
 
-    // Get building metadata from first floor plan
     const building3DMetadata = floorPlans[0].building3DMetadata || {
       buildingName: floorPlans[0].building,
       totalFloors: floorPlans.length,
@@ -396,47 +694,45 @@ export class FloorPlansService {
         length: 30,
         height: floorPlans.length * 3.5,
       },
-      floorOrder: floorPlans.map(fp => fp.floor),
+      floorOrder: floorPlans.map((fp) => fp.floor),
     };
 
-    // Compile floor data
-    const floors = floorPlans.map((fp, index) => ({
-      floorId: fp.id,
-      floorName: fp.floor,
-      floorNumber: fp.floorNumber || index,
-      geometry: fp.parsedGeometry,
-      devices: fp.devices,
-      zones: fp.zones,
-      dimensions: fp.dimensions,
-    }));
+    const floors = await Promise.all(
+      floorPlans.map(async (fp, index) => {
+        const placed = await this.getPlacedDevices(fp.id, tenantId);
+        return {
+          floorId: fp.id,
+          floorName: fp.floor,
+          floorNumber: fp.floorNumber ?? index,
+          geometry: fp.parsedGeometry,
+          devices: placed.map((p) => p.legacy),
+          placedDevices: placed.map(({ legacy, ...rest }) => rest),
+          zones: fp.zones,
+          dimensions: fp.dimensions,
+          modelUrl: fp.modelFileUrl ?? null,
+        };
+      }),
+    );
 
     return {
       assetId,
       building: building3DMetadata,
       floors,
-      totalDevices: floorPlans.reduce((sum, fp) => sum + fp.devices.length, 0),
-      totalZones: floorPlans.reduce((sum, fp) => sum + fp.zones.length, 0),
+      totalDevices: floors.reduce((sum, f) => sum + f.devices.length, 0),
+      totalZones: floorPlans.reduce((sum, fp) => sum + (fp.zones?.length ?? 0), 0),
     };
   }
 
-  /**
-   * ZONE MANAGEMENT
-   */
+  // ══════════════════════════════════════════════════════════════════════════
+  // ZONES
+  // ══════════════════════════════════════════════════════════════════════════
 
-  async addZone(
-    id: string,
-    userId: string,
-    zoneDto: AddZoneDto,
-  ): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
+  async addZone(id: string, actor: Actor, zoneDto: AddZoneDto): Promise<FloorPlan> {
+    const floorPlan = await this.findOne(id, actor.tenantId);
+    if (!floorPlan.zones) floorPlan.zones = [];
 
-    const zone = {
-      id: uuidv4(),
-      ...zoneDto,
-    };
-
-    floorPlan.zones.push(zone);
-    floorPlan.updatedBy = userId;
+    floorPlan.zones.push({ id: uuidv4(), ...zoneDto } as any);
+    floorPlan.updatedBy = actor.userId;
 
     return await this.floorPlanRepository.save(floorPlan);
   }
@@ -444,72 +740,57 @@ export class FloorPlansService {
   async updateZone(
     id: string,
     zoneId: string,
-    userId: string,
+    actor: Actor,
     zoneDto: Partial<AddZoneDto>,
   ): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
+    const floorPlan = await this.findOne(id, actor.tenantId);
 
-    const zone = floorPlan.zones.find((z) => z.id === zoneId);
+    const zone = floorPlan.zones?.find((z) => z.id === zoneId);
     if (!zone) {
       throw new NotFoundException('Zone not found on floor plan');
     }
 
     Object.assign(zone, zoneDto);
-    floorPlan.updatedBy = userId;
+    floorPlan.updatedBy = actor.userId;
 
     return await this.floorPlanRepository.save(floorPlan);
   }
 
-  async removeZone(
-    id: string,
-    zoneId: string,
-    userId: string,
-  ): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
+  async removeZone(id: string, zoneId: string, actor: Actor): Promise<FloorPlan> {
+    const floorPlan = await this.findOne(id, actor.tenantId);
 
-    floorPlan.zones = floorPlan.zones.filter((z) => z.id !== zoneId);
-    floorPlan.updatedBy = userId;
+    floorPlan.zones = (floorPlan.zones ?? []).filter((z) => z.id !== zoneId);
+    floorPlan.updatedBy = actor.userId;
 
     return await this.floorPlanRepository.save(floorPlan);
   }
 
-  /**
-   * BUILDING 3D METADATA
-   */
+  // ══════════════════════════════════════════════════════════════════════════
+  // BUILDING 3D METADATA / SETTINGS / STATS
+  // ══════════════════════════════════════════════════════════════════════════
 
   async updateBuilding3DMetadata(
     id: string,
-    userId: string,
+    actor: Actor,
     metadata: Building3DMetadataDto,
   ): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
-
+    const floorPlan = await this.findOne(id, actor.tenantId);
     floorPlan.building3DMetadata = metadata;
-    floorPlan.updatedBy = userId;
-
+    floorPlan.updatedBy = actor.userId;
     return await this.floorPlanRepository.save(floorPlan);
   }
 
-  /**
-   * SETTINGS
-   */
-
-  async getSettings(id: string, userId: string) {
-    const floorPlan = await this.findOne(id, userId);
-
-    if (!floorPlan.settings) {
-      return this.getDefaultSettings();
-    }
-
-    return floorPlan.settings;
+  async getSettings(id: string, tenantId: string) {
+    const floorPlan = await this.findOne(id, tenantId);
+    return floorPlan.settings ?? this.getDefaultSettings();
   }
 
   async updateSettings(
     id: string,
-    userId: string,
+    actor: Actor,
     settingsDto: UpdateFloorPlanSettingsDto,
   ): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
+    const floorPlan = await this.findOne(id, actor.tenantId);
 
     floorPlan.settings = {
       ...floorPlan.settings,
@@ -522,52 +803,44 @@ export class FloorPlansService {
         ...floorPlan.settings?.defaultColors,
         ...settingsDto.defaultColors,
       },
-    };
+    } as any;
 
-    floorPlan.updatedBy = userId;
-
+    floorPlan.updatedBy = actor.userId;
     return await this.floorPlanRepository.save(floorPlan);
   }
 
-  async resetSettings(id: string, userId: string): Promise<FloorPlan> {
-    const floorPlan = await this.findOne(id, userId);
-
-    floorPlan.settings = this.getDefaultSettings();
-    floorPlan.updatedBy = userId;
-
+  async resetSettings(id: string, actor: Actor): Promise<FloorPlan> {
+    const floorPlan = await this.findOne(id, actor.tenantId);
+    floorPlan.settings = this.getDefaultSettings() as any;
+    floorPlan.updatedBy = actor.userId;
     return await this.floorPlanRepository.save(floorPlan);
   }
 
-  /**
-   * STATISTICS
-   */
-
-  async getStatistics(userId: string) {
+  async getStatistics(tenantId: string) {
     const [total, active, draft, processing, failed] = await Promise.all([
-      this.floorPlanRepository.count({ where: { userId } }),
+      this.floorPlanRepository.count({ where: { tenantId } }),
       this.floorPlanRepository.count({
-        where: { userId, status: FloorPlanStatus.ACTIVE },
+        where: { tenantId, status: FloorPlanStatus.ACTIVE },
       }),
       this.floorPlanRepository.count({
-        where: { userId, status: FloorPlanStatus.DRAFT },
+        where: { tenantId, status: FloorPlanStatus.DRAFT },
       }),
       this.floorPlanRepository.count({
-        where: { userId, status: FloorPlanStatus.PROCESSING },
+        where: { tenantId, status: FloorPlanStatus.PROCESSING },
       }),
       this.floorPlanRepository.count({
-        where: { userId, status: FloorPlanStatus.FAILED },
+        where: { tenantId, status: FloorPlanStatus.FAILED },
       }),
     ]);
 
-    const plans = await this.floorPlanRepository.find({ where: { userId } });
-    const totalDevices = plans.reduce(
-      (sum, plan) => sum + plan.devices.length,
-      0,
-    );
-    const totalZones = plans.reduce((sum, plan) => sum + plan.zones.length, 0);
+    const totalDevices = await this.placementRepository.count({ where: { tenantId } });
 
-    // Count unique assets
-    const uniqueAssets = new Set(plans.map(p => p.assetId)).size;
+    const plans = await this.floorPlanRepository.find({
+      where: { tenantId },
+      select: ['id', 'assetId', 'zones'] as any,
+    });
+    const totalZones = plans.reduce((sum, p) => sum + (p.zones?.length ?? 0), 0);
+    const uniqueAssets = new Set(plans.map((p) => p.assetId)).size;
 
     return {
       total,
@@ -575,26 +848,22 @@ export class FloorPlansService {
       draft,
       processing,
       failed,
-      archived: total - active - draft - processing - failed,
+      archived: Math.max(0, total - active - draft - processing - failed),
       totalDevices,
       totalZones,
       uniqueAssets,
     };
   }
 
-  /**
-   * HELPER METHODS
-   */
+  // ══════════════════════════════════════════════════════════════════════════
+  // HELPERS
+  // ══════════════════════════════════════════════════════════════════════════
 
   private getDefaultSettings() {
     return {
       measurementUnit: 'metric' as const,
       autoSave: true,
-      gridSettings: {
-        showGrid: true,
-        snapToGrid: true,
-        gridSize: 1,
-      },
+      gridSettings: { showGrid: true, snapToGrid: true, gridSize: 1 },
       defaultColors: {
         gateways: '#22c55e',
         sensorsToGateway: '#f59e0b',
@@ -605,44 +874,26 @@ export class FloorPlansService {
   }
 
   private getDefaultAnimationConfig(animationType: DeviceAnimationType) {
-    const configs = {
+    const configs: Record<string, Record<string, any>> = {
       [DeviceAnimationType.SMOKE]: {
-        intensity: 0.7,
-        speed: 1.0,
-        color: '#808080',
-        particleCount: 100,
-        radius: 2.0,
+        intensity: 0.7, speed: 1.0, color: '#808080', particleCount: 100, radius: 2.0,
       },
-      [DeviceAnimationType.DOOR_OPEN_CLOSE]: {
-        speed: 1.0,
-      },
-      [DeviceAnimationType.LIGHT_PULSE]: {
-        intensity: 0.8,
-        speed: 1.5,
-        color: '#FFFFFF',
-      },
+      [DeviceAnimationType.DOOR_OPEN_CLOSE]: { speed: 1.0 },
+      [DeviceAnimationType.LIGHT_PULSE]: { intensity: 0.8, speed: 1.5, color: '#FFFFFF' },
       [DeviceAnimationType.WATER_LEAK]: {
-        intensity: 0.6,
-        speed: 1.2,
-        color: '#0077BE',
-        particleCount: 50,
+        intensity: 0.6, speed: 1.2, color: '#0077BE', particleCount: 50,
       },
-      [DeviceAnimationType.ALARM_FLASH]: {
-        intensity: 1.0,
-        speed: 2.0,
-        color: '#FF0000',
-      },
+      [DeviceAnimationType.ALARM_FLASH]: { intensity: 1.0, speed: 2.0, color: '#FF0000' },
       [DeviceAnimationType.NONE]: {},
     };
 
-    return configs[animationType] || {};
+    return configs[animationType] ?? {};
   }
 
   private calculateBounds(geometry: any): { width: number; height: number } {
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
 
-    // Check all geometry points
     [...(geometry.walls || []), ...(geometry.rooms || [])].forEach((item: any) => {
       const points = item.points || item.boundaries || [];
       points.forEach((point: any) => {
@@ -653,10 +904,7 @@ export class FloorPlansService {
       });
     });
 
-    return {
-      width: maxX - minX,
-      height: maxY - minY,
-    };
+    return { width: maxX - minX, height: maxY - minY };
   }
 
   private async deleteFile(fileUrl: string): Promise<void> {

@@ -1,7 +1,11 @@
 // src/modules/alarms/entities/alarm.entity.ts
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { User, Device, Tenant, Customer } from '@modules/index.entities';
+import type { User } from '../../users/entities/user.entity';
+import type { Device } from '../../devices/entities/device.entity';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
 import { AlarmSeverity, AlarmCondition, AlarmStatus } from '@/common/enums/index.enum';
 import type { AlarmRule } from '@/common/interfaces/index.interface';
 @Entity('alarms')
@@ -19,9 +23,9 @@ export class Alarm extends BaseEntity {
   @Column()
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL - inherited from device)
@@ -30,9 +34,9 @@ export class Alarm extends BaseEntity {
   @Column({ nullable: true })
   customerId?: string;  // Denormalized from device.customerId for fast filtering
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // ALARM DETAILS
@@ -57,9 +61,9 @@ export class Alarm extends BaseEntity {
 
   deviceId?: string;
 
-  @ManyToOne(() => Device, { nullable: true })
+  @ManyToOne('Device', { nullable: true })
   @JoinColumn({ name: 'deviceId' })
-  device?: Device;
+  device?: Relation<Device>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // ALARM RULE (What triggers this alarm?)
@@ -106,9 +110,9 @@ export class Alarm extends BaseEntity {
   @Column({ nullable: true })
   acknowledgedBy?: string;
 
-  @ManyToOne(() => User, { nullable: true })
+  @ManyToOne('User', { nullable: true })
   @JoinColumn({ name: 'acknowledgedBy' })
-  acknowledger?: User;
+  acknowledger?: Relation<User>;
 
   // Cleared (condition no longer true)
   @Column({ type: 'timestamp', nullable: true })
@@ -121,9 +125,9 @@ export class Alarm extends BaseEntity {
   @Column({ nullable: true })
   resolvedBy?: string;
 
-  @ManyToOne(() => User, { nullable: true })
+  @ManyToOne('User', { nullable: true })
   @JoinColumn({ name: 'resolvedBy' })
-  resolver?: User;
+  resolver?: Relation<User>;
 
   @Column({ type: 'text', nullable: true })
   resolutionNote?: string;

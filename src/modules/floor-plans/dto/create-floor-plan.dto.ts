@@ -216,7 +216,7 @@ export class UploadDWGResponseDto {
   @ApiProperty()
   dwgFileUrl: string;
 
-  @ApiProperty()
+  @ApiProperty({ enum: FloorPlanStatus })
   status: FloorPlanStatus;
 
   @ApiProperty()

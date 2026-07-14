@@ -60,6 +60,18 @@ export interface DWGGeometry {
     rotation: number;
     dimensions: { width: number; height: number; depth: number };
   }>;
+  /**
+   * Elevation metrics derived from the drawing's Z values.
+   * `hasElevationData` is false for the common case of a flat 2D plan drawn at
+   * z=0, in which case `floorHeight` is null and the frontend should fall back
+   * to Building3DMetadata.floorHeight.
+   */
+  building?: {
+    hasElevationData: boolean;
+    floorHeight: number | null;  // metres; null when it cannot be inferred
+    minElevation: number;
+    maxElevation: number;
+  };
 }
 
 export interface Device3DData {

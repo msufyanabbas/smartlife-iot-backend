@@ -1,7 +1,11 @@
 // src/modules/floor-plans/entities/floor-plan.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, User, Asset } from '@modules/index.entities';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { User } from '../../users/entities/user.entity';
+import type { Asset } from '../../assets/entities/asset.entity';
 import {
   FloorPlanStatus,
   DeviceAnimationType
@@ -28,9 +32,9 @@ export class FloorPlan extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
@@ -40,9 +44,9 @@ export class FloorPlan extends BaseEntity {
 
   customerId?: string;
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // OWNERSHIP
@@ -52,9 +56,9 @@ export class FloorPlan extends BaseEntity {
 
   userId: string;
 
-  @ManyToOne(() => User)
+  @ManyToOne('User')
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // ASSET ASSOCIATION
@@ -64,9 +68,9 @@ export class FloorPlan extends BaseEntity {
 
   assetId: string;
 
-  @ManyToOne(() => Asset)
+  @ManyToOne('Asset')
   @JoinColumn({ name: 'assetId' })
-  asset: Asset;
+  asset: Relation<Asset>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
@@ -117,6 +121,19 @@ export class FloorPlan extends BaseEntity {
   @Column({ type: 'jsonb', nullable: true })
   parsedGeometry?: DWGGeometry;
   // Contains: walls, doors, windows, rooms, stairs, furniture
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 3D MODEL FILE (OBJ / GLTF / GLB / FBX)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ nullable: true })
+  modelFileUrl?: string;  // "/uploads/floor-plans/models/<id>.glb"
+
+  @Column({ nullable: true })
+  modelFileType?: string;  // 'obj' | 'gltf' | 'glb' | 'fbx'
+
+  @Column({ type: 'bigint', nullable: true })
+  modelFileSize?: number;
 
   // ══════════════════════════════════════════════════════════════════════════
   // PREVIEW IMAGES

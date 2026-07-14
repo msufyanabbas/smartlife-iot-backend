@@ -123,7 +123,7 @@ export class UpdateAlarmDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ enum: AlarmSeverity })
   @IsOptional()
   @IsEnum(AlarmSeverity)
   severity?: AlarmSeverity;
