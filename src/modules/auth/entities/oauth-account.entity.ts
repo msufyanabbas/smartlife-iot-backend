@@ -4,6 +4,8 @@ import { BaseEntity } from '@common/entities/base.entity';
 import { User } from '@modules/index.entities';
 import { OAuthProviderEnum } from '@common/enums/index.enum';
 import type { OAuthProfile } from '@/common/interfaces/oauth.interface';
+
+// just adding the comment for fresh build
 @Entity('oauth_accounts')
 @Index(['provider', 'providerId'], { unique: true }) // one account per provider per providerId
 @Index(['userId'])                                    // look up all OAuth accounts for a user
