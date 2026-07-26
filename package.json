@@ -46,7 +46,7 @@
     "test:cov": "jest --coverage",
     "test:unit": "jest --testMatch='**/*.spec.ts'",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:e2e": "jest --testMatch='**/*.e2e-spec.ts' --runInBand",
     "typeorm": "ts-node --transpile-only -r tsconfig-paths/register ./node_modules/typeorm/cli.js -d src/database/data-source.ts",
     "migration:generate": "npm run typeorm -- migration:generate",
     "migration:create": "ts-node --transpile-only -r tsconfig-paths/register ./node_modules/typeorm/cli.js migration:create",

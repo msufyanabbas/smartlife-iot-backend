@@ -8,25 +8,16 @@ import { TelemetryService } from '../telemetry.service';
 import { Telemetry } from '../entities/telemetry.entity';
 import { Device } from '../../devices/entities/device.entity';
 import { NotFoundException } from '@nestjs/common';
+import { RedisService } from '@/lib/redis/redis.service';
 
-// Mock Kafka and Redis
-jest.mock('@lib/kafka/kafka.service', () => ({
-  kafkaService: {
-    sendMessage: jest.fn().mockResolvedValue(undefined),
-    sendBatch: jest.fn().mockResolvedValue(undefined),
-  },
-}));
-
-jest.mock('@lib/redis/redis.service', () => ({
-  redisService: {
-    hmset: jest.fn().mockResolvedValue(undefined),
-    lpush: jest.fn().mockResolvedValue(undefined),
-    ltrim: jest.fn().mockResolvedValue(undefined),
-    expire: jest.fn().mockResolvedValue(undefined),
-    hset: jest.fn().mockResolvedValue(undefined),
-    hgetall: jest.fn().mockResolvedValue({}),
-  },
-}));
+// NOTE: do NOT jest.mock('@lib/redis/redis.service') with a factory that only
+// exports a `redisService` instance — TelemetryService injects the RedisService
+// *class*, so replacing the module strips the class and Nest resolves the
+// constructor's 3rd argument to `undefined` ("dependency at index [2]").
+// Override it as a provider instead, which leaves the class token intact.
+//
+// TelemetryService does not inject KafkaService (see the note in the service),
+// so no Kafka mock is needed.
 
 describe('TelemetryService', () => {
   let service: TelemetryService;
@@ -46,6 +37,15 @@ describe('TelemetryService', () => {
     update: jest.fn(),
   };
 
+  // Only the methods TelemetryService.cacheLatest() actually calls
+  const mockRedisService = {
+    hmset: jest.fn().mockResolvedValue(undefined),
+    lpush: jest.fn().mockResolvedValue(undefined),
+    ltrim: jest.fn().mockResolvedValue(undefined),
+    expire: jest.fn().mockResolvedValue(undefined),
+    hgetall: jest.fn().mockResolvedValue({}),
+  };
+
   beforeEach(async () => {
     // Create testing module
     const module: TestingModule = await Test.createTestingModule({
@@ -58,6 +58,10 @@ describe('TelemetryService', () => {
         {
           provide: getRepositoryToken(Device),
           useValue: mockDeviceRepository,
+        },
+        {
+          provide: RedisService,
+          useValue: mockRedisService,
         },
       ],
     }).compile();

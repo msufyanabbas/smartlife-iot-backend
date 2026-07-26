@@ -35,6 +35,16 @@ module.exports = {
     '^@guards/(.*)$': '<rootDir>/src/common/guards/$1',
     '^@interceptors/(.*)$': '<rootDir>/src/common/interceptors/$1',
   },
+  // uuid v13 is ESM-only (its "exports" map has no CommonJS build), so Jest
+  // must transform it instead of skipping node_modules. The ts-jest preset only
+  // transforms .tsx?, hence the explicit .js rule with allowJs below.
+  transformIgnorePatterns: ['/node_modules/(?!(uuid)/)'],
+  transform: {
+    // no options -> uses tsconfig.json (which already sets isolatedModules)
+    '^.+\\.tsx?$': ['ts-jest', {}],
+    // uuid ships ESM .js; force CommonJS output just for these files
+    '^.+\\.js$': ['ts-jest', { tsconfig: { allowJs: true, module: 'commonjs' } }],
+  },
   setupFilesAfterEnv: ['<rootDir>/src/test/setup/jest.setup.ts'],
   testTimeout: 10000,
   maxWorkers: '50%',
