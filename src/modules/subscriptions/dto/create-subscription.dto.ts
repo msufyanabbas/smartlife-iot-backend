@@ -4,7 +4,7 @@ import { SubscriptionPlan, BillingPeriod } from '@common/enums/index.enum';
 
 export class CreateSubscriptionDto {
   @ApiProperty({
-    enum: SubscriptionPlan,
+    type: String, enum: SubscriptionPlan, enumName: 'SubscriptionPlan',
     example: SubscriptionPlan.FREE,
     description: 'Subscription plan - only FREE can be created directly',
   })
@@ -12,7 +12,7 @@ export class CreateSubscriptionDto {
   plan: SubscriptionPlan;
 
   @ApiProperty({
-    enum: BillingPeriod,
+    type: String, enum: BillingPeriod, enumName: 'BillingPeriod',
     example: BillingPeriod.MONTHLY,
     description: 'Billing period',
   })
@@ -23,7 +23,7 @@ export class CreateSubscriptionDto {
 
 export class UpgradeSubscriptionDto {
   @ApiProperty({
-    enum: SubscriptionPlan,
+    type: String, enum: SubscriptionPlan, enumName: 'SubscriptionPlan',
     example: SubscriptionPlan.PROFESSIONAL,
     description: 'Target plan (must be higher than current plan)',
   })
@@ -31,7 +31,7 @@ export class UpgradeSubscriptionDto {
   plan: SubscriptionPlan;
 
   @ApiProperty({
-    enum: BillingPeriod,
+    type: String, enum: BillingPeriod, enumName: 'BillingPeriod',
     required: false,
     example: BillingPeriod.YEARLY,
     description: 'Billing period (defaults to current period if not specified)',
@@ -43,7 +43,7 @@ export class UpgradeSubscriptionDto {
 
 export class ScheduleDowngradeDto {
   @ApiProperty({
-    enum: SubscriptionPlan,
+    type: String, enum: SubscriptionPlan, enumName: 'SubscriptionPlan',
     example: SubscriptionPlan.STARTER,
     description:
       'Target plan to downgrade to (must be lower than current plan)',

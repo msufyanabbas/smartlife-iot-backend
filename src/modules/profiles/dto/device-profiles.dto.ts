@@ -43,12 +43,12 @@ export class CreateDeviceProfileDto {
   @IsString()
   type?: string;
 
-  @ApiProperty({ enum: DeviceTransportType, default: DeviceTransportType.MQTT })
+  @ApiProperty({ type: String, enum: DeviceTransportType, enumName: 'DeviceTransportType', default: DeviceTransportType.MQTT })
   @IsEnum(DeviceTransportType)
   transportType: DeviceTransportType;
 
   @ApiProperty({
-    enum: DeviceProvisionType,
+    type: String, enum: DeviceProvisionType, enumName: 'DeviceProvisionType',
     default: DeviceProvisionType.DISABLED,
   })
   @IsEnum(DeviceProvisionType)
@@ -336,11 +336,11 @@ export class CalculatedFieldDto {
 }
 
 export class QueueConfigDto {
-  @ApiProperty({ enum: SubmitStrategy })
+  @ApiProperty({ type: String, enum: SubmitStrategy, enumName: 'SubmitStrategy' })
   @IsEnum(SubmitStrategy)
   submitStrategy: SubmitStrategy;
 
-  @ApiProperty({ enum: ProcessingStrategy })
+  @ApiProperty({ type: String, enum: ProcessingStrategy, enumName: 'ProcessingStrategy' })
   @IsEnum(ProcessingStrategy)
   processingStrategy: ProcessingStrategy;
 
@@ -359,7 +359,7 @@ export class AlarmRuleDto {
   @IsString()
   alarmType: string;
 
-  @ApiProperty({ enum: AlarmSeverity })
+  @ApiProperty({ type: String, enum: AlarmSeverity, enumName: 'AlarmSeverity' })
   @IsEnum(AlarmSeverity)
   severity: AlarmSeverity;
 

@@ -19,7 +19,7 @@ export class AlarmRuleDto implements AlarmRule {
   @IsString()
   telemetryKey: string;
 
-  @ApiProperty({ enum: AlarmCondition, example: AlarmCondition.GREATER_THAN })
+  @ApiProperty({ type: String, enum: AlarmCondition, enumName: 'AlarmCondition', example: AlarmCondition.GREATER_THAN })
   @IsEnum(AlarmCondition)
   condition: AlarmCondition;
 
@@ -49,7 +49,7 @@ export class CreateAlarmDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ enum: AlarmSeverity, default: AlarmSeverity.WARNING })
+  @ApiProperty({ type: String, enum: AlarmSeverity, enumName: 'AlarmSeverity', default: AlarmSeverity.WARNING })
   @IsEnum(AlarmSeverity)
   severity: AlarmSeverity;
 
@@ -123,7 +123,7 @@ export class UpdateAlarmDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ enum: AlarmSeverity })
+  @ApiPropertyOptional({ type: String, enum: AlarmSeverity, enumName: 'AlarmSeverity' })
   @IsOptional()
   @IsEnum(AlarmSeverity)
   severity?: AlarmSeverity;
@@ -166,12 +166,12 @@ export class AlarmQueryDto {
   @IsString()
   deviceId?: string;
 
-  @ApiPropertyOptional({ enum: AlarmSeverity })
+  @ApiPropertyOptional({ type: String, enum: AlarmSeverity, enumName: 'AlarmSeverity' })
   @IsOptional()
   @IsEnum(AlarmSeverity)
   severity?: AlarmSeverity;
 
-  @ApiPropertyOptional({ enum: AlarmStatus })
+  @ApiPropertyOptional({ type: String, enum: AlarmStatus, enumName: 'AlarmStatus' })
   @IsOptional()
   @IsEnum(AlarmStatus)
   status?: AlarmStatus;

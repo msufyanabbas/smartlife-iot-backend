@@ -100,7 +100,7 @@ export class CustomersController {
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'search', required: false, type: String })
-  @ApiQuery({ name: 'status', required: false, enum: CustomerStatus })
+  @ApiQuery({ name: 'status', required: false, type: String, enum: CustomerStatus, enumName: 'CustomerStatus' })
   @ApiQuery({ name: 'tenantId', required: false, type: String })
   @ApiQuery({ name: 'isPublic', required: false, type: Boolean })
   @ApiResponse({ status: 200, description: 'Customers retrieved successfully' })
@@ -258,6 +258,7 @@ export class CustomersController {
   @ApiOperation({ summary: 'Get customers by status' })
   @ApiQuery({ name: 'tenantId', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Customers retrieved successfully' })
+  @ApiParam({ name: 'status', type: String, enum: CustomerStatus, enumName: 'CustomerStatus' })
   async findByStatus(
     @Param('status') status: CustomerStatus,
     @Query('tenantId') tenantId?: string,

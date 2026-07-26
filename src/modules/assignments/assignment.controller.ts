@@ -13,6 +13,8 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { AssignmentService } from './assignment.service';
 import type { ResourceType } from './assignment.service';
@@ -106,6 +108,7 @@ export class AssignmentController {
   })
   @ApiResponse({ status: 200, description: 'Resource unassigned successfully' })
   @ApiResponse({ status: 404, description: 'Assignment not found' })
+  @ApiParam({ name: 'resourceType', enum: ['devices', 'dashboards', 'assets', 'floorPlans', 'automations'] })
   async unassignFromCustomer(
     @CurrentUser() user: User,
     @Param('customerId', ParseIdPipe) customerId: string,
@@ -173,6 +176,7 @@ export class AssignmentController {
   })
   @ApiResponse({ status: 200, description: 'Resource unassigned from user successfully' })
   @ApiResponse({ status: 404, description: 'Assignment not found' })
+  @ApiParam({ name: 'resourceType', enum: ['devices', 'dashboards', 'assets', 'floorPlans', 'automations'] })
   async unassignFromUser(
     @CurrentUser() user: User,
     @Param('userId', ParseIdPipe) userId: string,

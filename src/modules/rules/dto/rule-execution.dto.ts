@@ -5,7 +5,7 @@ export class NodeTraceEntryDto {
   @ApiProperty()
   nodeId: string;
 
-  @ApiProperty({ enum: NodeType })
+  @ApiProperty({ type: String, enum: NodeType, enumName: 'NodeType' })
   nodeType: NodeType;
 
   @ApiProperty()

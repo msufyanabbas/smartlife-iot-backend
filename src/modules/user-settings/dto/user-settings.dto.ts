@@ -21,12 +21,12 @@ import { Type } from 'class-transformer';
 // ==================== UPDATE GENERAL SETTINGS ====================
 
 export class UpdateGeneralSettingsDto {
-  @ApiPropertyOptional({ enum: Language, example: Language.EN })
+  @ApiPropertyOptional({ type: String, enum: Language, enumName: 'Language', example: Language.EN })
   @IsOptional()
   @IsEnum(Language)
   language?: Language;
 
-  @ApiPropertyOptional({ enum: Theme, example: Theme.LIGHT })
+  @ApiPropertyOptional({ type: String, enum: Theme, enumName: 'Theme', example: Theme.LIGHT })
   @IsOptional()
   @IsEnum(Theme)
   theme?: Theme;
@@ -81,12 +81,12 @@ export class UpdateNotificationSettingsDto {
 // ==================== UPDATE DISPLAY SETTINGS ====================
 
 export class UpdateDisplaySettingsDto {
-  @ApiPropertyOptional({ enum: TimeFormat, example: TimeFormat.TWELVE_HOUR })
+  @ApiPropertyOptional({ type: String, enum: TimeFormat, enumName: 'TimeFormat', example: TimeFormat.TWELVE_HOUR })
   @IsOptional()
   @IsEnum(TimeFormat)
   timeFormat?: TimeFormat;
 
-  @ApiPropertyOptional({ enum: DateFormat, example: DateFormat.DD_MM_YYYY })
+  @ApiPropertyOptional({ type: String, enum: DateFormat, enumName: 'DateFormat', example: DateFormat.DD_MM_YYYY })
   @IsOptional()
   @IsEnum(DateFormat)
   dateFormat?: DateFormat;
@@ -125,10 +125,10 @@ export class UserSettingsResponseDto {
   userId: string;
 
   // General
-  @ApiProperty({ enum: Language })
+  @ApiProperty({ type: String, enum: Language, enumName: 'Language' })
   language: Language;
 
-  @ApiProperty({ enum: Theme })
+  @ApiProperty({ type: String, enum: Theme, enumName: 'Theme' })
   theme: Theme;
 
   @ApiProperty()
@@ -157,10 +157,10 @@ export class UserSettingsResponseDto {
   pushNotifications: boolean;
 
   // Display
-  @ApiProperty({ enum: TimeFormat })
+  @ApiProperty({ type: String, enum: TimeFormat, enumName: 'TimeFormat' })
   timeFormat: TimeFormat;
 
-  @ApiProperty({ enum: DateFormat })
+  @ApiProperty({ type: String, enum: DateFormat, enumName: 'DateFormat' })
   dateFormat: DateFormat;
 
   @ApiProperty()

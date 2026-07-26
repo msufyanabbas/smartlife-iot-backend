@@ -22,7 +22,7 @@ export class CreateNodeDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ enum: NodeType, example: NodeType.FILTER })
+  @ApiProperty({ type: String, enum: NodeType, enumName: 'NodeType', example: NodeType.FILTER })
   @IsEnum(NodeType)
   type: NodeType;
 

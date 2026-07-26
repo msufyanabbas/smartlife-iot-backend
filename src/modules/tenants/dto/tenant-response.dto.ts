@@ -40,7 +40,7 @@ export class TenantResponseDto {
   @ApiPropertyOptional({ example: '94102' })
   zip?: string;
 
-  @ApiProperty({ enum: TenantStatus, example: TenantStatus.ACTIVE })
+  @ApiProperty({ type: String, enum: TenantStatus, enumName: 'TenantStatus', example: TenantStatus.ACTIVE })
   status: TenantStatus;
 
   @ApiPropertyOptional({

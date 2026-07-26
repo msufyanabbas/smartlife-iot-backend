@@ -99,7 +99,7 @@ export class CreateDashboardDto {
   customerId?: string;
 
   @ApiPropertyOptional({
-    enum: DashboardVisibility,
+    type: String, enum: DashboardVisibility, enumName: 'DashboardVisibility',
     default: DashboardVisibility.PRIVATE,
   })
   @IsOptional()
@@ -155,7 +155,7 @@ export class UpdateDashboardDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: String, enum: DashboardVisibility, enumName: 'DashboardVisibility' })
   @IsOptional()
   @IsEnum(DashboardVisibility)
   visibility?: DashboardVisibility;
@@ -197,7 +197,7 @@ export class DashboardQueryDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ enum: DashboardVisibility })
+  @ApiPropertyOptional({ type: String, enum: DashboardVisibility, enumName: 'DashboardVisibility' })
   @IsOptional()
   @IsEnum(DashboardVisibility)
   visibility?: DashboardVisibility;

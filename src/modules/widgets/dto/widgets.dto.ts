@@ -20,7 +20,7 @@ export class CreateWidgetTypeDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ enum: WidgetTypeCategory })
+  @ApiProperty({ type: String, enum: WidgetTypeCategory, enumName: 'WidgetTypeCategory' })
   @IsEnum(WidgetTypeCategory)
   category: WidgetTypeCategory;
 
@@ -74,7 +74,7 @@ export class QueryWidgetTypesDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ enum: WidgetTypeCategory })
+  @ApiPropertyOptional({ type: String, enum: WidgetTypeCategory, enumName: 'WidgetTypeCategory' })
   @IsOptional()
   @IsEnum(WidgetTypeCategory)
   category?: WidgetTypeCategory;

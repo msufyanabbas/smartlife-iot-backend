@@ -30,11 +30,11 @@ export class CreateAuditLogDto {
   @IsString()
   userEmail?: string;
 
-  @ApiProperty({ enum: AuditAction })
+  @ApiProperty({ type: String, enum: AuditAction, enumName: 'AuditAction' })
   @IsEnum(AuditAction)
   action: AuditAction;
 
-  @ApiProperty({ enum: AuditEntityType })
+  @ApiProperty({ type: String, enum: AuditEntityType, enumName: 'AuditEntityType' })
   @IsEnum(AuditEntityType)
   entityType: AuditEntityType;
 
@@ -79,7 +79,7 @@ export class CreateAuditLogDto {
   @IsString()
   requestId?: string;
 
-  @ApiPropertyOptional({ enum: AuditSeverity, default: AuditSeverity.INFO })
+  @ApiPropertyOptional({ type: String, enum: AuditSeverity, enumName: 'AuditSeverity', default: AuditSeverity.INFO })
   @IsOptional()
   @IsEnum(AuditSeverity)
   severity?: AuditSeverity;
@@ -126,12 +126,12 @@ export class QueryAuditLogsDto {
   @IsString()
   customerId?: string;
 
-  @ApiPropertyOptional({ enum: AuditAction })
+  @ApiPropertyOptional({ type: String, enum: AuditAction, enumName: 'AuditAction' })
   @IsOptional()
   @IsEnum(AuditAction)
   action?: AuditAction;
 
-  @ApiPropertyOptional({ enum: AuditEntityType })
+  @ApiPropertyOptional({ type: String, enum: AuditEntityType, enumName: 'AuditEntityType' })
   @IsOptional()
   @IsEnum(AuditEntityType)
   entityType?: AuditEntityType;
@@ -141,7 +141,7 @@ export class QueryAuditLogsDto {
   @IsString()
   entityId?: string;
 
-  @ApiPropertyOptional({ enum: AuditSeverity })
+  @ApiPropertyOptional({ type: String, enum: AuditSeverity, enumName: 'AuditSeverity' })
   @IsOptional()
   @IsEnum(AuditSeverity)
   severity?: AuditSeverity;
@@ -210,10 +210,10 @@ export class AuditLogResponseDto {
   @ApiProperty()
   tenantId: string;
 
-  @ApiProperty({ enum: AuditAction })
+  @ApiProperty({ type: String, enum: AuditAction, enumName: 'AuditAction' })
   action: AuditAction;
 
-  @ApiProperty({ enum: AuditEntityType })
+  @ApiProperty({ type: String, enum: AuditEntityType, enumName: 'AuditEntityType' })
   entityType: AuditEntityType;
 
   @ApiProperty()
@@ -225,7 +225,7 @@ export class AuditLogResponseDto {
   @ApiProperty()
   description?: string;
 
-  @ApiProperty({ enum: AuditSeverity })
+  @ApiProperty({ type: String, enum: AuditSeverity, enumName: 'AuditSeverity' })
   severity: AuditSeverity;
 
   @ApiProperty()

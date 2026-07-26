@@ -17,7 +17,7 @@ export enum AggregationInterval {
 
 export class AggregationQueryDto {
   @ApiProperty({
-    enum: AggregationInterval,
+    type: String, enum: AggregationInterval, enumName: 'AggregationInterval',
     example: AggregationInterval.HOUR,
     description: 'Aggregation interval',
   })

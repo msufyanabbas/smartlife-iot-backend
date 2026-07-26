@@ -82,7 +82,7 @@ export class CreateAssetDto {
   @IsString()
   label?: string;
 
-  @ApiProperty({ enum: AssetType, default: AssetType.OTHER })
+  @ApiProperty({ type: String, enum: AssetType, enumName: 'AssetType', default: AssetType.OTHER })
   @IsEnum(AssetType)
   type: AssetType;
 
@@ -183,7 +183,7 @@ export class QueryAssetsDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ enum: AssetType })
+  @ApiPropertyOptional({ type: String, enum: AssetType, enumName: 'AssetType' })
   @IsOptional()
   @IsEnum(AssetType)
   type?: AssetType;
@@ -227,7 +227,7 @@ export class QueryAssetsDto {
     @IsOptional()
     sortBy?: string;
   
-    @ApiPropertyOptional({ enum: SortOrder, default: SortOrder.DESC })
+    @ApiPropertyOptional({ type: String, enum: SortOrder, enumName: 'SortOrder', default: SortOrder.DESC })
     @IsEnum(SortOrder)
     @IsOptional()
     sortOrder?: SortOrder = SortOrder.DESC;

@@ -15,7 +15,7 @@ export class CreateInvitationDto {
   @Transform(({ value }) => value?.toLowerCase().trim())
   email: string;
 
-  @ApiProperty({ enum: UserRole, example: UserRole.CUSTOMER_USER })
+  @ApiProperty({ type: String, enum: UserRole, enumName: 'UserRole', example: UserRole.CUSTOMER_USER })
   @IsEnum(UserRole)
   @IsNotEmpty()
   role: UserRole;
@@ -94,7 +94,7 @@ export class InvitationPublicDto {
   @ApiProperty({ example: 'sara.ali@example.com' })
   email: string;
 
-  @ApiProperty({ enum: UserRole })
+  @ApiProperty({ type: String, enum: UserRole, enumName: 'UserRole' })
   role: UserRole;
 
   @ApiPropertyOptional({ example: 'Smart Life Solutions' })

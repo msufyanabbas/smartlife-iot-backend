@@ -5,7 +5,7 @@ import { OAuthProviderEnum } from '@common/enums/index.enum';
 
 export class OAuthCallbackDto {
   // Uses central enum — NOT redefined locally
-  @ApiProperty({ enum: OAuthProviderEnum, example: OAuthProviderEnum.GOOGLE })
+  @ApiProperty({ type: String, enum: OAuthProviderEnum, enumName: 'OAuthProviderEnum', example: OAuthProviderEnum.GOOGLE })
   @IsEnum(OAuthProviderEnum)
   @IsNotEmpty()
   provider: OAuthProviderEnum;

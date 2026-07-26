@@ -13,7 +13,7 @@ export class CreateIntegrationDto {
   @IsString()
   name: string;
 
-  @ApiProperty({ enum: IntegrationType, example: IntegrationType.CLOUD })
+  @ApiProperty({ type: String, enum: IntegrationType, enumName: 'IntegrationType', example: IntegrationType.CLOUD })
   @IsEnum(IntegrationType)
   type: IntegrationType;
 

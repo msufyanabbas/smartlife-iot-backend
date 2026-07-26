@@ -8,11 +8,11 @@ import { AnalyticsType, AnalyticsPeriod } from '@common/enums/analytics.enum';
 import { Type } from 'class-transformer';
 
 export class CreateAnalyticsDto {
-  @ApiProperty({ enum: AnalyticsType })
+  @ApiProperty({ type: String, enum: AnalyticsType, enumName: 'AnalyticsType' })
   @IsEnum(AnalyticsType)
   type: AnalyticsType;
 
-  @ApiProperty({ enum: AnalyticsPeriod })
+  @ApiProperty({ type: String, enum: AnalyticsPeriod, enumName: 'AnalyticsPeriod' })
   @IsEnum(AnalyticsPeriod)
   period: AnalyticsPeriod;
 
@@ -35,12 +35,12 @@ export class CreateAnalyticsDto {
 }
 
 export class QueryAnalyticsDto {
-  @ApiPropertyOptional({ enum: AnalyticsType })
+  @ApiPropertyOptional({ type: String, enum: AnalyticsType, enumName: 'AnalyticsType' })
   @IsOptional()
   @IsEnum(AnalyticsType)
   type?: AnalyticsType;
 
-  @ApiPropertyOptional({ enum: AnalyticsPeriod })
+  @ApiPropertyOptional({ type: String, enum: AnalyticsPeriod, enumName: 'AnalyticsPeriod' })
   @IsOptional()
   @IsEnum(AnalyticsPeriod)
   period?: AnalyticsPeriod;
@@ -84,7 +84,7 @@ export class DeviceAnalyticsDto {
   @IsString()
   deviceId?: string;
 
-  @ApiPropertyOptional({ enum: AnalyticsPeriod, default: AnalyticsPeriod.DAILY })
+  @ApiPropertyOptional({ type: String, enum: AnalyticsPeriod, enumName: 'AnalyticsPeriod', default: AnalyticsPeriod.DAILY })
   @IsOptional()
   @IsEnum(AnalyticsPeriod)
   period?: AnalyticsPeriod;

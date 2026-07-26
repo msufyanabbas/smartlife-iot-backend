@@ -12,7 +12,7 @@ export class UserInfoDto {
   @ApiProperty({ example: 'John Doe' })
   name: string;
 
-  @ApiProperty({ enum: UserRole, example: UserRole.TENANT_ADMIN })
+  @ApiProperty({ type: String, enum: UserRole, enumName: 'UserRole', example: UserRole.TENANT_ADMIN })
   role: UserRole;
 
   // Frontend needs this immediately after login to show the "verify email" banner

@@ -99,8 +99,7 @@ export class PlaceDeviceDto {
   model3DUrl?: string;
 
   @ApiPropertyOptional({
-    enum: DeviceAnimationType,
-    enumName: 'DeviceAnimationType',
+    type: String, enum: DeviceAnimationType, enumName: 'DeviceAnimationType',
   })
   @IsOptional()
   @IsEnum(DeviceAnimationType)
@@ -163,8 +162,7 @@ export class UpdatePlacementDto {
   metadata?: Record<string, any>;
 
   @ApiPropertyOptional({
-    enum: DeviceAnimationType,
-    enumName: 'DeviceAnimationType',
+    type: String, enum: DeviceAnimationType, enumName: 'DeviceAnimationType',
   })
   @IsOptional()
   @IsEnum(DeviceAnimationType)

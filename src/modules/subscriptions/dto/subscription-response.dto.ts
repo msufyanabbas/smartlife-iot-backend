@@ -67,7 +67,7 @@ export class SubscriptionFeaturesDto {
 // ==================== SUBSCRIPTION METADATA DTO ====================
 
 export class ScheduledDowngradeDto {
-  @ApiProperty({ enum: SubscriptionPlan, example: SubscriptionPlan.STARTER })
+  @ApiProperty({ type: String, enum: SubscriptionPlan, enumName: 'SubscriptionPlan', example: SubscriptionPlan.STARTER })
   plan: SubscriptionPlan;
 
   @ApiProperty({ example: '2025-01-18T00:00:00Z' })
@@ -92,15 +92,15 @@ export class SubscriptionResponseDto {
   userId: string;
 
   @ApiProperty({
-    enum: SubscriptionPlan,
+    type: String, enum: SubscriptionPlan, enumName: 'SubscriptionPlan',
     example: SubscriptionPlan.PROFESSIONAL,
   })
   plan: SubscriptionPlan;
 
-  @ApiProperty({ enum: BillingPeriod, example: BillingPeriod.MONTHLY })
+  @ApiProperty({ type: String, enum: BillingPeriod, enumName: 'BillingPeriod', example: BillingPeriod.MONTHLY })
   billingPeriod: BillingPeriod;
 
-  @ApiProperty({ enum: SubscriptionStatus, example: SubscriptionStatus.ACTIVE })
+  @ApiProperty({ type: String, enum: SubscriptionStatus, enumName: 'SubscriptionStatus', example: SubscriptionStatus.ACTIVE })
   status: SubscriptionStatus;
 
   @ApiProperty({ type: SubscriptionLimitsDto })
@@ -131,7 +131,7 @@ export class SubscriptionResponseDto {
 // ==================== SUBSCRIPTION PLAN INFO DTO ====================
 
 export class SubscriptionPlanInfoDto {
-  @ApiProperty({ enum: SubscriptionPlan, example: SubscriptionPlan.STARTER })
+  @ApiProperty({ type: String, enum: SubscriptionPlan, enumName: 'SubscriptionPlan', example: SubscriptionPlan.STARTER })
   plan: SubscriptionPlan;
 
   @ApiProperty({ example: 'Starter' })
@@ -228,7 +228,7 @@ export class UsageStatisticsResponseDto {
   percentage: UsagePercentageDto;
 
   @ApiProperty({
-    enum: SubscriptionPlan,
+    type: String, enum: SubscriptionPlan, enumName: 'SubscriptionPlan',
     example: SubscriptionPlan.PROFESSIONAL,
   })
   currentPlan: SubscriptionPlan;
@@ -253,12 +253,12 @@ export class UpgradeValidationResponseDto {
   message: string;
 
   @ApiProperty({
-    enum: SubscriptionPlan,
+    type: String, enum: SubscriptionPlan, enumName: 'SubscriptionPlan',
     example: SubscriptionPlan.PROFESSIONAL,
   })
   plan: SubscriptionPlan;
 
-  @ApiProperty({ enum: BillingPeriod, example: BillingPeriod.MONTHLY })
+  @ApiProperty({ type: String, enum: BillingPeriod, enumName: 'BillingPeriod', example: BillingPeriod.MONTHLY })
   billingPeriod: BillingPeriod;
 
   @ApiPropertyOptional({ example: 99, description: 'Amount to be charged' })
@@ -296,12 +296,12 @@ export class InvoiceDto {
   status: string;
 
   @ApiProperty({
-    enum: SubscriptionPlan,
+    type: String, enum: SubscriptionPlan, enumName: 'SubscriptionPlan',
     example: SubscriptionPlan.PROFESSIONAL,
   })
   plan: SubscriptionPlan;
 
-  @ApiProperty({ enum: BillingPeriod, example: BillingPeriod.MONTHLY })
+  @ApiProperty({ type: String, enum: BillingPeriod, enumName: 'BillingPeriod', example: BillingPeriod.MONTHLY })
   billingPeriod: BillingPeriod;
 
   @ApiPropertyOptional({ example: 'https://invoice-url.com/invoice.pdf' })

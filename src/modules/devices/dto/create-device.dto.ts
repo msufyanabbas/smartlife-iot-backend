@@ -26,11 +26,11 @@ export class CreateDeviceDto {
   @MaxLength(500)
   description?: string;
 
-  @ApiProperty({ enum: DeviceType, example: DeviceType.SENSOR })
+  @ApiProperty({ type: String, enum: DeviceType, enumName: 'DeviceType', example: DeviceType.SENSOR })
   @IsEnum(DeviceType)
   type: DeviceType;
 
-  @ApiProperty({ enum: DeviceConnectionType, example: DeviceConnectionType.WIFI })
+  @ApiProperty({ type: String, enum: DeviceConnectionType, enumName: 'DeviceConnectionType', example: DeviceConnectionType.WIFI })
   @IsEnum(DeviceConnectionType)
   connectionType: DeviceConnectionType;
 
@@ -41,7 +41,7 @@ export class CreateDeviceDto {
   // HTTP / COAP        → handled by separate adapters (future)
 
   @ApiProperty({
-    enum: DeviceProtocol,
+    type: String, enum: DeviceProtocol, enumName: 'DeviceProtocol',
     example: DeviceProtocol.LORAWAN_MILESIGHT,
     description:
       'Protocol used by the device. Drives topic structure and codec selection.',

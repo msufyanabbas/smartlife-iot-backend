@@ -58,7 +58,7 @@ export class CreateFloorPlanDto {
   @IsString()
   scale?: string;
 
-  @ApiPropertyOptional({ enum: FloorPlanStatus })
+  @ApiPropertyOptional({ type: String, enum: FloorPlanStatus, enumName: 'FloorPlanStatus' })
   @IsOptional()
   @IsEnum(FloorPlanStatus)
   status?: FloorPlanStatus;
@@ -138,7 +138,7 @@ export class AddDeviceToFloorPlanDto {
   model3DUrl?: string;
 
   @ApiProperty({
-    enum: DeviceAnimationType,
+    type: String, enum: DeviceAnimationType, enumName: 'DeviceAnimationType',
     example: DeviceAnimationType.SMOKE,
   })
   @IsEnum(DeviceAnimationType)
@@ -225,7 +225,7 @@ export class UploadDWGResponseDto {
   @ApiProperty()
   dwgFileUrl: string;
 
-  @ApiProperty({ enum: FloorPlanStatus })
+  @ApiProperty({ type: String, enum: FloorPlanStatus, enumName: 'FloorPlanStatus' })
   status: FloorPlanStatus;
 
   @ApiProperty()

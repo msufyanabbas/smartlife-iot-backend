@@ -16,6 +16,8 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { WidgetTypesService } from './widget-types.service';
 import { WidgetBundlesService } from './widget-bundles.service';
@@ -84,6 +86,7 @@ export class WidgetsController {
 
   @Get('types/category/:category')
   @ApiOperation({ summary: 'Get widget types by category' })
+  @ApiParam({ name: 'category', type: String, enum: WidgetTypeCategory, enumName: 'WidgetTypeCategory' })
   async findWidgetTypesByCategory(@Param('category') category: WidgetTypeCategory) {
     const widgetTypes = await this.widgetTypesService.findByCategory(category);
     return { message: 'Widget types retrieved successfully', data: widgetTypes };

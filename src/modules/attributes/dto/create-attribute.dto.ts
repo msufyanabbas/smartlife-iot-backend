@@ -21,11 +21,11 @@ export class CreateAttributeDto {
   @IsString()
   attributeKey: string;
 
-  @ApiProperty({ enum: AttributeScope, example: AttributeScope.SERVER })
+  @ApiProperty({ type: String, enum: AttributeScope, enumName: 'AttributeScope', example: AttributeScope.SERVER })
   @IsEnum(AttributeScope)
   scope: AttributeScope;
 
-  @ApiProperty({ enum: DataType, example: DataType.STRING })
+  @ApiProperty({ type: String, enum: DataType, enumName: 'DataType', example: DataType.STRING })
   @IsEnum(DataType)
   dataType: DataType;
 

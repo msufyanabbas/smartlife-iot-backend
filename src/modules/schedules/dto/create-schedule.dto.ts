@@ -70,7 +70,7 @@ export class CreateScheduleDto {
   description?: string;
 
   @ApiProperty({
-    enum: ScheduleType,
+    type: String, enum: ScheduleType, enumName: 'ScheduleType',
     example: ScheduleType.REPORT,
     description: 'Determines which configuration fields are required',
   })

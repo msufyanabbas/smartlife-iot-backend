@@ -108,7 +108,7 @@ export class RuleChainResponseDto {
   @ApiPropertyOptional()
   description?: string;
 
-  @ApiProperty({ enum: RuleChainStatus })
+  @ApiProperty({ type: String, enum: RuleChainStatus, enumName: 'RuleChainStatus' })
   status: RuleChainStatus;
 
   @ApiProperty()

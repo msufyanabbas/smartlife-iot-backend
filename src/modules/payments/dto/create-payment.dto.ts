@@ -4,7 +4,7 @@ import { SubscriptionPlan, BillingPeriod } from '@common/enums/index.enum';
 
 export class CreatePaymentIntentDto {
   @ApiProperty({ 
-    enum: SubscriptionPlan, 
+    type: String, enum: SubscriptionPlan, enumName: 'SubscriptionPlan', 
     example: SubscriptionPlan.STARTER,
     description: 'Subscription plan to purchase'
   })
@@ -12,7 +12,7 @@ export class CreatePaymentIntentDto {
   plan: SubscriptionPlan;
 
   @ApiProperty({ 
-    enum: BillingPeriod, 
+    type: String, enum: BillingPeriod, enumName: 'BillingPeriod', 
     example: BillingPeriod.MONTHLY,
     description: 'Billing period (monthly or yearly)'
   })

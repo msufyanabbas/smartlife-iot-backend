@@ -18,7 +18,7 @@ export class IntegrationActivityDto {
   })
   integrationName: string;
 
-  @ApiProperty({ enum: IntegrationType, example: IntegrationType.WEBHOOK })
+  @ApiProperty({ type: String, enum: IntegrationType, enumName: 'IntegrationType', example: IntegrationType.WEBHOOK })
   type: IntegrationType;
 
   @ApiProperty({
@@ -29,7 +29,7 @@ export class IntegrationActivityDto {
   activityType: string;
 
   @ApiProperty({
-    enum: IntegrationStatus,
+    type: String, enum: IntegrationStatus, enumName: 'IntegrationStatus',
     example: IntegrationStatus.ACTIVE,
     description: 'Current integration status',
   })

@@ -22,7 +22,7 @@ export class CreateSolutionTemplateDto {
   description: string;
 
   @ApiProperty({
-    enum: TemplateCategory,
+    type: String, enum: TemplateCategory, enumName: 'TemplateCategory',
     example: TemplateCategory.SMART_FACTORY,
   })
   @IsEnum(TemplateCategory)

@@ -19,19 +19,19 @@ export class CreateNotificationDto {
   @IsString()
   userId: string;
 
-  @ApiProperty({ enum: NotificationType, example: NotificationType.ALARM })
+  @ApiProperty({ type: String, enum: NotificationType, enumName: 'NotificationType', example: NotificationType.ALARM })
   @IsEnum(NotificationType)
   type: NotificationType;
 
   @ApiProperty({
-    enum: NotificationChannel,
+    type: String, enum: NotificationChannel, enumName: 'NotificationChannel',
     example: NotificationChannel.EMAIL,
   })
   @IsEnum(NotificationChannel)
   channel: NotificationChannel;
 
   @ApiPropertyOptional({
-    enum: NotificationPriority,
+    type: String, enum: NotificationPriority, enumName: 'NotificationPriority',
     default: NotificationPriority.NORMAL,
   })
   @IsOptional()
@@ -111,17 +111,17 @@ export class CreateNotificationDto {
 }
 
 export class NotificationQueryDto {
-  @ApiPropertyOptional({ enum: NotificationType })
+  @ApiPropertyOptional({ type: String, enum: NotificationType, enumName: 'NotificationType' })
   @IsOptional()
   @IsEnum(NotificationType)
   type?: NotificationType;
 
-  @ApiPropertyOptional({ enum: NotificationChannel })
+  @ApiPropertyOptional({ type: String, enum: NotificationChannel, enumName: 'NotificationChannel' })
   @IsOptional()
   @IsEnum(NotificationChannel)
   channel?: NotificationChannel;
 
-  @ApiPropertyOptional({ enum: NotificationStatus })
+  @ApiPropertyOptional({ type: String, enum: NotificationStatus, enumName: 'NotificationStatus' })
   @IsOptional()
   @IsEnum(NotificationStatus)
   status?: NotificationStatus;
@@ -166,15 +166,15 @@ export class SendBulkNotificationDto {
   @IsString({ each: true })
   userIds: string[];
 
-  @ApiProperty({ enum: NotificationType })
+  @ApiProperty({ type: String, enum: NotificationType, enumName: 'NotificationType' })
   @IsEnum(NotificationType)
   type: NotificationType;
 
-  @ApiProperty({ enum: NotificationChannel })
+  @ApiProperty({ type: String, enum: NotificationChannel, enumName: 'NotificationChannel' })
   @IsEnum(NotificationChannel)
   channel: NotificationChannel;
 
-  @ApiPropertyOptional({ enum: NotificationPriority })
+  @ApiPropertyOptional({ type: String, enum: NotificationPriority, enumName: 'NotificationPriority' })
   @IsOptional()
   @IsEnum(NotificationPriority)
   priority?: NotificationPriority;

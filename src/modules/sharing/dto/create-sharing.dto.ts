@@ -14,7 +14,7 @@ import {
 } from '@common/enums/index.enum';
 
 export class CreateShareDto {
-  @ApiProperty({ enum: ResourceType, example: ResourceType.DASHBOARD })
+  @ApiProperty({ type: String, enum: ResourceType, enumName: 'ResourceType', example: ResourceType.DASHBOARD })
   @IsEnum(ResourceType)
   resourceType: ResourceType;
 
@@ -22,7 +22,7 @@ export class CreateShareDto {
   @IsString()
   resourceId: string;
 
-  @ApiProperty({ enum: ShareType, example: ShareType.EMAIL })
+  @ApiProperty({ type: String, enum: ShareType, enumName: 'ShareType', example: ShareType.EMAIL })
   @IsEnum(ShareType)
   shareType: ShareType;
 
@@ -31,7 +31,7 @@ export class CreateShareDto {
   @IsString()
   sharedWith?: string;
 
-  @ApiProperty({ enum: AccessLevel, example: AccessLevel.VIEW })
+  @ApiProperty({ type: String, enum: AccessLevel, enumName: 'AccessLevel', example: AccessLevel.VIEW })
   @IsEnum(AccessLevel)
   accessLevel: AccessLevel;
 

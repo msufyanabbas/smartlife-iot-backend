@@ -16,6 +16,8 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { AttributesService } from './attributes.service';
 import {
@@ -44,6 +46,7 @@ export class AttributesController {
   @Post(':entityType/:entityId/:scope')
   @ApiOperation({ summary: 'Save multiple attributes for an entity' })
   @ApiResponse({ status: 201, description: 'Attributes saved successfully' })
+  @ApiParam({ name: 'scope', type: String, enum: AttributeScope, enumName: 'AttributeScope' })
   async saveAttributes(
     @CurrentUser() user: User,
     @Param('entityType') entityType: string,
@@ -68,6 +71,7 @@ export class AttributesController {
   @Get(':entityType/:entityId')
   @ApiOperation({ summary: 'Get all attributes for an entity' })
   @ApiResponse({ status: 200, description: 'Entity attributes' })
+  @ApiQuery({ name: 'scope', type: String, enum: AttributeScope, enumName: 'AttributeScope', required: false })
   async findByEntity(
     @CurrentUser() user: User,
     @Param('entityType') entityType: string,
@@ -90,6 +94,7 @@ export class AttributesController {
   @Get(':entityType/:entityId/keys')
   @ApiOperation({ summary: 'Get specific attribute keys for an entity' })
   @ApiResponse({ status: 200, description: 'Attribute values' })
+  @ApiQuery({ name: 'scope', type: String, enum: AttributeScope, enumName: 'AttributeScope', required: false })
   async findByKeys(
     @CurrentUser() user: User,
     @Param('entityType') entityType: string,
@@ -168,6 +173,7 @@ export class AttributesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete an attribute' })
   @ApiResponse({ status: 204, description: 'Attribute deleted' })
+  @ApiQuery({ name: 'scope', type: String, enum: AttributeScope, enumName: 'AttributeScope', required: false })
   deleteAttribute(
     @CurrentUser() user: User,
     @Param('entityType') entityType: string,
@@ -188,6 +194,7 @@ export class AttributesController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete multiple attributes' })
   @ApiResponse({ status: 200, description: 'Attributes deleted' })
+  @ApiQuery({ name: 'scope', type: String, enum: AttributeScope, enumName: 'AttributeScope', required: false })
   async deleteAttributes(
     @CurrentUser() user: User,
     @Param('entityType') entityType: string,

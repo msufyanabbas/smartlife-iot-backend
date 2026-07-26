@@ -12,7 +12,7 @@ import { EmailTemplateType } from '@common/enums/index.enum';
 export class CreateEmailTemplateDto {
   @ApiProperty({
     description: 'Type of email template',
-    enum: EmailTemplateType,
+    type: String, enum: EmailTemplateType, enumName: 'EmailTemplateType',
     example: EmailTemplateType.VERIFICATION,
   })
   @IsEnum(EmailTemplateType)

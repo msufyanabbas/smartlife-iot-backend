@@ -20,7 +20,7 @@ import { TriggerType, ActionType } from '@common/enums/index.enum';
 // ══════════════════════════════════════════════════════════════════════════
 class TriggerDto {
   @ApiProperty({
-    enum: TriggerType,
+    type: String, enum: TriggerType, enumName: 'TriggerType',
     example: TriggerType.THRESHOLD,
     description: 'Type of trigger',
   })
@@ -97,7 +97,7 @@ class TriggerDto {
 
 class ActionDto {
   @ApiProperty({
-    enum: ActionType,
+    type: String, enum: ActionType, enumName: 'ActionType',
     example: ActionType.CONTROL,
     description: 'Type of action to perform',
   })

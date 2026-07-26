@@ -36,7 +36,7 @@ export class CreateUserDto {
   @IsString()
   phone?: string;
 
-  @ApiPropertyOptional({ enum: UserRole, default: UserRole.USER })
+  @ApiPropertyOptional({ type: String, enum: UserRole, enumName: 'UserRole', default: UserRole.USER })
   @IsOptional()
   @IsEnum(UserRole)
   role?: UserRole;
@@ -151,7 +151,7 @@ export class BulkSendNotificationDto {
   message: string;
 
   @ApiPropertyOptional({
-    enum: NotificationType,
+    type: String, enum: NotificationType, enumName: 'NotificationType',
     default: NotificationType.SYSTEM,
   })
   @IsOptional()
@@ -159,7 +159,7 @@ export class BulkSendNotificationDto {
   type?: NotificationType;
 
   @ApiPropertyOptional({
-    enum: NotificationPriority,
+    type: String, enum: NotificationPriority, enumName: 'NotificationPriority',
     default: NotificationPriority.NORMAL,
   })
   @IsOptional()
@@ -187,12 +187,12 @@ export class UpdateUserDto {
   @IsString()
   customerId?: string;
 
-  @ApiPropertyOptional({ enum: UserRole })
+  @ApiPropertyOptional({ type: String, enum: UserRole, enumName: 'UserRole' })
   @IsOptional()
   @IsEnum(UserRole)
   role?: UserRole;
 
-  @ApiPropertyOptional({ enum: UserStatus })
+  @ApiPropertyOptional({ type: String, enum: UserStatus, enumName: 'UserStatus' })
   @IsOptional()
   @IsEnum(UserStatus)
   status?: UserStatus;
@@ -257,7 +257,7 @@ export class BulkUpdateStatusDto {
   @IsString({ each: true })
   userIds: string[];
 
-  @ApiProperty({ enum: UserStatus })
+  @ApiProperty({ type: String, enum: UserStatus, enumName: 'UserStatus' })
   @IsEnum(UserStatus)
   status: UserStatus;
 }
@@ -271,7 +271,7 @@ export class InviteUserDto {
   @IsString()
   name: string;
 
-  @ApiProperty({ enum: UserRole, default: UserRole.USER })
+  @ApiProperty({ type: String, enum: UserRole, enumName: 'UserRole', default: UserRole.USER })
   @IsEnum(UserRole)
   role: UserRole;
 
@@ -299,12 +299,12 @@ export class QueryUsersDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ enum: UserRole })
+  @ApiPropertyOptional({ type: String, enum: UserRole, enumName: 'UserRole' })
   @IsOptional()
   @IsEnum(UserRole)
   role?: UserRole;
 
-  @ApiPropertyOptional({ enum: UserStatus })
+  @ApiPropertyOptional({ type: String, enum: UserStatus, enumName: 'UserStatus' })
   @IsOptional()
   @IsEnum(UserStatus)
   status?: UserStatus;
@@ -330,7 +330,7 @@ export class SearchUsersDto {
 
 // Add this DTO for update status endpoint
 export class UpdateStatusDto {
-  @ApiProperty({ enum: UserStatus })
+  @ApiProperty({ type: String, enum: UserStatus, enumName: 'UserStatus' })
   @IsEnum(UserStatus)
   status: UserStatus;
 }

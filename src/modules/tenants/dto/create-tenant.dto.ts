@@ -96,7 +96,7 @@ export class CreateTenantDto {
     theme?: string;
   };
 
-  @ApiProperty({ enum: TenantStatus, required: false })
+  @ApiProperty({ type: String, enum: TenantStatus, enumName: 'TenantStatus', required: false })
   @IsOptional()
   @IsEnum(TenantStatus)
   status?: TenantStatus;

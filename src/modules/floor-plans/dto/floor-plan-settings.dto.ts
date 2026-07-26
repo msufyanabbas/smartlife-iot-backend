@@ -52,7 +52,7 @@ export class DefaultColorsDto {
 
 export class FloorPlanSettingsDto {
   @ApiProperty({
-    enum: MeasurementUnit,
+    type: String, enum: MeasurementUnit, enumName: 'MeasurementUnit',
     description: 'Measurement unit for floor plan',
   })
   @IsEnum(MeasurementUnit)
@@ -75,7 +75,7 @@ export class FloorPlanSettingsDto {
 
 export class UpdateFloorPlanSettingsDto {
   @ApiPropertyOptional({
-    enum: MeasurementUnit,
+    type: String, enum: MeasurementUnit, enumName: 'MeasurementUnit',
     description: 'Measurement unit for floor plan',
   })
   @IsOptional()

@@ -4,7 +4,7 @@ import { FirmwareUpdateStatus } from '@common/enums/index.enum';
 
 /** Device-reported OTA progress. Sent to POST /ota/:deviceToken/status. */
 export class OtaStatusDto {
-  @ApiProperty({ enum: FirmwareUpdateStatus, enumName: 'FirmwareUpdateStatus' })
+  @ApiProperty({ type: String, enum: FirmwareUpdateStatus, enumName: 'FirmwareUpdateStatus' })
   @IsEnum(FirmwareUpdateStatus)
   status: FirmwareUpdateStatus;
 

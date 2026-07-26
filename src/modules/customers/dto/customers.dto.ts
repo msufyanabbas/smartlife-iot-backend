@@ -156,7 +156,7 @@ export class UpdateCustomerDto {
   @IsString()
   zip?: string;
 
-  @ApiPropertyOptional({ enum: CustomerStatus })
+  @ApiPropertyOptional({ type: String, enum: CustomerStatus, enumName: 'CustomerStatus' })
   @IsOptional()
   @IsEnum(CustomerStatus)
   status?: CustomerStatus;
@@ -176,7 +176,7 @@ export class BulkUpdateCustomerStatusDto {
   @IsString({ each: true })
   customerIds: string[];
 
-  @ApiProperty({ enum: CustomerStatus })
+  @ApiProperty({ type: String, enum: CustomerStatus, enumName: 'CustomerStatus' })
   @IsEnum(CustomerStatus)
   status: CustomerStatus;
 }

@@ -78,10 +78,10 @@ export class AuditController {
       - CUSTOMER_USER: Only your own logs within your customer
     `,
   })
-  @ApiQuery({ name: 'action', required: false, enum: AuditAction })
-  @ApiQuery({ name: 'entityType', required: false, enum: AuditEntityType })
+  @ApiQuery({ name: 'action', required: false, type: String, enum: AuditAction })
+  @ApiQuery({ name: 'entityType', required: false, type: String, enum: AuditEntityType })
   @ApiQuery({ name: 'entityId', required: false })
-  @ApiQuery({ name: 'severity', required: false, enum: AuditSeverity })
+  @ApiQuery({ name: 'severity', required: false, type: String, enum: AuditSeverity })
   @ApiQuery({ name: 'success', required: false, type: Boolean })
   @ApiQuery({ name: 'startDate', required: false })
   @ApiQuery({ name: 'endDate', required: false })

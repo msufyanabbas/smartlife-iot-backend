@@ -3,7 +3,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { FirmwareTargetType } from '@common/enums/index.enum';
 
 export class AssignFirmwareDto {
-  @ApiProperty({ enum: FirmwareTargetType, enumName: 'FirmwareTargetType' })
+  @ApiProperty({ type: String, enum: FirmwareTargetType, enumName: 'FirmwareTargetType' })
   @IsEnum(FirmwareTargetType)
   targetType: FirmwareTargetType;
 

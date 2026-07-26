@@ -15,7 +15,7 @@ export class CreateScriptDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ enum: ScriptType, example: ScriptType.PROCESSING })
+  @ApiProperty({ type: String, enum: ScriptType, enumName: 'ScriptType', example: ScriptType.PROCESSING })
   @IsEnum(ScriptType)
   type: ScriptType;
 

@@ -63,7 +63,7 @@ export class EmailTemplatesController {
   @ApiResponse({ status: 404, description: 'Template not found' })
   // enumName is required — without it Swagger's schema factory treats a bare
   // enum @Param as a circular dependency and throws at bootstrap
-  @ApiParam({ name: 'type', enum: EmailTemplateType, enumName: 'EmailTemplateType' })
+  @ApiParam({ name: 'type', type: String, enum: EmailTemplateType, enumName: 'EmailTemplateType' })
   findByType(@Param('type') type: EmailTemplateType) {
     return this.emailTemplatesService.findByType(type);
   }

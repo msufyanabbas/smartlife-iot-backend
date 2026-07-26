@@ -6,7 +6,7 @@ import { DeviceStatus } from '@common/enums/index.enum';
 
 export class UpdateDeviceDto extends PartialType(CreateDeviceDto) {
   @ApiPropertyOptional({
-    enum: DeviceStatus,
+    type: String, enum: DeviceStatus, enumName: 'DeviceStatus',
     example: DeviceStatus.ACTIVE,
     description: 'Device status',
   })
