@@ -1,7 +1,8 @@
 // src/modules/auth/entities/oauth-account.entity.ts
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { User } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { User } from '../../users/entities/user.entity';
 import { OAuthProviderEnum } from '@common/enums/index.enum';
 import type { OAuthProfile } from '@/common/interfaces/oauth.interface';
 
@@ -14,9 +15,9 @@ export class OAuthAccount extends BaseEntity {
   @Column()
   userId: string;
 
-  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @ManyToOne('User', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ── Provider identity ──────────────────────────────────────────────────────
   @Column({ type: 'enum', enum: OAuthProviderEnum })

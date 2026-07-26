@@ -8,7 +8,8 @@ import {
   PrimaryGeneratedColumn,
   CreateDateColumn,
 } from 'typeorm';
-import { EdgeInstance } from './edge-instance.entity';
+import type { Relation } from 'typeorm';
+import type { EdgeInstance } from './edge-instance.entity';
 
 @Entity('edge_metrics_snapshots')
 @Index(['edgeId', 'recordedAt'])
@@ -25,11 +26,11 @@ export class EdgeMetricsSnapshot {
   @Index()
   edgeId: string;
 
-  @ManyToOne(() => EdgeInstance, (edge) => edge.metricsSnapshots, {
+  @ManyToOne('EdgeInstance', 'metricsSnapshots', {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'edgeId' })
-  edge: EdgeInstance;
+  edge: Relation<EdgeInstance>;
 
   @Column()
   tenantId: string;

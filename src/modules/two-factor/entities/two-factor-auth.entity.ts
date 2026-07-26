@@ -8,7 +8,9 @@ import {
   ManyToOne,
 } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { User, Tenant } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { User } from '../../users/entities/user.entity';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 import { TwoFactorMethod } from '@common/enums/index.enum';
 
 @Entity('two_factor_auth')
@@ -23,9 +25,9 @@ export class TwoFactorAuth extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // USER RELATIONSHIP
@@ -35,9 +37,9 @@ export class TwoFactorAuth extends BaseEntity {
 
   userId: string;
 
-  @OneToOne(() => User, { onDelete: 'CASCADE' })
+  @OneToOne('User', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // 2FA SETTINGS

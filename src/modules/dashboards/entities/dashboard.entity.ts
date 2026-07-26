@@ -1,6 +1,9 @@
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, User } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { User } from '../../users/entities/user.entity';
 import { WidgetConfig } from '@common/interfaces/index.interface';
 import { DashboardVisibility } from '@common/enums/index.enum';
 
@@ -15,27 +18,27 @@ export class Dashboard extends BaseEntity {
   @Column()
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ── Customer scoping (optional) ───────────────────────────────────────────
 
   @Column({ nullable: true })
   customerId?: string;
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ── Ownership ─────────────────────────────────────────────────────────────
 
   @Column()
   userId: string;
 
-  @ManyToOne(() => User)
+  @ManyToOne('User')
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ── Basic info ────────────────────────────────────────────────────────────
 

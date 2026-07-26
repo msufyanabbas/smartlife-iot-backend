@@ -1,7 +1,10 @@
 // src/modules/api-logs/entities/api-log.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, User } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { User } from '../../users/entities/user.entity';
 
 @Entity('api_logs')
 // ── Composite indexes for tenant-scoped queries ────────────────────────────
@@ -19,9 +22,9 @@ export class APILog extends BaseEntity {
 
   tenantId?: string;
 
-  @ManyToOne(() => Tenant, { nullable: true })
+  @ManyToOne('Tenant', { nullable: true })
   @JoinColumn({ name: 'tenantId' })
-  tenant?: Tenant;
+  tenant?: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL - denormalized from user)
@@ -31,9 +34,9 @@ export class APILog extends BaseEntity {
 
   customerId?: string;  // Denormalized from user.customerId for fast filtering
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // USER CONTEXT
@@ -43,9 +46,9 @@ export class APILog extends BaseEntity {
 
   userId?: string;  // Nullable for unauthenticated requests
 
-  @ManyToOne(() => User, { nullable: true })
+  @ManyToOne('User', { nullable: true })
   @JoinColumn({ name: 'userId' })
-  user?: User;
+  user?: Relation<User>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // REQUEST DETAILS

@@ -1,7 +1,9 @@
 // src/modules/scripts/entities/script.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, User } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { User } from '../../users/entities/user.entity';
 import { ScriptType } from '@common/enums/index.enum';
 
 @Entity('scripts')
@@ -17,9 +19,9 @@ export class Script extends BaseEntity {
   @Index() // ✅ Keep individual index on tenantId (frequently queried alone)
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // OWNER
@@ -28,9 +30,9 @@ export class Script extends BaseEntity {
   @Column()
   userId: string; // ✅ REMOVED @Index() - already in composite index
 
-  @ManyToOne(() => User)
+  @ManyToOne('User')
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // SCRIPT INFO

@@ -1,7 +1,8 @@
 // src/modules/subscriptions/entities/subscription.entity.ts
 import { Entity, Column, Index, OneToOne, JoinColumn, Unique } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant } from '@modules/index.entities';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 import {
   SubscriptionPlan,
   SubscriptionStatus,
@@ -25,11 +26,11 @@ export class Subscription extends BaseEntity {
   @Column({ nullable: false })
   tenantId: string;
 
-  @OneToOne(() => Tenant, (tenant) => tenant.subscription, {
+  @OneToOne('Tenant', 'subscription', {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ── Plan & Status ──────────────────────────────────────────────────────────
   @Column({

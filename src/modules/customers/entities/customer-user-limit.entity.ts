@@ -8,7 +8,9 @@ import {
   Unique,
 } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { User, Customer } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { User } from '../../users/entities/user.entity';
+import type { Customer } from './customers.entity';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CustomerUserLimit
@@ -37,16 +39,16 @@ export class CustomerUserLimit extends BaseEntity {
   @Column()
   userId: string;
 
-  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @ManyToOne('User', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   @Column()
   customerId: string;
 
-  @ManyToOne(() => Customer, { onDelete: 'CASCADE' })
+  @ManyToOne('Customer', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'customerId' })
-  customer: Customer;
+  customer: Relation<Customer>;
 
   // Denormalized for faster queries (avoids joining through customer every time)
   @Column()

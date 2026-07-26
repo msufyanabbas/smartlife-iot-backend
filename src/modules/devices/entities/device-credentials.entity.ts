@@ -7,7 +7,8 @@ import {
   BeforeInsert,
 } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Device } from './device.entity';
+import type { Relation } from 'typeorm';
+import type { Device } from './device.entity';
 import * as crypto from 'crypto';
 
 export enum CredentialsType {
@@ -29,11 +30,11 @@ export class DeviceCredentials extends BaseEntity {
   @Column()
   deviceId: string;
 
-  @OneToOne(() => Device, (device) => device.credentials, {
+  @OneToOne('Device', 'credentials', {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'deviceId' })
-  device: Device;
+  device: Relation<Device>;
 
   // ── Credentials type ──────────────────────────────────────────────────────
 

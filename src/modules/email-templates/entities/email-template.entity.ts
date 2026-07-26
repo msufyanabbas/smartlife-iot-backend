@@ -1,7 +1,8 @@
 // src/modules/email-templates/entities/email-template.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 import { EmailTemplateType } from '@common/enums/index.enum';
 
 @Entity('email_templates')
@@ -17,9 +18,9 @@ export class EmailTemplate extends BaseEntity {
 
   tenantId?: string;  // null = system template, non-null = tenant-specific override
 
-  @ManyToOne(() => Tenant, { nullable: true })
+  @ManyToOne('Tenant', { nullable: true })
   @JoinColumn({ name: 'tenantId' })
-  tenant?: Tenant;
+  tenant?: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // TEMPLATE TYPE & INFO

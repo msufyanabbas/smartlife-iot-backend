@@ -8,7 +8,8 @@ import {
   PrimaryGeneratedColumn,
   CreateDateColumn,
 } from 'typeorm';
-import { EdgeInstance } from './edge-instance.entity';
+import type { Relation } from 'typeorm';
+import type { EdgeInstance } from './edge-instance.entity';
 
 export enum EdgeCommandStatus {
   PENDING   = 'pending',
@@ -38,11 +39,11 @@ export class EdgeCommand {
   @Index()
   edgeId: string;
 
-  @ManyToOne(() => EdgeInstance, (edge) => edge.commands, {
+  @ManyToOne('EdgeInstance', 'commands', {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'edgeId' })
-  edge: EdgeInstance;
+  edge: Relation<EdgeInstance>;
 
   @Column()
   tenantId: string;
@@ -51,7 +52,9 @@ export class EdgeCommand {
   // COMMAND
   // ══════════════════════════════════════════════════════════════════════════
 
-  @Column()
+  // explicit type — EdgeCommandType is a string-literal union that erases at
+  // runtime, so design:type emits Object and TypeORM cannot infer a column type
+  @Column({ type: 'varchar' })
   command: EdgeCommandType;
 
   @Column({ type: 'jsonb', nullable: true })

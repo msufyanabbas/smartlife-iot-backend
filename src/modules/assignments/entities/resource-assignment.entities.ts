@@ -36,7 +36,15 @@ import {
   CreateDateColumn,
 } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Asset, Automation, Customer, Dashboard, Device, FloorPlan, User, Tenant } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Asset } from '../../assets/entities/asset.entity';
+import type { Automation } from '../../automation/entities/automation.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { Dashboard } from '../../dashboards/entities/dashboard.entity';
+import type { Device } from '../../devices/entities/device.entity';
+import type { FloorPlan } from '../../floor-plans/entities/floor-plan.entity';
+import type { User } from '../../users/entities/user.entity';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Base class for all customer-level resource assignments
@@ -46,9 +54,9 @@ abstract class CustomerResourceAssignment extends BaseEntity {
 
   customerId: string;
 
-  @ManyToOne(() => Customer, { onDelete: 'CASCADE' })
+  @ManyToOne('Customer', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'customerId' })
-  customer: Customer;
+  customer: Relation<Customer>;
 
   // Denormalized for fast tenant-scoped queries
   @Column()
@@ -65,9 +73,9 @@ abstract class CustomerResourceAssignment extends BaseEntity {
 
   assignedBy?: string;
 
-  @ManyToOne(() => User, { nullable: true })
+  @ManyToOne('User', { nullable: true })
   @JoinColumn({ name: 'assignedBy' })
-  assignor?: User;
+  assignor?: Relation<User>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,26 +86,26 @@ abstract class UserResourceAssignment extends BaseEntity {
 
   userId: string;
 
-  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @ManyToOne('User', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   @Column()
 
   customerId: string;
 
-  @ManyToOne(() => Customer, { onDelete: 'CASCADE' })
+  @ManyToOne('Customer', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'customerId' })
-  customer: Customer;
+  customer: Relation<Customer>;
 
   // Denormalized for fast tenant-scoped queries
   @Column()
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   @CreateDateColumn()
 
@@ -108,9 +116,9 @@ abstract class UserResourceAssignment extends BaseEntity {
 
   assignedBy?: string;
 
-  @ManyToOne(() => User, { nullable: true })
+  @ManyToOne('User', { nullable: true })
   @JoinColumn({ name: 'assignedBy' })
-  assignor?: User;
+  assignor?: Relation<User>;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -126,9 +134,9 @@ export class CustomerDevice extends CustomerResourceAssignment {
 
   deviceId: string;
 
-  @ManyToOne(() => Device, { onDelete: 'CASCADE' })
+  @ManyToOne('Device', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'deviceId' })
-  device: Device;
+  device: Relation<Device>;
 }
 
 @Entity('user_devices')
@@ -141,9 +149,9 @@ export class UserDevice extends UserResourceAssignment {
 
   deviceId: string;
 
-  @ManyToOne(() => Device, { onDelete: 'CASCADE' })
+  @ManyToOne('Device', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'deviceId' })
-  device: Device;
+  device: Relation<Device>;
 
   // Constraint: deviceId must already exist in customer_devices for this customerId.
   // Enforced at service layer, not DB level (too complex for a DB constraint).
@@ -162,9 +170,9 @@ export class CustomerDashboard extends CustomerResourceAssignment {
 
   dashboardId: string;
 
-  @ManyToOne(() => Dashboard, { onDelete: 'CASCADE' })
+  @ManyToOne('Dashboard', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'dashboardId' })
-  dashboard: Dashboard;
+  dashboard: Relation<Dashboard>;
 }
 
 @Entity('user_dashboards')
@@ -177,9 +185,9 @@ export class UserDashboard extends UserResourceAssignment {
 
   dashboardId: string;
 
-  @ManyToOne(() => Dashboard, { onDelete: 'CASCADE' })
+  @ManyToOne('Dashboard', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'dashboardId' })
-  dashboard: Dashboard;
+  dashboard: Relation<Dashboard>;
 
   // Constraint: dashboardId must already exist in customer_dashboards for this customerId.
   // Enforced at service layer, not DB level (too complex for a DB constraint).
@@ -198,9 +206,9 @@ export class CustomerAsset extends CustomerResourceAssignment {
 
   assetId: string;
 
-  @ManyToOne(() => Asset, { onDelete: 'CASCADE' })
+  @ManyToOne('Asset', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'assetId' })
-  asset: Asset;
+  asset: Relation<Asset>;
 }
 
 @Entity('user_assets')
@@ -213,9 +221,9 @@ export class UserAsset extends UserResourceAssignment {
 
   assetId: string;
 
-  @ManyToOne(() => Asset, { onDelete: 'CASCADE' })
+  @ManyToOne('Asset', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'assetId' })
-  asset: Asset;
+  asset: Relation<Asset>;
 
   // Constraint: assetId must already exist in customer_assets for this customerId.
   // Enforced at service layer, not DB level (too complex for a DB constraint).
@@ -234,9 +242,9 @@ export class CustomerFloorPlan extends CustomerResourceAssignment {
 
   floorPlanId: string;
 
-  @ManyToOne(() => FloorPlan, { onDelete: 'CASCADE' })
+  @ManyToOne('FloorPlan', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'floorPlanId' })
-  floorPlan: FloorPlan;
+  floorPlan: Relation<FloorPlan>;
 }
 
 @Entity('user_floor_plans')
@@ -249,9 +257,9 @@ export class UserFloorPlan extends UserResourceAssignment {
 
   floorPlanId: string;
 
-  @ManyToOne(() => FloorPlan, { onDelete: 'CASCADE' })
+  @ManyToOne('FloorPlan', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'floorPlanId' })
-  floorPlan: FloorPlan;
+  floorPlan: Relation<FloorPlan>;
 
   // Constraint: floorPlanId must already exist in customer_floor_plans for this customerId.
   // Enforced at service layer, not DB level (too complex for a DB constraint).
@@ -270,9 +278,9 @@ export class CustomerAutomation extends CustomerResourceAssignment {
 
   automationId: string;
 
-  @ManyToOne(() => Automation, { onDelete: 'CASCADE' })
+  @ManyToOne('Automation', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'automationId' })
-  automation: Automation;
+  automation: Relation<Automation>;
 }
 
 @Entity('user_automations')
@@ -285,9 +293,9 @@ export class UserAutomation extends UserResourceAssignment {
 
   automationId: string;
 
-  @ManyToOne(() => Automation, { onDelete: 'CASCADE' })
+  @ManyToOne('Automation', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'automationId' })
-  automation: Automation;
+  automation: Relation<Automation>;
 
   // Constraint: automationId must already exist in customer_automations for this customerId.
   // Enforced at service layer, not DB level (too complex for a DB constraint).

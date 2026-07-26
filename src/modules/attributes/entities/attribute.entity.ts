@@ -1,7 +1,10 @@
 // src/modules/attributes/entities/attribute.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, User } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { User } from '../../users/entities/user.entity';
 import { DataType, AttributeScope } from '@common/enums/index.enum';
 
 @Entity('attributes')
@@ -17,9 +20,9 @@ export class Attribute extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL - denormalized from entity)
@@ -29,9 +32,9 @@ export class Attribute extends BaseEntity {
 
   customerId?: string;  // Denormalized from the entity for fast filtering
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // ENTITY REFERENCE (What does this attribute belong to?)
@@ -91,9 +94,9 @@ export class Attribute extends BaseEntity {
 
   userId: string;  // Who last updated this attribute
 
-  @ManyToOne(() => User)  // ✅ Added relation
+  @ManyToOne('User')  // ✅ Added relation
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // ADDITIONAL METADATA

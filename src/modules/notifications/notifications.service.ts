@@ -40,8 +40,12 @@ export class NotificationsService {
     private notificationsRepo: NotificationsRepository,
     private eventEmitter: EventEmitter2,
     private emailChannel: EmailChannel,
+    // NOTE: type written as InstanceType<typeof UsersService> so SWC emits
+    // `Object` for design:paramtypes instead of eagerly reading the UsersService
+    // binding — that read TDZ-crashes on the UsersService <-> NotificationsService
+    // import cycle. The forwardRef below still resolves the real DI token.
     @Inject(forwardRef(() => UsersService))
-    private userService: UsersService,
+    private userService: InstanceType<typeof UsersService>,
     private smsChannel: SmsChannel,
     private pushChannel: PushChannel,
   ) { }

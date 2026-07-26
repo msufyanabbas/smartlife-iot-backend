@@ -1,7 +1,10 @@
 // src/modules/images/entities/image.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, User } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { User } from '../../users/entities/user.entity';
 
 @Entity('images')
 @Index(['tenantId', 'userId'])
@@ -17,9 +20,9 @@ export class Image extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
@@ -29,9 +32,9 @@ export class Image extends BaseEntity {
 
   customerId?: string;
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // UPLOADER INFO
@@ -41,9 +44,9 @@ export class Image extends BaseEntity {
 
   userId: string;  // Who uploaded this image
 
-  @ManyToOne(() => User)
+  @ManyToOne('User')
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   @Column({ nullable: true })
   uploadedBy?: string;  // Denormalized user name/email for quick reference

@@ -20,7 +20,9 @@ export const AppDataSource = new DataSource({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_DATABASE,
   entities: Object.values(entities),
-  migrations: ['src/database/migrations/**/*.ts'],
+  // .js only — loading .ts migrations here crashes app boot with
+  // ERR_INTERNAL_ASSERTION (TypeORM dynamic-import of a .ts file under nodenext).
+  migrations: [path.join(__dirname, 'migrations', '*.js')],
   synchronize: false,
   logging: process.env.DB_LOGGING === 'true',
   ssl: false,

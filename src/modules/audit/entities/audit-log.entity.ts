@@ -1,7 +1,10 @@
 // src/modules/audit/entities/audit-log.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { User, Tenant, Customer } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { User } from '../../users/entities/user.entity';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
 import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @Entity('audit_logs')
@@ -21,9 +24,9 @@ export class AuditLog extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
@@ -33,9 +36,9 @@ export class AuditLog extends BaseEntity {
 
   customerId?: string;
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // USER CONTEXT (Who performed the action?)
@@ -45,9 +48,9 @@ export class AuditLog extends BaseEntity {
 
   userId?: string;
 
-  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @ManyToOne('User', { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'userId' })
-  user?: User;
+  user?: Relation<User>;
 
   @Column({ nullable: true })
   userName?: string;

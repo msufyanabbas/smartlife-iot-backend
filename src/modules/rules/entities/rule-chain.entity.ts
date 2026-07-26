@@ -1,7 +1,10 @@
 // src/modules/rule-chains/entities/rule-chain.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, User } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { User } from '../../users/entities/user.entity';
 import { RuleChainStatus } from '@common/enums/index.enum';
 
 @Entity('rule_chains')
@@ -16,9 +19,9 @@ export class RuleChain extends BaseEntity {
   @Column()
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
@@ -27,9 +30,9 @@ export class RuleChain extends BaseEntity {
   @Column({ nullable: true })
   customerId?: string;
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // OWNERSHIP
@@ -38,9 +41,9 @@ export class RuleChain extends BaseEntity {
   @Column()
   userId: string;
 
-  @ManyToOne(() => User)
+  @ManyToOne('User')
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO

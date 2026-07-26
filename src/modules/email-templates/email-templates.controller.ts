@@ -17,6 +17,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiQuery,
+  ApiParam,
 } from '@nestjs/swagger';
 import { EmailTemplatesService } from './email-templates.service';
 import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
@@ -60,6 +61,9 @@ export class EmailTemplatesController {
   @ApiOperation({ summary: 'Get email template by type' })
   @ApiResponse({ status: 200, description: 'Email template found' })
   @ApiResponse({ status: 404, description: 'Template not found' })
+  // enumName is required — without it Swagger's schema factory treats a bare
+  // enum @Param as a circular dependency and throws at bootstrap
+  @ApiParam({ name: 'type', enum: EmailTemplateType, enumName: 'EmailTemplateType' })
   findByType(@Param('type') type: EmailTemplateType) {
     return this.emailTemplatesService.findByType(type);
   }

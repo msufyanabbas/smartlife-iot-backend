@@ -2,7 +2,8 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
 import { WidgetTypeCategory } from '@common/enums/index.enum';
-import { Tenant } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 
 @Entity('widget_types')
 @Index(['tenantId', 'name'])
@@ -16,9 +17,9 @@ export class WidgetType extends BaseEntity {
   @Column({ nullable: true })
   tenantId?: string;  // null = system widget, has value = tenant-specific widget
 
-  @ManyToOne(() => Tenant, { nullable: true })
+  @ManyToOne('Tenant', { nullable: true })
   @JoinColumn({ name: 'tenantId' })
-  tenant?: Tenant;
+  tenant?: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO

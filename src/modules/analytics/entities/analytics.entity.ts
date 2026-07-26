@@ -1,6 +1,8 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, Device, User } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
 import { AnalyticsType, AnalyticsPeriod } from '@common/enums/index.enum';
 
 @Entity('analytics')
@@ -17,9 +19,9 @@ export class Analytics extends BaseEntity {
   // Critical for tenant isolation queries
   tenantId: string;  // ✅ Required, not nullable
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL - for B2B2C)
@@ -29,9 +31,9 @@ export class Analytics extends BaseEntity {
 
   customerId?: string;
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // ANALYTICS TYPE & PERIOD

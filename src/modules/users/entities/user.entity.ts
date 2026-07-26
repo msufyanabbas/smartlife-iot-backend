@@ -10,10 +10,14 @@ import {
   ManyToMany,
   JoinTable,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { Exclude } from 'class-transformer';
 import * as bcrypt from 'bcrypt';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, Role, Permission } from '@modules/index.entities';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { Role } from '../../roles/entities/roles.entity';
+import type { Permission } from '../../permissions/entities/permissions.entity';
 import { UserRole, UserStatus } from '@common/enums/index.enum';
 
 @Entity('users')
@@ -56,12 +60,12 @@ export class User extends BaseEntity {
 
   tenantId?: string;
 
-  @ManyToOne(() => Tenant, (tenant) => tenant.users, {
+  @ManyToOne('Tenant', 'users', {
     nullable: true,
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'tenantId' })
-  tenant?: Tenant;
+  tenant?: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPE
@@ -71,36 +75,36 @@ export class User extends BaseEntity {
 
   customerId?: string;
 
-  @ManyToOne(() => Customer, (customer) => customer.users, {
+  @ManyToOne('Customer', 'users', {
     nullable: true,
     onDelete: 'SET NULL',
   })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // ROLE-BASED PERMISSIONS (ManyToMany with auto junction table)
   // ══════════════════════════════════════════════════════════════════════════
 
-  @ManyToMany(() => Role, (role) => role.users, { eager: true })  // ← Add eager loading
+  @ManyToMany('Role', 'users', { eager: true })  // ← Add eager loading
   @JoinTable({
     name: 'user_roles',
     joinColumn: { name: 'userId', referencedColumnName: 'id' },
     inverseJoinColumn: { name: 'roleId', referencedColumnName: 'id' },
   })
-  roles?: Role[];
+  roles?: Relation<Role>[];
 
   // ══════════════════════════════════════════════════════════════════════════
   // DIRECT PERMISSIONS
   // ══════════════════════════════════════════════════════════════════════════
 
-  @ManyToMany(() => Permission, (permission) => permission.users, { eager: true })
+  @ManyToMany('Permission', 'users', { eager: true })
   @JoinTable({
     name: 'user_permissions',
     joinColumn: { name: 'userId', referencedColumnName: 'id' },
     inverseJoinColumn: { name: 'permissionId', referencedColumnName: 'id' },
   })
-  directPermissions?: Permission[];
+  directPermissions?: Relation<Permission>[];
 
   // ══════════════════════════════════════════════════════════════════════════
   // AUTH FIELDS

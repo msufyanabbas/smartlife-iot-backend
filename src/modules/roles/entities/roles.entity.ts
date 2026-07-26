@@ -9,8 +9,11 @@ import {
   JoinTable,
   Unique,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, User, Permission } from '@modules/index.entities';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { User } from '../../users/entities/user.entity';
+import type { Permission } from '../../permissions/entities/permissions.entity';
 
 @Entity('roles')
 @Unique(['tenantId', 'name'])
@@ -30,9 +33,9 @@ export class Role extends BaseEntity {
   @Column({ nullable: true })
   tenantId?: string;
 
-  @ManyToOne(() => Tenant, { nullable: true, onDelete: 'CASCADE' })
+  @ManyToOne('Tenant', { nullable: true, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'tenantId' })
-  tenant?: Tenant;
+  tenant?: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // FLAGS
@@ -45,7 +48,7 @@ export class Role extends BaseEntity {
   // PERMISSIONS
   // ══════════════════════════════════════════════════════════════════════════
 
-  @ManyToMany(() => Permission, (permission) => permission.roles, {
+  @ManyToMany('Permission', 'roles', {
     eager: true,
   })
   @JoinTable({
@@ -53,14 +56,14 @@ export class Role extends BaseEntity {
     joinColumn: { name: 'roleId', referencedColumnName: 'id' },
     inverseJoinColumn: { name: 'permissionId', referencedColumnName: 'id' },
   })
-  permissions?: Permission[];
+  permissions?: Relation<Permission>[];
 
   // ══════════════════════════════════════════════════════════════════════════
   // INVERSE RELATIONSHIPS (NO @JoinTable!)
   // ══════════════════════════════════════════════════════════════════════════
 
-  @ManyToMany(() => User, (user) => user.roles)
-  users?: User[];
+  @ManyToMany('User', 'roles')
+  users?: Relation<User>[];
 
   // ══════════════════════════════════════════════════════════════════════════
   // HELPER METHODS

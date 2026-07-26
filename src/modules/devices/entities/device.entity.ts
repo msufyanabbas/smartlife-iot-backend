@@ -7,16 +7,15 @@ import {
   Index,
   OneToOne,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import {
-  User,
-  Tenant,
-  Customer,
-  Asset,
-  DeviceProfile,
-  DeviceCredentials,
-  EdgeInstance,
-} from '@modules/index.entities';
+import type { User } from '../../users/entities/user.entity';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { Asset } from '../../assets/entities/asset.entity';
+import type { DeviceProfile } from '../../profiles/entities/device-profile.entity';
+import type { DeviceCredentials } from './device-credentials.entity';
+import type { EdgeInstance } from '../../edge/entities/edge-instance.entity';
 import {
   DeviceType,
   DeviceStatus,
@@ -46,18 +45,18 @@ export class Device extends BaseEntity {
   @Column()
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ── Customer scoping (optional) ──────────────────────────────────────────
 
   @Column({ nullable: true })
   customerId?: string;
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ── Basic info ────────────────────────────────────────────────────────────
 
@@ -97,27 +96,27 @@ export class Device extends BaseEntity {
   @Column()
   userId: string;
 
-  @ManyToOne(() => User)
+  @ManyToOne('User')
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ── Device profile ────────────────────────────────────────────────────────
 
   @Column({ nullable: true })
   deviceProfileId?: string;
 
-  @ManyToOne(() => DeviceProfile, { nullable: true })
+  @ManyToOne('DeviceProfile', { nullable: true })
   @JoinColumn({ name: 'deviceProfileId' })
-  deviceProfile?: DeviceProfile;
+  deviceProfile?: Relation<DeviceProfile>;
 
   // ── Asset association ─────────────────────────────────────────────────────
 
   @Column({ nullable: true })
   assetId?: string;
 
-  @ManyToOne(() => Asset, (asset) => asset.devices, { nullable: true })
+  @ManyToOne('Asset', 'devices', { nullable: true })
   @JoinColumn({ name: 'assetId' })
-  asset?: Asset;
+  asset?: Relation<Asset>;
 
   // ── Network info ──────────────────────────────────────────────────────────
 
@@ -169,9 +168,9 @@ export class Device extends BaseEntity {
   @Column({ nullable: true })
   edgeId?: string;
 
-  @ManyToOne(() => EdgeInstance, { nullable: true, onDelete: 'SET NULL' })
+  @ManyToOne('EdgeInstance', { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'edgeId' })
-  edge?: EdgeInstance;
+  edge?: Relation<EdgeInstance>;
 
 
   // ── Tags ──────────────────────────────────────────────────────────────────
@@ -192,10 +191,10 @@ export class Device extends BaseEntity {
 
   // ── Credentials (1:1) — cascade handled by FK, not by TypeORM cascade ────
 
-  @OneToOne(() => DeviceCredentials, (credentials) => credentials.device, {
+  @OneToOne('DeviceCredentials', 'device', {
     nullable: true,
   })
-  credentials?: DeviceCredentials;
+  credentials?: Relation<DeviceCredentials>;
 
   // ── Statistics ────────────────────────────────────────────────────────────
 

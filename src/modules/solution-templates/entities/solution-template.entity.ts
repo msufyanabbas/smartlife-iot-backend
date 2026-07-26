@@ -2,7 +2,9 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
 import { SolutionTemplateCategory } from '@common/enums/index.enum';
-import { Tenant, User } from '@/modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { User } from '../../users/entities/user.entity';
 @Entity('solution_templates')
 @Index(['category'])
 @Index(['isPremium'])
@@ -16,9 +18,9 @@ export class SolutionTemplate extends BaseEntity {
   @Column({ nullable: true })
   tenantId?: string;
 
-  @ManyToOne(() => Tenant, { nullable: true })
+  @ManyToOne('Tenant', { nullable: true })
   @JoinColumn({ name: 'tenantId' })
-  tenant?: Tenant;
+  tenant?: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CREATOR (OPTIONAL - null for system templates)
@@ -27,9 +29,9 @@ export class SolutionTemplate extends BaseEntity {
   @Column({ nullable: true })
   userId?: string;
 
-  @ManyToOne(() => User, { nullable: true })
+  @ManyToOne('User', { nullable: true })
   @JoinColumn({ name: 'userId' })
-  user?: User;
+  user?: Relation<User>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO

@@ -1,7 +1,10 @@
 // src/modules/payments/entities/payment.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, User, Subscription } from '@/modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { User } from '../../users/entities/user.entity';
+import type { Subscription } from '../../subscriptions/entities/subscription.entity';
 import { PaymentMethod, PaymentProvider, PaymentStatus } from '@common/enums/index.enum'
 
 @Entity('payments')
@@ -19,9 +22,9 @@ export class Payment extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // USER & SUBSCRIPTION
@@ -31,17 +34,17 @@ export class Payment extends BaseEntity {
 
   userId: string;
 
-  @ManyToOne(() => User)
+  @ManyToOne('User')
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   @Column()
 
   subscriptionId: string;
 
-  @ManyToOne(() => Subscription)
+  @ManyToOne('Subscription')
   @JoinColumn({ name: 'subscriptionId' })
-  subscription: Subscription;
+  subscription: Relation<Subscription>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // PAYMENT PROVIDER

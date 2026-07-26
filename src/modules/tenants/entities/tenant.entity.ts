@@ -6,8 +6,11 @@ import {
   OneToMany,
   OneToOne,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { User, Customer, Subscription } from '@modules/index.entities';
+import type { User } from '../../users/entities/user.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { Subscription } from '../../subscriptions/entities/subscription.entity';
 import { TenantStatus } from '@/common/enums/index.enum';
 
 @Entity('tenants')
@@ -47,14 +50,14 @@ export class Tenant extends BaseEntity {
   status: TenantStatus;
 
   // ✅ Relations
-  @OneToMany(() => User, user => user.tenant)
-  users?: User[];
+  @OneToMany('User', 'tenant')
+  users?: Relation<User>[];
 
-  @OneToMany(() => Customer, customer => customer.tenant)
-  customers?: Customer[];  
+  @OneToMany('Customer', 'tenant')
+  customers?: Relation<Customer>[];
 
-  @OneToOne(() => Subscription, subscription => subscription.tenant)
-  subscription?: Subscription;
+  @OneToOne('Subscription', 'tenant')
+  subscription?: Relation<Subscription>;
 
   @Column({ type: 'jsonb', default: '{}' })
   configuration: {

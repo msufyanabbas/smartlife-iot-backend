@@ -8,7 +8,8 @@ import {
   OneToOne,
   JoinColumn,
 } from 'typeorm';
-import { User } from '../../users/entities/user.entity';
+import type { Relation } from 'typeorm';
+import type { User } from '../../users/entities/user.entity';
 
 export enum Language {
   EN = 'en',
@@ -43,9 +44,9 @@ export class UserSettings {
 
   userId: string;
 
-  @OneToOne(() => User)
+  @OneToOne('User')
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ==================== GENERAL SETTINGS ====================
 

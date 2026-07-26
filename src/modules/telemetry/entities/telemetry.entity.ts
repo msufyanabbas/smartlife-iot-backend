@@ -1,6 +1,8 @@
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Device, Tenant } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Device } from '../../devices/entities/device.entity';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 
 @Entity('telemetry')
 @Index(['tenantId', 'deviceId', 'timestamp'])
@@ -15,9 +17,9 @@ export class Telemetry extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // DEVICE REFERENCE
@@ -27,9 +29,9 @@ export class Telemetry extends BaseEntity {
 
   deviceId: string;
 
-  @ManyToOne(() => Device)
+  @ManyToOne('Device')
   @JoinColumn({ name: 'deviceId' })
-  device: Device;
+  device: Relation<Device>;
 
   @Column()
 

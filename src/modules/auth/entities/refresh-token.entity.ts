@@ -1,7 +1,9 @@
 // src/modules/auth/entities/refresh-token.entity.ts
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { User, Tenant } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { User } from '../../users/entities/user.entity';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 
 @Entity('refresh_tokens')
 @Index(['userId'])       // revoke all tokens for a user (logout from all devices)
@@ -18,9 +20,9 @@ export class RefreshToken extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // TOKEN
@@ -38,9 +40,9 @@ export class RefreshToken extends BaseEntity {
 
   userId: string;
 
-  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @ManyToOne('User', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // LIFECYCLE

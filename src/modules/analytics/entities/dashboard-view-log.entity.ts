@@ -8,7 +8,8 @@ import {
   PrimaryGeneratedColumn,
   CreateDateColumn,
 } from 'typeorm';
-import { Dashboard } from '@modules/dashboards/entities/dashboard.entity';
+import type { Relation } from 'typeorm';
+import type { Dashboard } from '../../dashboards/entities/dashboard.entity';
 
 @Entity('dashboard_view_logs')
 @Index(['dashboardId', 'viewedAt'])
@@ -21,9 +22,9 @@ export class DashboardViewLog {
   @Index()
   dashboardId: string;
 
-  @ManyToOne(() => Dashboard, { onDelete: 'CASCADE' })
+  @ManyToOne('Dashboard', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'dashboardId' })
-  dashboard: Dashboard;
+  dashboard: Relation<Dashboard>;
 
   @Column()
   tenantId: string;

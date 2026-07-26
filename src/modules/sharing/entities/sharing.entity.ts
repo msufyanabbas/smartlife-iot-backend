@@ -1,6 +1,8 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity'
-import { Tenant, User } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { User } from '../../users/entities/user.entity';
 import { ShareType, ShareResourceType, AccessLevel } from '@/common/enums/index.enum';
 
 @Entity('shares')
@@ -17,9 +19,9 @@ export class Share extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // OWNER
@@ -29,9 +31,9 @@ export class Share extends BaseEntity {
 
   sharedBy: string;  // User ID who created the share
 
-  @ManyToOne(() => User)
+  @ManyToOne('User')
   @JoinColumn({ name: 'sharedBy' })
-  owner: User;
+  owner: Relation<User>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // RESOURCE REFERENCE

@@ -1,6 +1,10 @@
 import { Entity, Column, Index, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, AssetProfile, Device } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { AssetProfile } from '../../profiles/entities/asset-profile.entity';
+import type { Device } from '../../devices/entities/device.entity';
 import { AssetType } from '@common/enums/asset.enum';
 
 @Entity('assets')
@@ -18,9 +22,9 @@ export class Asset extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
@@ -30,9 +34,9 @@ export class Asset extends BaseEntity {
 
   customerId?: string;
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
@@ -66,9 +70,9 @@ export class Asset extends BaseEntity {
 
   assetProfileId?: string;
 
-  @ManyToOne(() => AssetProfile, { nullable: true })
+  @ManyToOne('AssetProfile', { nullable: true })
   @JoinColumn({ name: 'assetProfileId' })
-  assetProfile?: AssetProfile;
+  assetProfile?: Relation<AssetProfile>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // HIERARCHICAL STRUCTURE (Building → Floor → Room)
@@ -92,8 +96,8 @@ export class Asset extends BaseEntity {
   // DEVICE ASSOCIATIONS (1 Asset → Many Devices)
   // ══════════════════════════════════════════════════════════════════════════
 
-  @OneToMany(() => Device, device => device.asset)
-  devices: Device[];
+  @OneToMany('Device', 'asset')
+  devices: Relation<Device>[];
 
   @Column({ type: 'int', default: 0 })
   deviceCount: number;

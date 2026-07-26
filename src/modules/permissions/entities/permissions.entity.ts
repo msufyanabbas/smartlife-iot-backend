@@ -1,7 +1,10 @@
 // src/modules/permissions/entities/permission.entity.ts
 import { Entity, Column, Index, ManyToMany, ManyToOne, JoinColumn, Unique } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Role, User, Tenant } from '@modules/index.entities';
+import type { Role } from '../../roles/entities/roles.entity';
+import type { User } from '../../users/entities/user.entity';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 
 @Entity('permissions')
 @Unique(['tenantId', 'resource', 'action']) // Unique per tenant (null for system)
@@ -23,9 +26,9 @@ export class Permission extends BaseEntity {
 
   tenantId?: string | null;
 
-  @ManyToOne(() => Tenant, { nullable: true, onDelete: 'CASCADE' })
+  @ManyToOne('Tenant', { nullable: true, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'tenantId' })
-  tenant?: Tenant;
+  tenant?: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // PERMISSION DEFINITION
@@ -73,15 +76,15 @@ export class Permission extends BaseEntity {
    * Inverse side of the Role <-> Permission many-to-many.
    * JoinTable is defined on Role side.
    */
-  @ManyToMany(() => Role, (role) => role.permissions)
-  roles?: Role[];
+  @ManyToMany('Role', 'permissions')
+  roles?: Relation<Role>[];
 
   /**
    * Inverse side of the User <-> Permission many-to-many (direct permissions).
    * JoinTable is defined on User side.
    */
-  @ManyToMany(() => User, (user) => user.directPermissions)
-  users?: User[];
+  @ManyToMany('User', 'directPermissions')
+  users?: Relation<User>[];
 
   // ══════════════════════════════════════════════════════════════════════════
   // HELPER METHODS

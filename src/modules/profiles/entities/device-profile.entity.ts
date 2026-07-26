@@ -1,6 +1,7 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Device, Tenant } from '@/modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 import { DeviceProvisionType, DeviceTransportType } from '@common/enums/index.enum';
 
 @Entity('device_profiles')
@@ -15,9 +16,9 @@ export class DeviceProfile extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO

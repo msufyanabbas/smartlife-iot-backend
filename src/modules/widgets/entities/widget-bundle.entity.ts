@@ -1,7 +1,8 @@
 // src/modules/widgets/entities/widget-bundle.entity.ts
 import { Entity, Column, Index, OneToMany, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 @Entity('widget_bundles')
 @Index(['tenantId', 'title'])
 export class WidgetBundle extends BaseEntity {
@@ -12,9 +13,9 @@ export class WidgetBundle extends BaseEntity {
   @Column({ nullable: true })
   tenantId?: string;  // null = system bundle
 
-  @ManyToOne(() => Tenant, { nullable: true })
+  @ManyToOne('Tenant', { nullable: true })
   @JoinColumn({ name: 'tenantId' })
-  tenant?: Tenant;
+  tenant?: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO

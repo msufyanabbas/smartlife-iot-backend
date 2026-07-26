@@ -8,7 +8,8 @@ import {
   CreateDateColumn,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { Schedule } from './schedule.entity';
+import type { Relation } from 'typeorm';
+import type { Schedule } from './schedule.entity';
 
 export enum ExecutionStatus {
   SUCCESS = 'success',
@@ -36,9 +37,9 @@ export class ScheduleExecutionLog {
   @Index()
   scheduleId: string;
 
-  @ManyToOne(() => Schedule, { onDelete: 'CASCADE' })
+  @ManyToOne('Schedule', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'scheduleId' })
-  schedule: Schedule;
+  schedule: Relation<Schedule>;
 
   @Column()
   tenantId: string;

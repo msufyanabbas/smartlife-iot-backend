@@ -8,12 +8,13 @@ import {
   OneToMany,
 } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant } from '@modules/tenants/entities/tenant.entity';
-import { Customer } from '@modules/customers/entities/customers.entity';
-import { User } from '@modules/users/entities/user.entity';
+import type { Relation } from 'typeorm';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { User } from '../../users/entities/user.entity';
 import { EdgeStatus } from '@common/enums/edge.enum';
-import { EdgeCommand } from './edge-command.entity';
-import { EdgeMetricsSnapshot } from './edge-metrics-snapshot.entity';
+import type { EdgeCommand } from './edge-command.entity';
+import type { EdgeMetricsSnapshot } from './edge-metrics-snapshot.entity';
 
 @Entity('edge_instances')
 @Index(['tenantId', 'status'])
@@ -29,9 +30,9 @@ export class EdgeInstance extends BaseEntity {
   @Column()
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // CUSTOMER SCOPING (OPTIONAL)
@@ -40,9 +41,9 @@ export class EdgeInstance extends BaseEntity {
   @Column({ nullable: true })
   customerId?: string;
 
-  @ManyToOne(() => Customer, { nullable: true })
+  @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // OWNERSHIP
@@ -51,9 +52,9 @@ export class EdgeInstance extends BaseEntity {
   @Column()
   userId: string;
 
-  @ManyToOne(() => User)
+  @ManyToOne('User')
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // BASIC INFO
@@ -160,11 +161,11 @@ export class EdgeInstance extends BaseEntity {
   // RELATIONS
   // ══════════════════════════════════════════════════════════════════════════
 
-  @OneToMany(() => EdgeCommand, (cmd: any) => cmd.edge)
-  commands: EdgeCommand[];
+  @OneToMany('EdgeCommand', 'edge')
+  commands: Relation<EdgeCommand>[];
 
-  @OneToMany(() => EdgeMetricsSnapshot, (snap: any) => snap.edge)
-  metricsSnapshots: EdgeMetricsSnapshot[];
+  @OneToMany('EdgeMetricsSnapshot', 'edge')
+  metricsSnapshots: Relation<EdgeMetricsSnapshot>[];
 
   // ══════════════════════════════════════════════════════════════════════════
   // HELPER METHODS

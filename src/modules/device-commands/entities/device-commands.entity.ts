@@ -9,7 +9,10 @@ import {
   JoinColumn,
   Index,
 } from 'typeorm';
-import { Device, User, Tenant } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { Device } from '../../devices/entities/device.entity';
+import type { User } from '../../users/entities/user.entity';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 
 @Entity('device_commands')
 @Index(['deviceId', 'status'])
@@ -28,9 +31,9 @@ export class DeviceCommand {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant)
+  @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // RELATIONSHIPS
@@ -40,17 +43,17 @@ export class DeviceCommand {
 
   deviceId: string;
 
-  @ManyToOne(() => Device, { onDelete: 'CASCADE' })
+  @ManyToOne('Device', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'deviceId' })
-  device: Device;
+  device: Relation<Device>;
 
   @Column()
 
   userId: string;
 
-  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @ManyToOne('User', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
-  user: User;
+  user: Relation<User>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // COMMAND DETAILS

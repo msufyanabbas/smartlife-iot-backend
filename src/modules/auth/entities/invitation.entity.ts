@@ -8,7 +8,10 @@ import {
   BeforeInsert,
 } from 'typeorm';
 import { BaseEntity } from '@/common/entities/base.entity';
-import { User, Customer, Tenant } from '@modules/index.entities';
+import type { Relation } from 'typeorm';
+import type { User } from '../../users/entities/user.entity';
+import type { Customer } from '../../customers/entities/customers.entity';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
 import { UserRole, InvitationStatus } from '@common/enums/index.enum';
 @Entity('invitations')
 @Index(['email'])
@@ -39,9 +42,9 @@ export class Invitation extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant, { onDelete: 'CASCADE' })
+  @ManyToOne('Tenant', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
   // ── Customer scope (null for tenant-level invites) ─────────────────────────
   // Required when inviting a CUSTOMER_USER.
@@ -49,18 +52,18 @@ export class Invitation extends BaseEntity {
 
   customerId?: string;
 
-  @ManyToOne(() => Customer, { nullable: true, onDelete: 'CASCADE' })
+  @ManyToOne('Customer', { nullable: true, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'customerId' })
-  customer?: Customer;
+  customer?: Relation<Customer>;
 
   // ── Who sent the invite ────────────────────────────────────────────────────
   // FK column name follows [relation]Id convention
   @Column({ nullable: true })
   invitedById?: string;
 
-  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @ManyToOne('User', { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'invitedById' })
-  inviter?: User;
+  inviter?: Relation<User>;
 
   // ── Status & lifecycle ─────────────────────────────────────────────────────
   @Column({ type: 'enum', enum: InvitationStatus, default: InvitationStatus.PENDING })

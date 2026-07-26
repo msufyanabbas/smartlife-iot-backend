@@ -63,22 +63,35 @@ COPY package*.json ./
 RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
 # ===========================
+# Production Dependencies Stage
+# ===========================
+# Split out from the builder so the production node_modules tree depends ONLY on
+# package*.json — never on src. Previously `npm prune --production` ran in the
+# builder AFTER `COPY src`, so every source change regenerated node_modules,
+# which produced a brand-new ~1GB layer that had to be re-pushed to the registry
+# on every build. This stage is cached across builds until dependencies change.
+# ts-node + tsconfig-paths are kept because production runs the seed scripts.
+FROM base AS prod-deps
+
+COPY package*.json ./
+
+RUN npm ci --omit=dev --legacy-peer-deps \
+    && npm install --legacy-peer-deps ts-node tsconfig-paths
+
+# ===========================
 # Builder Stage
 # ===========================
 FROM dependencies AS builder
 
 # Copy TypeScript config
 COPY tsconfig*.json ./
+COPY nest-cli.json ./
 
 # Copy source code
 COPY src ./src
 
-# Build the application
+# Build the application (nest-cli.json sets "builder": "swc")
 RUN npm run build
-
-# Remove dev dependencies but keep ts-node and tsconfig-paths for seeds
-RUN npm prune --production --legacy-peer-deps && \
-    npm install --legacy-peer-deps ts-node tsconfig-paths
 
 # ===========================
 # Production Stage
@@ -116,8 +129,9 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Copy production node_modules from builder (includes ts-node & tsconfig-paths)
-COPY --from=builder /app/node_modules ./node_modules
+# Production node_modules come from prod-deps (cached; independent of src), so
+# this large layer is NOT invalidated and re-pushed on every source change.
+COPY --from=prod-deps /app/node_modules ./node_modules
 
 # Copy built application
 COPY --from=builder /app/dist ./dist

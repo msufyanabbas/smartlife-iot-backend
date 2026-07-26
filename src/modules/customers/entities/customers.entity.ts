@@ -1,7 +1,10 @@
 // src/modules/customers/entities/customer.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany, JoinTable, ManyToMany } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Permission, Tenant, User } from '@modules/index.entities';
+import type { Permission } from '../../permissions/entities/permissions.entity';
+import type { Tenant } from '../../tenants/entities/tenant.entity';
+import type { User } from '../../users/entities/user.entity';
 import { CustomerStatus } from '@common/enums/index.enum';
 @Entity('customers')
 @Index(['tenantId', 'status'])
@@ -40,12 +43,12 @@ export class Customer extends BaseEntity {
 
   tenantId: string;
 
-  @ManyToOne(() => Tenant, (tenant) => tenant.customers, { onDelete: 'CASCADE' })
+  @ManyToOne('Tenant', 'customers', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'tenantId' })
-  tenant: Tenant;
+  tenant: Relation<Tenant>;
 
-  @OneToMany(() => User, (user) => user.customer)
-  users?: User[];
+  @OneToMany('User', 'customer')
+  users?: Relation<User>[];
 
   // ── Quota Allocation ──────────────────────────────────────────────────────
   // Set by the tenant admin when creating/editing this customer.
@@ -81,13 +84,13 @@ export class Customer extends BaseEntity {
   // A customer user can NEVER have a permission not in this set.
   // Also: if a resource has no permission here, that resource CANNOT be assigned
   // to this customer at all (gate check happens in assignment service).
-  @ManyToMany(() => Permission, { eager: true })
+  @ManyToMany('Permission', { eager: true })
   @JoinTable({
     name: 'customer_permissions',
     joinColumn: { name: 'customerId', referencedColumnName: 'id' },
     inverseJoinColumn: { name: 'permissionId', referencedColumnName: 'id' },
   })
-  grantedPermissions?: Permission[];
+  grantedPermissions?: Relation<Permission>[];
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   isActive(): boolean {
