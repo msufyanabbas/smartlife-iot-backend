@@ -52,9 +52,7 @@ export class SolutionTemplatesController {
   @Get()
   @ApiOperation({ summary: 'Get all solution templates' })
   @ApiResponse({ status: 200, description: 'List of templates' })
-  findAll(
-   @Query() filters: FindAllTemplatesDto
-  ) {
+  findAll(@Query() filters: FindAllTemplatesDto) {
     return this.solutionTemplatesService.findAll(filters);
   }
 

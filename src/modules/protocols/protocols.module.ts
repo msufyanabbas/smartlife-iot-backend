@@ -10,6 +10,8 @@ import { Device } from '@modules/devices/entities/device.entity';
 import { CodecModule } from '@modules/devices/codecs/codec.module';
 import { KafkaModule } from '@/lib/kafka/kafka.module';
 import { MQTTModule } from '@/lib/mqtt/mqtt.module';
+import { AttributesModule } from '@modules/attributes/attributes.module';
+import { FirmwareModule } from '@modules/firmware/firmware.module';
 
 // ─── What this module owns ────────────────────────────────────────────────
 // DeviceListenerService — unified entry point for all protocol adapters.
@@ -30,8 +32,10 @@ import { MQTTModule } from '@/lib/mqtt/mqtt.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([Device]),
-    CodecModule,       // provides CodecRegistryService for DeviceListenerService
-    KafkaModule,       // provides KafkaService for DeviceListenerService
+    CodecModule, // provides CodecRegistryService for DeviceListenerService
+    KafkaModule, // provides KafkaService for DeviceListenerService
+    AttributesModule, // provides AttributesService for CoAPAdapter (get/set attributes)
+    FirmwareModule, // provides FirmwareService for CoAPAdapter (OTA check/status)
     forwardRef(() => MQTTModule), // circular: MQTTModule also imports ProtocolsModule
   ],
   providers: [

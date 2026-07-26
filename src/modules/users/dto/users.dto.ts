@@ -10,7 +10,12 @@ import {
   IsNotEmpty,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { NotificationPriority, NotificationType, UserRole, UserStatus } from '@common/enums/index.enum';
+import {
+  NotificationPriority,
+  NotificationType,
+  UserRole,
+  UserStatus,
+} from '@common/enums/index.enum';
 import { Type } from 'class-transformer';
 export class CreateUserDto {
   @ApiProperty({ example: 'john@example.com' })
@@ -94,7 +99,10 @@ export class BulkUpdatePermissionsDto {
   @IsString({ each: true })
   userIds: string[];
 
-  @ApiProperty({ example: ['permission-id-1', 'permission-id-2'], type: [String] })
+  @ApiProperty({
+    example: ['permission-id-1', 'permission-id-2'],
+    type: [String],
+  })
   @IsArray()
   @IsString({ each: true })
   permissionIds: string[];
@@ -142,12 +150,18 @@ export class BulkSendNotificationDto {
   @IsNotEmpty()
   message: string;
 
-  @ApiPropertyOptional({ enum: NotificationType, default: NotificationType.SYSTEM })
+  @ApiPropertyOptional({
+    enum: NotificationType,
+    default: NotificationType.SYSTEM,
+  })
   @IsOptional()
   @IsEnum(NotificationType)
   type?: NotificationType;
 
-  @ApiPropertyOptional({ enum: NotificationPriority, default: NotificationPriority.NORMAL })
+  @ApiPropertyOptional({
+    enum: NotificationPriority,
+    default: NotificationPriority.NORMAL,
+  })
   @IsOptional()
   @IsEnum(NotificationPriority)
   priority?: NotificationPriority;
@@ -198,7 +212,7 @@ export class UpdateUserDto {
   preferences?: Record<string, any>;
 }
 
-export class ChangePasswordDto {
+export class UserChangePasswordDto {
   @ApiProperty({ example: 'OldPassword123!' })
   @IsString()
   currentPassword: string;
@@ -209,7 +223,7 @@ export class ChangePasswordDto {
   newPassword: string;
 }
 
-export class ResetPasswordDto {
+export class UserResetPasswordDto {
   @ApiProperty({ example: 'reset-token-here' })
   @IsString()
   token: string;
@@ -220,7 +234,7 @@ export class ResetPasswordDto {
   newPassword: string;
 }
 
-export class ForgotPasswordDto {
+export class UserForgotPasswordDto {
   @ApiProperty({ example: 'john@example.com' })
   @IsEmail()
   email: string;

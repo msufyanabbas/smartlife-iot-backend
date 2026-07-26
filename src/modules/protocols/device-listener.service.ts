@@ -3,7 +3,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Device } from '@modules/devices/entities/device.entity';
 import { DeviceProtocol } from '@modules/devices/entities/device.entity';
-import { DeviceConnectionType, DeviceStatus, DeviceType } from '@common/enums/index.enum';
+import {
+  DeviceConnectionType,
+  DeviceStatus,
+  DeviceType,
+} from '@common/enums/index.enum';
 import { StandardTelemetry } from '@common/interfaces/standard-telemetry.interface';
 import { CodecRegistryService } from '@modules/devices/codecs/codec-registry.service';
 import { KafkaService } from '@/lib/kafka/kafka.service';
@@ -49,7 +53,9 @@ export class DeviceListenerService {
         if (process.env.AUTO_REGISTER_DEVICES === 'true') {
           device = await this.autoRegisterDevice(standardTelemetry);
         } else {
-          this.logger.warn(`Device not found and auto-register is off: ${standardTelemetry.deviceKey}`);
+          this.logger.warn(
+            `Device not found and auto-register is off: ${standardTelemetry.deviceKey}`,
+          );
           return;
         }
       }
@@ -57,41 +63,59 @@ export class DeviceListenerService {
       // ── 2. Decode payload ─────────────────────────────────────────────────
       // Use metadata from StandardTelemetry (set by MQTTService / HTTPAdapter).
       // CodecRegistryService handles: JSON pass-through, hex decode, auto-detect.
-     const codecMeta = {
-      // Priority: message metadata → device metadata
-      codecId:      standardTelemetry.metadata?.codecId      as string | undefined
-                    ?? device.metadata?.codecId              as string | undefined,
-      manufacturer: standardTelemetry.metadata?.manufacturer as string | undefined
-                    ?? device.metadata?.manufacturer         as string | undefined
-                    ?? device.manufacturer,   // ← dedicated column (new)
-      model:        standardTelemetry.metadata?.model        as string | undefined
-                    ?? device.metadata?.model                as string | undefined
-                    ?? device.model,          // ← dedicated column (new)
-      fPort:        standardTelemetry.metadata?.fPort        as number | undefined,
-    };
+      const codecMeta = {
+        // Priority: message metadata → device metadata
+        codecId:
+          (standardTelemetry.metadata?.codecId as string | undefined) ??
+          (device.metadata?.codecId as string | undefined),
+        manufacturer:
+          (standardTelemetry.metadata?.manufacturer as string | undefined) ??
+          (device.metadata?.manufacturer as string | undefined) ??
+          device.manufacturer, // ← dedicated column (new)
+        model:
+          (standardTelemetry.metadata?.model as string | undefined) ??
+          (device.metadata?.model as string | undefined) ??
+          device.model, // ← dedicated column (new)
+        fPort: standardTelemetry.metadata?.fPort as number | undefined,
+      };
 
-      this.logger.log(`standardTelemetry.data type: ${typeof standardTelemetry.data}, value: ${JSON.stringify(standardTelemetry.data).substring(0, 200)}`);
-const decodedData = this.codecRegistry.decode(standardTelemetry.data, codecMeta);
-
-
+      this.logger.log(
+        `standardTelemetry.data type: ${typeof standardTelemetry.data}, value: ${JSON.stringify(standardTelemetry.data).substring(0, 200)}`,
+      );
+      const decodedData = this.codecRegistry.decode(
+        standardTelemetry.data,
+        codecMeta,
+      );
 
       // Merge decoded fields with any top-level fields from StandardTelemetry
-    const finalData: Record<string, any> = {
-      // ① Everything the codec decoded (device-specific + standard fields)
-      ...decodedData,
-      // ② Standard fields from StandardTelemetry override only if defined
-      ...(standardTelemetry.temperature  !== undefined && { temperature:   standardTelemetry.temperature  }),
-      ...(standardTelemetry.humidity     !== undefined && { humidity:      standardTelemetry.humidity     }),
-      ...(standardTelemetry.pressure     !== undefined && { pressure:      standardTelemetry.pressure     }),
-      ...(standardTelemetry.batteryLevel !== undefined && { batteryLevel:  standardTelemetry.batteryLevel }),
-      ...(standardTelemetry.signalStrength !== undefined && { signalStrength: standardTelemetry.signalStrength }),
-    };
+      const finalData: Record<string, any> = {
+        // ① Everything the codec decoded (device-specific + standard fields)
+        ...decodedData,
+        // ② Standard fields from StandardTelemetry override only if defined
+        ...(standardTelemetry.temperature !== undefined && {
+          temperature: standardTelemetry.temperature,
+        }),
+        ...(standardTelemetry.humidity !== undefined && {
+          humidity: standardTelemetry.humidity,
+        }),
+        ...(standardTelemetry.pressure !== undefined && {
+          pressure: standardTelemetry.pressure,
+        }),
+        ...(standardTelemetry.batteryLevel !== undefined && {
+          batteryLevel: standardTelemetry.batteryLevel,
+        }),
+        ...(standardTelemetry.signalStrength !== undefined && {
+          signalStrength: standardTelemetry.signalStrength,
+        }),
+      };
 
-// Only pipeline non-empty telemetry
-if (Object.keys(finalData).length === 0) {
-  this.logger.debug(`Heartbeat only (no data) — device: ${device.deviceKey}, raw: ${standardTelemetry.data}`);
-  return;
-}
+      // Only pipeline non-empty telemetry
+      if (Object.keys(finalData).length === 0) {
+        this.logger.debug(
+          `Heartbeat only (no data) — device: ${device.deviceKey}, raw: ${standardTelemetry.data}`,
+        );
+        return;
+      }
 
       // ── 3. Update device activity ──────────────────────────────────────────
       await this.deviceRepository.update(
@@ -100,12 +124,13 @@ if (Object.keys(finalData).length === 0) {
           lastSeenAt: new Date(),
           lastActivityAt: new Date(),
           messageCount: () => '"messageCount" + 1',
-          status: device.status === DeviceStatus.INACTIVE
-            ? DeviceStatus.ACTIVE
-            : device.status,
-          activatedAt: device.activatedAt ?? (
-            device.status === DeviceStatus.INACTIVE ? new Date() : undefined
-          ),
+          status:
+            device.status === DeviceStatus.INACTIVE
+              ? DeviceStatus.ACTIVE
+              : device.status,
+          activatedAt:
+            device.activatedAt ??
+            (device.status === DeviceStatus.INACTIVE ? new Date() : undefined),
         },
       );
 
@@ -144,13 +169,15 @@ if (Object.keys(finalData).length === 0) {
   // well-known system tenant. In production, set AUTO_REGISTER_DEVICES=false
   // and provision devices through the API.
 
-  private async autoRegisterDevice(telemetry: StandardTelemetry): Promise<Device> {
+  private async autoRegisterDevice(
+    telemetry: StandardTelemetry,
+  ): Promise<Device> {
     const systemTenantId = process.env.SYSTEM_TENANT_ID;
 
     if (!systemTenantId) {
       throw new Error(
         'AUTO_REGISTER_DEVICES is true but SYSTEM_TENANT_ID is not set. ' +
-        'Set SYSTEM_TENANT_ID to the tenant that should own auto-registered devices.',
+          'Set SYSTEM_TENANT_ID to the tenant that should own auto-registered devices.',
       );
     }
 

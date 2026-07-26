@@ -1,7 +1,11 @@
 // src/modules/nodes/entities/node.entity.ts
 import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
+import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
-import { Tenant, Customer, User, RuleChain } from '@modules/index.entities';
+import { Tenant } from '../../tenants/entities/tenant.entity';
+import { Customer } from '../../customers/entities/customers.entity';
+import { User } from '../../users/entities/user.entity';
+import { RuleChain } from '../../rules/entities/rule-chain.entity';
 import { NodeType } from '@common/enums/index.enum';
 
 @Entity('nodes')
@@ -15,7 +19,6 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -27,7 +30,6 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -39,7 +41,6 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-
   userId: string;
 
   @ManyToOne(() => User)
@@ -51,7 +52,6 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-
   ruleChainId?: string;
 
   @ManyToOne(() => RuleChain, { nullable: true })
@@ -63,21 +63,19 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  name: string;  // "Temperature Filter", "Send Email Action"
+  name: string; // "Temperature Filter", "Send Email Action"
 
   @Column({ type: 'text', nullable: true })
   description?: string;
 
   @Column({ type: 'enum', enum: NodeType })
-
   type: NodeType;
 
   @Column({ default: true })
-
   enabled: boolean;
 
   @Column({ default: false })
-  debugMode: boolean;  // Enable debug logging for this node
+  debugMode: boolean; // Enable debug logging for this node
 
   // ══════════════════════════════════════════════════════════════════════════
   // NODE CONFIGURATION
@@ -86,18 +84,18 @@ export class Node extends BaseEntity {
   @Column({ type: 'jsonb' })
   configuration: {
     // Script-based nodes
-    script?: string;              // JavaScript/Python code
+    script?: string; // JavaScript/Python code
     scriptLang?: 'javascript' | 'python' | 'groovy';
 
     // Flow control
-    successAction?: string;       // Node ID to go to on success
-    failureAction?: string;       // Node ID to go to on failure
+    successAction?: string; // Node ID to go to on success
+    failureAction?: string; // Node ID to go to on failure
 
     // Filters
-    messageTypes?: string[];      // ['TELEMETRY', 'ALARM']
-    originatorTypes?: string[];   // ['DEVICE', 'ASSET']
-    relationTypes?: string[];     // ['Contains', 'Manages']
-    dataKeys?: string[];          // ['temperature', 'humidity']
+    messageTypes?: string[]; // ['TELEMETRY', 'ALARM']
+    originatorTypes?: string[]; // ['DEVICE', 'ASSET']
+    relationTypes?: string[]; // ['Contains', 'Manages']
+    dataKeys?: string[]; // ['temperature', 'humidity']
 
     // Conditions
     condition?: {
@@ -107,7 +105,7 @@ export class Node extends BaseEntity {
     };
 
     // Transformations
-    mapping?: Record<string, string>;  // { 'temp': 'temperature' }
+    mapping?: Record<string, string>; // { 'temp': 'temperature' }
 
     // Actions
     actionType?: 'email' | 'sms' | 'webhook' | 'mqtt' | 'log';
@@ -205,7 +203,7 @@ export class Node extends BaseEntity {
   lastExecuted?: Date;
 
   @Column({ type: 'int', default: 0 })
-  averageExecutionTime: number;  // Milliseconds
+  averageExecutionTime: number; // Milliseconds
 
   // ══════════════════════════════════════════════════════════════════════════
   // ERROR TRACKING
@@ -226,7 +224,7 @@ export class Node extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'simple-array', nullable: true })
-  tags?: string[];  // ['critical', 'temperature', 'hvac']
+  tags?: string[]; // ['critical', 'temperature', 'hvac']
 
   @Column({ type: 'jsonb', nullable: true })
   additionalInfo?: {
@@ -259,14 +257,16 @@ export class Node extends BaseEntity {
    * Get success connection
    */
   getSuccessConnection(): string | undefined {
-    return this.connections?.find(c => c.connectionType === 'success')?.targetNodeId;
+    return this.connections?.find((c) => c.connectionType === 'success')
+      ?.targetNodeId;
   }
 
   /**
    * Get failure connection
    */
   getFailureConnection(): string | undefined {
-    return this.connections?.find(c => c.connectionType === 'failure')?.targetNodeId;
+    return this.connections?.find((c) => c.connectionType === 'failure')
+      ?.targetNodeId;
   }
 
   /**
@@ -283,7 +283,8 @@ export class Node extends BaseEntity {
 
     // Remove existing connection of same type
     this.connections = this.connections.filter(
-      c => c.targetNodeId !== targetNodeId || c.connectionType !== connectionType,
+      (c) =>
+        c.targetNodeId !== targetNodeId || c.connectionType !== connectionType,
     );
 
     // Add new connection
@@ -299,14 +300,20 @@ export class Node extends BaseEntity {
    */
   removeConnection(targetNodeId: string): void {
     if (this.connections) {
-      this.connections = this.connections.filter(c => c.targetNodeId !== targetNodeId);
+      this.connections = this.connections.filter(
+        (c) => c.targetNodeId !== targetNodeId,
+      );
     }
   }
 
   /**
    * Record execution
    */
-  recordExecution(success: boolean, executionTime: number, error?: string): void {
+  recordExecution(
+    success: boolean,
+    executionTime: number,
+    error?: string,
+  ): void {
     this.executionCount++;
     this.lastExecuted = new Date();
 
@@ -330,7 +337,8 @@ export class Node extends BaseEntity {
 
     // Update average execution time (rolling average)
     this.averageExecutionTime = Math.round(
-      (this.averageExecutionTime * (this.executionCount - 1) + executionTime) / this.executionCount,
+      (this.averageExecutionTime * (this.executionCount - 1) + executionTime) /
+        this.executionCount,
     );
   }
 

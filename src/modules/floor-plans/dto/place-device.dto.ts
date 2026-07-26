@@ -56,7 +56,10 @@ export class PlaceDeviceDto {
   z?: number;
 
   // ── Legacy nested position (takes precedence when present) ──────────────
-  @ApiPropertyOptional({ type: Vector3Dto, description: 'Legacy shape; overrides x/y/z' })
+  @ApiPropertyOptional({
+    type: Vector3Dto,
+    description: 'Legacy shape; overrides x/y/z',
+  })
   @IsOptional()
   @ValidateNested()
   @Type(() => Vector3Dto)
@@ -95,7 +98,10 @@ export class PlaceDeviceDto {
   @IsString()
   model3DUrl?: string;
 
-  @ApiPropertyOptional({ enum: DeviceAnimationType, enumName: 'DeviceAnimationType' })
+  @ApiPropertyOptional({
+    enum: DeviceAnimationType,
+    enumName: 'DeviceAnimationType',
+  })
   @IsOptional()
   @IsEnum(DeviceAnimationType)
   animationType?: DeviceAnimationType;
@@ -130,7 +136,10 @@ export class UpdatePlacementDto {
   @IsNumber()
   z?: number;
 
-  @ApiPropertyOptional({ type: Vector3Dto, description: 'Legacy shape; overrides x/y/z' })
+  @ApiPropertyOptional({
+    type: Vector3Dto,
+    description: 'Legacy shape; overrides x/y/z',
+  })
   @IsOptional()
   @ValidateNested()
   @Type(() => Vector3Dto)
@@ -153,7 +162,10 @@ export class UpdatePlacementDto {
   @IsObject()
   metadata?: Record<string, any>;
 
-  @ApiPropertyOptional({ enum: DeviceAnimationType, enumName: 'DeviceAnimationType' })
+  @ApiPropertyOptional({
+    enum: DeviceAnimationType,
+    enumName: 'DeviceAnimationType',
+  })
   @IsOptional()
   @IsEnum(DeviceAnimationType)
   animationType?: DeviceAnimationType;

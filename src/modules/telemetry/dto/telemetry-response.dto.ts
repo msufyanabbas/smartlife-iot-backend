@@ -85,12 +85,15 @@ export class TelemetryStatisticsDto {
       humidity: { min: 45, max: 78, avg: 61.5 },
     },
   })
-  statistics: Record<string, {
-    min: number;
-    max: number;
-    avg: number;
-    count?: number;
-  }>;
+  statistics: Record<
+    string,
+    {
+      min: number;
+      max: number;
+      avg: number;
+      count?: number;
+    }
+  >;
 
   @ApiProperty({
     example: ['temperature', 'humidity', 'co2', 'pressure'],
@@ -111,12 +114,15 @@ export class AggregatedDataPointDto {
       humidity: { min: 50, max: 70, avg: 60, count: 60 },
     },
   })
-  values: Record<string, {
-    min: number;
-    max: number;
-    avg: number;
-    count: number;
-  }>;
+  values: Record<
+    string,
+    {
+      min: number;
+      max: number;
+      avg: number;
+      count: number;
+    }
+  >;
 }
 
 export class AggregatedDataResponseDto {

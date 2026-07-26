@@ -10,7 +10,10 @@ import { PaginationDto } from '../../../common/dto/pagination.dto';
  * on the DTO is rejected with 400 "property assetId should not exist".
  */
 export class FloorPlanQueryDto extends PaginationDto {
-  @ApiPropertyOptional({ format: 'uuid', description: 'Filter floor plans by asset' })
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Filter floor plans by asset',
+  })
   @IsOptional()
   @IsUUID()
   assetId?: string;

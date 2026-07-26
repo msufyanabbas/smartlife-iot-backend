@@ -1,5 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { SubscriptionPlan, BillingPeriod, SubscriptionStatus } from '@common/enums/index.enum';
+import {
+  SubscriptionPlan,
+  BillingPeriod,
+  SubscriptionStatus,
+} from '@common/enums/index.enum';
 
 // ==================== SUBSCRIPTION LIMITS DTO ====================
 
@@ -41,7 +45,10 @@ export class SubscriptionFeaturesDto {
   @ApiProperty({ example: false })
   integrations: boolean;
 
-  @ApiProperty({ example: 'email', enum: ['none', 'email', 'priority', '24/7'] })
+  @ApiProperty({
+    example: 'email',
+    enum: ['none', 'email', 'priority', '24/7'],
+  })
   support: string;
 
   @ApiProperty({ example: false })
@@ -84,7 +91,10 @@ export class SubscriptionResponseDto {
   @ApiProperty({ example: 'user-id-123' })
   userId: string;
 
-  @ApiProperty({ enum: SubscriptionPlan, example: SubscriptionPlan.PROFESSIONAL })
+  @ApiProperty({
+    enum: SubscriptionPlan,
+    example: SubscriptionPlan.PROFESSIONAL,
+  })
   plan: SubscriptionPlan;
 
   @ApiProperty({ enum: BillingPeriod, example: BillingPeriod.MONTHLY })
@@ -145,7 +155,10 @@ export class SubscriptionPlanInfoDto {
   @ApiPropertyOptional({ example: true })
   isPopular?: boolean;
 
-  @ApiPropertyOptional({ example: 17, description: 'Percentage saved on yearly billing' })
+  @ApiPropertyOptional({
+    example: 17,
+    description: 'Percentage saved on yearly billing',
+  })
   yearlyDiscount?: number;
 }
 
@@ -214,13 +227,16 @@ export class UsageStatisticsResponseDto {
   @ApiProperty({ type: UsagePercentageDto })
   percentage: UsagePercentageDto;
 
-  @ApiProperty({ enum: SubscriptionPlan, example: SubscriptionPlan.PROFESSIONAL })
+  @ApiProperty({
+    enum: SubscriptionPlan,
+    example: SubscriptionPlan.PROFESSIONAL,
+  })
   currentPlan: SubscriptionPlan;
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     type: [String],
     example: ['devices', 'users'],
-    description: 'Resources that are approaching or exceeding limits'
+    description: 'Resources that are approaching or exceeding limits',
   })
   warnings?: string[];
 }
@@ -231,10 +247,15 @@ export class UpgradeValidationResponseDto {
   @ApiProperty({ example: true })
   requiresPayment: boolean;
 
-  @ApiProperty({ example: 'Please complete payment to upgrade your subscription' })
+  @ApiProperty({
+    example: 'Please complete payment to upgrade your subscription',
+  })
   message: string;
 
-  @ApiProperty({ enum: SubscriptionPlan, example: SubscriptionPlan.PROFESSIONAL })
+  @ApiProperty({
+    enum: SubscriptionPlan,
+    example: SubscriptionPlan.PROFESSIONAL,
+  })
   plan: SubscriptionPlan;
 
   @ApiProperty({ enum: BillingPeriod, example: BillingPeriod.MONTHLY })
@@ -268,13 +289,16 @@ export class InvoiceDto {
   @ApiProperty({ example: 'USD' })
   currency: string;
 
-  @ApiProperty({ 
-    example: 'paid', 
-    enum: ['draft', 'open', 'paid', 'void', 'uncollectible'] 
+  @ApiProperty({
+    example: 'paid',
+    enum: ['draft', 'open', 'paid', 'void', 'uncollectible'],
   })
   status: string;
 
-  @ApiProperty({ enum: SubscriptionPlan, example: SubscriptionPlan.PROFESSIONAL })
+  @ApiProperty({
+    enum: SubscriptionPlan,
+    example: SubscriptionPlan.PROFESSIONAL,
+  })
   plan: SubscriptionPlan;
 
   @ApiProperty({ enum: BillingPeriod, example: BillingPeriod.MONTHLY })

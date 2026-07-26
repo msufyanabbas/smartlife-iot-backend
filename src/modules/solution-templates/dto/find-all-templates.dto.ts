@@ -13,7 +13,10 @@ export class FindAllTemplatesDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ description: 'Filter by premium status', type: Boolean })
+  @ApiPropertyOptional({
+    description: 'Filter by premium status',
+    type: Boolean,
+  })
   @IsOptional()
   @Transform(({ value }) => value === 'true')
   @IsBoolean()
@@ -26,7 +29,11 @@ export class FindAllTemplatesDto {
   @Min(1)
   page?: number = 1;
 
-  @ApiPropertyOptional({ description: 'Items per page', minimum: 1, default: 12 })
+  @ApiPropertyOptional({
+    description: 'Items per page',
+    minimum: 1,
+    default: 12,
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

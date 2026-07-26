@@ -1,6 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsNotEmpty, IsDateString, IsOptional, IsString, IsNumber } from 'class-validator';
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsDateString,
+  IsOptional,
+  IsString,
+  IsNumber,
+} from 'class-validator';
 
 export enum AggregationInterval {
   HOUR = 'hour',

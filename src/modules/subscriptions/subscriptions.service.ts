@@ -9,15 +9,35 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, QueryRunner, DataSource } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { SubscriptionPlan, SubscriptionStatus, BillingPeriod, SupportLevel } from '@common/enums/index.enum';
-import { SubscriptionFeatures, SubscriptionLimits, SubscriptionUsage, EMPTY_USAGE } from '@common/interfaces/index.interface';
-import { Subscription, Customer, Device, Tenant, User, Payment } from '@modules/index.entities';
+import {
+  SubscriptionPlan,
+  SubscriptionStatus,
+  BillingPeriod,
+  SupportLevel,
+} from '@common/enums/index.enum';
+import {
+  SubscriptionFeatures,
+  SubscriptionLimits,
+  SubscriptionUsage,
+  EMPTY_USAGE,
+} from '@common/interfaces/index.interface';
+import {
+  Subscription,
+  Customer,
+  Device,
+  Tenant,
+  User,
+  Payment,
+} from '@modules/index.entities';
 import {
   CreateSubscriptionDto,
   UpgradeSubscriptionDto,
 } from './dto/create-subscription.dto';
 import { UsersService } from '@modules/index.service';
-import { PaginatedResponseDto, PaginationDto } from '@/common/dto/pagination.dto';
+import {
+  PaginatedResponseDto,
+  PaginationDto,
+} from '@/common/dto/pagination.dto';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Plan Configuration
@@ -28,10 +48,22 @@ import { PaginatedResponseDto, PaginationDto } from '@/common/dto/pagination.dto
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PLAN_PRICING: Record<SubscriptionPlan, Record<BillingPeriod, number>> = {
-  [SubscriptionPlan.FREE]: { [BillingPeriod.MONTHLY]: 0, [BillingPeriod.YEARLY]: 0 },
-  [SubscriptionPlan.STARTER]: { [BillingPeriod.MONTHLY]: 199, [BillingPeriod.YEARLY]: 1990 },
-  [SubscriptionPlan.PROFESSIONAL]: { [BillingPeriod.MONTHLY]: 499, [BillingPeriod.YEARLY]: 4990 },
-  [SubscriptionPlan.ENTERPRISE]: { [BillingPeriod.MONTHLY]: 0, [BillingPeriod.YEARLY]: 0 },
+  [SubscriptionPlan.FREE]: {
+    [BillingPeriod.MONTHLY]: 0,
+    [BillingPeriod.YEARLY]: 0,
+  },
+  [SubscriptionPlan.STARTER]: {
+    [BillingPeriod.MONTHLY]: 199,
+    [BillingPeriod.YEARLY]: 1990,
+  },
+  [SubscriptionPlan.PROFESSIONAL]: {
+    [BillingPeriod.MONTHLY]: 499,
+    [BillingPeriod.YEARLY]: 4990,
+  },
+  [SubscriptionPlan.ENTERPRISE]: {
+    [BillingPeriod.MONTHLY]: 0,
+    [BillingPeriod.YEARLY]: 0,
+  },
 };
 
 // Plan trial periods in days (0 = no trial)
@@ -73,7 +105,7 @@ const PLAN_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> = {
     dashboards: 20,
     assets: 500,
     floorPlans: 20,
-    automations: -1,  // unlimited
+    automations: -1, // unlimited
     users: 20,
     customers: 20,
     apiCallsPerMonth: 500_000,
@@ -238,14 +270,14 @@ export class SubscriptionsService {
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
     @InjectRepository(Payment)
-private readonly paymentRepository: Repository<Payment>,
-    private readonly dataSource: DataSource
-  ) { }
+    private readonly paymentRepository: Repository<Payment>,
+    private readonly dataSource: DataSource,
+  ) {}
 
   /**
-  * Returns tenant-wide usage from the cached subscription counters.
-  * Much cheaper than counting rows — O(1) not O(n).
-  */
+   * Returns tenant-wide usage from the cached subscription counters.
+   * Much cheaper than counting rows — O(1) not O(n).
+   */
   async getTenantUsage(tenantId: string): Promise<SubscriptionUsage> {
     const subscription = await this.subscriptionRepository.findOne({
       where: { tenantId },
@@ -292,7 +324,8 @@ private readonly paymentRepository: Repository<Payment>,
       throw new ConflictException('Tenant already has a subscription');
     }
 
-    const { plan, billingPeriod = BillingPeriod.MONTHLY } = createSubscriptionDto;
+    const { plan, billingPeriod = BillingPeriod.MONTHLY } =
+      createSubscriptionDto;
     const trialDays = PLAN_TRIAL_DAYS[plan];
     const subscription = this.subscriptionRepository.create({
       plan,
@@ -371,7 +404,6 @@ private readonly paymentRepository: Repository<Payment>,
    * Find current subscription
    */
   async findCurrent(userId: string | undefined): Promise<Subscription> {
-
     // userId from the controller — look up the user to get their tenantId
     const user = await this.dataSource
       .getRepository('users')
@@ -381,7 +413,9 @@ private readonly paymentRepository: Repository<Payment>,
 
     // Super admin has no tenant and no subscription
     if (!user.tenantId) {
-      throw new NotFoundException('No subscription associated with this account');
+      throw new NotFoundException(
+        'No subscription associated with this account',
+      );
     }
 
     return this.findByTenantId(user.tenantId);
@@ -413,8 +447,14 @@ private readonly paymentRepository: Repository<Payment>,
     return {
       current: subscription.usage,
       limits: subscription.limits,
-      percentage: this.calculateUsagePercentages(subscription.usage, subscription.limits),
-      warnings: this.generateUsageWarnings(subscription.usage, subscription.limits),
+      percentage: this.calculateUsagePercentages(
+        subscription.usage,
+        subscription.limits,
+      ),
+      warnings: this.generateUsageWarnings(
+        subscription.usage,
+        subscription.limits,
+      ),
     };
   }
 
@@ -426,7 +466,7 @@ private readonly paymentRepository: Repository<Payment>,
     limits: SubscriptionLimits,
   ): Record<string, number> {
     const pct = (used: number, limit: number | undefined): number => {
-      if (limit === -1) return 0;  // unlimited — show 0%
+      if (limit === -1) return 0; // unlimited — show 0%
       if (limit === 0) return 100;
       return Math.min(100, Math.round((used / (limit ? limit : 0)) * 100));
     };
@@ -441,7 +481,10 @@ private readonly paymentRepository: Repository<Payment>,
       customers: pct(usage.customers, limits.customers),
       apiCalls: pct(usage.apiCalls, limits.apiCallsPerMonth),
       storageGB: pct(usage.storageGB, limits.storageGB),
-      smsNotifications: pct(usage.smsNotifications, limits.smsNotificationsPerMonth),
+      smsNotifications: pct(
+        usage.smsNotifications,
+        limits.smsNotificationsPerMonth,
+      ),
     };
   }
 
@@ -461,7 +504,9 @@ private readonly paymentRepository: Repository<Payment>,
       if (pct >= 100) {
         warnings.push(`${label} limit reached (${used}/${limit})`);
       } else if (pct >= WARN_THRESHOLD) {
-        warnings.push(`${label} usage at ${Math.round(pct)}% (${used}/${limit})`);
+        warnings.push(
+          `${label} usage at ${Math.round(pct)}% (${used}/${limit})`,
+        );
       }
     };
 
@@ -474,7 +519,11 @@ private readonly paymentRepository: Repository<Payment>,
     check('Customers', usage.customers, limits.customers);
     check('API Calls', usage.apiCalls, limits.apiCallsPerMonth);
     check('Storage', usage.storageGB, limits.storageGB);
-    check('SMS Notifications', usage.smsNotifications, limits.smsNotificationsPerMonth);
+    check(
+      'SMS Notifications',
+      usage.smsNotifications,
+      limits.smsNotificationsPerMonth,
+    );
 
     return warnings;
   }
@@ -482,7 +531,10 @@ private readonly paymentRepository: Repository<Payment>,
   // ═══════════════════════════════════════════════════════════════════════════
   // PRIVATE HELPERS
   // ═══════════════════════════════════════════════════════════════════════════
-  validateUpgrade(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): void {
+  validateUpgrade(
+    currentPlan: SubscriptionPlan,
+    targetPlan: SubscriptionPlan,
+  ): void {
     const currentIndex = PLAN_ORDER.indexOf(currentPlan);
     const targetIndex = PLAN_ORDER.indexOf(targetPlan);
     if (targetIndex <= currentIndex) {
@@ -495,7 +547,10 @@ private readonly paymentRepository: Repository<Payment>,
   /**
    * Check if plan change is an upgrade
    */
-  isUpgrade(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): boolean {
+  isUpgrade(
+    currentPlan: SubscriptionPlan,
+    targetPlan: SubscriptionPlan,
+  ): boolean {
     return PLAN_ORDER.indexOf(targetPlan) > PLAN_ORDER.indexOf(currentPlan);
   }
 
@@ -516,7 +571,7 @@ private readonly paymentRepository: Repository<Payment>,
 
     const subscription = await repository.findOne({
       where: { tenantId },
-      lock: { mode: 'pessimistic_write' }
+      lock: { mode: 'pessimistic_write' },
     });
 
     if (!subscription) {
@@ -575,14 +630,14 @@ private readonly paymentRepository: Repository<Payment>,
 
     const subscription = await repository.findOne({
       where: { tenantId },
-      lock: { mode: 'pessimistic_write' }
+      lock: { mode: 'pessimistic_write' },
     });
 
     if (!subscription) {
       throw new NotFoundException('No subscription found');
     }
 
-    this.validatePaymentAmount(paymentAmount, subscription.plan, billingPeriod)
+    this.validatePaymentAmount(paymentAmount, subscription.plan, billingPeriod);
 
     const expectedAmount = PLAN_PRICING[subscription.plan][billingPeriod];
     if (Math.abs(paymentAmount - expectedAmount) > 0.01) {
@@ -591,13 +646,15 @@ private readonly paymentRepository: Repository<Payment>,
       );
     }
     // Extend from the current next billing date if in the future, otherwise from now
-    const baseDate = subscription.nextBillingDate && subscription.nextBillingDate > new Date()
-      ? new Date(subscription.nextBillingDate)
-      : new Date();
+    const baseDate =
+      subscription.nextBillingDate && subscription.nextBillingDate > new Date()
+        ? new Date(subscription.nextBillingDate)
+        : new Date();
 
-    subscription.nextBillingDate = billingPeriod === BillingPeriod.MONTHLY
-      ? new Date(baseDate.setMonth(baseDate.getMonth() + 1))
-      : new Date(baseDate.setFullYear(baseDate.getFullYear() + 1));
+    subscription.nextBillingDate =
+      billingPeriod === BillingPeriod.MONTHLY
+        ? new Date(baseDate.setMonth(baseDate.getMonth() + 1))
+        : new Date(baseDate.setFullYear(baseDate.getFullYear() + 1));
 
     subscription.billingPeriod = billingPeriod;
     subscription.status = SubscriptionStatus.ACTIVE;
@@ -615,9 +672,9 @@ private readonly paymentRepository: Repository<Payment>,
   }
 
   /**
-  * Routes payment webhook to upgrade or renewal based on the plan change.
-  * Called by PaymentsService after payment confirmation.
-  */
+   * Routes payment webhook to upgrade or renewal based on the plan change.
+   * Called by PaymentsService after payment confirmation.
+   */
   async processSubscriptionAfterPayment(
     tenantId: string,
     targetPlan: SubscriptionPlan,
@@ -679,9 +736,9 @@ private readonly paymentRepository: Repository<Payment>,
   }
 
   /**
- * Schedules a downgrade at end of current billing period.
- * Used by POST /subscriptions/downgrade/schedule
- */
+   * Schedules a downgrade at end of current billing period.
+   * Used by POST /subscriptions/downgrade/schedule
+   */
   async scheduleDowngrade(
     userId: string,
     targetPlan: SubscriptionPlan,
@@ -716,9 +773,9 @@ private readonly paymentRepository: Repository<Payment>,
   }
 
   /**
- * Cancels a scheduled downgrade.
- * Used by POST /subscriptions/downgrade/cancel
- */
+   * Cancels a scheduled downgrade.
+   * Used by POST /subscriptions/downgrade/cancel
+   */
   async cancelScheduledDowngrade(userId: string): Promise<Subscription> {
     const subscription = await this.findCurrent(userId);
 
@@ -726,7 +783,10 @@ private readonly paymentRepository: Repository<Payment>,
       throw new NotFoundException('No scheduled downgrade found');
     }
 
-    subscription.metadata = { ...subscription.metadata, scheduledDowngrade: undefined };
+    subscription.metadata = {
+      ...subscription.metadata,
+      scheduledDowngrade: undefined,
+    };
     return this.subscriptionRepository.save(subscription);
   }
 
@@ -748,8 +808,7 @@ private readonly paymentRepository: Repository<Payment>,
 
     if (effectiveDate && new Date(effectiveDate) <= now) {
       subscription.plan = targetPlan;
-      subscription.price =
-        PLAN_PRICING[targetPlan][subscription.billingPeriod];
+      subscription.price = PLAN_PRICING[targetPlan][subscription.billingPeriod];
       subscription.limits = PLAN_LIMITS[targetPlan];
       subscription.features = PLAN_FEATURES[targetPlan];
 
@@ -771,9 +830,9 @@ private readonly paymentRepository: Repository<Payment>,
   }
 
   /**
-  * Cancels the subscription immediately.
-  * Used by POST /subscriptions/cancel
-  */
+   * Cancels the subscription immediately.
+   * Used by POST /subscriptions/cancel
+   */
   async cancel(userId: string): Promise<Subscription> {
     const subscription = await this.findCurrent(userId);
 
@@ -786,7 +845,7 @@ private readonly paymentRepository: Repository<Payment>,
     subscription.updatedBy = userId;
 
     await this.create(subscription.tenantId, {
-          plan: SubscriptionPlan.FREE,
+      plan: SubscriptionPlan.FREE,
     });
 
     return await this.subscriptionRepository.save(subscription);
@@ -911,14 +970,17 @@ private readonly paymentRepository: Repository<Payment>,
   /**
    * Returns true if a feature is enabled in the tenant's current plan.
    */
-  async hasFeature(userId: string, feature: keyof SubscriptionFeatures): Promise<boolean> {
+  async hasFeature(
+    userId: string,
+    feature: keyof SubscriptionFeatures,
+  ): Promise<boolean> {
     const subscription = await this.findCurrent(userId);
     return subscription.hasFeature(feature);
   }
 
   /**
-  * Pricing helper used by PaymentsService.
-  */
+   * Pricing helper used by PaymentsService.
+   */
   getPlanPricing(plan: SubscriptionPlan, billingPeriod: BillingPeriod): number {
     return PLAN_PRICING[plan][billingPeriod];
   }
@@ -1013,9 +1075,9 @@ private readonly paymentRepository: Repository<Payment>,
   }
 
   /**
-    * Execute scheduled downgrades when their effective date has passed.
-    * Runs every day at midnight.
-    */
+   * Execute scheduled downgrades when their effective date has passed.
+   * Runs every day at midnight.
+   */
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async processScheduledDowngrades(): Promise<void> {
     this.logger.log('Processing scheduled downgrades...');
@@ -1035,17 +1097,26 @@ private readonly paymentRepository: Repository<Payment>,
         const { plan: targetPlan } = subscription.metadata!.scheduledDowngrade!;
 
         subscription.plan = targetPlan;
-        subscription.price = PLAN_PRICING[targetPlan][subscription.billingPeriod];
+        subscription.price =
+          PLAN_PRICING[targetPlan][subscription.billingPeriod];
         subscription.limits = PLAN_LIMITS[targetPlan];
         subscription.features = PLAN_FEATURES[targetPlan];
-        subscription.metadata = { ...subscription.metadata, scheduledDowngrade: undefined };
+        subscription.metadata = {
+          ...subscription.metadata,
+          scheduledDowngrade: undefined,
+        };
 
         await this.subscriptionRepository.save(subscription);
         processed++;
 
-        this.logger.log(`Executed downgrade to ${targetPlan} for tenant ${subscription.tenantId}`);
+        this.logger.log(
+          `Executed downgrade to ${targetPlan} for tenant ${subscription.tenantId}`,
+        );
       } catch (err) {
-        this.logger.error(`Failed to execute downgrade for tenant ${subscription.tenantId}`, err);
+        this.logger.error(
+          `Failed to execute downgrade for tenant ${subscription.tenantId}`,
+          err,
+        );
       }
     }
 
@@ -1056,69 +1127,72 @@ private readonly paymentRepository: Repository<Payment>,
   // INVOICES
   // ═══════════════════════════════════════════════════════════════════════════
 
-async getInvoices(
-  tenantId: string | undefined,
-  paginationDto: PaginationDto,
-): Promise<PaginatedResponseDto<any>> {
-  const { page, limit, search, sortBy, sortOrder } = paginationDto;
+  async getInvoices(
+    tenantId: string | undefined,
+    paginationDto: PaginationDto,
+  ): Promise<PaginatedResponseDto<any>> {
+    const { page, limit, search, sortBy, sortOrder } = paginationDto;
 
-  const subscription = await this.subscriptionRepository.findOne({
-    where: { tenantId },
-    select: ['id'],
-  });
-
-  if (!subscription) {
-    return PaginatedResponseDto.create([], page, limit, 0);
-  }
-
-  const qb = this.paymentRepository
-    .createQueryBuilder('payment')
-    .where('payment.subscriptionId = :subscriptionId', {
-      subscriptionId: subscription.id,
+    const subscription = await this.subscriptionRepository.findOne({
+      where: { tenantId },
+      select: ['id'],
     });
 
-  if (search) {
-    qb.andWhere(
-      `(payment.metadata->>'plan' ILIKE :search OR payment.description ILIKE :search)`,
-      { search: `%${search}%` },
-    );
+    if (!subscription) {
+      return PaginatedResponseDto.create([], page, limit, 0);
+    }
+
+    const qb = this.paymentRepository
+      .createQueryBuilder('payment')
+      .where('payment.subscriptionId = :subscriptionId', {
+        subscriptionId: subscription.id,
+      });
+
+    if (search) {
+      qb.andWhere(
+        `(payment.metadata->>'plan' ILIKE :search OR payment.description ILIKE :search)`,
+        { search: `%${search}%` },
+      );
+    }
+
+    const allowedSortFields: Record<string, string> = {
+      date: 'payment.paidAt',
+      amount: 'payment.amount',
+      status: 'payment.status',
+      createdAt: 'payment.createdAt',
+    };
+    const sortField = allowedSortFields[sortBy ?? ''] ?? 'payment.createdAt';
+    qb.orderBy(sortField, sortOrder ?? 'DESC');
+
+    qb.skip(paginationDto.skip).take(paginationDto.take);
+
+    const [payments, total] = await qb.getManyAndCount();
+
+    const invoices = payments.map((p) => ({
+      id: p.id,
+      invoiceNumber: `INV-${p.createdAt.getFullYear()}-${p.id.slice(0, 8).toUpperCase()}`,
+      date: p.paidAt ?? p.createdAt,
+      amount: Number(p.amount),
+      currency: p.currency,
+      status: p.status,
+      plan: p.metadata?.plan ?? null,
+      billingPeriod: p.metadata?.billingPeriod ?? null,
+      method: p.method,
+      provider: p.provider,
+      failureReason: p.failureReason ?? null,
+      createdAt: p.createdAt,
+    }));
+
+    return PaginatedResponseDto.create(invoices, page, limit, total);
   }
-
-  const allowedSortFields: Record<string, string> = {
-    date:      'payment.paidAt',
-    amount:    'payment.amount',
-    status:    'payment.status',
-    createdAt: 'payment.createdAt',
-  };
-  const sortField = allowedSortFields[sortBy ?? ''] ?? 'payment.createdAt';
-  qb.orderBy(sortField, sortOrder ?? 'DESC');
-
-  qb.skip(paginationDto.skip).take(paginationDto.take);
-
-  const [payments, total] = await qb.getManyAndCount();
-
-  const invoices = payments.map((p) => ({
-    id: p.id,
-    invoiceNumber: `INV-${p.createdAt.getFullYear()}-${p.id.slice(0, 8).toUpperCase()}`,
-    date: p.paidAt ?? p.createdAt,
-    amount: Number(p.amount),
-    currency: p.currency,
-    status: p.status,
-    plan: p.metadata?.plan ?? null,
-    billingPeriod: p.metadata?.billingPeriod ?? null,
-    method: p.method,
-    provider: p.provider,
-    failureReason: p.failureReason ?? null,
-    createdAt: p.createdAt,
-  }));
-
-  return PaginatedResponseDto.create(invoices, page, limit, total);
-}
 
   /**
    * Check if plan change is a renewal (same plan)
    */
-  isRenewal(currentPlan: SubscriptionPlan, targetPlan: SubscriptionPlan): boolean {
+  isRenewal(
+    currentPlan: SubscriptionPlan,
+    targetPlan: SubscriptionPlan,
+  ): boolean {
     return currentPlan === targetPlan;
   }
 
@@ -1136,27 +1210,27 @@ async getInvoices(
   }
 
   async getInvoiceForPdf(
-  tenantId: string | undefined,
-  paymentId: string,
-): Promise<{ payment: Payment; invoiceNumber: string }> {
-  const subscription = await this.subscriptionRepository.findOne({
-    where: { tenantId },
-    select: ['id'],
-  });
+    tenantId: string | undefined,
+    paymentId: string,
+  ): Promise<{ payment: Payment; invoiceNumber: string }> {
+    const subscription = await this.subscriptionRepository.findOne({
+      where: { tenantId },
+      select: ['id'],
+    });
 
-  if (!subscription) throw new NotFoundException('No subscription found');
+    if (!subscription) throw new NotFoundException('No subscription found');
 
-  const payment = await this.paymentRepository.findOne({
-    where: {
-      id: paymentId,
-      subscriptionId: subscription.id, // ensures tenant isolation
-    },
-  });
+    const payment = await this.paymentRepository.findOne({
+      where: {
+        id: paymentId,
+        subscriptionId: subscription.id, // ensures tenant isolation
+      },
+    });
 
-  if (!payment) throw new NotFoundException('Invoice not found');
+    if (!payment) throw new NotFoundException('Invoice not found');
 
-  const invoiceNumber = `INV-${payment.createdAt.getFullYear()}-${payment.id.slice(0, 8).toUpperCase()}`;
+    const invoiceNumber = `INV-${payment.createdAt.getFullYear()}-${payment.id.slice(0, 8).toUpperCase()}`;
 
-  return { payment, invoiceNumber };
-}
+    return { payment, invoiceNumber };
+  }
 }

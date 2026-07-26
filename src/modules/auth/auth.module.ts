@@ -6,7 +6,17 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthController } from './auth.controller';
 import { AuthService, TenantsService } from '@modules/index.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
-import { User, RefreshToken, OAuthAccount, Customer, Invitation, Subscription, Tenant, TokenBlacklist, TwoFactorAuth } from '@modules/index.entities';
+import {
+  User,
+  RefreshToken,
+  OAuthAccount,
+  Customer,
+  Invitation,
+  Subscription,
+  Tenant,
+  TokenBlacklist,
+  TwoFactorAuth,
+} from '@modules/index.entities';
 import { MailModule } from '../mail/mail.module';
 import { GoogleStrategy } from './strategies/oauth/google.strategy';
 import { GitHubStrategy } from './strategies/oauth/github.strategy';
@@ -26,7 +36,7 @@ import { TwoFactorAuthModule } from '../two-factor/two-factor-auth.module';
       TokenBlacklist,
       Invitation,
       Tenant,
-      Customer
+      Customer,
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
@@ -34,10 +44,11 @@ import { TwoFactorAuthModule } from '../two-factor/two-factor-auth.module';
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => ({
         secret: (() => {
-        const secret = configService.get<string>('jwt.secret');
-        if (!secret) throw new Error('JWT_SECRET environment variable is required');
-        return secret;
-          })(),
+          const secret = configService.get<string>('jwt.secret');
+          if (!secret)
+            throw new Error('JWT_SECRET environment variable is required');
+          return secret;
+        })(),
         signOptions: {
           expiresIn: configService.get<string>('jwt.expiration', '7d') as any,
         },
@@ -45,7 +56,7 @@ import { TwoFactorAuthModule } from '../two-factor/two-factor-auth.module';
     }),
     MailModule,
     TwoFactorAuthModule,
-    forwardRef(() => SubscriptionsModule)
+    forwardRef(() => SubscriptionsModule),
   ],
   controllers: [AuthController],
   providers: [
@@ -58,8 +69,8 @@ import { TwoFactorAuthModule } from '../two-factor/two-factor-auth.module';
     TenantsService,
     {
       provide: 'REDIS_SERVICE',
-      useClass: RedisService
-    }
+      useClass: RedisService,
+    },
   ],
   exports: [AuthService, JwtModule, PassportModule],
 })

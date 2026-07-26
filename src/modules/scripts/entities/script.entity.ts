@@ -5,7 +5,7 @@ import { Tenant, User } from '@modules/index.entities';
 import { ScriptType } from '@common/enums/index.enum';
 
 @Entity('scripts')
-@Index(['tenantId', 'userId'])  // ✅ Added this for better queries
+@Index(['tenantId', 'userId']) // ✅ Added this for better queries
 @Index(['tenantId', 'type'])
 @Index(['userId', 'type'])
 export class Script extends BaseEntity {
@@ -14,7 +14,7 @@ export class Script extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  @Index()  // ✅ Keep individual index on tenantId (frequently queried alone)
+  @Index() // ✅ Keep individual index on tenantId (frequently queried alone)
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -26,7 +26,7 @@ export class Script extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  userId: string;  // ✅ REMOVED @Index() - already in composite index
+  userId: string; // ✅ REMOVED @Index() - already in composite index
 
   @ManyToOne(() => User)
   @JoinColumn({ name: 'userId' })
@@ -46,7 +46,7 @@ export class Script extends BaseEntity {
     type: 'enum',
     enum: ScriptType,
   })
-  type: ScriptType;  // ✅ REMOVED @Index() - already in composite index
+  type: ScriptType; // ✅ REMOVED @Index() - already in composite index
 
   @Column({ default: 'javascript' })
   language: string;

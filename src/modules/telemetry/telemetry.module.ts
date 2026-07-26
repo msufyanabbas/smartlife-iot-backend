@@ -18,17 +18,13 @@ import { Device } from '../index.entities';
     TypeOrmModule.forFeature([Telemetry, Device]),
     KafkaModule,
     RedisModule,
-    AutomationModule,  // must export AutomationProcessor
+    AutomationModule, // must export AutomationProcessor
     WebsocketModule,
-    AlarmsModule,      // exports AlarmsService → needed by TelemetryProcessor
+    AlarmsModule, // exports AlarmsService → needed by TelemetryProcessor
     BullModule.registerQueue({ name: 'telemetry' }),
   ],
   controllers: [TelemetryController],
-  providers: [
-    TelemetryService,
-    TelemetryConsumer,
-    TelemetryProcessor,
-  ],
+  providers: [TelemetryService, TelemetryConsumer, TelemetryProcessor],
   exports: [TelemetryService],
 })
 export class TelemetryModule {}

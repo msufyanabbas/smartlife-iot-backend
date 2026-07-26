@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
+import type { File as MulterFile } from 'multer';
 import { FloorPlan } from './entities/floor-plan.entity';
 import { FloorPlanDevice } from './entities/floor-plan-device.entity';
 import { Asset } from '../assets/entities/asset.entity';
@@ -61,7 +62,8 @@ const MODEL_CONTENT_TYPES: Record<string, string> = {
 @Injectable()
 export class FloorPlansService {
   private readonly logger = new Logger(FloorPlansService.name);
-  private readonly uploadDir = process.env.UPLOAD_PATH || './uploads/floor-plans';
+  private readonly uploadDir =
+    process.env.UPLOAD_PATH || './uploads/floor-plans';
   private readonly dwgDir = path.join(this.uploadDir, 'dwg');
   private readonly modelDir = path.join(this.uploadDir, 'models');
 
@@ -110,7 +112,10 @@ export class FloorPlansService {
   }
 
   /** The device must exist AND belong to the caller's tenant. */
-  private async assertDevice(deviceId: string, tenantId: string): Promise<Device> {
+  private async assertDevice(
+    deviceId: string,
+    tenantId: string,
+  ): Promise<Device> {
     const device = await this.deviceRepository.findOne({
       where: { id: deviceId, tenantId },
     });
@@ -141,7 +146,11 @@ export class FloorPlansService {
     return await this.floorPlanRepository.save(floorPlan);
   }
 
-  async findAll(tenantId: string, paginationDto: PaginationDto, assetId?: string) {
+  async findAll(
+    tenantId: string,
+    paginationDto: PaginationDto,
+    assetId?: string,
+  ) {
     const {
       page = 1,
       limit = 10,
@@ -152,7 +161,8 @@ export class FloorPlansService {
     const skip = (page - 1) * limit;
 
     const sortColumn = SORTABLE.has(sortBy) ? sortBy : 'createdAt';
-    const direction = String(sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const direction =
+      String(sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
     const qb = this.floorPlanRepository
       .createQueryBuilder('floorPlan')
@@ -298,7 +308,8 @@ export class FloorPlansService {
       if (dto.metadata) placement.metadata = dto.metadata;
       if (dto.animationType) placement.animationType = dto.animationType;
       if (dto.animationConfig) placement.animationConfig = dto.animationConfig;
-      if (dto.telemetryBindings) placement.telemetryBindings = dto.telemetryBindings;
+      if (dto.telemetryBindings)
+        placement.telemetryBindings = dto.telemetryBindings;
       placement.updatedBy = actor.userId;
     } else {
       placement = this.placementRepository.create({
@@ -317,7 +328,9 @@ export class FloorPlansService {
         animationType: dto.animationType ?? DeviceAnimationType.NONE,
         animationConfig:
           dto.animationConfig ??
-          this.getDefaultAnimationConfig(dto.animationType ?? DeviceAnimationType.NONE),
+          this.getDefaultAnimationConfig(
+            dto.animationType ?? DeviceAnimationType.NONE,
+          ),
         telemetryBindings: dto.telemetryBindings,
         createdBy: actor.userId,
       });
@@ -355,9 +368,13 @@ export class FloorPlansService {
     if (dto.metadata) placement.metadata = dto.metadata;
     if (dto.animationType) placement.animationType = dto.animationType;
     if (dto.animationConfig) {
-      placement.animationConfig = { ...placement.animationConfig, ...dto.animationConfig };
+      placement.animationConfig = {
+        ...placement.animationConfig,
+        ...dto.animationConfig,
+      };
     }
-    if (dto.telemetryBindings) placement.telemetryBindings = dto.telemetryBindings;
+    if (dto.telemetryBindings)
+      placement.telemetryBindings = dto.telemetryBindings;
     placement.updatedBy = actor.userId;
 
     const saved = await this.placementRepository.save(placement);
@@ -417,7 +434,11 @@ export class FloorPlansService {
       await this.telemetryRepository
         .createQueryBuilder('t')
         .distinctOn(['t.deviceId'])
-        .select(['t.deviceId AS "deviceId"', 't.data AS data', 't.timestamp AS timestamp'])
+        .select([
+          't.deviceId AS "deviceId"',
+          't.data AS data',
+          't.timestamp AS timestamp',
+        ])
         .where('t.tenantId = :tenantId', { tenantId })
         .andWhere('t.deviceId IN (:...deviceIds)', { deviceIds })
         .orderBy('t.deviceId')
@@ -492,7 +513,7 @@ export class FloorPlansService {
   async uploadDWGFile(
     id: string,
     actor: Actor,
-    file: Express.Multer.File,
+    file: MulterFile,
   ): Promise<FloorPlan> {
     const floorPlan = await this.findOne(id, actor.tenantId);
 
@@ -517,12 +538,18 @@ export class FloorPlansService {
       await this.floorPlanRepository.save(floorPlan);
 
       void this.parseDWGFileAsync(id, actor, filePath).catch((err) =>
-        this.logger.error(`Unhandled DWG parse failure: ${err?.message}`, err?.stack),
+        this.logger.error(
+          `Unhandled DWG parse failure: ${err?.message}`,
+          err?.stack,
+        ),
       );
 
       return floorPlan;
     } catch (error) {
-      this.logger.error(`Failed to upload DWG file: ${error.message}`, error.stack);
+      this.logger.error(
+        `Failed to upload DWG file: ${error.message}`,
+        error.stack,
+      );
       throw new BadRequestException('Failed to upload DWG file');
     }
   }
@@ -533,13 +560,17 @@ export class FloorPlansService {
     filePath: string,
   ): Promise<void> {
     try {
-      this.logger.log(`Starting async DWG parsing for floor plan: ${floorPlanId}`);
+      this.logger.log(
+        `Starting async DWG parsing for floor plan: ${floorPlanId}`,
+      );
 
       const geometry = await this.dwgParserService.parseDWGFile(filePath);
 
       const validation = this.dwgParserService.validateGeometry(geometry);
       if (!validation.valid) {
-        throw new Error(`Invalid DWG geometry: ${validation.errors.join(', ')}`);
+        throw new Error(
+          `Invalid DWG geometry: ${validation.errors.join(', ')}`,
+        );
       }
 
       // Thumbnail: previously generated but never persisted, leaving the PNG
@@ -618,7 +649,7 @@ export class FloorPlansService {
   async uploadModel(
     id: string,
     actor: Actor,
-    file: Express.Multer.File,
+    file: MulterFile,
   ): Promise<FloorPlan> {
     const floorPlan = await this.findOne(id, actor.tenantId);
 
@@ -669,7 +700,8 @@ export class FloorPlansService {
     return {
       path: absolutePath,
       contentType:
-        MODEL_CONTENT_TYPES[floorPlan.modelFileType] ?? 'application/octet-stream',
+        MODEL_CONTENT_TYPES[floorPlan.modelFileType] ??
+        'application/octet-stream',
       fileName: `${floorPlan.name}.${floorPlan.modelFileType}`,
     };
   }
@@ -719,7 +751,10 @@ export class FloorPlansService {
       building: building3DMetadata,
       floors,
       totalDevices: floors.reduce((sum, f) => sum + f.devices.length, 0),
-      totalZones: floorPlans.reduce((sum, fp) => sum + (fp.zones?.length ?? 0), 0),
+      totalZones: floorPlans.reduce(
+        (sum, fp) => sum + (fp.zones?.length ?? 0),
+        0,
+      ),
     };
   }
 
@@ -727,7 +762,11 @@ export class FloorPlansService {
   // ZONES
   // ══════════════════════════════════════════════════════════════════════════
 
-  async addZone(id: string, actor: Actor, zoneDto: AddZoneDto): Promise<FloorPlan> {
+  async addZone(
+    id: string,
+    actor: Actor,
+    zoneDto: AddZoneDto,
+  ): Promise<FloorPlan> {
     const floorPlan = await this.findOne(id, actor.tenantId);
     if (!floorPlan.zones) floorPlan.zones = [];
 
@@ -756,7 +795,11 @@ export class FloorPlansService {
     return await this.floorPlanRepository.save(floorPlan);
   }
 
-  async removeZone(id: string, zoneId: string, actor: Actor): Promise<FloorPlan> {
+  async removeZone(
+    id: string,
+    zoneId: string,
+    actor: Actor,
+  ): Promise<FloorPlan> {
     const floorPlan = await this.findOne(id, actor.tenantId);
 
     floorPlan.zones = (floorPlan.zones ?? []).filter((z) => z.id !== zoneId);
@@ -833,13 +876,18 @@ export class FloorPlansService {
       }),
     ]);
 
-    const totalDevices = await this.placementRepository.count({ where: { tenantId } });
+    const totalDevices = await this.placementRepository.count({
+      where: { tenantId },
+    });
 
     const plans = await this.floorPlanRepository.find({
       where: { tenantId },
       select: ['id', 'assetId', 'zones'] as any,
     });
-    const totalZones = plans.reduce((sum, p) => sum + (p.zones?.length ?? 0), 0);
+    const totalZones = plans.reduce(
+      (sum, p) => sum + (p.zones?.length ?? 0),
+      0,
+    );
     const uniqueAssets = new Set(plans.map((p) => p.assetId)).size;
 
     return {
@@ -876,14 +924,29 @@ export class FloorPlansService {
   private getDefaultAnimationConfig(animationType: DeviceAnimationType) {
     const configs: Record<string, Record<string, any>> = {
       [DeviceAnimationType.SMOKE]: {
-        intensity: 0.7, speed: 1.0, color: '#808080', particleCount: 100, radius: 2.0,
+        intensity: 0.7,
+        speed: 1.0,
+        color: '#808080',
+        particleCount: 100,
+        radius: 2.0,
       },
       [DeviceAnimationType.DOOR_OPEN_CLOSE]: { speed: 1.0 },
-      [DeviceAnimationType.LIGHT_PULSE]: { intensity: 0.8, speed: 1.5, color: '#FFFFFF' },
-      [DeviceAnimationType.WATER_LEAK]: {
-        intensity: 0.6, speed: 1.2, color: '#0077BE', particleCount: 50,
+      [DeviceAnimationType.LIGHT_PULSE]: {
+        intensity: 0.8,
+        speed: 1.5,
+        color: '#FFFFFF',
       },
-      [DeviceAnimationType.ALARM_FLASH]: { intensity: 1.0, speed: 2.0, color: '#FF0000' },
+      [DeviceAnimationType.WATER_LEAK]: {
+        intensity: 0.6,
+        speed: 1.2,
+        color: '#0077BE',
+        particleCount: 50,
+      },
+      [DeviceAnimationType.ALARM_FLASH]: {
+        intensity: 1.0,
+        speed: 2.0,
+        color: '#FF0000',
+      },
       [DeviceAnimationType.NONE]: {},
     };
 
@@ -891,18 +954,22 @@ export class FloorPlansService {
   }
 
   private calculateBounds(geometry: any): { width: number; height: number } {
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
+    let minX = Infinity,
+      maxX = -Infinity;
+    let minY = Infinity,
+      maxY = -Infinity;
 
-    [...(geometry.walls || []), ...(geometry.rooms || [])].forEach((item: any) => {
-      const points = item.points || item.boundaries || [];
-      points.forEach((point: any) => {
-        minX = Math.min(minX, point.x);
-        maxX = Math.max(maxX, point.x);
-        minY = Math.min(minY, point.y);
-        maxY = Math.max(maxY, point.y);
-      });
-    });
+    [...(geometry.walls || []), ...(geometry.rooms || [])].forEach(
+      (item: any) => {
+        const points = item.points || item.boundaries || [];
+        points.forEach((point: any) => {
+          minX = Math.min(minX, point.x);
+          maxX = Math.max(maxX, point.x);
+          minY = Math.min(minY, point.y);
+          maxY = Math.max(maxY, point.y);
+        });
+      },
+    );
 
     return { width: maxX - minX, height: maxY - minY };
   }

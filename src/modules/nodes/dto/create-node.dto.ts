@@ -4,9 +4,13 @@ import {
   IsOptional,
   IsBoolean,
   IsObject,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { NodeType } from '@common/enums/index.enum';
+import { ConnectionDto } from './connection.dto';
 
 export class CreateNodeDto {
   @ApiProperty({ example: 'Message Type Filter' })
@@ -45,6 +49,28 @@ export class CreateNodeDto {
     dataKeys?: string[];
     metadata?: Record<string, any>;
   };
+
+  @ApiPropertyOptional({
+    type: [ConnectionDto],
+    description: 'Outgoing edges to other nodes (the node graph wiring)',
+    example: [
+      {
+        targetNodeId: '5bd40c91-b22e-434f-95a7-c8486b2fba37',
+        connectionType: 'success',
+        label: 'on pass',
+      },
+      {
+        targetNodeId: '6141d2e0-db10-49fb-b160-83b6b02c3fb9',
+        connectionType: 'failure',
+        label: 'on fail',
+      },
+    ],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ConnectionDto)
+  connections?: ConnectionDto[];
 
   @ApiProperty({ example: { x: 100, y: 200 }, required: false })
   @IsOptional()

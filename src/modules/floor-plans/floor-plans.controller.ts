@@ -25,6 +25,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { File as MulterFile } from 'multer';
 import type { Response } from 'express';
 import { createReadStream } from 'fs';
 import { FloorPlansService, Actor } from './floor-plans.service';
@@ -162,15 +163,18 @@ export class FloorPlansController {
   @Post(':id/dwg-upload')
   @ApiOperation({
     summary: 'Upload DWG/DXF file for floor plan',
-    description: 'Upload and parse a DWG or DXF file. Parsing happens asynchronously.',
+    description:
+      'Upload and parse a DWG or DXF file. Parsing happens asynchronously.',
   })
   @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }),
+  )
   uploadDWG(
     @CurrentUser('id') userId: string,
     @CurrentUser('tenantId') tenantId: string,
     @Param('id', ParseIdPipe) id: string,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: MulterFile,
   ) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
@@ -190,12 +194,14 @@ export class FloorPlansController {
     description: 'Accepts .obj, .gltf, .glb or .fbx',
   })
   @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }),
+  )
   uploadModel(
     @CurrentUser('id') userId: string,
     @CurrentUser('tenantId') tenantId: string,
     @Param('id', ParseIdPipe) id: string,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: MulterFile,
   ) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
@@ -214,8 +220,11 @@ export class FloorPlansController {
     @Param('id', ParseIdPipe) id: string,
     @Res() res: Response,
   ) {
-    const { path: filePath, contentType, fileName } =
-      await this.floorPlansService.getModelFile(id, tenantId);
+    const {
+      path: filePath,
+      contentType,
+      fileName,
+    } = await this.floorPlansService.getModelFile(id, tenantId);
 
     // @Res() bypasses the global TransformInterceptor so the raw bytes are sent.
     res.setHeader('Content-Type', contentType);
@@ -339,7 +348,11 @@ export class FloorPlansController {
     @Param('id', ParseIdPipe) id: string,
     @Body() zoneDto: AddZoneDto,
   ) {
-    return this.floorPlansService.addZone(id, this.actor(userId, tenantId), zoneDto);
+    return this.floorPlansService.addZone(
+      id,
+      this.actor(userId, tenantId),
+      zoneDto,
+    );
   }
 
   @Patch(':id/zones/:zoneId')
@@ -424,6 +437,9 @@ export class FloorPlansController {
     @CurrentUser('tenantId') tenantId: string,
     @Param('id', ParseIdPipe) id: string,
   ) {
-    return this.floorPlansService.resetSettings(id, this.actor(userId, tenantId));
+    return this.floorPlansService.resetSettings(
+      id,
+      this.actor(userId, tenantId),
+    );
   }
 }

@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Telemetry } from './entities/telemetry.entity';
@@ -34,7 +30,9 @@ export class TelemetryService {
   // ── Create (HTTP ingestion path) ──────────────────────────────────────────
 
   async create(deviceKey: string, dto: CreateTelemetryDto): Promise<Telemetry> {
-    const device = await this.deviceRepository.findOne({ where: { deviceKey } });
+    const device = await this.deviceRepository.findOne({
+      where: { deviceKey },
+    });
     if (!device) throw new NotFoundException(`Device not found: ${deviceKey}`);
 
     const telemetry = this.telemetryRepository.create({
@@ -75,8 +73,13 @@ export class TelemetryService {
 
   // ── Batch create ──────────────────────────────────────────────────────────
 
-  async createBatch(deviceKey: string, dtos: CreateTelemetryDto[]): Promise<Telemetry[]> {
-    const device = await this.deviceRepository.findOne({ where: { deviceKey } });
+  async createBatch(
+    deviceKey: string,
+    dtos: CreateTelemetryDto[],
+  ): Promise<Telemetry[]> {
+    const device = await this.deviceRepository.findOne({
+      where: { deviceKey },
+    });
     if (!device) throw new NotFoundException(`Device not found: ${deviceKey}`);
 
     const records = dtos.map((dto) =>
@@ -121,7 +124,9 @@ export class TelemetryService {
     userId: string,
     queryDto: QueryTelemetryDto,
   ): Promise<{ data: Telemetry[]; total: number }> {
-    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId },
+    });
     if (!device) throw new NotFoundException('Device not found');
 
     const qb = this.telemetryRepository
@@ -134,9 +139,13 @@ export class TelemetryService {
         endDate: new Date(queryDto.endDate),
       });
     } else if (queryDto.startDate) {
-      qb.andWhere('telemetry.timestamp >= :startDate', { startDate: new Date(queryDto.startDate) });
+      qb.andWhere('telemetry.timestamp >= :startDate', {
+        startDate: new Date(queryDto.startDate),
+      });
     } else if (queryDto.endDate) {
-      qb.andWhere('telemetry.timestamp <= :endDate', { endDate: new Date(queryDto.endDate) });
+      qb.andWhere('telemetry.timestamp <= :endDate', {
+        endDate: new Date(queryDto.endDate),
+      });
     }
 
     if (queryDto.key) {
@@ -144,7 +153,10 @@ export class TelemetryService {
     }
 
     const total = await qb.getCount();
-    qb.orderBy('telemetry.timestamp', queryDto.order === 'asc' ? 'ASC' : 'DESC');
+    qb.orderBy(
+      'telemetry.timestamp',
+      queryDto.order === 'asc' ? 'ASC' : 'DESC',
+    );
     qb.skip(queryDto.skip ?? 0).take(queryDto.limit ?? 100);
 
     const data = await qb.getMany();
@@ -154,7 +166,9 @@ export class TelemetryService {
   // ── Latest ─────────────────────────────────────────────────────────────────
 
   async getLatest(deviceId: string, userId: string): Promise<Telemetry> {
-    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId },
+    });
     if (!device) throw new NotFoundException('Device not found');
 
     // // Try Redis cache first
@@ -179,7 +193,8 @@ export class TelemetryService {
       order: { timestamp: 'DESC' },
     });
 
-    if (!telemetry) throw new NotFoundException('No telemetry data found for this device');
+    if (!telemetry)
+      throw new NotFoundException('No telemetry data found for this device');
 
     // // Populate cache for next read
     // await this.redisService.hmset(`device:${deviceId}:telemetry:latest`, {
@@ -204,7 +219,9 @@ export class TelemetryService {
     startDate?: string,
     endDate?: string,
   ): Promise<any> {
-    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId },
+    });
     if (!device) throw new NotFoundException('Device not found');
 
     const qb = this.telemetryRepository
@@ -271,7 +288,9 @@ export class TelemetryService {
     startDate: string,
     endDate: string,
   ): Promise<any[]> {
-    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId },
+    });
     if (!device) throw new NotFoundException('Device not found');
 
     const results = await this.telemetryRepository
@@ -323,7 +342,9 @@ export class TelemetryService {
     endDate: string,
     limit = 1000,
   ): Promise<any[]> {
-    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId },
+    });
     if (!device) throw new NotFoundException('Device not found');
 
     const results = await this.telemetryRepository
@@ -349,7 +370,9 @@ export class TelemetryService {
   // ── Delete ─────────────────────────────────────────────────────────────────
 
   async deleteByDevice(deviceId: string, userId: string): Promise<number> {
-    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId },
+    });
     if (!device) throw new NotFoundException('Device not found');
 
     const result = await this.telemetryRepository
@@ -377,7 +400,9 @@ export class TelemetryService {
   // ── Count ──────────────────────────────────────────────────────────────────
 
   async getCountByDevice(deviceId: string, userId: string): Promise<number> {
-    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId },
+    });
     if (!device) throw new NotFoundException('Device not found');
 
     return this.telemetryRepository.count({ where: { deviceId } });
@@ -402,7 +427,9 @@ export class TelemetryService {
     if (data.length === 0) return 'timestamp,data\n';
 
     const allKeys = new Set<string>();
-    data.forEach((r) => Object.keys(r.data || {}).forEach((k) => allKeys.add(k)));
+    data.forEach((r) =>
+      Object.keys(r.data || {}).forEach((k) => allKeys.add(k)),
+    );
 
     const header = ['timestamp', 'deviceKey', ...Array.from(allKeys)].join(',');
     const rows = data.map((r) =>
@@ -418,7 +445,10 @@ export class TelemetryService {
 
   // ── Redis cache helper ─────────────────────────────────────────────────────
 
-  private async cacheLatest(deviceId: string, dto: CreateTelemetryDto): Promise<void> {
+  private async cacheLatest(
+    deviceId: string,
+    dto: CreateTelemetryDto,
+  ): Promise<void> {
     await this.redisService.hmset(`device:${deviceId}:telemetry:latest`, {
       temperature: dto.temperature?.toString() ?? '',
       humidity: dto.humidity?.toString() ?? '',

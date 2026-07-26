@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Node } from './entities/node.entity';
@@ -9,14 +9,21 @@ import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @Injectable()
 export class NodesService {
+  private readonly logger = new Logger(NodesService.name);
+
   constructor(
     @InjectRepository(Node)
     private readonly nodeRepository: Repository<Node>,
-  ) { }
+  ) {}
 
-  async create(userId: string, createDto: CreateNodeDto): Promise<Node> {
+  async create(
+    tenantId: string,
+    userId: string,
+    createDto: CreateNodeDto,
+  ): Promise<Node> {
     const node = this.nodeRepository.create({
       ...createDto,
+      tenantId,
       userId,
       createdBy: userId,
       position: createDto.position || { x: 0, y: 0 },
@@ -25,7 +32,7 @@ export class NodesService {
     return await this.nodeRepository.save(node);
   }
 
-  async findAll(userId: string, paginationDto?: PaginationDto) {
+  async findAll(tenantId: string, paginationDto?: PaginationDto) {
     const {
       page = 1,
       limit = 50,
@@ -37,7 +44,7 @@ export class NodesService {
 
     const queryBuilder = this.nodeRepository
       .createQueryBuilder('node')
-      .where('node.userId = :userId', { userId });
+      .where('node.tenantId = :tenantId', { tenantId });
 
     if (search) {
       queryBuilder.andWhere(
@@ -62,16 +69,19 @@ export class NodesService {
     };
   }
 
-  async findByRuleChain(userId: string, ruleChainId: string): Promise<Node[]> {
+  async findByRuleChain(
+    tenantId: string,
+    ruleChainId: string,
+  ): Promise<Node[]> {
     return await this.nodeRepository.find({
-      where: { userId, ruleChainId },
+      where: { tenantId, ruleChainId },
       order: { createdAt: 'ASC' },
     });
   }
 
-  async findOne(id: string, userId: string): Promise<Node> {
+  async findOne(id: string, tenantId: string): Promise<Node> {
     const node = await this.nodeRepository.findOne({
-      where: { id, userId },
+      where: { id, tenantId },
     });
 
     if (!node) {
@@ -83,10 +93,11 @@ export class NodesService {
 
   async update(
     id: string,
+    tenantId: string,
     userId: string,
     updateDto: UpdateNodeDto,
   ): Promise<Node> {
-    const node = await this.findOne(id, userId);
+    const node = await this.findOne(id, tenantId);
 
     Object.assign(node, updateDto);
     node.updatedBy = userId;
@@ -94,29 +105,29 @@ export class NodesService {
     return await this.nodeRepository.save(node);
   }
 
-  async remove(id: string, userId: string): Promise<void> {
-    const node = await this.findOne(id, userId);
+  async remove(id: string, tenantId: string): Promise<void> {
+    const node = await this.findOne(id, tenantId);
     await this.nodeRepository.softRemove(node);
   }
 
-  async toggle(id: string, userId: string): Promise<Node> {
-    const node = await this.findOne(id, userId);
+  async toggle(id: string, tenantId: string, userId: string): Promise<Node> {
+    const node = await this.findOne(id, tenantId);
     node.enabled = !node.enabled;
     node.updatedBy = userId;
     return await this.nodeRepository.save(node);
   }
 
-  async getStatistics(userId: string) {
+  async getStatistics(tenantId: string) {
     const [total, enabled] = await Promise.all([
-      this.nodeRepository.count({ where: { userId } }),
-      this.nodeRepository.count({ where: { userId, enabled: true } }),
+      this.nodeRepository.count({ where: { tenantId } }),
+      this.nodeRepository.count({ where: { tenantId, enabled: true } }),
     ]);
 
     const byTypeResult = await this.nodeRepository
       .createQueryBuilder('node')
       .select('node.type', 'type')
       .addSelect('COUNT(*)', 'count')
-      .where('node.userId = :userId', { userId })
+      .where('node.tenantId = :tenantId', { tenantId })
       .groupBy('node.type')
       .getRawMany();
 

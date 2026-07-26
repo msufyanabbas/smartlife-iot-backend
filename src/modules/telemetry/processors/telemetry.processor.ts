@@ -36,7 +36,11 @@ export class TelemetryProcessor {
         }
       }
 
-      this.eventEmitter.emit('telemetry.processed', { deviceId, data, timestamp });
+      this.eventEmitter.emit('telemetry.processed', {
+        deviceId,
+        data,
+        timestamp,
+      });
     } catch (error) {
       this.logger.error(
         `Failed to process telemetry for device ${deviceId}: ${(error as Error).message}`,
@@ -50,7 +54,9 @@ export class TelemetryProcessor {
     job: Job<{ deviceId: string; interval: 'hour' | 'day'; timestamp: Date }>,
   ): Promise<void> {
     const { deviceId, interval, timestamp } = job.data;
-    this.logger.log(`Aggregating telemetry for device ${deviceId} at interval ${interval}`);
+    this.logger.log(
+      `Aggregating telemetry for device ${deviceId} at interval ${interval}`,
+    );
 
     try {
       const startTime = this.getIntervalStart(timestamp, interval);
@@ -81,7 +87,9 @@ export class TelemetryProcessor {
   }
 
   @Process('cleanup-telemetry')
-  async cleanupTelemetry(job: Job<{ daysOld: number }>): Promise<{ deletedCount: number }> {
+  async cleanupTelemetry(
+    job: Job<{ daysOld: number }>,
+  ): Promise<{ deletedCount: number }> {
     const { daysOld } = job.data;
     this.logger.log(`Cleaning up telemetry older than ${daysOld} days`);
 
@@ -98,7 +106,11 @@ export class TelemetryProcessor {
     const deletedCount = result.affected ?? 0;
     this.logger.log(`Deleted ${deletedCount} old telemetry records`);
 
-    this.eventEmitter.emit('telemetry.cleaned', { deletedCount, daysOld, cutoffDate });
+    this.eventEmitter.emit('telemetry.cleaned', {
+      deletedCount,
+      daysOld,
+      cutoffDate,
+    });
     return { deletedCount };
   }
 

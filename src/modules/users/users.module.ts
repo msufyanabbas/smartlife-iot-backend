@@ -1,4 +1,4 @@
-import { forwardRef, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
@@ -6,7 +6,7 @@ import { User } from './entities/user.entity';
 import { Tenant } from '../tenants/entities/tenant.entity';
 import { MailModule } from '../mail/mail.module';
 import { TenantsModule } from '../tenants/tenants.module';
-import { NotificationsModule } from '../index.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { Role } from '../roles/entities/roles.entity';
 import { Permission } from '../permissions/entities/permissions.entity';
 
@@ -15,7 +15,7 @@ import { Permission } from '../permissions/entities/permissions.entity';
     TypeOrmModule.forFeature([User, Tenant, Role, Permission]),
     MailModule,
     TenantsModule,
-    forwardRef(() => NotificationsModule),
+    NotificationsModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],

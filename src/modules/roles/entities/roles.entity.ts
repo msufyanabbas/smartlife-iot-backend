@@ -1,5 +1,14 @@
 // src/modules/roles/entities/role.entity.ts
-import { Entity, Column, Index, ManyToOne, JoinColumn, ManyToMany, JoinTable, Unique } from 'typeorm';
+import {
+  Entity,
+  Column,
+  Index,
+  ManyToOne,
+  JoinColumn,
+  ManyToMany,
+  JoinTable,
+  Unique,
+} from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
 import { Tenant, User, Permission } from '@modules/index.entities';
 
@@ -19,7 +28,6 @@ export class Role extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-
   tenantId?: string;
 
   @ManyToOne(() => Tenant, { nullable: true, onDelete: 'CASCADE' })
@@ -31,14 +39,15 @@ export class Role extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ default: false })
-
   isSystem: boolean;
 
   // ══════════════════════════════════════════════════════════════════════════
   // PERMISSIONS
   // ══════════════════════════════════════════════════════════════════════════
 
-  @ManyToMany(() => Permission, (permission) => permission.roles, { eager: true })
+  @ManyToMany(() => Permission, (permission) => permission.roles, {
+    eager: true,
+  })
   @JoinTable({
     name: 'role_permissions',
     joinColumn: { name: 'roleId', referencedColumnName: 'id' },
@@ -70,8 +79,10 @@ export class Role extends BaseEntity {
   }
 
   hasPermission(resource: string, action: string): boolean {
-    return this.permissions?.some(
-      p => p.resource === resource && p.action === action
-    ) ?? false;
+    return (
+      this.permissions?.some(
+        (p) => p.resource === resource && p.action === action,
+      ) ?? false
+    );
   }
 }

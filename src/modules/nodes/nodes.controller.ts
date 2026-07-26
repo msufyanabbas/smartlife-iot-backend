@@ -6,88 +6,110 @@ import {
   Patch,
   Param,
   Delete,
-  UseGuards,
   Query,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { NodesService } from './nodes.service';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { User } from '../users/entities/user.entity';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import {
+  TenantOrCustomerAdmin,
+  SwaggerAuth,
+} from '@common/decorators/access-control.decorator';
 
 @ApiTags('nodes')
 @Controller('nodes')
-@UseGuards(JwtAuthGuard)
-@ApiBearerAuth()
 export class NodesController {
   constructor(private readonly nodesService: NodesService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a new node' })
-  @ApiResponse({ status: 201, description: 'Node created successfully' })
-  create(@CurrentUser() user: User, @Body() createDto: CreateNodeDto) {
-    return this.nodesService.create(user.id, createDto);
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Create a new node', 'Node created successfully')
+  create(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('id') userId: string,
+    @Body() createDto: CreateNodeDto,
+  ) {
+    return this.nodesService.create(tenantId, userId, createDto);
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all nodes' })
-  @ApiResponse({ status: 200, description: 'List of nodes' })
-  findAll(@CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
-    return this.nodesService.findAll(user.id, paginationDto);
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Get all nodes', 'List of nodes')
+  findAll(
+    @CurrentUser('tenantId') tenantId: string,
+    @Query() paginationDto: PaginationDto,
+  ) {
+    return this.nodesService.findAll(tenantId, paginationDto);
   }
 
   @Get('statistics')
-  @ApiOperation({ summary: 'Get node statistics' })
-  getStatistics(@CurrentUser() user: User) {
-    return this.nodesService.getStatistics(user.id);
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Get node statistics')
+  getStatistics(@CurrentUser('tenantId') tenantId: string) {
+    return this.nodesService.getStatistics(tenantId);
   }
 
   @Get('rule-chain/:ruleChainId')
-  @ApiOperation({ summary: 'Get nodes by rule chain' })
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Get nodes by rule chain')
   findByRuleChain(
-    @CurrentUser() user: User,
+    @CurrentUser('tenantId') tenantId: string,
     @Param('ruleChainId') ruleChainId: string,
   ) {
-    return this.nodesService.findByRuleChain(user.id, ruleChainId);
+    return this.nodesService.findByRuleChain(tenantId, ruleChainId);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get node by ID' })
-  findOne(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.nodesService.findOne(id, user.id);
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Get node by ID')
+  @ApiResponse({ status: 404, description: 'Node not found' })
+  findOne(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.nodesService.findOne(id, tenantId);
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update node' })
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Update node', 'Node updated successfully')
+  @ApiResponse({ status: 404, description: 'Node not found' })
   update(
-    @CurrentUser() user: User,
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('id') userId: string,
     @Param('id', ParseIdPipe) id: string,
     @Body() updateDto: UpdateNodeDto,
   ) {
-    return this.nodesService.update(id, user.id, updateDto);
+    return this.nodesService.update(id, tenantId, userId, updateDto);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete node' })
-  remove(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.nodesService.remove(id, user.id);
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Delete node', 'Deleted successfully')
+  @ApiResponse({ status: 404, description: 'Node not found' })
+  remove(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.nodesService.remove(id, tenantId);
   }
 
   @Post(':id/toggle')
-  @ApiOperation({ summary: 'Toggle node enabled status' })
-  toggle(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.nodesService.toggle(id, user.id);
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Toggle node enabled status', 'Toggled successfully')
+  @ApiResponse({ status: 404, description: 'Node not found' })
+  toggle(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.nodesService.toggle(id, tenantId, userId);
   }
 }

@@ -24,9 +24,9 @@ import { UsersService } from '@modules/users/users.service';
 import {
   CreateUserDto,
   UpdateUserDto,
-  ChangePasswordDto,
-  ResetPasswordDto,
-  ForgotPasswordDto,
+  UserChangePasswordDto,
+  UserResetPasswordDto,
+  UserForgotPasswordDto,
   VerifyEmailDto,
   UpdatePreferencesDto,
   BulkUpdateStatusDto,
@@ -41,10 +41,24 @@ import {
   BulkAssignRoleDto,
   BulkDeleteUsersDto,
 } from './dto/users.dto';
-import { JwtAuthGuard, RolesGuard, ResourceType, SubscriptionLimitGuard } from '@common/guards/index.guards';
-import { CurrentUser, RequireSubscriptionLimit } from '@common/decorators/index.decorator';
+import {
+  JwtAuthGuard,
+  RolesGuard,
+  ResourceType,
+  SubscriptionLimitGuard,
+} from '@common/guards/index.guards';
+import {
+  CurrentUser,
+  RequireSubscriptionLimit,
+} from '@common/decorators/index.decorator';
 import { Roles, Audit } from '@common/decorators/index.decorator';
-import { UserRole, UserStatus, AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
+import {
+  UserRole,
+  UserStatus,
+  AuditAction,
+  AuditEntityType,
+  AuditSeverity,
+} from '@common/enums/index.enum';
 import { AuditInterceptor } from '@/common/interceptors/index.interceptor';
 import { User } from '../index.entities';
 
@@ -53,7 +67,7 @@ import { User } from '../index.entities';
 @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionLimitGuard)
 // @UseInterceptors(AuditInterceptor)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) { }
+  constructor(private readonly usersService: UsersService) {}
 
   /**
    * Create a new user
@@ -90,10 +104,7 @@ export class UsersController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all users' })
   @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
-  async findAll(
-    @CurrentUser() user: User,
-    @Query() queryDto: QueryUsersDto
-  ) {
+  async findAll(@CurrentUser() user: User, @Query() queryDto: QueryUsersDto) {
     const result = await this.usersService.findAll({
       page: queryDto.page,
       limit: queryDto.limit,
@@ -162,7 +173,7 @@ export class UsersController {
   @ApiResponse({ status: 401, description: 'Current password is incorrect' })
   async changePassword(
     @Request() req,
-    @Body() changePasswordDto: ChangePasswordDto,
+    @Body() changePasswordDto: UserChangePasswordDto,
   ) {
     await this.usersService.changePassword(req.user.sub, changePasswordDto);
     return {
@@ -177,7 +188,7 @@ export class UsersController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Request password reset' })
   @ApiResponse({ status: 200, description: 'Password reset email sent' })
-  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
+  async forgotPassword(@Body() forgotPasswordDto: UserForgotPasswordDto) {
     await this.usersService.forgotPassword(forgotPasswordDto);
     return {
       message: 'If the email exists, a password reset link has been sent',
@@ -192,7 +203,7 @@ export class UsersController {
   @ApiOperation({ summary: 'Reset password with token' })
   @ApiResponse({ status: 200, description: 'Password reset successfully' })
   @ApiResponse({ status: 400, description: 'Invalid or expired token' })
-  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+  async resetPassword(@Body() resetPasswordDto: UserResetPasswordDto) {
     await this.usersService.resetPassword(resetPasswordDto);
     return {
       message: 'Password reset successfully',
@@ -281,7 +292,10 @@ export class UsersController {
   @ApiOperation({ summary: 'Search users' })
   @ApiResponse({ status: 200, description: 'Search results' })
   async search(@Query() queryDto: SearchUsersDto) {
-    const users = await this.usersService.search(queryDto.q, queryDto.limit ? +queryDto.limit : 10);
+    const users = await this.usersService.search(
+      queryDto.q,
+      queryDto.limit ? +queryDto.limit : 10,
+    );
     return {
       message: 'Search completed successfully',
       data: users,
@@ -354,78 +368,77 @@ export class UsersController {
       data: admins,
     };
   }
- 
 
-@Delete('bulk')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
-@ApiBearerAuth()
-@HttpCode(HttpStatus.OK)
-@ApiOperation({ summary: 'Bulk delete users' })
-@ApiResponse({ status: 200, description: 'Users deleted successfully' })
-async bulkDelete(@Body() dto: BulkDeleteUsersDto) {
-  const result = await this.usersService.bulkDelete(dto);
-  return { message: 'Users deleted successfully', data: result };
-}
+  @Delete('bulk')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Bulk delete users' })
+  @ApiResponse({ status: 200, description: 'Users deleted successfully' })
+  async bulkDelete(@Body() dto: BulkDeleteUsersDto) {
+    const result = await this.usersService.bulkDelete(dto);
+    return { message: 'Users deleted successfully', data: result };
+  }
 
-@Patch('bulk/assign-role')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
-@ApiBearerAuth()
-@ApiOperation({ summary: 'Bulk assign role to users' })
-@ApiResponse({ status: 200, description: 'Role assigned successfully' })
-async bulkAssignRole(@Body() dto: BulkAssignRoleDto) {
-  const result = await this.usersService.bulkAssignRole(dto);
-  return { message: 'Role assigned successfully', data: result };
-}
+  @Patch('bulk/assign-role')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bulk assign role to users' })
+  @ApiResponse({ status: 200, description: 'Role assigned successfully' })
+  async bulkAssignRole(@Body() dto: BulkAssignRoleDto) {
+    const result = await this.usersService.bulkAssignRole(dto);
+    return { message: 'Role assigned successfully', data: result };
+  }
 
-@Patch('bulk/remove-role')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
-@ApiBearerAuth()
-@ApiOperation({ summary: 'Bulk remove role from users' })
-@ApiResponse({ status: 200, description: 'Role removed successfully' })
-async bulkRemoveRole(@Body() dto: BulkRemoveRoleDto) {
-  const result = await this.usersService.bulkRemoveRole(dto);
-  return { message: 'Role removed successfully', data: result };
-}
+  @Patch('bulk/remove-role')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bulk remove role from users' })
+  @ApiResponse({ status: 200, description: 'Role removed successfully' })
+  async bulkRemoveRole(@Body() dto: BulkRemoveRoleDto) {
+    const result = await this.usersService.bulkRemoveRole(dto);
+    return { message: 'Role removed successfully', data: result };
+  }
 
-@Patch('bulk/permissions')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
-@ApiBearerAuth()
-@ApiOperation({ summary: 'Bulk update direct permissions on users' })
-@ApiResponse({ status: 200, description: 'Permissions updated successfully' })
-async bulkUpdatePermissions(@Body() dto: BulkUpdatePermissionsDto) {
-  const result = await this.usersService.bulkUpdatePermissions(dto);
-  return { message: 'Permissions updated successfully', data: result };
-}
+  @Patch('bulk/permissions')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bulk update direct permissions on users' })
+  @ApiResponse({ status: 200, description: 'Permissions updated successfully' })
+  async bulkUpdatePermissions(@Body() dto: BulkUpdatePermissionsDto) {
+    const result = await this.usersService.bulkUpdatePermissions(dto);
+    return { message: 'Permissions updated successfully', data: result };
+  }
 
-@Post('bulk/send-email')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
-@ApiBearerAuth()
-@HttpCode(HttpStatus.OK)
-@ApiOperation({ summary: 'Bulk send email to users' })
-@ApiResponse({ status: 200, description: 'Emails sent' })
-async bulkSendEmail(@Body() dto: BulkSendEmailDto) {
-  const result = await this.usersService.bulkSendEmail(dto);
-  return { message: 'Emails processed', data: result };
-}
+  @Post('bulk/send-email')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Bulk send email to users' })
+  @ApiResponse({ status: 200, description: 'Emails sent' })
+  async bulkSendEmail(@Body() dto: BulkSendEmailDto) {
+    const result = await this.usersService.bulkSendEmail(dto);
+    return { message: 'Emails processed', data: result };
+  }
 
-@Post('bulk/send-notification')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
-@ApiBearerAuth()
-@HttpCode(HttpStatus.OK)
-@ApiOperation({ summary: 'Bulk send in-app notification to users' })
-@ApiResponse({ status: 200, description: 'Notifications sent' })
-async bulkSendNotification(@Body() dto: BulkSendNotificationDto) {
-  const result = await this.usersService.bulkSendNotification(dto);
-  return { message: 'Notifications sent', data: result };
-}
+  @Post('bulk/send-notification')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Bulk send in-app notification to users' })
+  @ApiResponse({ status: 200, description: 'Notifications sent' })
+  async bulkSendNotification(@Body() dto: BulkSendNotificationDto) {
+    const result = await this.usersService.bulkSendNotification(dto);
+    return { message: 'Notifications sent', data: result };
+  }
 
- /**
+  /**
    * Delete user
    */
   @Delete(':id')
@@ -440,7 +453,7 @@ async bulkSendNotification(@Body() dto: BulkSendNotificationDto) {
     await this.usersService.remove(id);
   }
 
-    /**
+  /**
    * Get user by ID
    */
   @Get(':id')
@@ -488,11 +501,13 @@ async bulkSendNotification(@Body() dto: BulkSendNotificationDto) {
     @Param('id') id: string,
     @Body() updateStatusDto: UpdateStatusDto,
   ) {
-    const user = await this.usersService.updateStatus(id, updateStatusDto.status);
+    const user = await this.usersService.updateStatus(
+      id,
+      updateStatusDto.status,
+    );
     return {
       message: 'Status updated successfully',
       data: user,
     };
   }
-
 }

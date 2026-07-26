@@ -28,7 +28,7 @@ export class TwoFactorAuthService {
     private userRepository: Repository<User>,
     private mailService: MailService,
     private configService: ConfigService,
-  ) { }
+  ) {}
 
   /**
    * Get or create 2FA record for user
@@ -39,7 +39,10 @@ export class TwoFactorAuthService {
     });
 
     if (!twoFactor) {
-      twoFactor = this.twoFactorAuthRepository.create({ userId: user.id, tenantId: user.tenantId });
+      twoFactor = this.twoFactorAuthRepository.create({
+        userId: user.id,
+        tenantId: user.tenantId,
+      });
       await this.twoFactorAuthRepository.save(twoFactor);
     }
 
@@ -84,7 +87,9 @@ export class TwoFactorAuthService {
     qrCode: string;
     manualEntryKey: string;
   }> {
-    const newUser = await this.userRepository.findOne({ where: { id: user.id, tenantId: user.tenantId } });
+    const newUser = await this.userRepository.findOne({
+      where: { id: user.id, tenantId: user.tenantId },
+    });
     if (!newUser) {
       throw new NotFoundException('User not found');
     }
@@ -133,7 +138,10 @@ export class TwoFactorAuthService {
   /**
    * Enable authenticator 2FA
    */
-  async enableAuthenticator(userId: User, code: string): Promise<{
+  async enableAuthenticator(
+    userId: User,
+    code: string,
+  ): Promise<{
     backupCodes: string[];
     message: string;
   }> {
@@ -148,7 +156,7 @@ export class TwoFactorAuthService {
 
     // Hash backup codes for storage
     const hashedBackupCodes = await Promise.all(
-      backupCodes.map(code => bcrypt.hash(code, 10))
+      backupCodes.map((code) => bcrypt.hash(code, 10)),
     );
 
     // Enable 2FA
@@ -163,7 +171,8 @@ export class TwoFactorAuthService {
 
     return {
       backupCodes,
-      message: 'Authenticator 2FA enabled successfully. Save these backup codes in a safe place.',
+      message:
+        'Authenticator 2FA enabled successfully. Save these backup codes in a safe place.',
     };
   }
 
@@ -172,7 +181,10 @@ export class TwoFactorAuthService {
   /**
    * Setup SMS 2FA
    */
-  async setupSMS(userId: User, phoneNumber: string): Promise<{ message: string }> {
+  async setupSMS(
+    userId: User,
+    phoneNumber: string,
+  ): Promise<{ message: string }> {
     // Validate phone number format (basic validation)
     if (!phoneNumber.match(/^\+?[1-9]\d{1,14}$/)) {
       throw new BadRequestException('Invalid phone number format');
@@ -218,13 +230,18 @@ export class TwoFactorAuthService {
     // In production, send via SMS:
     // await this.smsService.send(twoFactor.phoneNumber, `Your verification code is: ${code}`);
 
-    this.logger.log(`SMS code sent to ${this.maskPhoneNumber(twoFactor.phoneNumber)}`);
+    this.logger.log(
+      `SMS code sent to ${this.maskPhoneNumber(twoFactor.phoneNumber)}`,
+    );
   }
 
   /**
    * Verify SMS code and enable SMS 2FA
    */
-  async enableSMS(userId: User, code: string): Promise<{
+  async enableSMS(
+    userId: User,
+    code: string,
+  ): Promise<{
     backupCodes: string[];
     message: string;
   }> {
@@ -235,11 +252,15 @@ export class TwoFactorAuthService {
     }
 
     if (twoFactor.isLocked()) {
-      throw new BadRequestException('Too many failed attempts. Please try again later.');
+      throw new BadRequestException(
+        'Too many failed attempts. Please try again later.',
+      );
     }
 
     if (!twoFactor.isTempCodeValid()) {
-      throw new BadRequestException('Verification code expired. Please request a new one.');
+      throw new BadRequestException(
+        'Verification code expired. Please request a new one.',
+      );
     }
 
     const isValid = await bcrypt.compare(code, twoFactor.tempCode!);
@@ -253,7 +274,7 @@ export class TwoFactorAuthService {
     // Generate backup codes
     const backupCodes = this.generateBackupCodes();
     const hashedBackupCodes = await Promise.all(
-      backupCodes.map(code => bcrypt.hash(code, 10))
+      backupCodes.map((code) => bcrypt.hash(code, 10)),
     );
 
     // Enable 2FA
@@ -271,7 +292,8 @@ export class TwoFactorAuthService {
 
     return {
       backupCodes,
-      message: 'SMS 2FA enabled successfully. Save these backup codes in a safe place.',
+      message:
+        'SMS 2FA enabled successfully. Save these backup codes in a safe place.',
     };
   }
 
@@ -281,7 +303,9 @@ export class TwoFactorAuthService {
    * Send email verification code
    */
   async sendEmailCode(userId: User): Promise<void> {
-    const user = await this.userRepository.findOne({ where: { id: userId.id } });
+    const user = await this.userRepository.findOne({
+      where: { id: userId.id },
+    });
     if (!user) {
       throw new NotFoundException('User not found');
     }
@@ -311,18 +335,25 @@ export class TwoFactorAuthService {
   /**
    * Enable email 2FA
    */
-  async enableEmail(userId: User, code: string): Promise<{
+  async enableEmail(
+    userId: User,
+    code: string,
+  ): Promise<{
     backupCodes: string[];
     message: string;
   }> {
     const twoFactor = await this.getOrCreate(userId);
 
     if (twoFactor.isLocked()) {
-      throw new BadRequestException('Too many failed attempts. Please try again later.');
+      throw new BadRequestException(
+        'Too many failed attempts. Please try again later.',
+      );
     }
 
     if (!twoFactor.isTempCodeValid()) {
-      throw new BadRequestException('Verification code expired. Please request a new one.');
+      throw new BadRequestException(
+        'Verification code expired. Please request a new one.',
+      );
     }
 
     const isValid = await bcrypt.compare(code, twoFactor.tempCode!);
@@ -336,7 +367,7 @@ export class TwoFactorAuthService {
     // Generate backup codes
     const backupCodes = this.generateBackupCodes();
     const hashedBackupCodes = await Promise.all(
-      backupCodes.map(code => bcrypt.hash(code, 10))
+      backupCodes.map((code) => bcrypt.hash(code, 10)),
     );
 
     // Enable 2FA
@@ -353,7 +384,8 @@ export class TwoFactorAuthService {
 
     return {
       backupCodes,
-      message: 'Email 2FA enabled successfully. Save these backup codes in a safe place.',
+      message:
+        'Email 2FA enabled successfully. Save these backup codes in a safe place.',
     };
   }
 
@@ -436,7 +468,9 @@ export class TwoFactorAuthService {
         twoFactor.lastVerifiedAt = new Date();
         await this.twoFactorAuthRepository.save(twoFactor);
 
-        this.logger.log(`Backup code used for user ${userId}. Remaining: ${backupCodes.length}`);
+        this.logger.log(
+          `Backup code used for user ${userId}. Remaining: ${backupCodes.length}`,
+        );
         return true;
       }
     }
@@ -524,7 +558,10 @@ export class TwoFactorAuthService {
   /**
    * Regenerate backup codes
    */
-  async regenerateBackupCodes(userId: User, verificationCode: string): Promise<{
+  async regenerateBackupCodes(
+    userId: User,
+    verificationCode: string,
+  ): Promise<{
     backupCodes: string[];
     message: string;
   }> {
@@ -545,7 +582,7 @@ export class TwoFactorAuthService {
     // Generate new backup codes
     const backupCodes = this.generateBackupCodes();
     const hashedBackupCodes = await Promise.all(
-      backupCodes.map(code => bcrypt.hash(code, 10))
+      backupCodes.map((code) => bcrypt.hash(code, 10)),
     );
 
     twoFactor.backupCodes = JSON.stringify(hashedBackupCodes);

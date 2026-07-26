@@ -15,7 +15,6 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -27,7 +26,6 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -39,7 +37,6 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-
   userId: string;
 
   @ManyToOne(() => User)
@@ -51,24 +48,25 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  name: string;  // "Slack Notifications", "Weather API"
+  name: string; // "Slack Notifications", "Weather API"
 
   @Column({ type: 'enum', enum: IntegrationType })
-
   type: IntegrationType;
 
   @Column()
-  protocol: string;  // "HTTPS", "MQTT", "WebSocket", "AMQP"
+  protocol: string; // "HTTPS", "MQTT", "WebSocket", "AMQP"
 
   @Column({ type: 'text', nullable: true })
   description?: string;
 
-  @Column({ type: 'enum', enum: IntegrationStatus, default: IntegrationStatus.INACTIVE })
-
+  @Column({
+    type: 'enum',
+    enum: IntegrationStatus,
+    default: IntegrationStatus.INACTIVE,
+  })
   status: IntegrationStatus;
 
   @Column({ default: true })
-
   enabled: boolean;
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -198,10 +196,10 @@ export class Integration extends BaseEntity {
   @Column({ type: 'jsonb', nullable: true })
   rateLimiting?: {
     enabled: boolean;
-    maxRequests: number;      // Max requests per window
-    windowSeconds: number;     // Time window in seconds
-    currentCount?: number;     // Current count in window
-    windowStart?: Date;        // When current window started
+    maxRequests: number; // Max requests per window
+    windowSeconds: number; // Time window in seconds
+    currentCount?: number; // Current count in window
+    windowStart?: Date; // When current window started
   };
   // Example:
   // rateLimiting: {
@@ -217,7 +215,7 @@ export class Integration extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'simple-array', nullable: true })
-  tags?: string[];  // ['notifications', 'critical', 'external-api']
+  tags?: string[]; // ['notifications', 'critical', 'external-api']
 
   @Column({ type: 'jsonb', nullable: true })
   additionalInfo?: Record<string, any>;
@@ -237,7 +235,9 @@ export class Integration extends BaseEntity {
    * Check if integration has errors
    */
   hasErrors(): boolean {
-    return this.status === IntegrationStatus.ERROR || this.consecutiveFailures > 0;
+    return (
+      this.status === IntegrationStatus.ERROR || this.consecutiveFailures > 0
+    );
   }
 
   /**
@@ -310,7 +310,9 @@ export class Integration extends BaseEntity {
     }
 
     // Check if limit exceeded
-    return (this.rateLimiting.currentCount ?? 0) >= this.rateLimiting.maxRequests;
+    return (
+      (this.rateLimiting.currentCount ?? 0) >= this.rateLimiting.maxRequests
+    );
   }
 
   /**
@@ -330,7 +332,8 @@ export class Integration extends BaseEntity {
       this.rateLimiting.currentCount = 1;
       this.rateLimiting.windowStart = new Date();
     } else {
-      this.rateLimiting.currentCount = (this.rateLimiting.currentCount ?? 0) + 1;
+      this.rateLimiting.currentCount =
+        (this.rateLimiting.currentCount ?? 0) + 1;
     }
   }
 

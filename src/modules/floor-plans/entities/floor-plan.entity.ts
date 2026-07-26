@@ -6,10 +6,7 @@ import type { Tenant } from '../../tenants/entities/tenant.entity';
 import type { Customer } from '../../customers/entities/customers.entity';
 import type { User } from '../../users/entities/user.entity';
 import type { Asset } from '../../assets/entities/asset.entity';
-import {
-  FloorPlanStatus,
-  DeviceAnimationType
-} from '@common/enums/index.enum';
+import { FloorPlanStatus, DeviceAnimationType } from '@common/enums/index.enum';
 import type {
   FloorPlanSettings,
   DWGGeometry,
@@ -29,7 +26,6 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-
   tenantId: string;
 
   @ManyToOne('Tenant')
@@ -41,7 +37,6 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-
   customerId?: string;
 
   @ManyToOne('Customer', { nullable: true })
@@ -53,7 +48,6 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-
   userId: string;
 
   @ManyToOne('User')
@@ -65,7 +59,6 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-
   assetId: string;
 
   @ManyToOne('Asset')
@@ -77,25 +70,28 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  name: string;  // "Main Office Floor Plan"
+  name: string; // "Main Office Floor Plan"
 
   @Column()
-  building: string;  // "Building A"
+  building: string; // "Building A"
 
   @Column()
-  floor: string;  // "Floor 3", "Ground Floor"
+  floor: string; // "Floor 3", "Ground Floor"
 
   @Column({ type: 'int', nullable: true })
-  floorNumber?: number;  // 3, 1, 0 (for ordering)
+  floorNumber?: number; // 3, 1, 0 (for ordering)
 
   @Column({ nullable: true })
-  category?: string;  // "office", "warehouse", "factory"
+  category?: string; // "office", "warehouse", "factory"
 
   @Column({ type: 'text', nullable: true })
   description?: string;
 
-  @Column({ type: 'enum', enum: FloorPlanStatus, default: FloorPlanStatus.DRAFT })
-
+  @Column({
+    type: 'enum',
+    enum: FloorPlanStatus,
+    default: FloorPlanStatus.DRAFT,
+  })
   status: FloorPlanStatus;
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -103,7 +99,7 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  dwgFileUrl?: string;  // "https://storage.../floor-plan.dwg"
+  dwgFileUrl?: string; // "https://storage.../floor-plan.dwg"
 
   @Column({ type: 'bigint', nullable: true })
   dwgFileSizeBytes?: number;
@@ -112,7 +108,7 @@ export class FloorPlan extends BaseEntity {
   dwgUploadedAt?: Date;
 
   @Column({ type: 'text', nullable: true })
-  parsingError?: string;  // Error message if DWG parsing failed
+  parsingError?: string; // Error message if DWG parsing failed
 
   // ══════════════════════════════════════════════════════════════════════════
   // PARSED DWG GEOMETRY
@@ -127,10 +123,10 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  modelFileUrl?: string;  // "/uploads/floor-plans/models/<id>.glb"
+  modelFileUrl?: string; // "/uploads/floor-plans/models/<id>.glb"
 
   @Column({ nullable: true })
-  modelFileType?: string;  // 'obj' | 'gltf' | 'glb' | 'fbx'
+  modelFileType?: string; // 'obj' | 'gltf' | 'glb' | 'fbx'
 
   @Column({ type: 'bigint', nullable: true })
   modelFileSize?: number;
@@ -140,10 +136,10 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  thumbnailUrl?: string;  // Small preview (200x200)
+  thumbnailUrl?: string; // Small preview (200x200)
 
   @Column({ nullable: true })
-  imageUrl?: string;  // Full-size 2D render
+  imageUrl?: string; // Full-size 2D render
 
   // ══════════════════════════════════════════════════════════════════════════
   // DIMENSIONS & SCALE
@@ -158,7 +154,7 @@ export class FloorPlan extends BaseEntity {
   // Example: { width: 50, height: 30, unit: 'meters' }
 
   @Column({ nullable: true })
-  scale?: string;  // "1:100", "1:50"
+  scale?: string; // "1:100", "1:50"
 
   // ══════════════════════════════════════════════════════════════════════════
   // 3D DEVICES (With animations and telemetry bindings)
@@ -205,7 +201,7 @@ export class FloorPlan extends BaseEntity {
     boundaries: Array<{ x: number; y: number }>;
     floor?: string;
     deviceIds?: string[];
-    area?: number;  // Square meters/feet
+    area?: number; // Square meters/feet
   }>;
   // Example:
   // zones: [
@@ -274,7 +270,7 @@ export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'simple-array', nullable: true })
-  tags?: string[];  // ['3d-enabled', 'hvac', 'security']
+  tags?: string[]; // ['3d-enabled', 'hvac', 'security']
 
   @Column({ type: 'jsonb', nullable: true })
   additionalInfo?: Record<string, any>;
@@ -308,7 +304,7 @@ export class FloorPlan extends BaseEntity {
    * Get device by ID
    */
   getDevice(deviceId: string): Device3DData | undefined {
-    return this.devices.find(d => d.deviceId === deviceId);
+    return this.devices.find((d) => d.deviceId === deviceId);
   }
 
   /**
@@ -326,7 +322,7 @@ export class FloorPlan extends BaseEntity {
    */
   removeDevice(deviceId: string): void {
     if (this.devices) {
-      this.devices = this.devices.filter(d => d.deviceId !== deviceId);
+      this.devices = this.devices.filter((d) => d.deviceId !== deviceId);
     }
   }
 
@@ -347,10 +343,10 @@ export class FloorPlan extends BaseEntity {
    * Get all devices in a zone
    */
   getDevicesInZone(zoneId: string): Device3DData[] {
-    const zone = this.zones.find(z => z.id === zoneId);
+    const zone = this.zones.find((z) => z.id === zoneId);
     if (!zone?.deviceIds) return [];
 
-    return this.devices.filter(d => zone.deviceIds?.includes(d.deviceId));
+    return this.devices.filter((d) => zone.deviceIds?.includes(d.deviceId));
   }
 
   /**
@@ -368,7 +364,7 @@ export class FloorPlan extends BaseEntity {
    */
   removeZone(zoneId: string): void {
     if (this.zones) {
-      this.zones = this.zones.filter(z => z.id !== zoneId);
+      this.zones = this.zones.filter((z) => z.id !== zoneId);
     }
   }
 
@@ -383,6 +379,6 @@ export class FloorPlan extends BaseEntity {
    * Check if has 3D data
    */
   has3DData(): boolean {
-    return this.devices.length > 0 && this.devices.some(d => d.model3DUrl);
+    return this.devices.length > 0 && this.devices.some((d) => d.model3DUrl);
   }
 }

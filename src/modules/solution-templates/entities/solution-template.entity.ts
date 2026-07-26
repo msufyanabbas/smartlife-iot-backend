@@ -14,7 +14,6 @@ export class SolutionTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-
   tenantId?: string;
 
   @ManyToOne(() => Tenant, { nullable: true })
@@ -26,7 +25,6 @@ export class SolutionTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-
   userId?: string;
 
   @ManyToOne(() => User, { nullable: true })
@@ -47,7 +45,6 @@ export class SolutionTemplate extends BaseEntity {
     type: 'enum',
     enum: SolutionTemplateCategory,
   })
-
   category: SolutionTemplateCategory;
 
   @Column()
@@ -107,12 +104,10 @@ export class SolutionTemplate extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ default: false })
-
   isPremium: boolean;
 
   @Column({ default: true })
-
-  isSystem: boolean;  // true = system template, false = user-created
+  isSystem: boolean; // true = system template, false = user-created
 
   // ══════════════════════════════════════════════════════════════════════════
   // HELPER METHODS

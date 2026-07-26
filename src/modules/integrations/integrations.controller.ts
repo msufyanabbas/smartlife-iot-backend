@@ -16,10 +16,12 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { IntegrationsService } from './integrations.service';
 import { CreateIntegrationDto } from './dto/create-integration.dto';
 import { UpdateIntegrationDto } from './dto/update-integration.dto';
+import { IntegrationActivityDto } from './dto/integration-activity.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
@@ -56,6 +58,50 @@ export class IntegrationsController {
   @ApiResponse({ status: 200, description: 'Integration statistics' })
   getStatistics(@CurrentUser() user: User) {
     return this.integrationsService.getStatistics(user.id);
+  }
+
+  @Get('recent-activity')
+  @ApiOperation({
+    summary: 'Get recent integration activity',
+    description:
+      'Recent activity feed derived from integration state (no dedicated event log exists). ' +
+      "Entries are ordered by each integration's most recent relevant timestamp.",
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Max entries (default 10, max 50)',
+    example: 10,
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    description: 'Page number, 1-based (default 1)',
+    example: 1,
+  })
+  @ApiQuery({
+    name: 'type',
+    required: false,
+    description:
+      'Filter by integration type (cloud | webhook | mqtt | notification | api | database)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Recent integration activity (paginated).',
+    type: IntegrationActivityDto,
+    isArray: true,
+  })
+  getRecentActivity(
+    @CurrentUser() user: User,
+    @Query('limit') limit?: string,
+    @Query('page') page?: string,
+    @Query('type') type?: string,
+  ) {
+    return this.integrationsService.getRecentActivity(user.id, {
+      limit,
+      page,
+      type,
+    });
   }
 
   @Get(':id')

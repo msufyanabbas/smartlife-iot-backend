@@ -14,7 +14,7 @@ describe('Floor Plans E2E Tests', () => {
   let authToken: string;
   let userId: string;
   let assetId: string;
-  let createdFloorPlanIds: string[] = [];
+  const createdFloorPlanIds: string[] = [];
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -226,7 +226,7 @@ describe('Floor Plans E2E Tests', () => {
 
     it('should get parsed geometry after processing', async () => {
       // Wait for processing (in real scenario, you'd poll or use webhooks)
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
       const response = await request(app.getHttpServer())
         .get(`/floor-plans/${floorPlanId}/geometry`)
@@ -325,7 +325,9 @@ describe('Floor Plans E2E Tests', () => {
         .send({ position: newPosition })
         .expect(200);
 
-      const device = response.body.devices.find((d: any) => d.deviceId === deviceId);
+      const device = response.body.devices.find(
+        (d: any) => d.deviceId === deviceId,
+      );
       expect(device.position).toEqual(newPosition);
     });
 
@@ -345,7 +347,9 @@ describe('Floor Plans E2E Tests', () => {
         .send(animationUpdate)
         .expect(200);
 
-      const device = response.body.devices.find((d: any) => d.deviceId === deviceId);
+      const device = response.body.devices.find(
+        (d: any) => d.deviceId === deviceId,
+      );
       expect(device.animationType).toBe('alarm_flash');
       expect(device.animationConfig.color).toBe('#FF0000');
     });
@@ -437,7 +441,7 @@ describe('Floor Plans E2E Tests', () => {
 
   describe('3D Simulation Data', () => {
     const multiFloorAssetId = 'multi-floor-asset-uuid';
-    let floorPlanIds: string[] = [];
+    const floorPlanIds: string[] = [];
 
     beforeAll(async () => {
       // Create multiple floors for the same building

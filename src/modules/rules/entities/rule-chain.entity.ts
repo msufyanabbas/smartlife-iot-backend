@@ -1,5 +1,5 @@
 // src/modules/rule-chains/entities/rule-chain.entity.ts
-import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
 import { Tenant, Customer, User } from '@modules/index.entities';
 import { RuleChainStatus } from '@common/enums/index.enum';
@@ -14,7 +14,6 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-
   tenantId: string;
 
   @ManyToOne(() => Tenant)
@@ -26,7 +25,6 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-
   customerId?: string;
 
   @ManyToOne(() => Customer, { nullable: true })
@@ -38,7 +36,6 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-
   userId: string;
 
   @ManyToOne(() => User)
@@ -50,18 +47,20 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column()
-  name: string;  // "Device Telemetry Processing", "Alarm Handler"
+  name: string; // "Device Telemetry Processing", "Alarm Handler"
 
   @Column({ type: 'text', nullable: true })
   description?: string;
 
-  @Column({ type: 'enum', enum: RuleChainStatus, default: RuleChainStatus.DRAFT })
-
+  @Column({
+    type: 'enum',
+    enum: RuleChainStatus,
+    default: RuleChainStatus.DRAFT,
+  })
   status: RuleChainStatus;
 
   @Column({ default: false })
-
-  isRoot: boolean;  // Is this the root/entry rule chain?
+  isRoot: boolean; // Is this the root/entry rule chain?
 
   @Column({ default: true })
   enabled: boolean;
@@ -74,7 +73,7 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ nullable: true })
-  rootNodeId?: string;  // First node to execute
+  rootNodeId?: string; // First node to execute
 
   // ══════════════════════════════════════════════════════════════════════════
   // CONFIGURATION
@@ -82,10 +81,10 @@ export class RuleChain extends BaseEntity {
 
   @Column({ type: 'jsonb', nullable: true })
   configuration?: {
-    messageTypes?: string[];      // ['TELEMETRY', 'ALARM', 'ATTRIBUTE']
-    deviceTypes?: string[];       // ['sensor', 'gateway']
-    assetTypes?: string[];        // ['building', 'vehicle']
-    maxExecutionTime?: number;    // Max time in ms
+    messageTypes?: string[]; // ['TELEMETRY', 'ALARM', 'ATTRIBUTE']
+    deviceTypes?: string[]; // ['sensor', 'gateway']
+    assetTypes?: string[]; // ['building', 'vehicle']
+    maxExecutionTime?: number; // Max time in ms
     retryOnFailure?: boolean;
     maxRetries?: number;
   };
@@ -115,7 +114,7 @@ export class RuleChain extends BaseEntity {
   lastExecuted?: Date;
 
   @Column({ type: 'int', default: 0 })
-  averageExecutionTime: number;  // Milliseconds
+  averageExecutionTime: number; // Milliseconds
 
   // ══════════════════════════════════════════════════════════════════════════
   // ERROR TRACKING
@@ -136,7 +135,7 @@ export class RuleChain extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Column({ type: 'simple-array', nullable: true })
-  tags?: string[];  // ['telemetry', 'critical', 'alarms']
+  tags?: string[]; // ['telemetry', 'critical', 'alarms']
 
   @Column({ type: 'jsonb', nullable: true })
   additionalInfo?: Record<string, any>;
@@ -162,7 +161,12 @@ export class RuleChain extends BaseEntity {
   /**
    * Record execution
    */
-  recordExecution(success: boolean, executionTime: number, error?: string, nodeId?: string): void {
+  recordExecution(
+    success: boolean,
+    executionTime: number,
+    error?: string,
+    nodeId?: string,
+  ): void {
     this.executionCount++;
     this.lastExecuted = new Date();
 
@@ -187,7 +191,8 @@ export class RuleChain extends BaseEntity {
 
     // Update average execution time
     this.averageExecutionTime = Math.round(
-      (this.averageExecutionTime * (this.executionCount - 1) + executionTime) / this.executionCount,
+      (this.averageExecutionTime * (this.executionCount - 1) + executionTime) /
+        this.executionCount,
     );
   }
 

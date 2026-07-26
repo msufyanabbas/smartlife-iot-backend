@@ -2,13 +2,22 @@
 import { Entity, Column, Index, OneToOne, JoinColumn, Unique } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
 import { Tenant } from '@modules/index.entities';
-import { SubscriptionPlan, SubscriptionStatus, BillingPeriod } from '@common/enums/index.enum';
-import { EMPTY_USAGE, type SubscriptionFeatures, type SubscriptionLimits, type SubscriptionUsage, USAGE_TO_LIMIT_KEY } from '@/common/interfaces/index.interface';
+import {
+  SubscriptionPlan,
+  SubscriptionStatus,
+  BillingPeriod,
+} from '@common/enums/index.enum';
+import {
+  EMPTY_USAGE,
+  type SubscriptionFeatures,
+  type SubscriptionLimits,
+  type SubscriptionUsage,
+  USAGE_TO_LIMIT_KEY,
+} from '@/common/interfaces/index.interface';
 @Entity('subscriptions')
 @Unique(['tenantId'])
 @Index(['status'])
 export class Subscription extends BaseEntity {
-
   // ── Tenant Link ────────────────────────────────────────────────────────────
   // Subscription belongs to the TENANT org, not to any individual user.
   // The tenant admin is just the person who manages it — they're identified
@@ -23,10 +32,18 @@ export class Subscription extends BaseEntity {
   tenant: Tenant;
 
   // ── Plan & Status ──────────────────────────────────────────────────────────
-  @Column({ type: 'enum', enum: SubscriptionPlan, default: SubscriptionPlan.FREE })
+  @Column({
+    type: 'enum',
+    enum: SubscriptionPlan,
+    default: SubscriptionPlan.FREE,
+  })
   plan: SubscriptionPlan;
 
-  @Column({ type: 'enum', enum: SubscriptionStatus, default: SubscriptionStatus.ACTIVE })
+  @Column({
+    type: 'enum',
+    enum: SubscriptionStatus,
+    default: SubscriptionStatus.ACTIVE,
+  })
   status: SubscriptionStatus;
 
   @Column({ type: 'enum', enum: BillingPeriod, default: BillingPeriod.MONTHLY })
@@ -67,7 +84,7 @@ export class Subscription extends BaseEntity {
   @Column({ type: 'timestamp', nullable: true })
   cancelledAt?: Date;
 
-    // ── Metadata ───────────────────────────────────────────────────────────────
+  // ── Metadata ───────────────────────────────────────────────────────────────
   @Column({ type: 'jsonb', nullable: true })
   metadata?: {
     scheduledDowngrade?: {
@@ -80,7 +97,7 @@ export class Subscription extends BaseEntity {
     [key: string]: any;
   };
 
-    // ── Helper Methods ─────────────────────────────────────────────────────────
+  // ── Helper Methods ─────────────────────────────────────────────────────────
 
   /**
    * Returns true if the subscription is in a usable state.

@@ -1,4 +1,3 @@
-
 // User & Auth entities
 export { User } from './users/entities/user.entity';
 export { RefreshToken } from './auth/entities/refresh-token.entity';
@@ -6,15 +5,22 @@ export { Role } from './roles/entities/roles.entity';
 export { Permission } from './permissions/entities/permissions.entity';
 export { CustomerUserLimit } from './customers/entities/customer-user-limit.entity';
 export {
-  CustomerDevice, CustomerDashboard, CustomerAsset,
-  CustomerFloorPlan, CustomerAutomation,
-  UserDevice, UserDashboard, UserAsset,
-  UserFloorPlan, UserAutomation,
+  CustomerDevice,
+  CustomerDashboard,
+  CustomerAsset,
+  CustomerFloorPlan,
+  CustomerAutomation,
+  UserDevice,
+  UserDashboard,
+  UserAsset,
+  UserFloorPlan,
+  UserAutomation,
 } from './assignments/entities/resource-assignment.entities';
 
 // Device & IoT entities
 export { Device } from './devices/entities/device.entity';
 export { Telemetry } from './telemetry/entities/telemetry.entity';
+export { Firmware } from './firmware/entities/firmware.entity';
 export { Asset } from './assets/entities/asset.entity';
 export { EdgeInstance } from './edge/entities/edge-instance.entity';
 export { EdgeCommand } from './edge/entities/edge-command.entity';
@@ -30,6 +36,7 @@ export { Dashboard } from './dashboards/entities/dashboard.entity';
 export { WidgetBundle } from './widgets/entities/widget-bundle.entity';
 export { WidgetType } from './widgets/entities/widget-type.entity';
 export { FloorPlan } from './floor-plans/entities/floor-plan.entity';
+export { FloorPlanDevice } from './floor-plans/entities/floor-plan-device.entity';
 
 // Notification & Communication entities
 export { Alarm } from './alarms/entities/alarm.entity';
@@ -44,6 +51,7 @@ export { APILog } from './api-monitoring/entities/api-log.entity';
 // Integration & Automation entities
 export { Integration } from './integrations/entities/integration.entity';
 export { Automation } from './automation/entities/automation.entity';
+export { AutomationLog } from './automation/entities/automation-log.entity';
 export { Schedule } from './schedules/entities/schedule.entity';
 
 // Subscription & Sharing entities

@@ -7,10 +7,7 @@ import { User } from '../users/entities/user.entity';
 import { MailModule } from '../mail/mail.module';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([TwoFactorAuth, User]),
-    MailModule,
-  ],
+  imports: [TypeOrmModule.forFeature([TwoFactorAuth, User]), MailModule],
   controllers: [TwoFactorAuthController],
   providers: [TwoFactorAuthService],
   exports: [TwoFactorAuthService],

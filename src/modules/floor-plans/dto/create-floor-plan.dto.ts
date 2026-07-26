@@ -26,12 +26,18 @@ export class CreateFloorPlanDto {
   @IsString()
   floor: string;
 
-  @ApiPropertyOptional({ example: 0, description: 'Numeric floor order (0=ground, 1=first floor, etc.)' })
+  @ApiPropertyOptional({
+    example: 0,
+    description: 'Numeric floor order (0=ground, 1=first floor, etc.)',
+  })
   @IsOptional()
   @IsInt()
   floorNumber?: number;
 
-  @ApiProperty({ example: 'asset-uuid-123', description: 'Associated asset ID' })
+  @ApiProperty({
+    example: 'asset-uuid-123',
+    description: 'Associated asset ID',
+  })
   @IsString()
   assetId: string;
 
@@ -131,7 +137,10 @@ export class AddDeviceToFloorPlanDto {
   @IsString()
   model3DUrl?: string;
 
-  @ApiProperty({ enum: DeviceAnimationType, example: DeviceAnimationType.SMOKE })
+  @ApiProperty({
+    enum: DeviceAnimationType,
+    example: DeviceAnimationType.SMOKE,
+  })
   @IsEnum(DeviceAnimationType)
   animationType: DeviceAnimationType;
 

@@ -5,10 +5,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import {
-  SolutionTemplate,
-} from './entities/solution-template.entity';
-import { SolutionTemplateCategory as TemplateCategory } from '@common/enums/index.enum'
+import { SolutionTemplate } from './entities/solution-template.entity';
+import { SolutionTemplateCategory as TemplateCategory } from '@common/enums/index.enum';
 import {
   CreateSolutionTemplateDto,
   InstallTemplateDto,
@@ -22,7 +20,7 @@ export class SolutionTemplatesService {
   constructor(
     @InjectRepository(SolutionTemplate)
     private readonly templateRepository: Repository<SolutionTemplate>,
-  ) { }
+  ) {}
 
   async create(
     userId: string,

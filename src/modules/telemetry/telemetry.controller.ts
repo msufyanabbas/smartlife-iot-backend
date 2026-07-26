@@ -35,13 +35,10 @@ import {
   BatchTelemetryResponseDto,
   TelemetryMessageResponseDto,
 } from './dto/telemetry-response.dto';
-import { 
-  AggregationQueryDto, 
-  TimeSeriesQueryDto 
-} from './dto/aggregation.dto';
-import { 
-  StatisticsQueryDto, 
-  ExportQueryDto 
+import { AggregationQueryDto, TimeSeriesQueryDto } from './dto/aggregation.dto';
+import {
+  StatisticsQueryDto,
+  ExportQueryDto,
 } from './dto/telemetry-stats-query.dto';
 import { IsArray } from 'class-validator';
 
@@ -55,7 +52,11 @@ export class TelemetryController {
   @Post('devices/:deviceKey')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create telemetry data for a device' })
-  @ApiResponse({ status: 201, description: 'Telemetry created successfully', type: TelemetryMessageResponseDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Telemetry created successfully',
+    type: TelemetryMessageResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'Device not found' })
   create(
     @Param('deviceKey') deviceKey: string,
@@ -67,7 +68,11 @@ export class TelemetryController {
   @Post('devices/:deviceKey/batch')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create multiple telemetry records (batch)' })
-  @ApiResponse({ status: 201, description: 'Batch telemetry created',  type: BatchTelemetryResponseDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Batch telemetry created',
+    type: BatchTelemetryResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'Device not found' })
   createBatch(
     @Param('deviceKey') deviceKey: string,
@@ -78,7 +83,11 @@ export class TelemetryController {
 
   @Get('devices/:deviceId')
   @ApiOperation({ summary: 'Query telemetry data for a device' })
-  @ApiResponse({ status: 200, description: 'Telemetry data retrieved', type: TelemetryListResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Telemetry data retrieved',
+    type: TelemetryListResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'Device not found' })
   findByDevice(
     @CurrentUser() user: User,
@@ -90,7 +99,11 @@ export class TelemetryController {
 
   @Get('devices/:deviceId/latest')
   @ApiOperation({ summary: 'Get latest telemetry for a device' })
-  @ApiResponse({ status: 200, description: 'Latest telemetry retrieved', type: TelemetryResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Latest telemetry retrieved',
+    type: TelemetryResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'Device or telemetry not found' })
   getLatest(
     @CurrentUser() user: User,
@@ -101,7 +114,11 @@ export class TelemetryController {
 
   @Get('devices/:deviceId/statistics')
   @ApiOperation({ summary: 'Get telemetry statistics for a device' })
-  @ApiResponse({ status: 200, description: 'Statistics retrieved', type: TelemetryStatisticsDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Statistics retrieved',
+    type: TelemetryStatisticsDto,
+  })
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
   getStatistics(
@@ -120,7 +137,11 @@ export class TelemetryController {
 
   @Get('devices/:deviceId/aggregated')
   @ApiOperation({ summary: 'Get aggregated telemetry data' })
-  @ApiResponse({ status: 200, description: 'Aggregated data retrieved', type: AggregatedDataResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Aggregated data retrieved',
+    type: AggregatedDataResponseDto,
+  })
   @ApiQuery({
     name: 'interval',
     enum: ['hour', 'day', 'month'],
@@ -146,7 +167,11 @@ export class TelemetryController {
 
   @Get('devices/:deviceId/timeseries')
   @ApiOperation({ summary: 'Get time series data for a specific key' })
-  @ApiResponse({ status: 200, description: 'Time series data retrieved', type: TimeSeriesResponseDto, })
+  @ApiResponse({
+    status: 200,
+    description: 'Time series data retrieved',
+    type: TimeSeriesResponseDto,
+  })
   @ApiQuery({ name: 'key', required: true, type: String })
   @ApiQuery({ name: 'startDate', required: true, type: String })
   @ApiQuery({ name: 'endDate', required: true, type: String })
@@ -171,7 +196,11 @@ export class TelemetryController {
 
   @Get('devices/:deviceId/count')
   @ApiOperation({ summary: 'Get telemetry record count for a device' })
-  @ApiResponse({ status: 200, description: 'Count retrieved', type: TelemetryCountResponseDto, })
+  @ApiResponse({
+    status: 200,
+    description: 'Count retrieved',
+    type: TelemetryCountResponseDto,
+  })
   getCount(
     @CurrentUser() user: User,
     @Param('deviceId', ParseIdPipe) deviceId: string,

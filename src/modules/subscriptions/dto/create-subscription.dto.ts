@@ -1,20 +1,20 @@
 import { IsEnum, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { SubscriptionPlan, BillingPeriod} from '@common/enums/index.enum';
+import { SubscriptionPlan, BillingPeriod } from '@common/enums/index.enum';
 
 export class CreateSubscriptionDto {
-  @ApiProperty({ 
-    enum: SubscriptionPlan, 
+  @ApiProperty({
+    enum: SubscriptionPlan,
     example: SubscriptionPlan.FREE,
-    description: 'Subscription plan - only FREE can be created directly'
+    description: 'Subscription plan - only FREE can be created directly',
   })
   @IsEnum(SubscriptionPlan)
   plan: SubscriptionPlan;
 
-  @ApiProperty({ 
-    enum: BillingPeriod, 
+  @ApiProperty({
+    enum: BillingPeriod,
     example: BillingPeriod.MONTHLY,
-    description: 'Billing period'
+    description: 'Billing period',
   })
   @IsOptional()
   @IsEnum(BillingPeriod)
@@ -22,19 +22,19 @@ export class CreateSubscriptionDto {
 }
 
 export class UpgradeSubscriptionDto {
-  @ApiProperty({ 
+  @ApiProperty({
     enum: SubscriptionPlan,
     example: SubscriptionPlan.PROFESSIONAL,
-    description: 'Target plan (must be higher than current plan)'
+    description: 'Target plan (must be higher than current plan)',
   })
   @IsEnum(SubscriptionPlan)
   plan: SubscriptionPlan;
 
-  @ApiProperty({ 
-    enum: BillingPeriod, 
+  @ApiProperty({
+    enum: BillingPeriod,
     required: false,
     example: BillingPeriod.YEARLY,
-    description: 'Billing period (defaults to current period if not specified)'
+    description: 'Billing period (defaults to current period if not specified)',
   })
   @IsOptional()
   @IsEnum(BillingPeriod)
@@ -42,10 +42,11 @@ export class UpgradeSubscriptionDto {
 }
 
 export class ScheduleDowngradeDto {
-  @ApiProperty({ 
+  @ApiProperty({
     enum: SubscriptionPlan,
     example: SubscriptionPlan.STARTER,
-    description: 'Target plan to downgrade to (must be lower than current plan)'
+    description:
+      'Target plan to downgrade to (must be lower than current plan)',
   })
   @IsEnum(SubscriptionPlan)
   targetPlan: SubscriptionPlan;

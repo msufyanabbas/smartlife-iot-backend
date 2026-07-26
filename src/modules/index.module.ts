@@ -12,8 +12,8 @@ export { ThrottlerModule } from '@nestjs/throttler';
 export { SeederModule } from '../database/seeds/seeder.module';
 export { HealthModule } from './health/health.module';
 export { MetricsModule } from './metrics/metrics.module';
-export {CustomersModule} from './customers/customers.module';
-export {UserSettingsModule} from './user-settings/user-settings.module';
+export { CustomersModule } from './customers/customers.module';
+export { UserSettingsModule } from './user-settings/user-settings.module';
 export { RolesModule } from './roles/roles.module';
 export { PermissionsModule } from './permissions/permissions.module';
 export { GuardsModule } from '../common/guards/guards.module';
@@ -32,10 +32,12 @@ export { TenantsModule } from './tenants/tenants.module';
 // Device & IoT modules
 export { DevicesModule } from './devices/devices.module';
 export { TelemetryModule } from './telemetry/telemetry.module';
+export { FirmwareModule } from './firmware/firmware.module';
 export { GatewayModule } from './gateway/gateway.module';
 export { AssetsModule } from './assets/assets.module';
 export { AttributesModule } from './attributes/attributes.module';
 export { NodesModule } from './nodes/nodes.module';
+export { RulesModule } from './rules/rules.module';
 
 // Communication modules
 export { WebsocketModule } from './websocket/websocket.module';
@@ -74,10 +76,12 @@ import { ProfilesModule } from './profiles/profiles.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { DevicesModule } from './devices/devices.module';
 import { TelemetryModule } from './telemetry/telemetry.module';
+import { FirmwareModule } from './firmware/firmware.module';
 import { GatewayModule } from './gateway/gateway.module';
 import { AssetsModule } from './assets/assets.module';
 import { AttributesModule } from './attributes/attributes.module';
 import { NodesModule } from './nodes/nodes.module';
+import { RulesModule } from './rules/rules.module';
 import { WebsocketModule } from './websocket/websocket.module';
 import { UserSettingsModule } from './user-settings/user-settings.module';
 import { MailModule } from './mail/mail.module';
@@ -122,7 +126,7 @@ import { EdgeModule } from './edge/edge.module';
 export const featureModules = [
   EdgeModule,
   MQTTModule,
-  KafkaModule, 
+  KafkaModule,
   RedisModule,
   GuardsModule,
   PermissionsModule,
@@ -145,10 +149,12 @@ export const featureModules = [
   // Device & IoT
   DevicesModule,
   TelemetryModule,
+  FirmwareModule,
   GatewayModule,
   AssetsModule,
   AttributesModule,
   NodesModule,
+  RulesModule,
 
   // Communication
   WebsocketModule,

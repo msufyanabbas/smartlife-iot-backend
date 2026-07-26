@@ -68,15 +68,27 @@ export class FloorPlanEnhancements1784028884852 implements MigrationInterface {
     );
 
     // 3D model file columns
-    await queryRunner.query(`ALTER TABLE "floor_plans" ADD "modelFileUrl" character varying`);
-    await queryRunner.query(`ALTER TABLE "floor_plans" ADD "modelFileType" character varying`);
-    await queryRunner.query(`ALTER TABLE "floor_plans" ADD "modelFileSize" bigint`);
+    await queryRunner.query(
+      `ALTER TABLE "floor_plans" ADD "modelFileUrl" character varying`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "floor_plans" ADD "modelFileType" character varying`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "floor_plans" ADD "modelFileSize" bigint`,
+    );
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`ALTER TABLE "floor_plans" DROP COLUMN "modelFileSize"`);
-    await queryRunner.query(`ALTER TABLE "floor_plans" DROP COLUMN "modelFileType"`);
-    await queryRunner.query(`ALTER TABLE "floor_plans" DROP COLUMN "modelFileUrl"`);
+    await queryRunner.query(
+      `ALTER TABLE "floor_plans" DROP COLUMN "modelFileSize"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "floor_plans" DROP COLUMN "modelFileType"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "floor_plans" DROP COLUMN "modelFileUrl"`,
+    );
 
     await queryRunner.query(
       `ALTER TABLE "floor_plan_devices" DROP CONSTRAINT "FK_4dd161c950817dd2af8ee7fd2de"`,
@@ -87,8 +99,12 @@ export class FloorPlanEnhancements1784028884852 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "floor_plan_devices" DROP CONSTRAINT "FK_e23455422ce6c04299c1ce83095"`,
     );
-    await queryRunner.query(`DROP INDEX "public"."IDX_2845ad2920701c6e204409f66a"`);
-    await queryRunner.query(`DROP INDEX "public"."IDX_09a5389e79d5d9f25e02ee2961"`);
+    await queryRunner.query(
+      `DROP INDEX "public"."IDX_2845ad2920701c6e204409f66a"`,
+    );
+    await queryRunner.query(
+      `DROP INDEX "public"."IDX_09a5389e79d5d9f25e02ee2961"`,
+    );
     await queryRunner.query(`DROP TABLE "floor_plan_devices"`);
   }
 }

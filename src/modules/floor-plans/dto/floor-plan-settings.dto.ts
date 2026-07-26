@@ -35,7 +35,9 @@ export class DefaultColorsDto {
   @IsString()
   gateways: string;
 
-  @ApiProperty({ description: 'Default color for sensors to gateway (hex color)' })
+  @ApiProperty({
+    description: 'Default color for sensors to gateway (hex color)',
+  })
   @IsString()
   sensorsToGateway: string;
 
