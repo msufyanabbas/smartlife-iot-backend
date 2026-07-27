@@ -13,6 +13,7 @@ import { Telemetry } from '../telemetry/entities/telemetry.entity';
 import { Alarm } from '../alarms/entities/alarm.entity';
 import { Attribute } from '../attributes/entities/attribute.entity';
 import {
+  AlarmCondition,
   AlarmSeverity,
   AlarmStatus,
   AttributeScope,
@@ -196,12 +197,17 @@ export class ActionNodeProcessor implements INodeProcessor {
       deviceId:
         input.originator?.type === 'DEVICE' ? input.originator.id : undefined,
       rule: config.alarmRule ?? {
+        // No threshold applies: the rule chain already decided this alarm should
+        // fire, so the rule row records "this key was present" rather than a
+        // comparison. 'ANY' was not a member of AlarmCondition — the string
+        // literal is what forced the `as any` cast on this object, which in turn
+        // made create() resolve to its array overload and broke `saved.id` below.
         telemetryKey: Object.keys(input.data ?? {})[0] ?? 'unknown',
-        condition: 'ANY',
+        condition: AlarmCondition.EXISTS,
         value: 0,
       },
       isEnabled: true,
-    } as any);
+    });
 
     const saved = await this.alarmRepo.save(alarm);
     this.logger.log(`[create_alarm] id=${saved.id} severity=${alarm.severity}`);

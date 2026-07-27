@@ -20,6 +20,7 @@ import {
   DeviceType,
   DeviceStatus,
   DeviceConnectionType,
+  FirmwareUpdateStatus,
 } from '@common/enums/index.enum';
 
 // ─── Protocol enum used for topic strategy selection ────────────────────────
@@ -131,6 +132,47 @@ export class Device extends BaseEntity {
 
   @Column({ nullable: true })
   hardwareVersion?: string;
+
+  // ── OTA firmware update tracking ──────────────────────────────────────────
+  //
+  // These seven columns already exist in the `devices` table but were never
+  // declared here. That was not merely a typing gap: TypeORM silently drops
+  // properties it does not know about, so every assignment FirmwareService and
+  // FirmwareConsumer made to them was discarded on save — OTA progress was
+  // never actually persisted. Declaring them makes those writes take effect.
+  //
+  // Types mirror the live column definitions exactly (all nullable):
+  //   currentFirmwareVersion    varchar   pendingFirmwareVersion    varchar
+  //   firmwareUpdateStatus      varchar   firmwareUpdateProgress    integer
+  //   firmwareUpdateStartedAt   timestamp firmwareUpdateCompletedAt timestamp
+  //   firmwareUpdateError       text
+  //
+  // `firmwareUpdateStatus` is stored as varchar rather than a PG enum, matching
+  // the existing column; FirmwareUpdateStatus constrains it at the type level.
+
+  /** Version currently confirmed running on the device. */
+  @Column({ nullable: true })
+  currentFirmwareVersion?: string;
+
+  /** Version pushed but not yet confirmed applied. */
+  @Column({ nullable: true })
+  pendingFirmwareVersion?: string;
+
+  @Column({ type: 'varchar', nullable: true })
+  firmwareUpdateStatus?: FirmwareUpdateStatus;
+
+  /** 0–100. */
+  @Column({ type: 'int', nullable: true })
+  firmwareUpdateProgress?: number;
+
+  @Column({ type: 'timestamp', nullable: true })
+  firmwareUpdateStartedAt?: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  firmwareUpdateCompletedAt?: Date;
+
+  @Column({ type: 'text', nullable: true })
+  firmwareUpdateError?: string;
 
   // ── Location ──────────────────────────────────────────────────────────────
 

@@ -298,9 +298,17 @@ async setPassword(@Body() dto: SetCustomerPasswordDto) {
     @Body() dto: VerifyOAuth2FADto,  // typed DTO — no more raw @Body('userId'), @Body('code')
     @Ip() ipAddress: string,
     @Headers('user-agent') userAgent: string,
-    @CurrentUser() user: User,
   ): Promise<AuthResponseDto> {
-    return this.authService.verifyOAuth2FA(user, dto.code, ipAddress, userAgent);
+    // This route is @Public(): the 2FA step happens BEFORE tokens are issued, so
+    // there is no authenticated principal and @CurrentUser() would always be
+    // undefined here. The user is identified by the untrusted `userId` in the
+    // body, which AuthService re-validates against the pending 2FA challenge.
+    return this.authService.verifyOAuth2FA(
+      dto.userId,
+      dto.code,
+      ipAddress,
+      userAgent,
+    );
   }
 
   // ============ OAuth Account Management ============
