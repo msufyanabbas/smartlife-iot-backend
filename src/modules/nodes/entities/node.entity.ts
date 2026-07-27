@@ -169,7 +169,18 @@ export class Node extends BaseEntity {
   @Column({ type: 'jsonb', default: [] })
   connections: Array<{
     targetNodeId: string;
-    connectionType: 'success' | 'failure' | 'default' | 'custom';
+    /**
+     * Route label the engine follows when leaving this node.
+     *
+     * 'success' | 'failure' | 'default' | 'custom' are the canonical labels used
+     * by binary nodes, but this is deliberately `string`: SWITCH nodes emit
+     * arbitrary named routes from their `cases[].outputRoute` / `defaultRoute`
+     * config (e.g. 'A', 'high', 'low'), and RuleEngineService.resolveNextNode()
+     * matches them with an exact `c.connectionType === route` comparison.
+     * Restricting this to the four literals would make SWITCH edges
+     * unrepresentable. Keep it in sync with ConnectionDto.connectionType.
+     */
+    connectionType: string;
     label?: string;
   }>;
   // Example:
@@ -274,7 +285,7 @@ export class Node extends BaseEntity {
    */
   addConnection(
     targetNodeId: string,
-    connectionType: 'success' | 'failure' | 'default' | 'custom' = 'default',
+    connectionType: string = 'default',
     label?: string,
   ): void {
     if (!this.connections) {
