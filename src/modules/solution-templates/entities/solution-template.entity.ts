@@ -5,6 +5,7 @@ import { SolutionTemplateCategory } from '@common/enums/index.enum';
 import type { Relation } from 'typeorm';
 import type { Tenant } from '../../tenants/entities/tenant.entity';
 import type { User } from '../../users/entities/user.entity';
+import type { TemplateConfiguration } from '../interfaces/template-configuration.interface';
 @Entity('solution_templates')
 @Index(['category'])
 @Index(['isPremium'])
@@ -62,8 +63,16 @@ export class SolutionTemplate extends BaseEntity {
   // STATISTICS
   // ══════════════════════════════════════════════════════════════════════════
 
+  /** Running average of `ratings`, recomputed on every rate() call. */
   @Column({ type: 'decimal', precision: 3, scale: 2, default: 0 })
   rating: number;
+
+  /** Per-user ratings keyed by userId, so a user can revise but not stuff the average. */
+  @Column({ type: 'jsonb', default: {} })
+  ratings: Record<string, number>;
+
+  @Column({ type: 'int', default: 0 })
+  ratingCount: number;
 
   @Column({ default: 0 })
   installs: number;
@@ -93,13 +102,12 @@ export class SolutionTemplate extends BaseEntity {
   @Column({ default: 0 })
   rules: number;
 
+  /**
+   * Declarative provisioning spec consumed by SolutionTemplatesService.install().
+   * Previously an untyped `any[]` bag that nothing ever read.
+   */
   @Column({ type: 'jsonb', nullable: true })
-  configuration?: {
-    devices?: any[];
-    dashboards?: any[];
-    rules?: any[];
-    widgets?: any[];
-  };
+  configuration?: TemplateConfiguration;
 
   // ══════════════════════════════════════════════════════════════════════════
   // FLAGS

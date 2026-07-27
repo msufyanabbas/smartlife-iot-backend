@@ -9,6 +9,7 @@ import {
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { SolutionTemplateCategory as TemplateCategory } from '@common/enums/index.enum';
+import type { TemplateConfiguration } from '../interfaces/template-configuration.interface';
 
 export class CreateSolutionTemplateDto {
   @ApiProperty({ example: 'Smart Factory Solution' })
@@ -74,15 +75,14 @@ export class CreateSolutionTemplateDto {
   @IsBoolean()
   isPremium?: boolean;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({
+    required: false,
+    description:
+      'Declarative provisioning spec (devices / dashboards / ruleChains / alarms) executed by POST /:id/install',
+  })
   @IsOptional()
   @IsObject()
-  configuration?: {
-    devices?: any[];
-    dashboards?: any[];
-    rules?: any[];
-    widgets?: any[];
-  };
+  configuration?: TemplateConfiguration;
 
   @ApiProperty({ required: false })
   @IsOptional()

@@ -60,6 +60,7 @@ export { Share } from './sharing/entities/sharing.entity';
 
 // Template & Resource entities
 export { SolutionTemplate } from './solution-templates/entities/solution-template.entity';
+export { TemplateInstallation } from './solution-templates/entities/template-installation.entity';
 export { Image } from './images/entities/image.entity';
 
 export { Attribute } from './attributes/entities/attribute.entity';
