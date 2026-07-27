@@ -6,6 +6,7 @@ import type { Customer } from '../../customers/entities/customers.entity';
 import type { AssetProfile } from '../../profiles/entities/asset-profile.entity';
 import type { Device } from '../../devices/entities/device.entity';
 import { AssetType } from '@common/enums/asset.enum';
+import type { AssetConfiguration } from '@common/interfaces/index.interface';
 
 @Entity('assets')
 @Index(['tenantId', 'type'])
@@ -73,6 +74,36 @@ export class Asset extends BaseEntity {
   @ManyToOne('AssetProfile', { nullable: true })
   @JoinColumn({ name: 'assetProfileId' })
   assetProfile?: Relation<AssetProfile>;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PROFILE-SPECIFIC CONFIGURATION (values for AssetProfile.schema.fields)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Values for the fields declared by this asset's AssetProfile.schema.
+   * Keyed by ProfileField.key.
+   *
+   * Example (a "Building" profile asset):
+   *   configuration: {
+   *     totalFloors: 5,
+   *     totalArea: 2000,
+   *     yearBuilt: 2020,
+   *     buildingType: 'Commercial',
+   *     floorsData: [
+   *       { floorNumber: 0, name: 'Basement',     rooms: 5,  area: 300 },
+   *       { floorNumber: 1, name: 'Ground Floor', rooms: 12, area: 450 },
+   *       { floorNumber: 2, name: 'First Floor',  rooms: 10, area: 450 },
+   *     ]
+   *   }
+   *
+   * `floorsData` is the source of truth for GET /assets/:id/floors and for
+   * which floor numbers may have a FloorPlan.
+   *
+   * Distinct from `attributes` (free-form/legacy) and `additionalInfo`
+   * (anything outside the schema).
+   */
+  @Column({ type: 'jsonb', nullable: true, default: {} })
+  configuration?: AssetConfiguration;
 
   // ══════════════════════════════════════════════════════════════════════════
   // HIERARCHICAL STRUCTURE (Building → Floor → Room)

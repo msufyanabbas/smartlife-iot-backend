@@ -8,6 +8,7 @@ import { Asset } from '../assets/entities/asset.entity';
 import { Device } from '../devices/entities/device.entity';
 import { Telemetry } from '../telemetry/entities/telemetry.entity';
 import { Alarm } from '../alarms/entities/alarm.entity';
+import { Subscription } from '../subscriptions/entities/subscription.entity';
 import { DWGParserService } from './dwg-parser.service';
 
 /**
@@ -23,6 +24,10 @@ import { DWGParserService } from './dwg-parser.service';
  *
  * Enrichment needs read-only access to 4 tables, which forFeature provides with
  * correct tenant scoping and no cycles.
+ *
+ * Subscription is registered for the same reason: the maxFloorPlans /
+ * maxDevicesPerFloorPlan checks only read `subscription.limits`, and importing
+ * SubscriptionsModule would drag in its payment/mail dependencies.
  */
 @Module({
   imports: [
@@ -33,6 +38,7 @@ import { DWGParserService } from './dwg-parser.service';
       Device,
       Telemetry,
       Alarm,
+      Subscription,
     ]),
   ],
   controllers: [FloorPlansController],

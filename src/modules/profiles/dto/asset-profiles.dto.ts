@@ -5,8 +5,74 @@ import {
   IsArray,
   IsNotEmpty,
   IsObject,
+  IsEnum,
+  IsNumber,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { AssetProfileType, ProfileFieldType } from '@common/enums/index.enum';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROFILE SCHEMA (type + fields)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export class ProfileFieldDto {
+  @ApiProperty({ example: 'totalFloors', description: 'Key under Asset.configuration' })
+  @IsString()
+  @IsNotEmpty()
+  key: string;
+
+  @ApiProperty({ example: 'Total Floors' })
+  @IsString()
+  @IsNotEmpty()
+  label: string;
+
+  @ApiProperty({
+    type: String,
+    enum: ProfileFieldType,
+    enumName: 'ProfileFieldType',
+    example: ProfileFieldType.NUMBER,
+  })
+  @IsEnum(ProfileFieldType)
+  type: ProfileFieldType;
+
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  required: boolean;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: "Allowed values — only for type 'select'",
+    example: ['Commercial', 'Residential'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  options?: string[];
+
+  @ApiPropertyOptional({ example: 1, description: "Minimum — only for type 'number'" })
+  @IsOptional()
+  @IsNumber()
+  min?: number;
+
+  @ApiPropertyOptional({ example: 200, description: "Maximum — only for type 'number'" })
+  @IsOptional()
+  @IsNumber()
+  max?: number;
+
+  @ApiPropertyOptional({ description: 'Value pre-filled on new assets' })
+  @IsOptional()
+  defaultValue?: any;
+}
+
+export class ProfileSchemaDto {
+  @ApiProperty({ type: [ProfileFieldDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProfileFieldDto)
+  fields: ProfileFieldDto[];
+}
 
 // Asset Profile DTOs
 export class CreateAssetProfileDto {
@@ -34,6 +100,27 @@ export class CreateAssetProfileDto {
   @IsOptional()
   @IsString()
   image?: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    enum: AssetProfileType,
+    enumName: 'AssetProfileType',
+    example: AssetProfileType.BUILDING,
+    description: 'What kind of thing this profile describes',
+  })
+  @IsOptional()
+  @IsEnum(AssetProfileType)
+  type?: AssetProfileType;
+
+  @ApiPropertyOptional({
+    type: ProfileSchemaDto,
+    description:
+      'Fields assets of this profile carry. Values are stored in Asset.configuration.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ProfileSchemaDto)
+  schema?: ProfileSchemaDto;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -239,6 +326,21 @@ export class UpdateAssetProfileDto {
   @IsOptional()
   @IsString()
   image?: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    enum: AssetProfileType,
+    enumName: 'AssetProfileType',
+  })
+  @IsOptional()
+  @IsEnum(AssetProfileType)
+  type?: AssetProfileType;
+
+  @ApiPropertyOptional({ type: ProfileSchemaDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ProfileSchemaDto)
+  schema?: ProfileSchemaDto;
 
   @ApiPropertyOptional()
   @IsOptional()

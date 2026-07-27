@@ -87,6 +87,8 @@ const PLAN_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> = {
     apiCallsPerMonth: 10_000,
     storageGB: 1,
     smsNotificationsPerMonth: 0,
+    maxFloorPlans: 1,
+    maxDevicesPerFloorPlan: 5,
   },
   [SubscriptionPlan.STARTER]: {
     devices: 50,
@@ -99,6 +101,8 @@ const PLAN_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> = {
     apiCallsPerMonth: 100_000,
     storageGB: 10,
     smsNotificationsPerMonth: 100,
+    maxFloorPlans: 5,
+    maxDevicesPerFloorPlan: 20,
   },
   [SubscriptionPlan.PROFESSIONAL]: {
     devices: 200,
@@ -111,6 +115,8 @@ const PLAN_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> = {
     apiCallsPerMonth: 500_000,
     storageGB: 50,
     smsNotificationsPerMonth: 500,
+    maxFloorPlans: 25,
+    maxDevicesPerFloorPlan: 100,
   },
   [SubscriptionPlan.ENTERPRISE]: {
     devices: -1,
@@ -123,6 +129,8 @@ const PLAN_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> = {
     apiCallsPerMonth: -1,
     storageGB: 500,
     smsNotificationsPerMonth: -1,
+    maxFloorPlans: -1,
+    maxDevicesPerFloorPlan: -1,
   },
 };
 

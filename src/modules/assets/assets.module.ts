@@ -4,9 +4,17 @@ import { AssetsController } from './assets.controller';
 import { AssetsService } from './assets.service';
 import { Asset } from './entities/asset.entity';
 import { Device } from '../devices/entities/device.entity';
+import { FloorPlan } from '../floor-plans/entities/floor-plan.entity';
+import { FloorPlanDevice } from '../floor-plans/entities/floor-plan-device.entity';
 
+// FloorPlan repositories are registered directly (not via FloorPlansModule):
+// GET /assets/:id/floors only needs read access to two tables, and importing
+// FloorPlansModule — which itself depends on the Asset repository — would create
+// a module cycle.
 @Module({
-  imports: [TypeOrmModule.forFeature([Asset, Device])],
+  imports: [
+    TypeOrmModule.forFeature([Asset, Device, FloorPlan, FloorPlanDevice]),
+  ],
   controllers: [AssetsController],
   providers: [AssetsService],
   exports: [AssetsService],

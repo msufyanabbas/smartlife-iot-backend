@@ -253,6 +253,87 @@ iot-platform-backend/
 
 ---
 
+## 4a. Asset Profile → Asset → Floor Plan → Device Chain
+
+The spatial model is a single chain. Each link constrains the next.
+
+```
+AssetProfile  (type + schema)          "a Building has totalFloors and floorsData"
+     ↓ assetProfileId
+Asset         (configuration)          "this building has 3 floors: 1,2,3"
+     ↓ assetId  +  floorNumber
+FloorPlan     (one per floor)          "floor 2's DXF, geometry and zones"
+     ↓ floorPlanId  +  deviceId
+FloorPlanDevice (x/y/z placement)      "the CO2 sensor sits at (12, 4, 2.5) on floor 2"
+                ↑ device.assetId MUST equal floorPlan.assetId
+```
+
+### AssetProfile defines the type and the schema
+- `type` (varchar): `building | shop | farm | warehouse | hospital | hotel | factory | custom`
+  (`AssetProfileType`). Varchar rather than a PG enum so new types need no DB migration.
+- `schema` (jsonb): `{ fields: ProfileField[] }` where a field is
+  `{ key, label, type, required, options?, min?, max?, defaultValue? }` and type is
+  `text | number | boolean | select | floors_array` (`ProfileFieldType`).
+- A `floors_array` field is what makes a profile **multi-floor** — building, hospital
+  and hotel declare one (`floorsData`); shop, farm, warehouse and factory do not.
+- Seeded by `src/database/seeds/asset-profile/asset-profile.seeder.ts` — 8 profiles per
+  tenant, `Custom` being the tenant default. (The older 5-profile seeder in
+  `seeds/asset-profiles/` is superseded and no longer registered in `index.seeder.ts`.)
+- The legacy `attributesSchema` (required/optional split) still exists on the entity for
+  backwards compatibility; `schema` is the one the new flow uses.
+
+### Asset stores the values
+- `configuration` (jsonb, default `{}`): values keyed by `ProfileField.key`.
+- `configuration.totalFloors` and `configuration.floorsData: FloorConfig[]`
+  (`{ floorNumber, name?, rooms?, area? }`) drive everything floor-related.
+- `AssetsService.findOne()` always joins `assetProfile`, so the schema travels with the
+  asset and the frontend can render `configuration` as a form.
+- Still distinct from `attributes` (free-form/legacy) and `additionalInfo` (off-schema).
+
+### FloorPlan is per floor
+- `floorNumber` (int, default 1) + `floorName` (varchar) + **`UNIQUE (assetId, floorNumber)`**
+  (`UQ_floor_plans_asset_floor`) — one plan per floor per asset.
+- `floorNumber` is **required** when the asset is multi-floor (`totalFloors > 1`) and must
+  match a floor declared in `floorsData`; single-floor assets default to 1.
+- Postgres treats NULLs as distinct, so legacy rows with a NULL `floorNumber` do not
+  collide. Soft-deleted rows **do** still occupy their slot — `deleted_at` is not part of
+  the constraint, so re-creating a deleted floor needs a hard delete first.
+
+### Device placement is filtered by asset
+- `POST /floor-plans/:id/devices` **rejects with 400** unless
+  `device.assetId === floorPlan.assetId`. (This was previously a soft warning that placed
+  the device anyway.)
+- `GET /floor-plans/:id/available-devices` is the picker: every device on the plan's asset,
+  minus those already placed on *this* plan; devices placed on another floor of the same
+  asset come back with `isAvailable: false` and `placedOnFloor` set.
+- Link a device to an asset with `POST /assets/:id/devices` first.
+
+### Key endpoints
+| Endpoint | Purpose |
+|---|---|
+| `GET /assets/:id/floors` | **Entry point.** Merges `configuration.floorsData` (or 1..totalFloors) with existing plans → per floor: `hasFloorPlan`, `floorPlanId`, `hasDxf`, `deviceCount`, `rooms`, `area`. Plans not matching a configured floor come back with `inConfiguration: false`. |
+| `GET /floor-plans/asset/:assetId` | All plans of an asset ordered by `floorNumber`, each with `deviceCount`, `hasDxf` and a `geometrySummary` (room/wall/door/window counts, total area). |
+| `GET /floor-plans/:id/available-devices` | Device picker (see above). |
+| `GET /floor-plans/asset/:assetId/3d-simulation` | Whole-building 3D payload, all floors. |
+
+### Subscription limits
+`SubscriptionLimits.maxFloorPlans` and `maxDevicesPerFloorPlan` (-1 = unlimited), enforced
+in `FloorPlansService` (`create` and `placeDevice`), not by a guard decorator:
+
+| Plan | maxFloorPlans | maxDevicesPerFloorPlan |
+|---|---|---|
+| FREE | 1 | 5 |
+| STARTER | 5 | 20 |
+| PROFESSIONAL | 25 | 100 |
+| ENTERPRISE | -1 | -1 |
+
+Checks are skipped for `SUPER_ADMIN`, for tenants with no subscription row, and for limits
+the plan does not define — so adding a limit key never retroactively locks out a tenant.
+Repositories (`Subscription`, `FloorPlan`, `FloorPlanDevice`) are registered directly via
+`TypeOrmModule.forFeature` rather than importing each other's modules, to avoid cycles.
+
+---
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity

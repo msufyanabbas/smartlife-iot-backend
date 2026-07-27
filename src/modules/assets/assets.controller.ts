@@ -227,6 +227,26 @@ findAll(
     };
   }
 
+  @Get(':id/floors')
+  @UseGuards(CustomerAccessGuard)
+  @ApiOperation({
+    summary: 'Get the asset floor list with floor-plan coverage',
+    description:
+      'Merges asset.configuration.floorsData (or 1..totalFloors when floorsData is absent) ' +
+      'with the floor plans that exist for this asset. Use this to decide which floors ' +
+      'still need a DXF uploaded. Floor plans not matching a configured floor are returned ' +
+      'with inConfiguration: false.',
+  })
+  @ApiResponse({ status: 200, description: 'Floors retrieved' })
+  @ApiResponse({ status: 404, description: 'Asset not found' })
+  async getFloors(@CurrentUser() user: User, @Param('id') id: string) {
+    const floors = await this.assetsService.getFloors(id, user);
+    return {
+      message: 'Floors retrieved successfully',
+      data: floors,
+    };
+  }
+
   @Get(':id/path')
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({ summary: 'Get asset path (from root to asset)' })

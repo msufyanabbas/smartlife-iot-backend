@@ -41,6 +41,7 @@ import { FloorPlanQueryDto } from './dto/floor-plan-query.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import { UserRole } from '@common/enums/index.enum';
 
 /** 50 MB cap on uploads — previously there was no limit at all. */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -52,20 +53,30 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 export class FloorPlansController {
   constructor(private readonly floorPlansService: FloorPlansService) {}
 
-  private actor(userId: string, tenantId: string): Actor {
-    return { userId, tenantId };
+  private actor(userId: string, tenantId: string, role?: UserRole): Actor {
+    return { userId, tenantId, role };
   }
 
   @Post()
-  @ApiOperation({ summary: 'Create a new floor plan' })
+  @ApiOperation({
+    summary: 'Create a new floor plan',
+    description:
+      'floorNumber is required when the asset is multi-floor (configuration.totalFloors > 1) ' +
+      'and must be one of the floors declared in configuration.floorsData. ' +
+      'One floor plan per floor per asset. Subject to the plan\'s maxFloorPlans limit.',
+  })
   @ApiResponse({ status: 201, description: 'Floor plan created successfully' })
+  @ApiResponse({ status: 400, description: 'Missing or invalid floorNumber' })
+  @ApiResponse({ status: 403, description: 'Subscription floor plan limit reached' })
+  @ApiResponse({ status: 409, description: 'That floor already has a plan' })
   create(
     @CurrentUser('id') userId: string,
     @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('role') role: UserRole,
     @Body() createFloorPlanDto: CreateFloorPlanDto,
   ) {
     return this.floorPlansService.create(
-      this.actor(userId, tenantId),
+      this.actor(userId, tenantId, role),
       createFloorPlanDto,
     );
   }
@@ -87,13 +98,18 @@ export class FloorPlansController {
   }
 
   @Get('asset/:assetId')
-  @ApiOperation({ summary: 'Get all floor plans for an asset' })
+  @ApiOperation({
+    summary: 'Get all floor plans for an asset, ordered by floor number',
+    description:
+      'Returns one entry per floor plan with its device count, whether a DXF has been ' +
+      'uploaded (hasDxf) and a parsed-geometry summary (room/wall/door/window counts and area).',
+  })
   @ApiParam({ name: 'assetId', type: 'string' })
   findByAsset(
     @CurrentUser('tenantId') tenantId: string,
     @Param('assetId') assetId: string,
   ) {
-    return this.floorPlansService.findByAsset(assetId, tenantId);
+    return this.floorPlansService.getAssetFloorPlansOverview(assetId, tenantId);
   }
 
   @Get('asset/:assetId/3d-simulation')
@@ -249,23 +265,44 @@ export class FloorPlansController {
       .then((rows) => rows.map(({ legacy, ...rest }) => rest));
   }
 
+  @Get(':id/available-devices')
+  @ApiOperation({
+    summary: 'Device picker list for this floor plan',
+    description:
+      "Devices linked to this floor plan's asset, excluding any already placed on THIS plan. " +
+      'Devices placed on another floor of the same asset are included with isAvailable: false ' +
+      'and placedOnFloor set, so the picker can grey them out.',
+  })
+  getAvailableDevices(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.floorPlansService.getAvailableDevices(id, tenantId);
+  }
+
   @Post(':id/devices')
   @ApiOperation({
     summary: 'Place a device on the floor plan',
     description:
       'Body accepts { deviceId, x, y, z? } or the legacy { deviceId, position: {x,y,z} }. ' +
-      'Re-placing an already-placed device updates its position instead of duplicating it.',
+      'Re-placing an already-placed device updates its position instead of duplicating it. ' +
+      "The device MUST be linked to the floor plan's asset — otherwise 400. " +
+      "Use GET /floor-plans/:id/available-devices for the valid list. " +
+      "New placements are subject to the plan's maxDevicesPerFloorPlan limit.",
   })
   @ApiResponse({ status: 201, description: 'Device placed' })
+  @ApiResponse({ status: 400, description: 'Device is not linked to this floor plan\'s asset' })
+  @ApiResponse({ status: 403, description: 'Subscription device-per-floor-plan limit reached' })
   addDevice(
     @CurrentUser('id') userId: string,
     @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('role') role: UserRole,
     @Param('id', ParseIdPipe) id: string,
     @Body() deviceDto: PlaceDeviceDto,
   ) {
     return this.floorPlansService.placeDevice(
       id,
-      this.actor(userId, tenantId),
+      this.actor(userId, tenantId, role),
       deviceDto,
     );
   }

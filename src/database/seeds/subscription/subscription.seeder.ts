@@ -54,6 +54,9 @@ export class SubscriptionSeeder implements ISeeder {
       maxTemplateInstalls: 1,
       maxCustomTemplates: 1,
       templateInstallsLifetime: 1,
+      // Floor plans — FREE tier values; overridden per plan below.
+      maxFloorPlans: 1,
+      maxDevicesPerFloorPlan: 5,
     };
 
     const limitsMap: Record<SubscriptionPlan, SubscriptionLimits> = {
@@ -69,6 +72,8 @@ export class SubscriptionSeeder implements ISeeder {
         maxTemplateInstalls: 3,
         maxCustomTemplates: 5,
         templateInstallsLifetime: 10,
+        maxFloorPlans: 5,
+        maxDevicesPerFloorPlan: 20,
       },
       [SubscriptionPlan.PROFESSIONAL]: {
         ...defaultLimits,
@@ -84,6 +89,8 @@ export class SubscriptionSeeder implements ISeeder {
         maxTemplateInstalls: 10,
         maxCustomTemplates: 20,
         templateInstallsLifetime: 50,
+        maxFloorPlans: 25,
+        maxDevicesPerFloorPlan: 100,
       },
       [SubscriptionPlan.ENTERPRISE]: {
         devices: -1,
@@ -104,6 +111,8 @@ export class SubscriptionSeeder implements ISeeder {
         maxTemplateInstalls: -1,
         maxCustomTemplates: -1,
         templateInstallsLifetime: -1,
+        maxFloorPlans: -1,
+        maxDevicesPerFloorPlan: -1,
       },
     };
 
@@ -272,11 +281,16 @@ export class SubscriptionSeeder implements ISeeder {
         // But a subscription with no template keys reads as "unlimited" to
         // SolutionTemplatesService, which would silently disable the quota,
         // so the three new keys are merged in from the plan defaults.
+        //
+        // The same applies to the floor-plan ceilings: a subscription with no
+        // maxFloorPlans key reads as "no limit" to FloorPlansService.
         const planLimits = this.getPlanLimits(existing.plan);
         const missing =
           existing.limits?.maxTemplateInstalls === undefined ||
           existing.limits?.maxCustomTemplates === undefined ||
-          existing.limits?.templateInstallsLifetime === undefined;
+          existing.limits?.templateInstallsLifetime === undefined ||
+          existing.limits?.maxFloorPlans === undefined ||
+          existing.limits?.maxDevicesPerFloorPlan === undefined;
 
         if (missing) {
           existing.limits = {
@@ -288,10 +302,15 @@ export class SubscriptionSeeder implements ISeeder {
             templateInstallsLifetime:
               existing.limits?.templateInstallsLifetime ??
               planLimits.templateInstallsLifetime,
+            maxFloorPlans:
+              existing.limits?.maxFloorPlans ?? planLimits.maxFloorPlans,
+            maxDevicesPerFloorPlan:
+              existing.limits?.maxDevicesPerFloorPlan ??
+              planLimits.maxDevicesPerFloorPlan,
           };
           await this.subscriptionRepository.save(existing);
           this.logger.log(
-            `🔧 Backfilled solution-template limits (${existing.plan}) for tenant: ${tenant.name}`,
+            `🔧 Backfilled solution-template + floor-plan limits (${existing.plan}) for tenant: ${tenant.name}`,
           );
         } else {
           this.logger.log(`⏭️  Subscription already exists for tenant: ${tenant.name}`);

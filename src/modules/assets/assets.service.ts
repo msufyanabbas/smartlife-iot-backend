@@ -8,8 +8,9 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, IsNull } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Asset, Device, User } from '@modules/index.entities';
+import { Asset, Device, User, FloorPlan, FloorPlanDevice } from '@modules/index.entities';
 import { AssetType } from '@common/enums/index.enum';
+import type { FloorConfig } from '@common/interfaces/index.interface';
 import {
   CreateAssetDto,
   UpdateAssetDto,
@@ -26,6 +27,13 @@ export class AssetsService {
     private assetRepository: Repository<Asset>,
     @InjectRepository(Device)
     private deviceRepository: Repository<Device>,
+    // Repositories are injected directly rather than importing FloorPlansModule —
+    // FloorPlansModule already depends on the Asset repository, so a module-level
+    // import in this direction would create a cycle.
+    @InjectRepository(FloorPlan)
+    private floorPlanRepository: Repository<FloorPlan>,
+    @InjectRepository(FloorPlanDevice)
+    private floorPlanDeviceRepository: Repository<FloorPlanDevice>,
     private eventEmitter: EventEmitter2,
   ) {}
 
@@ -181,6 +189,9 @@ async findAll(
     const queryBuilder = this.assetRepository
       .createQueryBuilder('asset')
       .leftJoinAndSelect('asset.parentAsset', 'parentAsset')
+      // Always join the profile: the frontend renders `configuration` against
+      // `assetProfile.schema`, so the schema must travel with the asset.
+      .leftJoinAndSelect('asset.assetProfile', 'assetProfile')
       .where('asset.id = :id', { id });
 
     // Apply customer filtering
@@ -351,6 +362,137 @@ async findAll(
     return await queryBuilder.orderBy('asset.name', 'ASC').getMany();
   }
 
+
+  /**
+   * Get the asset's floor list, merged with which floors already have a floor plan.
+   *
+   * This is the entry point the frontend uses to decide which floors still need a
+   * DXF uploaded. Floors come from `asset.configuration.floorsData` when present;
+   * otherwise they are synthesised as 1..configuration.totalFloors.
+   *
+   * Floor plans whose floorNumber is not in the configured list (or is null, on
+   * rows created before floorNumber was required) are still returned, flagged
+   * `inConfiguration: false`, so nothing is silently hidden.
+   */
+  async getFloors(id: string, user: User) {
+    const asset = await this.findOne(id, user);
+
+    const configuration = asset.configuration ?? {};
+    const configuredFloors: FloorConfig[] = Array.isArray(
+      configuration.floorsData,
+    )
+      ? configuration.floorsData
+      : [];
+
+    const floorPlans = await this.floorPlanRepository.find({
+      where: { assetId: asset.id, tenantId: asset.tenantId },
+      order: { floorNumber: 'ASC' },
+    });
+
+    // One grouped query for placement counts — not one per floor.
+    const countRows: Array<{ floorPlanId: string; count: string }> =
+      floorPlans.length > 0
+        ? await this.floorPlanDeviceRepository
+            .createQueryBuilder('placement')
+            .select('placement.floorPlanId', 'floorPlanId')
+            .addSelect('COUNT(*)', 'count')
+            .where('placement.floorPlanId IN (:...ids)', {
+              ids: floorPlans.map((fp) => fp.id),
+            })
+            .groupBy('placement.floorPlanId')
+            .getRawMany()
+        : [];
+
+    const deviceCountByPlan = new Map(
+      countRows.map((row) => [row.floorPlanId, parseInt(row.count, 10) || 0]),
+    );
+
+    const planByFloorNumber = new Map<number, FloorPlan>();
+    for (const fp of floorPlans) {
+      if (fp.floorNumber !== null && fp.floorNumber !== undefined) {
+        // First plan wins; duplicates are impossible once the unique constraint
+        // on (assetId, floorNumber) is in place, but stay defensive for legacy rows.
+        if (!planByFloorNumber.has(fp.floorNumber)) {
+          planByFloorNumber.set(fp.floorNumber, fp);
+        }
+      }
+    }
+
+    const totalFloors: number =
+      typeof configuration.totalFloors === 'number'
+        ? configuration.totalFloors
+        : configuredFloors.length || planByFloorNumber.size;
+
+    // Build the configured floor list.
+    let baseFloors: FloorConfig[];
+    if (configuredFloors.length > 0) {
+      baseFloors = [...configuredFloors].sort(
+        (a, b) => (a.floorNumber ?? 0) - (b.floorNumber ?? 0),
+      );
+    } else {
+      baseFloors = Array.from({ length: Math.max(0, totalFloors) }, (_, i) => ({
+        floorNumber: i + 1,
+        name: i === 0 ? 'Ground Floor' : `Floor ${i + 1}`,
+      }));
+    }
+
+    const describe = (
+      floor: FloorConfig,
+      plan: FloorPlan | undefined,
+      inConfiguration: boolean,
+    ) => ({
+      floorNumber: floor.floorNumber ?? null,
+      floorName:
+        floor.name ??
+        plan?.floorName ??
+        plan?.floor ??
+        (floor.floorNumber !== undefined && floor.floorNumber !== null
+          ? `Floor ${floor.floorNumber}`
+          : null),
+      rooms: floor.rooms ?? null,
+      area: floor.area ?? null,
+      hasFloorPlan: !!plan,
+      floorPlanId: plan?.id ?? null,
+      floorPlanStatus: plan?.status ?? null,
+      hasDxf: !!plan?.dwgFileUrl,
+      deviceCount: plan ? (deviceCountByPlan.get(plan.id) ?? 0) : 0,
+      inConfiguration,
+    });
+
+    const usedPlanIds = new Set<string>();
+    const floors = baseFloors.map((floor) => {
+      const plan =
+        floor.floorNumber !== undefined && floor.floorNumber !== null
+          ? planByFloorNumber.get(floor.floorNumber)
+          : undefined;
+      if (plan) usedPlanIds.add(plan.id);
+      return describe(floor, plan, true);
+    });
+
+    // Floor plans that don't correspond to any configured floor.
+    const orphans = floorPlans
+      .filter((fp) => !usedPlanIds.has(fp.id))
+      .map((fp) =>
+        describe(
+          {
+            floorNumber: fp.floorNumber as number,
+            name: fp.floorName ?? fp.floor,
+          },
+          fp,
+          false,
+        ),
+      );
+
+    return {
+      assetId: asset.id,
+      assetName: asset.name,
+      assetProfileId: asset.assetProfileId ?? null,
+      assetProfileType: (asset.assetProfile as any)?.type ?? null,
+      totalFloors,
+      floorsWithPlans: floorPlans.length,
+      floors: [...floors, ...orphans],
+    };
+  }
 
   /**
    * Get asset path (from root to asset)

@@ -7,6 +7,7 @@ import {
   ValidateNested,
   IsNumber,
   IsDateString,
+  IsObject,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -109,6 +110,25 @@ export class CreateAssetDto {
   @ApiPropertyOptional()
   @IsOptional()
   additionalInfo?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    description:
+      "Values for the fields declared by the asset profile's schema, keyed by field key. " +
+      'A `floors_array` field (e.g. floorsData) drives GET /assets/:id/floors.',
+    example: {
+      totalFloors: 3,
+      totalArea: 1200,
+      buildingType: 'Commercial',
+      floorsData: [
+        { floorNumber: 1, name: 'Ground Floor', rooms: 12, area: 450 },
+        { floorNumber: 2, name: 'First Floor', rooms: 10, area: 400 },
+        { floorNumber: 3, name: 'Second Floor', rooms: 8, area: 350 },
+      ],
+    },
+  })
+  @IsOptional()
+  @IsObject()
+  configuration?: Record<string, any>;
 
   @ApiPropertyOptional({ type: LocationDto })
   @IsOptional()

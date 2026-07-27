@@ -2,10 +2,12 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import type { File as MulterFile } from 'multer';
 import { FloorPlan } from './entities/floor-plan.entity';
 import { FloorPlanDevice } from './entities/floor-plan-device.entity';
@@ -13,11 +15,14 @@ import { Asset } from '../assets/entities/asset.entity';
 import { Device } from '../devices/entities/device.entity';
 import { Telemetry } from '../telemetry/entities/telemetry.entity';
 import { Alarm } from '../alarms/entities/alarm.entity';
+import { Subscription } from '../subscriptions/entities/subscription.entity';
 import {
   FloorPlanStatus,
   DeviceAnimationType,
   AlarmStatus,
+  UserRole,
 } from '@common/enums/index.enum';
+import type { SubscriptionLimits } from '@common/interfaces/index.interface';
 import { Device3DData } from '@common/interfaces/index.interface';
 import {
   CreateFloorPlanDto,
@@ -37,6 +42,8 @@ import * as path from 'path';
 export interface Actor {
   userId: string;
   tenantId: string;
+  /** Present so SUPER_ADMIN can bypass subscription quotas. */
+  role?: UserRole;
 }
 
 /** Columns a client is allowed to sort by (prevents ORDER BY injection). */
@@ -80,6 +87,8 @@ export class FloorPlansService {
     private readonly telemetryRepository: Repository<Telemetry>,
     @InjectRepository(Alarm)
     private readonly alarmRepository: Repository<Alarm>,
+    @InjectRepository(Subscription)
+    private readonly subscriptionRepository: Repository<Subscription>,
     private readonly dwgParserService: DWGParserService,
   ) {
     this.ensureUploadDirectories();
@@ -126,16 +135,165 @@ export class FloorPlansService {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
+  // SUBSCRIPTION LIMITS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Resolve a plan limit for the tenant.
+   *
+   * Returns null when the check should be skipped: SUPER_ADMIN callers, tenants
+   * with no subscription row, and limits the plan does not define (so adding a
+   * new limit key never retroactively locks out existing tenants). -1 means
+   * unlimited and is also returned as null.
+   */
+  private async resolveLimit(
+    actor: Actor,
+    key: keyof SubscriptionLimits,
+  ): Promise<number | null> {
+    if (actor.role === UserRole.SUPER_ADMIN) return null;
+
+    const subscription = await this.subscriptionRepository.findOne({
+      where: { tenantId: actor.tenantId },
+    });
+    if (!subscription) return null;
+
+    const value = subscription.limits?.[key];
+    if (typeof value !== 'number' || value === -1) return null;
+
+    return value;
+  }
+
+  /** Blocks creating another floor plan once the plan's maxFloorPlans is hit. */
+  private async assertFloorPlanQuota(actor: Actor): Promise<void> {
+    const limit = await this.resolveLimit(actor, 'maxFloorPlans');
+    if (limit === null) return;
+
+    const current = await this.floorPlanRepository.count({
+      where: { tenantId: actor.tenantId },
+    });
+
+    if (current >= limit) {
+      throw new ForbiddenException(
+        `Your tenant has reached the Floor Plan limit for its subscription plan ` +
+          `(${current}/${limit}). Please upgrade your subscription to add more floor plans.`,
+      );
+    }
+  }
+
+  /** Blocks placing another device once the plan's maxDevicesPerFloorPlan is hit. */
+  private async assertDevicePlacementQuota(
+    actor: Actor,
+    floorPlanId: string,
+  ): Promise<void> {
+    const limit = await this.resolveLimit(actor, 'maxDevicesPerFloorPlan');
+    if (limit === null) return;
+
+    const current = await this.placementRepository.count({
+      where: { floorPlanId, tenantId: actor.tenantId },
+    });
+
+    if (current >= limit) {
+      throw new ForbiddenException(
+        `This floor plan has reached the device limit for your subscription plan ` +
+          `(${current}/${limit}). Please upgrade your subscription to place more devices.`,
+      );
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // FLOOR NUMBER RESOLUTION
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Work out which floor a new/updated plan belongs to.
+   *
+   * - Multi-floor asset (configuration.totalFloors > 1): floorNumber is required.
+   * - Single-floor asset: defaults to 1.
+   * - When the asset declares floorsData, the number must be one of those floors.
+   */
+  private resolveFloorNumber(
+    asset: Asset,
+    requested: number | undefined,
+  ): number {
+    const configuration = asset.configuration ?? {};
+    const totalFloors =
+      typeof configuration.totalFloors === 'number'
+        ? configuration.totalFloors
+        : undefined;
+    const floorsData = Array.isArray(configuration.floorsData)
+      ? configuration.floorsData
+      : [];
+
+    if (requested === undefined || requested === null) {
+      if (totalFloors !== undefined && totalFloors > 1) {
+        throw new BadRequestException(
+          `Asset "${asset.name}" has ${totalFloors} floors — floorNumber is required. ` +
+            `Call GET /assets/${asset.id}/floors to see which floors still need a plan.`,
+        );
+      }
+      return 1;
+    }
+
+    if (floorsData.length > 0) {
+      const known = floorsData.some((f) => f.floorNumber === requested);
+      if (!known) {
+        const available = floorsData
+          .map((f) => f.floorNumber)
+          .sort((a, b) => a - b)
+          .join(', ');
+        throw new BadRequestException(
+          `Floor ${requested} is not part of asset "${asset.name}". ` +
+            `Configured floors are: ${available}.`,
+        );
+      }
+    } else if (totalFloors !== undefined && requested > totalFloors) {
+      throw new BadRequestException(
+        `Floor ${requested} exceeds the asset's totalFloors (${totalFloors}).`,
+      );
+    }
+
+    return requested;
+  }
+
+  /** One plan per (asset, floor) — checked up front for a clean 409. */
+  private async assertFloorIsFree(
+    assetId: string,
+    floorNumber: number,
+    tenantId: string,
+    excludeFloorPlanId?: string,
+  ): Promise<void> {
+    const existing = await this.floorPlanRepository.findOne({
+      where: { assetId, floorNumber, tenantId },
+    });
+
+    if (existing && existing.id !== excludeFloorPlanId) {
+      throw new ConflictException(
+        `A floor plan already exists for floor ${floorNumber} of this asset ` +
+          `(${existing.name}, id ${existing.id}). Update it instead of creating a second one.`,
+      );
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   // CRUD
   // ══════════════════════════════════════════════════════════════════════════
 
   async create(actor: Actor, dto: CreateFloorPlanDto): Promise<FloorPlan> {
     // Previously tenantId was never set, so every insert violated the NOT NULL
     // constraint on floor_plans.tenantId and POST /floor-plans always 500'd.
-    await this.assertAsset(dto.assetId, actor.tenantId);
+    const asset = await this.assertAsset(dto.assetId, actor.tenantId);
+
+    // Subscription ceiling first — cheapest rejection, and it should fire before
+    // any of the shape validation below.
+    await this.assertFloorPlanQuota(actor);
+
+    const floorNumber = this.resolveFloorNumber(asset, dto.floorNumber);
+    await this.assertFloorIsFree(asset.id, floorNumber, actor.tenantId);
 
     const floorPlan = this.floorPlanRepository.create({
       ...dto,
+      floorNumber,
+      floorName: dto.floorName ?? dto.floor,
       tenantId: actor.tenantId,
       userId: actor.userId,
       createdBy: actor.userId,
@@ -175,12 +333,19 @@ export class FloorPlansService {
 
     if (search) {
       qb.andWhere(
-        '(floorPlan.name ILIKE :search OR floorPlan.building ILIKE :search OR floorPlan.floor ILIKE :search)',
+        '(floorPlan.name ILIKE :search OR floorPlan.building ILIKE :search OR floorPlan.floor ILIKE :search OR floorPlan.floorName ILIKE :search)',
         { search: `%${search}%` },
       );
     }
 
-    qb.orderBy(`floorPlan.${sortColumn}`, direction).skip(skip).take(limit);
+    if (assetId) {
+      // Browsing one building: floor order is the only order that makes sense.
+      qb.orderBy('floorPlan.floorNumber', 'ASC');
+    } else {
+      qb.orderBy(`floorPlan.${sortColumn}`, direction);
+    }
+
+    qb.skip(skip).take(limit);
 
     const [data, total] = await qb.getManyAndCount();
 
@@ -248,8 +413,29 @@ export class FloorPlansService {
     const floorPlan = await this.findOne(id, actor.tenantId);
 
     // FIX 1: re-validate the asset when it is being reassigned.
+    const targetAssetId = dto.assetId ?? floorPlan.assetId;
+    let asset: Asset | undefined;
     if (dto.assetId && dto.assetId !== floorPlan.assetId) {
-      await this.assertAsset(dto.assetId, actor.tenantId);
+      asset = await this.assertAsset(dto.assetId, actor.tenantId);
+    }
+
+    // Re-check the floor slot whenever the asset or the floor number moves.
+    if (
+      (dto.floorNumber !== undefined && dto.floorNumber !== floorPlan.floorNumber) ||
+      (dto.assetId && dto.assetId !== floorPlan.assetId)
+    ) {
+      asset ??= await this.assertAsset(targetAssetId, actor.tenantId);
+      const floorNumber = this.resolveFloorNumber(
+        asset,
+        dto.floorNumber ?? floorPlan.floorNumber,
+      );
+      await this.assertFloorIsFree(
+        targetAssetId,
+        floorNumber,
+        actor.tenantId,
+        floorPlan.id,
+      );
+      dto = { ...dto, floorNumber };
     }
 
     Object.assign(floorPlan, dto);
@@ -286,17 +472,27 @@ export class FloorPlansService {
     const floorPlan = await this.findOne(floorPlanId, actor.tenantId);
     const device = await this.assertDevice(dto.deviceId, actor.tenantId);
 
-    // Not an error: placement is allowed, but the caller is told about it.
-    const linkedToAsset = device.assetId === floorPlan.assetId;
-    const warning = linkedToAsset
-      ? undefined
-      : `Device is not linked to this floor plan's asset (${floorPlan.assetId}); placed anyway.`;
+    // A device may only be placed on a floor plan of the asset it belongs to.
+    // This used to be a soft warning; it is now a hard rejection, so a floor plan
+    // can never show telemetry for equipment that isn't part of that building.
+    if (!device.assetId || device.assetId !== floorPlan.assetId) {
+      throw new BadRequestException(
+        'This device is not linked to the asset associated with this floor plan. ' +
+          'Please link the device to the asset first before placing it on the floor plan.',
+      );
+    }
 
     const { x, y, z } = this.coords(dto);
 
     let placement = await this.placementRepository.findOne({
       where: { floorPlanId, deviceId: dto.deviceId, tenantId: actor.tenantId },
     });
+
+    // Quota applies to new placements only — repositioning an existing device
+    // must keep working even for a tenant sitting exactly on its limit.
+    if (!placement) {
+      await this.assertDevicePlacementQuota(actor, floorPlanId);
+    }
 
     if (placement) {
       // Already placed → reposition instead of creating a duplicate.
@@ -340,7 +536,7 @@ export class FloorPlansService {
     const [enriched] = await this.enrich([saved], actor.tenantId);
 
     const { legacy, ...placementView } = enriched;
-    return { ...placementView, linkedToAsset, ...(warning ? { warning } : {}) };
+    return { ...placementView, linkedToAsset: true };
   }
 
   /** PATCH /floor-plans/:id/devices/:deviceId — move / update a placement. */
@@ -400,6 +596,164 @@ export class FloorPlansService {
 
     await this.placementRepository.remove(placement);
     return { removed: true };
+  }
+
+  /**
+   * GET /floor-plans/:id/available-devices — the device picker list.
+   *
+   * Every device linked to this floor plan's asset, minus the ones already placed
+   * on THIS plan. Devices already placed on another floor of the same asset are
+   * still returned but marked `isAvailable: false` with the floor they sit on, so
+   * the picker can grey them out rather than pretend they don't exist.
+   */
+  async getAvailableDevices(floorPlanId: string, tenantId: string) {
+    const floorPlan = await this.findOne(floorPlanId, tenantId);
+
+    const devices = await this.deviceRepository.find({
+      where: { assetId: floorPlan.assetId, tenantId },
+      order: { name: 'ASC' },
+    });
+
+    if (devices.length === 0) {
+      return {
+        floorPlanId,
+        assetId: floorPlan.assetId,
+        total: 0,
+        availableCount: 0,
+        devices: [],
+      };
+    }
+
+    // Every floor plan of this asset — a device placed on floor 2 is not free
+    // to be placed on floor 3.
+    const siblingPlans = await this.floorPlanRepository.find({
+      where: { assetId: floorPlan.assetId, tenantId },
+      select: ['id', 'floorNumber', 'floorName', 'floor', 'name'] as any,
+    });
+    const planById = new Map(siblingPlans.map((p) => [p.id, p]));
+
+    const placements = await this.placementRepository.find({
+      where: {
+        tenantId,
+        floorPlanId: In(siblingPlans.map((p) => p.id)),
+        deviceId: In(devices.map((d) => d.id)),
+      },
+    });
+    const placementByDevice = new Map(
+      placements.map((p) => [p.deviceId, p]),
+    );
+
+    const rows = devices
+      .map((device) => {
+        const placement = placementByDevice.get(device.id);
+        const placedPlan = placement ? planById.get(placement.floorPlanId) : undefined;
+
+        return {
+          id: device.id,
+          name: device.name,
+          type: device.type,
+          status: device.status,
+          deviceKey: device.deviceKey,
+          assetId: device.assetId,
+          isAvailable: !placement,
+          placedOnFloor: placedPlan?.floorNumber ?? null,
+          placedOnFloorPlanId: placement?.floorPlanId ?? null,
+          placedOnThisFloorPlan: placement?.floorPlanId === floorPlanId,
+        };
+      })
+      // Already on this plan → not a picker candidate at all.
+      .filter((row) => !row.placedOnThisFloorPlan)
+      .map(({ placedOnThisFloorPlan, ...row }) => row);
+
+    return {
+      floorPlanId,
+      assetId: floorPlan.assetId,
+      total: rows.length,
+      availableCount: rows.filter((r) => r.isAvailable).length,
+      devices: rows,
+    };
+  }
+
+  /**
+   * GET /floor-plans/asset/:assetId — one row per floor plan of an asset, with the
+   * bits a floor switcher needs: device count, whether a DXF was uploaded, and a
+   * summary of the parsed geometry.
+   */
+  async getAssetFloorPlansOverview(assetId: string, tenantId: string) {
+    await this.assertAsset(assetId, tenantId);
+
+    const floorPlans = await this.floorPlanRepository.find({
+      where: { assetId, tenantId },
+      order: { floorNumber: 'ASC' },
+    });
+
+    if (floorPlans.length === 0) {
+      return { assetId, total: 0, floorPlans: [] };
+    }
+
+    const countRows: Array<{ floorPlanId: string; count: string }> =
+      await this.placementRepository
+        .createQueryBuilder('placement')
+        .select('placement.floorPlanId', 'floorPlanId')
+        .addSelect('COUNT(*)', 'count')
+        .where('placement.tenantId = :tenantId', { tenantId })
+        .andWhere('placement.floorPlanId IN (:...ids)', {
+          ids: floorPlans.map((fp) => fp.id),
+        })
+        .groupBy('placement.floorPlanId')
+        .getRawMany();
+
+    const deviceCountByPlan = new Map(
+      countRows.map((r) => [r.floorPlanId, parseInt(r.count, 10) || 0]),
+    );
+
+    return {
+      assetId,
+      total: floorPlans.length,
+      floorPlans: floorPlans.map((fp) => ({
+        id: fp.id,
+        name: fp.name,
+        building: fp.building,
+        floor: fp.floor,
+        floorNumber: fp.floorNumber ?? null,
+        floorName: fp.floorName ?? fp.floor ?? null,
+        status: fp.status,
+        dimensions: fp.dimensions,
+        scale: fp.scale ?? null,
+        deviceCount: deviceCountByPlan.get(fp.id) ?? 0,
+        hasDxf: !!fp.dwgFileUrl,
+        dwgUploadedAt: fp.dwgUploadedAt ?? null,
+        parsingError: fp.parsingError ?? null,
+        hasModel: !!fp.modelFileUrl,
+        thumbnailUrl: fp.thumbnailUrl ?? null,
+        geometrySummary: this.summariseGeometry(fp),
+      })),
+    };
+  }
+
+  /** Compact stats over parsedGeometry — null when the plan has not been parsed. */
+  private summariseGeometry(floorPlan: FloorPlan) {
+    const geometry = floorPlan.parsedGeometry;
+    if (!geometry) return null;
+
+    const rooms = geometry.rooms ?? [];
+
+    return {
+      roomCount: rooms.length,
+      wallCount: geometry.walls?.length ?? 0,
+      doorCount: geometry.doors?.length ?? 0,
+      windowCount: geometry.windows?.length ?? 0,
+      stairCount: geometry.stairs?.length ?? 0,
+      // Sum of detected room areas (m²). Falls back to the declared plan
+      // footprint when the drawing yielded no rooms.
+      totalArea:
+        rooms.length > 0
+          ? Math.round(rooms.reduce((sum, r) => sum + (r.area ?? 0), 0) * 100) / 100
+          : ((floorPlan.dimensions?.width ?? 0) *
+              (floorPlan.dimensions?.height ?? 0)) || null,
+      hasElevationData: geometry.building?.hasElevationData ?? false,
+      floorHeight: geometry.building?.floorHeight ?? null,
+    };
   }
 
   /** GET /floor-plans/:id/devices — placements + device info + telemetry + alarms. */

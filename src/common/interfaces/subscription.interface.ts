@@ -36,6 +36,18 @@ export interface SubscriptionLimits {
   floorPlans?: number;
   automations?: number;
 
+  // Floor plans
+  /**
+   * Floor plans a tenant may own in total. -1 = unlimited.
+   * Enforced by FloorPlansService.create().
+   */
+  maxFloorPlans?: number;
+  /**
+   * Devices that may be placed on a single floor plan. -1 = unlimited.
+   * Enforced by FloorPlansService.placeDevice() on new placements only.
+   */
+  maxDevicesPerFloorPlan?: number;
+
   // Solution Templates
   /** Concurrent SUCCESS installations allowed. -1 = unlimited. */
   maxTemplateInstalls?: number;

@@ -2,10 +2,13 @@ import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
 import type { Relation } from 'typeorm';
 import type { Tenant } from '../../tenants/entities/tenant.entity';
+import { AssetProfileType } from '@common/enums/index.enum';
+import type { ProfileSchema } from '@common/interfaces/index.interface';
 
 @Entity('asset_profiles')
 @Index(['tenantId', 'name'])
 @Index(['tenantId', 'default'])
+@Index(['tenantId', 'type'])
 export class AssetProfile extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
@@ -36,6 +39,39 @@ export class AssetProfile extends BaseEntity {
 
   @Column({ nullable: true })
   image?: string;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PROFILE TYPE + FIELD SCHEMA
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * What kind of thing this profile describes (building, shop, farm, …).
+   * Deliberately a varchar rather than a PG enum so new types need no DB
+   * migration. Validated against AssetProfileType at the DTO layer.
+   */
+  @Column({ type: 'varchar', nullable: true })
+  type?: AssetProfileType;
+
+  /**
+   * Declares the fields assets of this profile carry. Values are stored in
+   * `Asset.configuration` keyed by ProfileField.key.
+   *
+   * Example ("building"):
+   *   schema: {
+   *     fields: [
+   *       { key: 'totalFloors', label: 'Total Floors', type: 'number',
+   *         required: true, min: 1, max: 200 },
+   *       { key: 'floorsData',  label: 'Floors Configuration',
+   *         type: 'floors_array', required: false },
+   *     ]
+   *   }
+   *
+   * A `floors_array` field is what makes an asset multi-floor: its value
+   * (Asset.configuration.floorsData) drives GET /assets/:id/floors and the
+   * per-floor floor plans.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  schema?: ProfileSchema;
 
   // ══════════════════════════════════════════════════════════════════════════
   // HIERARCHY RULES (What can be parent/child of this asset type?)

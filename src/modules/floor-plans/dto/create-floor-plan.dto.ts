@@ -27,12 +27,25 @@ export class CreateFloorPlanDto {
   floor: string;
 
   @ApiPropertyOptional({
-    example: 0,
-    description: 'Numeric floor order (0=ground, 1=first floor, etc.)',
+    example: 1,
+    default: 1,
+    description:
+      'Which floor of the asset this plan represents. Unique per asset. ' +
+      'REQUIRED when the asset is multi-floor (configuration.totalFloors > 1); ' +
+      'defaults to 1 for single-floor assets.',
   })
   @IsOptional()
   @IsInt()
+  @Min(-10)
   floorNumber?: number;
+
+  @ApiPropertyOptional({
+    example: 'Ground Floor',
+    description: "Display name for the floor — 'Ground Floor', 'Basement', 'Rooftop'",
+  })
+  @IsOptional()
+  @IsString()
+  floorName?: string;
 
   @ApiProperty({
     example: 'asset-uuid-123',

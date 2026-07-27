@@ -1,5 +1,5 @@
 // src/modules/floor-plans/entities/floor-plan.entity.ts
-import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, Column, Index, ManyToOne, JoinColumn, Unique } from 'typeorm';
 import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
 import type { Tenant } from '../../tenants/entities/tenant.entity';
@@ -20,6 +20,13 @@ import type {
 @Index(['tenantId', 'customerId'])
 @Index(['tenantId', 'assetId'])
 @Index(['tenantId', 'building', 'floor'])
+@Index(['assetId', 'floorNumber'])
+// One floor plan per floor per asset.
+// NOTE: Postgres treats NULLs as distinct, so legacy rows with a NULL
+// floorNumber do not collide — only explicitly numbered floors are constrained.
+// Soft-deleted rows DO still occupy their slot (deleted_at is not part of the
+// constraint); re-creating a deleted floor requires a hard delete first.
+@Unique('UQ_floor_plans_asset_floor', ['assetId', 'floorNumber'])
 export class FloorPlan extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPING (REQUIRED)
@@ -76,10 +83,19 @@ export class FloorPlan extends BaseEntity {
   building: string; // "Building A"
 
   @Column()
-  floor: string; // "Floor 3", "Ground Floor"
+  floor: string; // "Floor 3", "Ground Floor" — legacy free-text label
 
-  @Column({ type: 'int', nullable: true })
+  /**
+   * Which floor of the asset this plan represents. Together with assetId this
+   * is the plan's identity (see the unique constraint above) and it is the key
+   * that matches an entry in `Asset.configuration.floorsData`.
+   */
+  @Column({ type: 'int', nullable: true, default: 1 })
   floorNumber?: number; // 3, 1, 0 (for ordering)
+
+  /** Display name for the floor — "Ground Floor", "Basement", "Rooftop". */
+  @Column({ nullable: true })
+  floorName?: string;
 
   @Column({ nullable: true })
   category?: string; // "office", "warehouse", "factory"

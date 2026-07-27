@@ -5,7 +5,10 @@ import { DeviceSeeder } from './device/device.seeder';
 import { AlarmSeeder } from './alarm/alarm.seeder';
 import { AnalyticsSeeder } from './analytics/analytics.seeder';
 import { APILogSeeder } from './api-log/api-log.seeder';
-import { AssetProfileSeeder } from './asset-profiles/asset-profile.seeder';
+// 8 stock profiles (building/shop/farm/warehouse/hospital/hotel/factory/custom)
+// with type + schema. Supersedes the older 5-profile seeder in ./asset-profiles/,
+// which is left on disk but no longer registered.
+import { AssetProfileSeeder } from './asset-profile/asset-profile.seeder';
 import { AssetSeeder } from './assets/assets.seeder';
 import { AttributeSeeder } from './attribute/attribute.seeder';
 import { AuditLogSeeder } from './audit-log/audit-log.seeder';
