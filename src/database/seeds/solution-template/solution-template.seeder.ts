@@ -33,8 +33,29 @@ import { ISeeder } from '../seeder.interface';
  *   condition 'EQUALS'  → AlarmCondition.EQUAL   (the member is EQUAL, not EQUALS)
  *   node type 'filter'  → NodeType.FILTER, 'action' → NodeType.ACTION
  *
- * 21 new DeviceType members and 5 new SolutionTemplateCategory members were
- * added to support these templates — see the accompanying enum migration.
+ * ── Device types ──────────────────────────────────────────────────────────────
+ * Every device spec uses only the six base `devices_type_enum` members —
+ * sensor / actuator / gateway / controller / camera / tracker — so this seeder
+ * runs against ANY database, including one that has not had the enum-expansion
+ * migration applied. Specific hardware roles collapse onto those six:
+ *
+ *   thermostat, hvac, access control, elevator,
+ *   street-light controller, inverter, POS   → controller
+ *   light, lock, plug, EV charger, signage,
+ *   irrigation valve, pump                   → actuator
+ *   energy/grid/flow meter, battery, shelf,
+ *   weather station, traffic + all others    → sensor
+ *   crop camera                              → camera
+ *   drone, asset tracker                     → tracker
+ *
+ * The concrete role stays legible in the device NAME ('Smart Thermostat {n}')
+ * and in `defaultTelemetryKeys`; only the coarse enum is generic.
+ *
+ * ── Categories ────────────────────────────────────────────────────────────────
+ * NOTE: the 8 templates DO still rely on 5 category values that are not in the
+ * original `solution_templates_category_enum` (smart_agriculture, smart_energy,
+ * smart_retail, smart_water, smart_facility). Seeding a database that has not
+ * run 1785196800000-SolutionTemplateEnumExpansion will fail on those.
  */
 @Injectable()
 export class SolutionTemplateSeeder implements ISeeder {
@@ -73,14 +94,14 @@ export class SolutionTemplateSeeder implements ISeeder {
           devices: [
             {
               name: 'Smart Thermostat {n}',
-              type: DeviceType.THERMOSTAT,
+              type: DeviceType.CONTROLLER,
               count: 2,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['temperature', 'humidity', 'setpoint', 'mode'],
             },
             {
               name: 'Smart Light {n}',
-              type: DeviceType.LIGHT,
+              type: DeviceType.ACTUATOR,
               count: 10,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['state', 'brightness', 'color_temp'],
@@ -101,14 +122,14 @@ export class SolutionTemplateSeeder implements ISeeder {
             },
             {
               name: 'Smart Lock {n}',
-              type: DeviceType.LOCK,
+              type: DeviceType.ACTUATOR,
               count: 3,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['lock_state', 'battery'],
             },
             {
               name: 'Smart Plug {n}',
-              type: DeviceType.PLUG,
+              type: DeviceType.ACTUATOR,
               count: 6,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['state', 'power', 'energy'],
@@ -208,14 +229,14 @@ export class SolutionTemplateSeeder implements ISeeder {
           devices: [
             {
               name: 'HVAC Controller {n}',
-              type: DeviceType.HVAC,
+              type: DeviceType.CONTROLLER,
               count: 5,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['temperature', 'humidity', 'setpoint', 'mode', 'fan_speed'],
             },
             {
               name: 'Access Control {n}',
-              type: DeviceType.ACCESS_CONTROL,
+              type: DeviceType.CONTROLLER,
               count: 10,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['door_state', 'last_access', 'access_granted'],
@@ -229,7 +250,7 @@ export class SolutionTemplateSeeder implements ISeeder {
             },
             {
               name: 'Energy Meter {n}',
-              type: DeviceType.ENERGY_METER,
+              type: DeviceType.SENSOR,
               count: 5,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['power', 'energy', 'voltage', 'current', 'power_factor'],
@@ -243,7 +264,7 @@ export class SolutionTemplateSeeder implements ISeeder {
             },
             {
               name: 'Elevator Controller {n}',
-              type: DeviceType.ELEVATOR,
+              type: DeviceType.CONTROLLER,
               count: 2,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['floor', 'state', 'door_state', 'load'],
@@ -344,7 +365,7 @@ export class SolutionTemplateSeeder implements ISeeder {
           devices: [
             {
               name: 'Street Light Controller {n}',
-              type: DeviceType.LIGHT_CONTROLLER,
+              type: DeviceType.CONTROLLER,
               count: 50,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['state', 'brightness', 'power', 'fault'],
@@ -358,7 +379,7 @@ export class SolutionTemplateSeeder implements ISeeder {
             },
             {
               name: 'Traffic Sensor {n}',
-              type: DeviceType.TRAFFIC_SENSOR,
+              type: DeviceType.SENSOR,
               count: 20,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['vehicle_count', 'avg_speed', 'occupancy'],
@@ -486,7 +507,7 @@ export class SolutionTemplateSeeder implements ISeeder {
             },
             {
               name: 'Weather Station {n}',
-              type: DeviceType.WEATHER_STATION,
+              type: DeviceType.SENSOR,
               count: 3,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: [
@@ -514,7 +535,7 @@ export class SolutionTemplateSeeder implements ISeeder {
             },
             {
               name: 'Drone Station {n}',
-              type: DeviceType.DRONE,
+              type: DeviceType.TRACKER,
               count: 2,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['battery', 'latitude', 'longitude', 'altitude', 'status'],
@@ -615,7 +636,7 @@ export class SolutionTemplateSeeder implements ISeeder {
           devices: [
             {
               name: 'Solar Inverter {n}',
-              type: DeviceType.INVERTER,
+              type: DeviceType.CONTROLLER,
               count: 5,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: [
@@ -629,7 +650,7 @@ export class SolutionTemplateSeeder implements ISeeder {
             },
             {
               name: 'Energy Meter {n}',
-              type: DeviceType.ENERGY_METER,
+              type: DeviceType.SENSOR,
               count: 10,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: [
@@ -643,21 +664,21 @@ export class SolutionTemplateSeeder implements ISeeder {
             },
             {
               name: 'Battery Storage {n}',
-              type: DeviceType.BATTERY,
+              type: DeviceType.SENSOR,
               count: 3,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['soc', 'voltage', 'current', 'temperature', 'state', 'cycles'],
             },
             {
               name: 'EV Charger {n}',
-              type: DeviceType.EV_CHARGER,
+              type: DeviceType.ACTUATOR,
               count: 4,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['state', 'power', 'energy_delivered', 'session_duration'],
             },
             {
               name: 'Grid Meter {n}',
-              type: DeviceType.GRID_METER,
+              type: DeviceType.SENSOR,
               count: 2,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: [
@@ -784,21 +805,21 @@ export class SolutionTemplateSeeder implements ISeeder {
             },
             {
               name: 'POS Terminal {n}',
-              type: DeviceType.POS,
+              type: DeviceType.CONTROLLER,
               count: 6,
               protocol: DeviceProtocol.HTTP,
               defaultTelemetryKeys: ['transaction_count', 'revenue', 'avg_basket', 'status'],
             },
             {
               name: 'Digital Signage {n}',
-              type: DeviceType.DISPLAY,
+              type: DeviceType.ACTUATOR,
               count: 4,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['state', 'content_id', 'brightness'],
             },
             {
               name: 'Smart Shelf {n}',
-              type: DeviceType.SHELF,
+              type: DeviceType.SENSOR,
               count: 20,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['weight', 'item_count', 'low_stock'],
@@ -899,7 +920,7 @@ export class SolutionTemplateSeeder implements ISeeder {
           devices: [
             {
               name: 'Flow Meter {n}',
-              type: DeviceType.FLOW_METER,
+              type: DeviceType.SENSOR,
               count: 15,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['flow_rate', 'total_volume', 'velocity', 'temperature'],
@@ -1070,7 +1091,7 @@ export class SolutionTemplateSeeder implements ISeeder {
             },
             {
               name: 'Maintenance Beacon {n}',
-              type: DeviceType.BEACON,
+              type: DeviceType.SENSOR,
               count: 20,
               protocol: DeviceProtocol.GENERIC_MQTT,
               defaultTelemetryKeys: ['vibration', 'temperature', 'noise_level', 'fault_code'],
