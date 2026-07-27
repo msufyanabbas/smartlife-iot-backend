@@ -50,6 +50,10 @@ export class SubscriptionSeeder implements ISeeder {
       smsNotificationsPerMonth: 0,
       historicalDataQueryDays: 7,
       trainingSessions: 0,
+      // Solution templates — FREE tier values; overridden per plan below.
+      maxTemplateInstalls: 1,
+      maxCustomTemplates: 1,
+      templateInstallsLifetime: 1,
     };
 
     const limitsMap: Record<SubscriptionPlan, SubscriptionLimits> = {
@@ -62,6 +66,9 @@ export class SubscriptionSeeder implements ISeeder {
         apiCallsPerMonth: 100000,
         dataRetentionDays: 30,
         storageGB: 10,
+        maxTemplateInstalls: 3,
+        maxCustomTemplates: 5,
+        templateInstallsLifetime: 10,
       },
       [SubscriptionPlan.PROFESSIONAL]: {
         ...defaultLimits,
@@ -74,6 +81,9 @@ export class SubscriptionSeeder implements ISeeder {
         dashboardTemplates: -1,
         customIntegrations: -1,
         webhooks: -1,
+        maxTemplateInstalls: 10,
+        maxCustomTemplates: 20,
+        templateInstallsLifetime: 50,
       },
       [SubscriptionPlan.ENTERPRISE]: {
         devices: -1,
@@ -91,6 +101,9 @@ export class SubscriptionSeeder implements ISeeder {
         smsNotificationsPerMonth: -1,
         historicalDataQueryDays: 365,
         trainingSessions: -1,
+        maxTemplateInstalls: -1,
+        maxCustomTemplates: -1,
+        templateInstallsLifetime: -1,
       },
     };
 
@@ -252,7 +265,37 @@ export class SubscriptionSeeder implements ISeeder {
         this.logger.log(`✅ Created ${plan} subscription for tenant: ${tenant.name}`);
         createdCount++;
       } else {
-        this.logger.log(`⏭️  Subscription already exists for tenant: ${tenant.name}`);
+        // Backfill only the solution-template ceilings when they are absent.
+        //
+        // Existing subscriptions are otherwise left alone — their `limits` may
+        // have been tuned per tenant and a blanket refresh would clobber that.
+        // But a subscription with no template keys reads as "unlimited" to
+        // SolutionTemplatesService, which would silently disable the quota,
+        // so the three new keys are merged in from the plan defaults.
+        const planLimits = this.getPlanLimits(existing.plan);
+        const missing =
+          existing.limits?.maxTemplateInstalls === undefined ||
+          existing.limits?.maxCustomTemplates === undefined ||
+          existing.limits?.templateInstallsLifetime === undefined;
+
+        if (missing) {
+          existing.limits = {
+            ...existing.limits,
+            maxTemplateInstalls:
+              existing.limits?.maxTemplateInstalls ?? planLimits.maxTemplateInstalls,
+            maxCustomTemplates:
+              existing.limits?.maxCustomTemplates ?? planLimits.maxCustomTemplates,
+            templateInstallsLifetime:
+              existing.limits?.templateInstallsLifetime ??
+              planLimits.templateInstallsLifetime,
+          };
+          await this.subscriptionRepository.save(existing);
+          this.logger.log(
+            `🔧 Backfilled solution-template limits (${existing.plan}) for tenant: ${tenant.name}`,
+          );
+        } else {
+          this.logger.log(`⏭️  Subscription already exists for tenant: ${tenant.name}`);
+        }
         skippedCount++;
       }
     }

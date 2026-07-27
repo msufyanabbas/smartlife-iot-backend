@@ -35,6 +35,18 @@ export interface SubscriptionLimits {
   assets?: number;
   floorPlans?: number;
   automations?: number;
+
+  // Solution Templates
+  /** Concurrent SUCCESS installations allowed. -1 = unlimited. */
+  maxTemplateInstalls?: number;
+  /** Custom (non-system) templates the tenant may own. -1 = unlimited. */
+  maxCustomTemplates?: number;
+  /**
+   * Total install attempts ever allowed, counting FAILED and ROLLED_BACK ones.
+   * Uninstalling does NOT free lifetime budget — on FREE (1) a tenant that
+   * installs then uninstalls can never install again. -1 = unlimited.
+   */
+  templateInstallsLifetime?: number;
 }
 
 /**

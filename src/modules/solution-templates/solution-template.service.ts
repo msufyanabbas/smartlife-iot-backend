@@ -8,7 +8,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, DataSource, In, Repository } from 'typeorm';
+import { Brackets, DataSource, In, IsNull, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 
 import { SolutionTemplate } from './entities/solution-template.entity';
@@ -29,6 +29,7 @@ import {
   UserRole,
 } from '@common/enums/index.enum';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import type { SubscriptionLimits } from '@common/interfaces/index.interface';
 
 import {
   CreateSolutionTemplateDto,
@@ -71,11 +72,40 @@ export class SolutionTemplatesService {
     return qb.andWhere(
       new Brackets((w) => {
         w.where('template.isSystem = true').orWhere(
-          'template.tenantId = :tenantId',
-          { tenantId },
+          new Brackets((c) => {
+            c.where('template.tenantId = :tenantId', { tenantId }).andWhere(
+              'template.isSystem = false',
+            );
+          }),
         );
       }),
     );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PLAN LIMITS
+  //
+  // Solution-template ceilings live in Subscription.limits (jsonb), alongside
+  // devices/dashboards/etc. A missing key is treated as unlimited so that
+  // tenants seeded before these limits existed are not retroactively locked out.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  private async getPlanLimits(tenantId: string): Promise<SubscriptionLimits> {
+    const subscription = await this.subscriptionsService
+      .findByTenantId(tenantId)
+      .catch(() => null);
+
+    if (!subscription) {
+      throw new BadRequestException(
+        'No active subscription found for this tenant',
+      );
+    }
+    return subscription.limits ?? {};
+  }
+
+  /** -1 or an absent key means unlimited. */
+  private isUnlimited(limit: number | undefined): boolean {
+    return limit === undefined || limit === null || limit === -1;
   }
 
   // ── Create ────────────────────────────────────────────────────────────────
@@ -85,6 +115,21 @@ export class SolutionTemplatesService {
     tenantId: string,
     createDto: CreateSolutionTemplateDto,
   ): Promise<SolutionTemplate> {
+    // Custom-template quota. Templates created through this endpoint are always
+    // isSystem: false, so the ceiling always applies. Soft-deleted templates do
+    // not count — deleting one frees a slot.
+    const limits = await this.getPlanLimits(tenantId);
+    if (!this.isUnlimited(limits.maxCustomTemplates)) {
+      const customTemplates = await this.templateRepository.count({
+        where: { tenantId, isSystem: false, deletedAt: IsNull() },
+      });
+      if (customTemplates >= limits.maxCustomTemplates!) {
+        throw new ForbiddenException(
+          `Your plan allows a maximum of ${limits.maxCustomTemplates} custom templates.`,
+        );
+      }
+    }
+
     const template = this.templateRepository.create({
       ...createDto,
       tenantId, // ← from JWT, never from the body
@@ -160,11 +205,14 @@ export class SolutionTemplatesService {
   ): Promise<SolutionTemplate> {
     const template = await this.findOne(id, tenantId);
 
-    if (template.isSystem && role !== UserRole.SUPER_ADMIN) {
-      throw new ForbiddenException('Cannot update system templates');
+    // System templates are code-owned: they are defined by the seeder and
+    // refreshed on every seed run, so any API edit would be silently reverted.
+    // Immutable for everyone, SUPER_ADMIN included.
+    if (template.isSystem) {
+      throw new ForbiddenException('System templates cannot be modified');
     }
 
-    if (!template.isSystem && template.userId !== userId && role !== UserRole.SUPER_ADMIN) {
+    if (template.userId !== userId && role !== UserRole.SUPER_ADMIN) {
       throw new ForbiddenException(
         'You do not have permission to update this template',
       );
@@ -185,11 +233,12 @@ export class SolutionTemplatesService {
   ): Promise<void> {
     const template = await this.findOne(id, tenantId);
 
-    if (template.isSystem && role !== UserRole.SUPER_ADMIN) {
-      throw new ForbiddenException('Cannot delete system templates');
+    // See update(): system templates are seeder-owned and immutable via the API.
+    if (template.isSystem) {
+      throw new ForbiddenException('System templates cannot be deleted');
     }
 
-    if (!template.isSystem && template.userId !== userId && role !== UserRole.SUPER_ADMIN) {
+    if (template.userId !== userId && role !== UserRole.SUPER_ADMIN) {
       throw new ForbiddenException(
         'You do not have permission to delete this template',
       );
@@ -211,12 +260,6 @@ export class SolutionTemplatesService {
     tenantId: string,
     config: TemplateConfiguration,
   ): Promise<void> {
-    const totalDevices =
-      config.devices?.reduce((sum, d) => sum + (d.count ?? 0), 0) ?? 0;
-    const totalDashboards = config.dashboards?.length ?? 0;
-
-    if (totalDevices === 0 && totalDashboards === 0) return;
-
     const subscription = await this.subscriptionsService
       .findByTenantId(tenantId)
       .catch(() => null);
@@ -226,6 +269,43 @@ export class SolutionTemplatesService {
         'No active subscription found for this tenant — cannot install a template',
       );
     }
+
+    const limits = subscription.limits ?? {};
+
+    // ── Lifetime install budget ───────────────────────────────────────────
+    // Counts EVERY attempt — SUCCESS, FAILED and ROLLED_BACK alike — so
+    // uninstalling never returns lifetime budget. On FREE (1) a tenant that
+    // installs once and uninstalls can never install again.
+    if (!this.isUnlimited(limits.templateInstallsLifetime)) {
+      const lifetimeInstalls = await this.installationRepo.count({
+        where: { tenantId },
+      });
+      if (lifetimeInstalls >= limits.templateInstallsLifetime!) {
+        throw new ForbiddenException(
+          `Your plan allows a maximum of ${limits.templateInstallsLifetime} total template installs. Please upgrade your plan.`,
+        );
+      }
+    }
+
+    // ── Concurrent install budget ─────────────────────────────────────────
+    // Only SUCCESS rows occupy a slot, so uninstalling does free one of these.
+    if (!this.isUnlimited(limits.maxTemplateInstalls)) {
+      const activeInstalls = await this.installationRepo.count({
+        where: { tenantId, status: InstallationStatus.SUCCESS },
+      });
+      if (activeInstalls >= limits.maxTemplateInstalls!) {
+        throw new ForbiddenException(
+          `Your plan allows a maximum of ${limits.maxTemplateInstalls} active template installations. Uninstall one to install another.`,
+        );
+      }
+    }
+
+    // ── Resource capacity ─────────────────────────────────────────────────
+    const totalDevices =
+      config.devices?.reduce((sum, d) => sum + (d.count ?? 0), 0) ?? 0;
+    const totalDashboards = config.dashboards?.length ?? 0;
+
+    if (totalDevices === 0 && totalDashboards === 0) return;
 
     const checks: Array<[number, 'devices' | 'dashboards', string]> = [
       [totalDevices, 'devices', 'devices'],
@@ -868,10 +948,17 @@ export class SolutionTemplatesService {
     );
 
     const categories = [
-      { category: TemplateCategory.SMART_FACTORY, name: 'Smart Factory', icon: 'factory' },
+      // Categories used by the 8 system templates
       { category: TemplateCategory.SMART_HOME, name: 'Smart Home', icon: 'home' },
       { category: TemplateCategory.SMART_BUILDING, name: 'Smart Building', icon: 'building' },
       { category: TemplateCategory.SMART_CITY, name: 'Smart City', icon: 'city' },
+      { category: TemplateCategory.SMART_AGRICULTURE, name: 'Smart Agriculture', icon: 'plant' },
+      { category: TemplateCategory.SMART_ENERGY, name: 'Smart Energy', icon: 'battery' },
+      { category: TemplateCategory.SMART_RETAIL, name: 'Smart Retail', icon: 'shopping-cart' },
+      { category: TemplateCategory.SMART_WATER, name: 'Smart Water Management', icon: 'droplet' },
+      { category: TemplateCategory.SMART_FACILITY, name: 'Smart Facility', icon: 'tools' },
+      // Legacy categories — still selectable for custom templates
+      { category: TemplateCategory.SMART_FACTORY, name: 'Smart Factory', icon: 'factory' },
       { category: TemplateCategory.AGRICULTURE, name: 'Agriculture', icon: 'plant' },
       { category: TemplateCategory.HEALTHCARE, name: 'Healthcare', icon: 'hospital' },
       { category: TemplateCategory.ENERGY, name: 'Energy', icon: 'battery' },
