@@ -278,10 +278,18 @@ export class FloorPlansService {
   // CRUD
   // ══════════════════════════════════════════════════════════════════════════
 
-  async create(actor: Actor, dto: CreateFloorPlanDto): Promise<FloorPlan> {
+  async create(
+    actor: Actor,
+    dto: CreateFloorPlanDto,
+    file?: MulterFile,
+  ): Promise<FloorPlan> {
     // Previously tenantId was never set, so every insert violated the NOT NULL
     // constraint on floor_plans.tenantId and POST /floor-plans always 500'd.
     const asset = await this.assertAsset(dto.assetId, actor.tenantId);
+
+    // Validate the upload before the insert, otherwise a wrong extension leaves
+    // an orphaned floor plan row behind.
+    if (file) this.assertDwgExtension(file);
 
     // Subscription ceiling first — cheapest rejection, and it should fire before
     // any of the shape validation below.
@@ -290,10 +298,18 @@ export class FloorPlansService {
     const floorNumber = this.resolveFloorNumber(asset, dto.floorNumber);
     await this.assertFloorIsFree(asset.id, floorNumber, actor.tenantId);
 
+    // Only name + assetId are required on the wire. building/floor/dimensions are
+    // NOT NULL on floor_plans, so anything the caller omits is derived here rather
+    // than blowing up at insert time.
+    const floorName = dto.floorName ?? dto.floor ?? `Floor ${floorNumber}`;
+
     const floorPlan = this.floorPlanRepository.create({
       ...dto,
       floorNumber,
-      floorName: dto.floorName ?? dto.floor,
+      floorName,
+      building: dto.building ?? asset.name,
+      floor: dto.floor ?? floorName,
+      dimensions: dto.dimensions ?? { width: 100, height: 100, unit: 'meters' },
       tenantId: actor.tenantId,
       userId: actor.userId,
       createdBy: actor.userId,
@@ -301,7 +317,15 @@ export class FloorPlansService {
       zones: [],
     });
 
-    return await this.floorPlanRepository.save(floorPlan);
+    const saved = await this.floorPlanRepository.save(floorPlan);
+
+    // One-shot create + upload: same effect as calling POST /floor-plans/:id/dwg-upload
+    // straight after. Parsing still happens asynchronously.
+    if (file) {
+      return await this.uploadDWGFile(saved.id, actor, file);
+    }
+
+    return saved;
   }
 
   async findAll(
@@ -864,6 +888,15 @@ export class FloorPlansService {
   // DWG UPLOAD / PARSING
   // ══════════════════════════════════════════════════════════════════════════
 
+  /** Shared by POST /floor-plans (inline upload) and POST /floor-plans/:id/dwg-upload. */
+  private assertDwgExtension(file: MulterFile): string {
+    const ext = path.extname(file.originalname ?? '').toLowerCase();
+    if (ext !== '.dwg' && ext !== '.dxf') {
+      throw new BadRequestException('Only DWG and DXF files are supported');
+    }
+    return ext;
+  }
+
   async uploadDWGFile(
     id: string,
     actor: Actor,
@@ -871,10 +904,7 @@ export class FloorPlansService {
   ): Promise<FloorPlan> {
     const floorPlan = await this.findOne(id, actor.tenantId);
 
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (ext !== '.dwg' && ext !== '.dxf') {
-      throw new BadRequestException('Only DWG and DXF files are supported');
-    }
+    const ext = this.assertDwgExtension(file);
 
     try {
       // Never interpolate the client-supplied filename into a shell command or a
@@ -920,10 +950,15 @@ export class FloorPlansService {
 
       const geometry = await this.dwgParserService.parseDWGFile(filePath);
 
+      // A drawing fails only when it is unreadable. Missing walls or rooms are
+      // warnings — the geometry that *was* found is saved either way.
       const validation = this.dwgParserService.validateGeometry(geometry);
       if (!validation.valid) {
-        throw new Error(
-          `Invalid DWG geometry: ${validation.errors.join(', ')}`,
+        throw new Error(validation.errors.join(', '));
+      }
+      if (validation.warnings.length > 0) {
+        this.logger.warn(
+          `Floor plan ${floorPlanId} parsed with warnings: ${validation.warnings.join(', ')}`,
         );
       }
 
@@ -946,9 +981,19 @@ export class FloorPlansService {
       floorPlan.parsingError = null as any;
       if (thumbnailUrl) floorPlan.thumbnailUrl = thumbnailUrl;
 
-      if (geometry.rooms && geometry.rooms.length > 0) {
-        const bounds = this.calculateBounds(geometry);
-        if (Number.isFinite(bounds.width) && Number.isFinite(bounds.height)) {
+      // Extents come from the drawing's own bounding box (every entity type,
+      // not just rooms), falling back to the wall/room point cloud.
+      {
+        const bounds =
+          geometry.bounds && geometry.bounds.width > 0 && geometry.bounds.height > 0
+            ? geometry.bounds
+            : this.calculateBounds(geometry);
+        if (
+          Number.isFinite(bounds.width) &&
+          Number.isFinite(bounds.height) &&
+          bounds.width > 0 &&
+          bounds.height > 0
+        ) {
           floorPlan.dimensions = {
             width: bounds.width,
             height: bounds.height,

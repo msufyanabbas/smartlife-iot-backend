@@ -67,3 +67,7 @@ Dockerfile.dev
 docker-compose.local.yml
 
 SmartLife-IoT-Postman-Collection.json
+
+*.png
+*.dxf
+*.dwg

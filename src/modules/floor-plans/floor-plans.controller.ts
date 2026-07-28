@@ -20,9 +20,12 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiBody,
   ApiConsumes,
+  ApiExtraModels,
   ApiParam,
   ApiQuery,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { File as MulterFile } from 'multer';
@@ -69,15 +72,45 @@ export class FloorPlansController {
   @ApiResponse({ status: 400, description: 'Missing or invalid floorNumber' })
   @ApiResponse({ status: 403, description: 'Subscription floor plan limit reached' })
   @ApiResponse({ status: 409, description: 'That floor already has a plan' })
+  // Accepts JSON *or* multipart/form-data with an optional `file` (DWG/DXF).
+  // Without FileInterceptor multer never runs, so a multipart request reaches the
+  // ValidationPipe with an empty body — that is where "name must be a string"
+  // came from, not from the pipe failing to coerce the strings.
+  @ApiConsumes('application/json', 'multipart/form-data')
+  @ApiExtraModels(CreateFloorPlanDto)
+  @ApiBody({
+    schema: {
+      allOf: [
+        { $ref: getSchemaPath(CreateFloorPlanDto) },
+        {
+          type: 'object',
+          properties: {
+            file: {
+              type: 'string',
+              format: 'binary',
+              description:
+                'Optional DWG/DXF uploaded in the same request. Equivalent to ' +
+                'calling POST /floor-plans/:id/dwg-upload afterwards.',
+            },
+          },
+        },
+      ],
+    },
+  })
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }),
+  )
   create(
     @CurrentUser('id') userId: string,
     @CurrentUser('tenantId') tenantId: string,
     @CurrentUser('role') role: UserRole,
     @Body() createFloorPlanDto: CreateFloorPlanDto,
+    @UploadedFile() file?: MulterFile,
   ) {
     return this.floorPlansService.create(
       this.actor(userId, tenantId, role),
       createFloorPlanDto,
+      file,
     );
   }
 

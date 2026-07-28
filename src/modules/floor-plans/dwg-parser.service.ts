@@ -260,14 +260,30 @@ export class DWGParserService {
       const geometry = this.extractGeometry(parsed, scale, bbox);
 
       // ── Step 6: post-process ──────────────────────────────────────────────
-      this.mergeParallelWalls(geometry);
+      // Wall merging (two parallel lines → one thick wall) is the one lossy
+      // step in the pipeline and it only makes sense for architectural
+      // drawings. A DXF with no wall/room layers — a bridge, a site plan,
+      // anything drawn on layer "0" — keeps its linework as-is.
+      const architectural = (geometry.layers ?? []).some((layer) => {
+        const category = this.classifyLayer(layer.toUpperCase().trim());
+        return category === 'wall' || category === 'room';
+      });
+
+      if (architectural) {
+        this.mergeParallelWalls(geometry);
+      } else {
+        this.logger.log(
+          'No architectural layers found — keeping raw linework (no wall merge)',
+        );
+      }
       this.detectRoomsFromWalls(geometry);
       this.assignRoomNamesFromText(geometry, parsed.entities, scale, bbox);
 
       this.logger.log(
         `Parsing complete: ${geometry.walls.length} walls, ` +
         `${geometry.doors.length} doors, ${geometry.windows.length} windows, ` +
-        `${geometry.rooms.length} rooms`,
+        `${geometry.rooms.length} rooms, ` +
+        `${geometry.totalEntities ?? 0} raw entities on ${geometry.layers?.length ?? 0} layer(s)`,
       );
 
       return geometry;
@@ -292,32 +308,59 @@ export class DWGParserService {
   }
 
   /**
-   * Validate parsed geometry and return a list of human-readable errors.
+   * Decide whether a parsed drawing is usable.
+   *
+   * The only failure condition is an unreadable file — one that yielded no
+   * geometry of any kind. Missing walls or missing rooms are NOT failures:
+   * plenty of valid DXFs (bridges, site plans, schematics, anything not drawn
+   * to the AIA layer standard) contain neither, and rejecting them was making
+   * the platform refuse files that parsed perfectly well.
+   *
+   * Structural oddities are reported as `warnings` and never block the import.
    */
-  validateGeometry(geometry: DWGGeometry): { valid: boolean; errors: string[] } {
-    const errors: string[] = [];
-
-    if (!geometry.walls || geometry.walls.length === 0) {
-      errors.push('No walls found in DWG file');
-    }
-
-    if (!geometry.rooms || geometry.rooms.length === 0) {
-      errors.push('No rooms identified in DWG file');
-    }
+  validateGeometry(geometry: DWGGeometry): {
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+    entityCount: number;
+  } {
+    const warnings: string[] = [];
 
     geometry.walls?.forEach((wall, i) => {
       if (!wall.points || wall.points.length < 2) {
-        errors.push(`Wall[${i}] (id=${wall.id}) has fewer than 2 points`);
+        warnings.push(`Wall[${i}] (id=${wall.id}) has fewer than 2 points`);
       }
     });
 
     geometry.doors?.forEach((door, i) => {
       if (door.width <= 0 || door.height <= 0) {
-        errors.push(`Door[${i}] (id=${door.id}) has invalid dimensions`);
+        warnings.push(`Door[${i}] (id=${door.id}) has invalid dimensions`);
       }
     });
 
-    return { valid: errors.length === 0, errors };
+    if (!geometry.walls?.length) warnings.push('No walls found in drawing');
+    if (!geometry.rooms?.length) warnings.push('No rooms identified in drawing');
+
+    const entityCount =
+      (geometry.walls?.length ?? 0) +
+      (geometry.rooms?.length ?? 0) +
+      (geometry.doors?.length ?? 0) +
+      (geometry.windows?.length ?? 0) +
+      (geometry.stairs?.length ?? 0) +
+      (geometry.furniture?.length ?? 0) +
+      (geometry.arcs?.length ?? 0) +
+      (geometry.circles?.length ?? 0) +
+      (geometry.texts?.length ?? 0);
+
+    const errors =
+      entityCount === 0
+        ? [
+            'The file could not be read: no geometry of any kind was found ' +
+              '(no lines, polylines, arcs, circles or text).',
+          ]
+        : [];
+
+    return { valid: entityCount > 0, errors, warnings, entityCount };
   }
 
   /**
@@ -681,9 +724,31 @@ export class DWGParserService {
       y: y * scale - bbox.minY,
     });
 
+    // Raw capture — populated for every entity regardless of layer naming, so a
+    // drawing that follows no CAD standard still produces usable geometry.
+    geometry.lines = [];
+    geometry.arcs = [];
+    geometry.circles = [];
+    geometry.texts = [];
+    geometry.entityCounts = {};
+    geometry.totalEntities = entities.length;
+    geometry.bounds = {
+      minX: 0,
+      minY: 0,
+      maxX: bbox.maxX - bbox.minX,
+      maxY: bbox.maxY - bbox.minY,
+      width: bbox.width,
+      height: bbox.height,
+    };
+    const layersSeen = new Set<string>();
+
     for (const entity of entities) {
       const layerRaw  = (entity.layer ?? '').toUpperCase().trim();
       const category  = this.classifyLayer(layerRaw);
+
+      if (entity.layer) layersSeen.add(entity.layer);
+      geometry.entityCounts[entity.type] =
+        (geometry.entityCounts[entity.type] ?? 0) + 1;
 
       switch (entity.type) {
 
@@ -697,19 +762,28 @@ export class DWGParserService {
             norm(verts[0].x, verts[0].y, verts[0].z ?? 0),
             norm(verts[1].x, verts[1].y, verts[1].z ?? 0),
           ];
-          // Ignore lines shorter than 0.5 m — these are dimension ticks,
-          // hatching leaders, or annotation geometry, not structural walls.
+          // Every LINE becomes a wall, whatever its layer is called. The old
+          // code kept only 'wall'/'unknown' layers and dropped anything under
+          // 0.5 m, which emptied walls[] for drawings that are not AIA-layered
+          // architectural plans. Only zero-length lines are skipped now.
+          // lines[] keeps every LINE, including purely vertical ones from 3D
+          // drawings whose XY projection is a point. Those cannot be drawn as
+          // walls, so only walls[] skips them.
+          geometry.lines!.push({
+            id:    nextId('line'),
+            start: pts[0],
+            end:   pts[1],
+            layer: entity.layer,
+          });
           const lineLen = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
-          if (lineLen < 0.5) break;
-          if (category === 'wall' || category === 'unknown') {
-            geometry.walls.push({
-              id:        nextId('wall'),
-              points:    pts,
-              thickness: 0.2,
-              height:    3.0,
-              material:  layerRaw || 'default',
-            });
-          }
+          if (lineLen === 0) break;
+          geometry.walls.push({
+            id:        nextId('wall'),
+            points:    pts,
+            thickness: 0.2,
+            height:    3.0,
+            material:  layerRaw || 'default',
+          });
           break;
         }
 
@@ -721,7 +795,13 @@ export class DWGParserService {
           );
           if (verts.length < 2) break;
 
-          if (category === 'room') {
+          // A closed polyline encloses an area, so it is a room — regardless of
+          // what its layer is called. Open polylines are linework and become
+          // walls. A closed polyline on a wall layer is kept in both: it is the
+          // building outline and clients render it as wall geometry.
+          const isClosed = entity.closed === true || category === 'room';
+
+          if (isClosed) {
             const bounds2D = verts.map(v => ({ x: v.x, y: v.y }));
             geometry.rooms.push({
               id:         nextId('room'),
@@ -730,8 +810,9 @@ export class DWGParserService {
               area:       this.polygonArea(bounds2D),
               floor:      'ground',
             });
-          } else {
-            // Default to wall (also catches 'unknown' on closed polylines)
+          }
+
+          if (!isClosed || category === 'wall') {
             geometry.walls.push({
               id:        nextId('wall'),
               points:    verts,
@@ -748,13 +829,24 @@ export class DWGParserService {
         // arcToPoints receives radians directly — do NOT multiply by π/180.
         case 'ARC': {
           if (!entity.center) break;
+          const startAngle = entity.startAngle ?? 0;        // already radians
+          const endAngle   = entity.endAngle ?? Math.PI * 2;
           const arcPts = this.arcToPoints(
             entity.center.x * scale - bbox.minX,
             entity.center.y * scale - bbox.minY,
             (entity.radius ?? 1) * scale,
-            entity.startAngle ?? 0,        // already radians
-            entity.endAngle   ?? Math.PI * 2,
+            startAngle,
+            endAngle,
           );
+          geometry.arcs!.push({
+            id:     nextId('arc'),
+            center: norm(entity.center.x, entity.center.y, entity.center.z ?? 0),
+            radius: (entity.radius ?? 1) * scale,
+            startAngle,
+            endAngle,
+            points: arcPts.map(p => ({ x: p.x, y: p.y })),
+            layer:  entity.layer,
+          });
           if (category !== 'door') {
             // FIX 4: carry the arc's centre elevation onto its sampled points
             // instead of hardcoding z: 0.
@@ -776,6 +868,12 @@ export class DWGParserService {
           // Represent as a very small room boundary or ignore;
           // store in furniture as 'column'
           const r = (entity.radius ?? 0.3) * scale;
+          geometry.circles!.push({
+            id:     nextId('circle'),
+            center: norm(entity.center.x, entity.center.y, entity.center.z ?? 0),
+            radius: r,
+            layer:  entity.layer,
+          });
           if (!geometry.furniture) geometry.furniture = [];
           geometry.furniture.push({
             id:         nextId('column'),
@@ -860,17 +958,29 @@ export class DWGParserService {
           break;
         }
 
-        // ── TEXT / MTEXT (handled in post-process) ────────────────────────
+        // ── TEXT / MTEXT ──────────────────────────────────────────────────
+        // Room-name assignment still happens later in assignRoomNamesFromText;
+        // the text is also kept verbatim so labels survive on drawings that
+        // have no rooms to attach them to.
         case 'TEXT':
-        case 'MTEXT':
-          // Handled later in assignRoomNamesFromText
+        case 'MTEXT': {
+          const pos = entity.position ?? entity.insertionPoint ?? entity.startPoint;
+          if (!entity.text || !pos) break;
+          geometry.texts!.push({
+            id:       nextId('text'),
+            text:     entity.text,
+            position: norm(pos.x, pos.y, pos.z ?? 0),
+            layer:    entity.layer,
+          });
           break;
+        }
 
         default:
           break;
       }
     }
 
+    geometry.layers = [...layersSeen];
     geometry.building = this.computeBuildingMetrics(geometry);
 
     return geometry;
@@ -977,6 +1087,16 @@ export class DWGParserService {
     const walls  = geometry.walls;
     const merged = new Set<number>();
 
+    // The 0.5 m pairing distance assumes a building-scale drawing. On a small
+    // drawing (or one whose units we had to guess) every parallel pair falls
+    // inside it and the whole plan collapses into a handful of walls — that is
+    // how a 261-line DXF became 12 walls. Scale the tolerance to the extents.
+    const diagonal = Math.hypot(
+      geometry.bounds?.width ?? 0,
+      geometry.bounds?.height ?? 0,
+    );
+    const tolerance = diagonal > 0 ? Math.min(0.5, diagonal * 0.02) : 0.5;
+
     for (let i = 0; i < walls.length; i++) {
       if (merged.has(i)) continue;
       const wa = walls[i];
@@ -989,7 +1109,7 @@ export class DWGParserService {
 
         if (this.wallsAreParallel(wa, wb)) {
           const dist = this.perpendicularDistance(wa, wb);
-          if (dist > 0 && dist < 0.5) {
+          if (dist > 0 && dist < tolerance) {
             // Replace wa with merged wall, mark wb for removal
             wa.points    = this.midWallPoints(wa, wb);
             wa.thickness = dist;

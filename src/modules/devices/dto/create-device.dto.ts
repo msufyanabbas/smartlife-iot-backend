@@ -9,6 +9,7 @@ import {
   IsObject,
   MaxLength,
   IsArray,
+  IsUUID,
 } from 'class-validator';
 import { DeviceType, DeviceConnectionType } from '@common/enums/index.enum';
 import { DeviceProtocol } from '../entities/device.entity';
@@ -74,6 +75,16 @@ export class CreateDeviceDto {
   @IsOptional()
   @MaxLength(200)
   location?: string;
+
+  @ApiPropertyOptional({
+    example: 'f5c8f60f-f5ba-4506-9aed-5af59ab6cc2a',
+    description:
+      'Asset this device belongs to. Required before the device can be placed ' +
+      'on that asset\'s floor plans — see POST /floor-plans/:id/devices.',
+  })
+  @IsUUID()
+  @IsOptional()
+  assetId?: string;
 
   @ApiPropertyOptional({
     description: 'Device metadata — codec and gateway info',

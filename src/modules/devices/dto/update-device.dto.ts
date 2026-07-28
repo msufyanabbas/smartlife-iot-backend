@@ -1,5 +1,7 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { PartialType } from '@nestjs/mapped-types';
+// PartialType comes from @nestjs/swagger, not @nestjs/mapped-types: both copy
+// the validation metadata, but only the swagger one carries @ApiProperty over,
+// so the inherited fields (assetId included) show up in the PATCH docs.
+import { ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { IsEnum, IsObject, IsOptional } from 'class-validator';
 import { CreateDeviceDto } from './create-device.dto';
 import { DeviceStatus } from '@common/enums/index.enum';

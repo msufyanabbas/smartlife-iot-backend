@@ -5,6 +5,7 @@ import { DevicesController } from './devices.controller';
 import { DeviceCredentialsService } from './device-credentials.service';
 import { Device } from './entities/device.entity';
 import { DeviceCredentials } from './entities/device-credentials.entity';
+import { Asset } from '../assets/entities/asset.entity';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { ProtocolsModule } from '../protocols/protocols.module';
 import { UsersModule } from '../users/users.module';
@@ -15,7 +16,9 @@ import { CodecModule } from './codecs/codec.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Device, DeviceCredentials]),
+    // Asset is registered as a repository rather than by importing AssetsModule,
+    // to keep device↔asset validation from creating a module cycle.
+    TypeOrmModule.forFeature([Device, DeviceCredentials, Asset]),
     SubscriptionsModule,
     RolesModule,
     ProtocolsModule,

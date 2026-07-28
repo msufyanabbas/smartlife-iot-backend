@@ -10,21 +10,49 @@ import {
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { FloorPlanStatus, DeviceAnimationType } from '@common/enums/index.enum';
 
+/**
+ * multipart/form-data carries every field as a string, so an object-valued field
+ * arrives as its JSON text. Parse it back; on malformed JSON hand the original
+ * string through so @IsObject() produces the error instead of a 500.
+ */
+const parseJsonField = ({ value }: { value: unknown }): unknown => {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
+/**
+ * Only `name` and `assetId` are required — everything else is filled in from the
+ * asset / sensible defaults by FloorPlansService.create(). Keeping the payload
+ * minimal lets the UI create a floor before its geometry is known.
+ */
 export class CreateFloorPlanDto {
   @ApiProperty({ example: 'Factory Floor - Production Area' })
   @IsString()
   name: string;
 
-  @ApiProperty({ example: 'Manufacturing Plant A' })
+  @ApiPropertyOptional({
+    example: 'Manufacturing Plant A',
+    description: "Building label. Defaults to the asset's name.",
+  })
+  @IsOptional()
   @IsString()
-  building: string;
+  building?: string;
 
-  @ApiProperty({ example: 'Ground Floor' })
+  @ApiPropertyOptional({
+    example: 'Ground Floor',
+    description:
+      "Legacy free-text floor label. Defaults to floorName, else 'Floor <floorNumber>'.",
+  })
+  @IsOptional()
   @IsString()
-  floor: string;
+  floor?: string;
 
   @ApiPropertyOptional({
     example: 1,
@@ -35,6 +63,7 @@ export class CreateFloorPlanDto {
       'defaults to 1 for single-floor assets.',
   })
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(-10)
   floorNumber?: number;
@@ -54,13 +83,27 @@ export class CreateFloorPlanDto {
   @IsString()
   assetId: string;
 
-  @ApiProperty({ example: 'Industrial' })
+  @ApiPropertyOptional({ example: 'Industrial' })
+  @IsOptional()
   @IsString()
-  category: string;
+  category?: string;
 
-  @ApiProperty({ example: { width: 100, height: 80, unit: 'meters' } })
+  @ApiPropertyOptional({ example: 'Main production hall, east wing' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({
+    example: { width: 100, height: 80, unit: 'meters' },
+    description:
+      'Plan extents. Defaults to { width: 100, height: 100, unit: "meters" } and is ' +
+      'overwritten when a DXF/DWG is uploaded and parsed. Over multipart/form-data ' +
+      'send it as a JSON string.',
+  })
+  @IsOptional()
+  @Transform(parseJsonField)
   @IsObject()
-  dimensions: {
+  dimensions?: {
     width: number;
     height: number;
     unit?: 'meters' | 'feet';

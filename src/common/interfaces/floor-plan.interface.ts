@@ -72,6 +72,69 @@ export interface DWGGeometry {
     minElevation: number;
     maxElevation: number;
   };
+
+  // ── Raw entity capture ─────────────────────────────────────────────────────
+  // A DXF that is not an architectural floor plan (a bridge, a site plan, a
+  // mechanical part) still carries usable geometry. These fields keep every
+  // entity the parser saw, whatever its layer was named, so nothing is thrown
+  // away just because it could not be classified as a wall or a room.
+
+  /**
+   * Every LINE entity exactly as it was read, before wall merging. walls[] is
+   * the post-processed view (collinear segments merged); this is the raw one.
+   */
+  lines?: Array<{
+    id: string;
+    start: { x: number; y: number; z?: number };
+    end: { x: number; y: number; z?: number };
+    layer?: string;
+  }>;
+
+  /** All ARC entities, sampled to points. */
+  arcs?: Array<{
+    id: string;
+    center: { x: number; y: number; z?: number };
+    radius: number;
+    startAngle: number; // radians
+    endAngle: number;   // radians
+    points: Array<{ x: number; y: number }>;
+    layer?: string;
+  }>;
+
+  /** All CIRCLE entities. */
+  circles?: Array<{
+    id: string;
+    center: { x: number; y: number; z?: number };
+    radius: number;
+    layer?: string;
+  }>;
+
+  /** All TEXT / MTEXT entities. */
+  texts?: Array<{
+    id: string;
+    text: string;
+    position: { x: number; y: number; z?: number };
+    layer?: string;
+  }>;
+
+  /** Every distinct layer name encountered, in first-seen order. */
+  layers?: string[];
+
+  /** Drawing extents in metres, origin-normalised like every other coordinate. */
+  bounds?: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+    width: number;
+    height: number;
+  };
+
+  /** Raw DXF entity-type histogram, e.g. { LINE: 412, LWPOLYLINE: 33 }. */
+  entityCounts?: Record<string, number>;
+
+  /** Total entities seen in the file, including types we do not model. */
+  totalEntities?: number;
 }
 
 export interface Device3DData {

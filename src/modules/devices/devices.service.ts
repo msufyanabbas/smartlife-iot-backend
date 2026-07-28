@@ -11,7 +11,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import { Device, User } from '@modules/index.entities';
+import { Asset, Device, User } from '@modules/index.entities';
 import { DeviceStatus } from '@common/enums/index.enum';
 import { CreateDeviceDto } from '@modules/devices/dto/create-device.dto';
 import { UpdateDeviceDto } from '@modules/devices/dto/update-device.dto';
@@ -33,6 +33,8 @@ export class DevicesService {
   constructor(
     @InjectRepository(Device)
     private deviceRepository: Repository<Device>,
+    @InjectRepository(Asset)
+    private assetRepository: Repository<Asset>,
     @Inject(ConfigService)
     private configService: ConfigService,
      @Inject(forwardRef(() => UsersService))
@@ -47,6 +49,24 @@ export class DevicesService {
     private subscriptionsService: SubscriptionsService,
   ) {}
 
+  /**
+   * assetId arrives as a bare UUID from the client, so it has to be checked
+   * against the caller's tenant — otherwise a device could be linked to another
+   * tenant's asset and would then show up in that asset's floor plan pickers.
+   */
+  private async assertAssetInTenant(
+    assetId: string,
+    tenantId?: string,
+  ): Promise<void> {
+    // A SUPER_ADMIN has no tenantId — existence is all we can check for them.
+    const asset = await this.assetRepository.findOne({
+      where: tenantId ? { id: assetId, tenantId } : { id: assetId },
+    });
+    if (!asset) {
+      throw new NotFoundException(`Asset ${assetId} not found`);
+    }
+  }
+
   // ── Create ────────────────────────────────────────────────────────────────
 
   async create(
@@ -58,6 +78,10 @@ export class DevicesService {
     const collision = await this.deviceRepository.findOne({ where: { deviceKey } });
     if (collision) {
       throw new ConflictException('Device key collision — please retry');
+    }
+
+    if (dto.assetId) {
+      await this.assertAssetInTenant(dto.assetId, user.tenantId);
     }
 
     // ── Resolve codecId from manufacturer + model ─────────────────────────
@@ -217,6 +241,11 @@ export class DevicesService {
 
   async update(id: string, user: User, dto: UpdateDeviceDto): Promise<Device> {
     const device = await this.findOne(id, user);
+
+    if (dto.assetId) {
+      await this.assertAssetInTenant(dto.assetId, device.tenantId);
+    }
+
     Object.assign(device, dto);
     return this.deviceRepository.save(device);
   }
