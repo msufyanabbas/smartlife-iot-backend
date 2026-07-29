@@ -69,19 +69,19 @@ async function bootstrap() {
   app.use(compression());
 
   // ── CORS ───────────────────────────────────────────────────────────────────
-  // const corsOrigin = configService.get('CORS_ORIGIN');
-  // const allowedOrigins = corsOrigin
-  //   ? corsOrigin.split(',').map((origin: string) => origin.trim())
-  //   : '*';
+  const corsOrigin = configService.get('CORS_ORIGIN');
+  const allowedOrigins = corsOrigin
+    ? corsOrigin.split(',').map((origin: string) => origin.trim())
+    : '*';
 
     // test
 
-  app.enableCors({
-    origin: '*',
-    credentials: false,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  });
+  // app.enableCors({
+  //   origin: '*',
+  //   credentials: false,
+  //   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  //   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  // });
 
   // ── Filters ────────────────────────────────────────────────────────────────
   app.useGlobalFilters(new HttpExceptionFilter());
