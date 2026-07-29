@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { WidgetsController } from './widgets.controller';
+import { WidgetTypesController } from './widget-types.controller';
 import { WidgetTypesService } from './widget-types.service';
 import { WidgetBundlesService } from './widget-bundles.service';
 import { WidgetType } from './entities/widget-type.entity';
@@ -23,7 +24,7 @@ import { WebsocketModule } from '@modules/websocket/websocket.module';
     TypeOrmModule.forFeature([WidgetType, WidgetBundle]),
     WebsocketModule,
   ],
-  controllers: [WidgetsController],
+  controllers: [WidgetsController, WidgetTypesController],
   providers: [WidgetTypesService, WidgetBundlesService],
   exports: [WidgetTypesService, WidgetBundlesService],
 })

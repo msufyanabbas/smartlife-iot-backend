@@ -30,6 +30,7 @@ import { SubscriptionSeeder } from './subscription/subscription.seeder';
 import { TelemetrySeeder } from './telemetry/telemetry.seeder';
 import { WidgetBundleSeeder } from './widget-bundle/widget-bundle.seeder';
 import { WidgetTypeSeeder } from './widget-type/widget-type.seeder';
+import { WidgetSeeder } from './widget/widget.seeder';
 import { DeviceCredentialsSeeder } from './device-credentials/device-credentials.seeder';
 import { DeviceCommandsSeeder } from './device-commands/device-commands.seeder';
 import { PermissionSeeder } from "./permissions/permissions.seeder";
@@ -262,6 +263,14 @@ export const SEEDERS: SeederConfig[] = [
     name: 'Widget Types',
     seeder: WidgetTypeSeeder,
     emoji: '🔧',
+    entity: WidgetType,
+  },
+  {
+    // Runs after the two legacy widget seeders so the core bundle and its 10
+    // widget types are the last word on any name they share.
+    name: 'Core Widgets',
+    seeder: WidgetSeeder,
+    emoji: '🎨',
     entity: WidgetType,
   },
   {

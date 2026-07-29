@@ -238,9 +238,13 @@ export class ShareDashboardDto {
 }
 
 export class CloneDashboardDto {
-  @ApiProperty({ example: 'Cloned Dashboard' })
+  @ApiPropertyOptional({
+    example: 'Cloned Dashboard',
+    description: 'Defaults to "Copy of {original name}" when omitted',
+  })
+  @IsOptional()
   @IsString()
-  name: string;
+  name?: string;
 
   @ApiPropertyOptional({ example: 'Cloned from original dashboard' })
   @IsOptional()

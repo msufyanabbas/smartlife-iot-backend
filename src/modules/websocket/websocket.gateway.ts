@@ -11,7 +11,11 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger, UseGuards } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { WsJwtGuard } from '@common/guards/ws-jwt.guard';
+import { Dashboard } from '@modules/dashboards/entities/dashboard.entity';
+import { Telemetry } from '@modules/telemetry/entities/telemetry.entity';
 
 interface AuthenticatedSocket extends Socket {
   data: {
@@ -38,12 +42,21 @@ export class WebsocketGateway
   server: Server;
 
   private readonly logger = new Logger(WebsocketGateway.name);
-  
+
   // Track which clients are subscribed to which resources
   private subscriptions = new Map<string, Set<string>>();
   // socket.id → Set of room names (device:123, dashboard:456)
-  
-  constructor() {}
+
+  // Repositories are injected directly instead of DashboardsService /
+  // TelemetryService: both DashboardsModule and TelemetryModule already import
+  // WebsocketModule, so importing either back would be a module cycle. The
+  // gateway only needs reads, which the repositories cover.
+  constructor(
+    @InjectRepository(Dashboard)
+    private readonly dashboardRepository: Repository<Dashboard>,
+    @InjectRepository(Telemetry)
+    private readonly telemetryRepository: Repository<Telemetry>,
+  ) {}
 
   afterInit(server: Server) {
     this.logger.log('🚀 WebSocket Gateway initialized');
@@ -213,6 +226,104 @@ export class WebsocketGateway
       success: true, 
       message: `Unsubscribed from dashboard ${data.dashboardId}` 
     };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DASHBOARD SUBSCRIPTION (server-resolved)
+  //
+  // Unlike 'dashboard:subscribe' above — which trusts a client-supplied
+  // deviceIds list — this handler loads the dashboard itself, derives the
+  // device set from its widgets, joins those rooms, and seeds the client with
+  // the current values so widgets render populated instead of waiting for the
+  // next telemetry message.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @SubscribeMessage('subscribe-dashboard')
+  @UseGuards(WsJwtGuard)
+  async handleDashboardSubscription(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() data: { dashboardId: string },
+  ) {
+    const { dashboardId } = data ?? ({} as any);
+    if (!dashboardId) {
+      return { event: 'dashboard:error', data: { message: 'dashboardId is required' } };
+    }
+
+    // Tenant-scoped read — a socket cannot pull another tenant's dashboard.
+    const dashboard = await this.dashboardRepository.findOne({
+      where: { id: dashboardId, tenantId: client.data.tenantId },
+    });
+
+    if (!dashboard) {
+      return {
+        event: 'dashboard:error',
+        data: { dashboardId, message: 'Dashboard not found' },
+      };
+    }
+
+    await client.join(`dashboard:${dashboardId}`);
+    const clientSubs = this.subscriptions.get(client.id);
+    clientSubs?.add(`dashboard:${dashboardId}`);
+
+    // getUsedDevices() understands both the legacy dataSource.deviceIds[] and
+    // the current datasource.deviceId widget shapes.
+    const deviceIds = dashboard.getUsedDevices();
+
+    for (const deviceId of deviceIds) {
+      await client.join(`device:${deviceId}`);
+      clientSubs?.add(`device:${deviceId}`);
+    }
+
+    // Seed the client with the latest reading per device. Queried directly so
+    // one missing/unreadable device degrades to {} instead of failing the join.
+    const currentData: Record<string, any> = {};
+    for (const deviceId of deviceIds) {
+      try {
+        const latest = await this.telemetryRepository.findOne({
+          where: { deviceId },
+          order: { timestamp: 'DESC' },
+        });
+        currentData[deviceId] = latest
+          ? { timestamp: latest.timestamp, data: latest.data ?? {} }
+          : {};
+      } catch (error: any) {
+        this.logger.error(
+          `Failed to load latest telemetry for device ${deviceId}: ${error.message}`,
+        );
+        currentData[deviceId] = {};
+      }
+    }
+
+    client.emit('dashboard:current-data', {
+      dashboardId,
+      deviceCount: deviceIds.length,
+      data: currentData,
+    });
+
+    this.logger.log(
+      `📊 Client ${client.id} subscribed to dashboard ${dashboardId} ` +
+        `(${deviceIds.length} devices resolved server-side)`,
+    );
+
+    return {
+      event: 'dashboard:subscribed',
+      data: { dashboardId, deviceCount: deviceIds.length },
+    };
+  }
+
+  @SubscribeMessage('unsubscribe-dashboard')
+  @UseGuards(WsJwtGuard)
+  async handleDashboardUnsubscription(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() data: { dashboardId: string },
+  ) {
+    const { dashboardId } = data ?? ({} as any);
+    await client.leave(`dashboard:${dashboardId}`);
+    this.subscriptions.get(client.id)?.delete(`dashboard:${dashboardId}`);
+
+    // Device rooms are deliberately left joined: another dashboard or widget
+    // on this socket may still need them. They are dropped on disconnect.
+    return { event: 'dashboard:unsubscribed', data: { dashboardId } };
   }
 
   // ══════════════════════════════════════════════════════════════════════════

@@ -149,11 +149,23 @@ export class Dashboard extends BaseEntity {
     return this.widgets?.find((w) => w.id === widgetId);
   }
 
-  /** All unique deviceIds referenced across all widgets on this dashboard */
+  /**
+   * All unique deviceIds referenced across all widgets on this dashboard.
+   *
+   * Two widget shapes coexist in the `widgets` column:
+   *   • legacy WidgetConfig    — `dataSource.deviceIds: string[]`
+   *   • DashboardWidgetConfig  — `datasource.deviceId: string`
+   * Both are read here so a dashboard mixing them still yields a complete
+   * device list for the WebSocket room fan-out.
+   */
   getUsedDevices(): string[] {
     if (!this.widgets) return [];
     const ids = new Set<string>();
-    this.widgets.forEach((w) => w.dataSource?.deviceIds?.forEach((id) => ids.add(id)));
+    this.widgets.forEach((w) => {
+      const widget = w as any;
+      widget.dataSource?.deviceIds?.forEach((id: string) => id && ids.add(id));
+      if (widget.datasource?.deviceId) ids.add(widget.datasource.deviceId);
+    });
     return Array.from(ids);
   }
 

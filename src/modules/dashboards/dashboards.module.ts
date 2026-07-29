@@ -3,11 +3,15 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DashboardsController } from './dashboards.controller';
 import { DashboardsService } from './dashboards.service';
 import { Dashboard } from './entities/dashboard.entity';
+import { WidgetType } from '@modules/widgets/entities/widget-type.entity';
+import { Device } from '@modules/devices/entities/device.entity';
 import { WebsocketModule } from '@modules/websocket/websocket.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Dashboard]),
+    // WidgetType and Device repositories are registered directly rather than
+    // importing WidgetsModule / DevicesModule, which would introduce cycles.
+    TypeOrmModule.forFeature([Dashboard, WidgetType, Device]),
     WebsocketModule, // DashboardsService uses WebsocketGateway to notify clients
                      // when widgets are added/removed (device subscription changes)
   ],

@@ -13,6 +13,11 @@ import {
   ShareDashboardDto,
   CloneDashboardDto,
 } from './dto/dashboard.dto';
+import {
+  AddWidgetDto,
+  UpdateWidgetDto,
+  UpdateLayoutDto,
+} from './dto/dashboard-widget.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
@@ -91,35 +96,66 @@ export class DashboardsController {
     return this.dashboardsService.remove(id, user);
   }
 
+  @Get(':id/widgets')
+  @ApiOperation({
+    summary: 'Get dashboard widgets enriched with widget type and device',
+  })
+  @ApiResponse({ status: 200, description: 'Enriched widget list' })
+  @ApiResponse({ status: 404, description: 'Dashboard not found' })
+  getWidgets(
+    @Param('id', ParseIdPipe) id: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.dashboardsService.getWidgets(id, user);
+  }
+
   @Post(':id/widgets')
   @ApiOperation({ summary: 'Add widget to dashboard' })
   @ApiResponse({ status: 201, description: 'Widget added' })
+  @ApiResponse({ status: 400, description: 'Device not found in this tenant' })
+  @ApiResponse({ status: 404, description: 'Dashboard or widget type not found' })
   addWidget(
     @Param('id', ParseIdPipe) id: string,
     @CurrentUser() user: User,
-    @Body() widget: any,
+    @Body() dto: AddWidgetDto,
   ) {
-    return this.dashboardsService.addWidget(id, user, widget);
+    return this.dashboardsService.addWidget(id, user, dto);
+  }
+
+  // Declared before ':id/widgets/:widgetId' so 'layout' is never parsed as a
+  // widgetId — Nest matches routes in declaration order.
+  @Patch(':id/layout')
+  @ApiOperation({ summary: 'Batch update widget positions (drag and drop)' })
+  @ApiResponse({ status: 200, description: 'Updated widget list' })
+  @ApiResponse({ status: 404, description: 'Dashboard or widget not found' })
+  updateLayout(
+    @Param('id', ParseIdPipe) id: string,
+    @CurrentUser() user: User,
+    @Body() dto: UpdateLayoutDto,
+  ) {
+    return this.dashboardsService.updateLayout(id, user, dto);
   }
 
   @Patch(':id/widgets/:widgetId')
   @ApiOperation({ summary: 'Update widget' })
   @ApiResponse({ status: 200, description: 'Widget updated' })
+  @ApiResponse({ status: 404, description: 'Dashboard or widget not found' })
   updateWidget(
     @Param('id', ParseIdPipe) id: string,
-    @Param('widgetId') widgetId: string,
+    @Param('widgetId', ParseIdPipe) widgetId: string,
     @CurrentUser() user: User,
-    @Body() updates: any,
+    @Body() dto: UpdateWidgetDto,
   ) {
-    return this.dashboardsService.updateWidget(id, widgetId, user, updates);
+    return this.dashboardsService.updateWidget(id, widgetId, user, dto);
   }
 
   @Delete(':id/widgets/:widgetId')
   @ApiOperation({ summary: 'Remove widget from dashboard' })
   @ApiResponse({ status: 200, description: 'Widget removed' })
+  @ApiResponse({ status: 404, description: 'Dashboard or widget not found' })
   removeWidget(
     @Param('id', ParseIdPipe) id: string,
-    @Param('widgetId') widgetId: string,
+    @Param('widgetId', ParseIdPipe) widgetId: string,
     @CurrentUser() user: User,
   ) {
     return this.dashboardsService.removeWidget(id, widgetId, user);

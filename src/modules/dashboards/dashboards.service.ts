@@ -2,10 +2,12 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { Dashboard } from './entities/dashboard.entity';
 import { DashboardVisibility, UserRole } from '@common/enums/index.enum';
@@ -16,7 +18,18 @@ import {
   ShareDashboardDto,
   CloneDashboardDto,
 } from './dto/dashboard.dto';
+import {
+  AddWidgetDto,
+  UpdateWidgetDto,
+  UpdateLayoutDto,
+} from './dto/dashboard-widget.dto';
+import type {
+  DashboardWidgetConfig,
+  EnrichedDashboardWidget,
+} from './interfaces/dashboard-widget.interface';
 import { User } from '../index.entities';
+import { WidgetType } from '@modules/widgets/entities/widget-type.entity';
+import { Device } from '@modules/devices/entities/device.entity';
 import { WebsocketGateway } from '@modules/websocket/websocket.gateway';
 
 @Injectable()
@@ -26,6 +39,13 @@ export class DashboardsService {
   constructor(
     @InjectRepository(Dashboard)
     private readonly dashboardRepository: Repository<Dashboard>,
+    // WidgetType and Device are read directly rather than by importing
+    // WidgetsModule / DevicesModule — those would create module cycles, and the
+    // repository is all this service needs. Same pattern as FloorPlansService.
+    @InjectRepository(WidgetType)
+    private readonly widgetTypeRepository: Repository<WidgetType>,
+    @InjectRepository(Device)
+    private readonly deviceRepository: Repository<Device>,
     private readonly websocketGateway: WebsocketGateway,
   ) {}
 
@@ -187,20 +207,112 @@ export class DashboardsService {
   // When widgets are added or removed, we notify the WebSocket gateway so the
   // frontend can subscribe/unsubscribe from the relevant device rooms.
 
-  async addWidget(id: string, user: User, widget: any): Promise<Dashboard> {
-    const dashboard = await this.findOne(id, user);
+  /**
+   * Owner-or-admin check for any write to a dashboard's widgets.
+   *
+   * findOne() already enforces read access; this is the narrower write gate.
+   * TENANT_ADMIN and SUPER_ADMIN are allowed through so an admin can fix a
+   * dashboard belonging to one of their users — matching remove()'s rule.
+   */
+  private assertCanEdit(dashboard: Dashboard, user: User): void {
+    if (
+      dashboard.userId !== user.id &&
+      user.role !== UserRole.SUPER_ADMIN &&
+      user.role !== UserRole.TENANT_ADMIN
+    ) {
+      throw new ForbiddenException(
+        'Only the dashboard owner or an admin can modify its widgets',
+      );
+    }
+  }
 
-    if (dashboard.userId !== user.id) {
-      throw new ForbiddenException('Only the dashboard owner can add widgets');
+  /** The widgets column typed as the flat dashboard-widget shape. */
+  private widgetsOf(dashboard: Dashboard): DashboardWidgetConfig[] {
+    return (dashboard.widgets ?? []) as unknown as DashboardWidgetConfig[];
+  }
+
+  private async loadWidgetType(widgetTypeId: string): Promise<WidgetType> {
+    const widgetType = await this.widgetTypeRepository.findOne({
+      where: { id: widgetTypeId },
+    });
+    if (!widgetType) {
+      throw new NotFoundException(`Widget type ${widgetTypeId} not found`);
+    }
+    return widgetType;
+  }
+
+  /**
+   * Resolves a datasource's deviceId to a device in the caller's tenant.
+   * Cross-tenant ids are rejected rather than silently stored, so a widget can
+   * never reference a device its viewers are not allowed to see.
+   */
+  private async resolveDevice(
+    deviceId: string,
+    tenantId: string,
+  ): Promise<Device> {
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId, tenantId },
+    });
+    if (!device) {
+      throw new BadRequestException(
+        `Device ${deviceId} not found in this tenant`,
+      );
+    }
+    return device;
+  }
+
+  async addWidget(
+    id: string,
+    user: User,
+    dto: AddWidgetDto,
+  ): Promise<Dashboard> {
+    const dashboard = await this.findOne(id, user);
+    this.assertCanEdit(dashboard, user);
+
+    const widgetType = await this.loadWidgetType(dto.widgetTypeId);
+    const descriptor = widgetType.descriptor ?? ({} as any);
+
+    const datasource: DashboardWidgetConfig['datasource'] = {
+      ...(dto.datasource ?? {}),
+    };
+    if (datasource.deviceId) {
+      const device = await this.resolveDevice(
+        datasource.deviceId,
+        dashboard.tenantId,
+      );
+      datasource.deviceName = device.name;
+      datasource.entityType = datasource.entityType ?? 'DEVICE';
     }
 
-    dashboard.addWidget({ ...widget, id: uuidv4() });
+    const now = new Date().toISOString();
+    const widget: DashboardWidgetConfig = {
+      id: randomUUID(),
+      widgetTypeId: widgetType.id,
+      widgetTypeAlias: descriptor.alias ?? widgetType.name,
+      title: dto.title,
+      row: dto.row ?? 0,
+      col: dto.col ?? 0,
+      // Fall back to the widget type's natural size rather than an arbitrary 1×1
+      width: dto.width ?? descriptor.sizeX ?? 4,
+      height: dto.height ?? descriptor.sizeY ?? 3,
+      datasource,
+      // defaultConfig first so caller overrides win, key by key
+      config: { ...(descriptor.defaultConfig ?? {}), ...(dto.config ?? {}) },
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    dashboard.widgets = [
+      ...this.widgetsOf(dashboard),
+      widget,
+    ] as unknown as Dashboard['widgets'];
     const saved = await this.dashboardRepository.save(dashboard);
 
     // Notify connected clients that this dashboard's device list changed.
     // The frontend should re-evaluate which device rooms to subscribe to.
     this.websocketGateway.broadcastDashboardUpdate(id, {
       action: 'widget_added',
+      widgetId: widget.id,
       usedDevices: saved.getUsedDevices(),
     });
 
@@ -211,15 +323,50 @@ export class DashboardsService {
     id: string,
     widgetId: string,
     user: User,
-    updates: any,
-  ): Promise<Dashboard> {
+    dto: UpdateWidgetDto,
+  ): Promise<DashboardWidgetConfig> {
     const dashboard = await this.findOne(id, user);
+    this.assertCanEdit(dashboard, user);
 
-    if (dashboard.userId !== user.id) {
-      throw new ForbiddenException('Only the dashboard owner can update widgets');
+    const widgets = this.widgetsOf(dashboard);
+    const index = widgets.findIndex((w) => w.id === widgetId);
+    if (index === -1) {
+      throw new NotFoundException(
+        `Widget ${widgetId} not found on dashboard ${id}`,
+      );
     }
 
-    dashboard.updateWidget(widgetId, updates);
+    const current = widgets[index];
+
+    // datasource and config merge one level deep so a partial update does not
+    // wipe sibling keys; everything else is a straight replace.
+    const datasource = dto.datasource
+      ? { ...current.datasource, ...dto.datasource }
+      : current.datasource;
+
+    if (dto.datasource?.deviceId) {
+      const device = await this.resolveDevice(
+        dto.datasource.deviceId,
+        dashboard.tenantId,
+      );
+      datasource.deviceName = device.name;
+      datasource.entityType = datasource.entityType ?? 'DEVICE';
+    }
+
+    const updated: DashboardWidgetConfig = {
+      ...current,
+      title: dto.title ?? current.title,
+      row: dto.row ?? current.row,
+      col: dto.col ?? current.col,
+      width: dto.width ?? current.width,
+      height: dto.height ?? current.height,
+      datasource,
+      config: dto.config ? { ...current.config, ...dto.config } : current.config,
+      updatedAt: new Date().toISOString(),
+    };
+
+    widgets[index] = updated;
+    dashboard.widgets = [...widgets] as unknown as Dashboard['widgets'];
     const saved = await this.dashboardRepository.save(dashboard);
 
     this.websocketGateway.broadcastDashboardUpdate(id, {
@@ -228,17 +375,26 @@ export class DashboardsService {
       usedDevices: saved.getUsedDevices(),
     });
 
-    return saved;
+    return updated;
   }
 
-  async removeWidget(id: string, widgetId: string, user: User): Promise<Dashboard> {
+  async removeWidget(
+    id: string,
+    widgetId: string,
+    user: User,
+  ): Promise<{ removed: boolean; widgetId: string }> {
     const dashboard = await this.findOne(id, user);
+    this.assertCanEdit(dashboard, user);
 
-    if (dashboard.userId !== user.id) {
-      throw new ForbiddenException('Only the dashboard owner can remove widgets');
+    const widgets = this.widgetsOf(dashboard);
+    const remaining = widgets.filter((w) => w.id !== widgetId);
+    if (remaining.length === widgets.length) {
+      throw new NotFoundException(
+        `Widget ${widgetId} not found on dashboard ${id}`,
+      );
     }
 
-    dashboard.removeWidget(widgetId);
+    dashboard.widgets = remaining as unknown as Dashboard['widgets'];
     const saved = await this.dashboardRepository.save(dashboard);
 
     this.websocketGateway.broadcastDashboardUpdate(id, {
@@ -247,7 +403,129 @@ export class DashboardsService {
       usedDevices: saved.getUsedDevices(),
     });
 
-    return saved;
+    return { removed: true, widgetId };
+  }
+
+  /**
+   * Every widget on the dashboard with its WidgetType and Device resolved.
+   *
+   * Both lookups are batched — one query for all referenced widget types, one
+   * for all referenced devices — so a 30-widget dashboard costs 3 queries, not
+   * 61. A widget whose type or device has since been deleted comes back with
+   * that field null rather than being dropped, so the editor can show it as
+   * broken instead of silently losing it.
+   */
+  async getWidgets(
+    id: string,
+    user: User,
+  ): Promise<EnrichedDashboardWidget[]> {
+    const dashboard = await this.findOne(id, user);
+    const widgets = this.widgetsOf(dashboard);
+    if (!widgets.length) return [];
+
+    const widgetTypeIds = [
+      ...new Set(widgets.map((w) => w.widgetTypeId).filter(Boolean)),
+    ];
+    const deviceIds = [
+      ...new Set(
+        widgets.map((w) => w.datasource?.deviceId).filter(Boolean) as string[],
+      ),
+    ];
+
+    const [widgetTypes, devices] = await Promise.all([
+      widgetTypeIds.length
+        ? this.widgetTypeRepository.find({ where: { id: In(widgetTypeIds) } })
+        : Promise.resolve([] as WidgetType[]),
+      deviceIds.length
+        ? this.deviceRepository.find({
+            where: { id: In(deviceIds), tenantId: dashboard.tenantId },
+          })
+        : Promise.resolve([] as Device[]),
+    ]);
+
+    const typeMap = new Map(widgetTypes.map((t) => [t.id, t]));
+    const deviceMap = new Map(devices.map((d) => [d.id, d]));
+
+    return widgets.map((widget) => {
+      const type = typeMap.get(widget.widgetTypeId);
+      const device = widget.datasource?.deviceId
+        ? deviceMap.get(widget.datasource.deviceId)
+        : undefined;
+      const descriptor = (type?.descriptor ?? {}) as any;
+
+      return {
+        ...widget,
+        widgetType: type
+          ? {
+              id: type.id,
+              name: type.name,
+              alias: descriptor.alias ?? null,
+              type: descriptor.type ?? null,
+              category: type.category,
+              description: type.description ?? null,
+              defaultConfig: descriptor.defaultConfig ?? null,
+              dataConfig: descriptor.dataConfig ?? null,
+              sizeX: descriptor.sizeX ?? null,
+              sizeY: descriptor.sizeY ?? null,
+            }
+          : null,
+        device: device
+          ? {
+              id: device.id,
+              name: device.name,
+              status: device.status,
+              type: device.type,
+              deviceKey: device.deviceKey,
+            }
+          : null,
+      };
+    });
+  }
+
+  /**
+   * Batch position update for drag-and-drop reordering — one save for the
+   * whole grid instead of one request per moved widget.
+   *
+   * All ids are validated before anything is written, so a layout containing
+   * one bad id fails cleanly rather than applying half the moves.
+   */
+  async updateLayout(
+    id: string,
+    user: User,
+    dto: UpdateLayoutDto,
+  ): Promise<DashboardWidgetConfig[]> {
+    const dashboard = await this.findOne(id, user);
+    this.assertCanEdit(dashboard, user);
+
+    const widgets = this.widgetsOf(dashboard);
+    const byId = new Map(widgets.map((w) => [w.id, w]));
+
+    const unknown = dto.widgets.filter((p) => !byId.has(p.id)).map((p) => p.id);
+    if (unknown.length) {
+      throw new NotFoundException(
+        `Widget(s) not found on dashboard ${id}: ${unknown.join(', ')}`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    for (const position of dto.widgets) {
+      const widget = byId.get(position.id)!;
+      widget.row = position.row;
+      widget.col = position.col;
+      widget.width = position.width;
+      widget.height = position.height;
+      widget.updatedAt = now;
+    }
+
+    dashboard.widgets = [...widgets] as unknown as Dashboard['widgets'];
+    await this.dashboardRepository.save(dashboard);
+
+    this.websocketGateway.broadcastDashboardUpdate(id, {
+      action: 'layout_updated',
+      widgetIds: dto.widgets.map((w) => w.id),
+    });
+
+    return widgets;
   }
 
   // ── Sharing ───────────────────────────────────────────────────────────────
@@ -292,14 +570,21 @@ export class DashboardsService {
     const original = await this.findOne(id, user);
 
     const cloned = this.dashboardRepository.create({
-      name: cloneDto.name,
+      // Name is optional — default to "Copy of {original}" so the endpoint can
+      // be called with an empty body.
+      name: cloneDto.name?.trim() || `Copy of ${original.name}`,
       description: cloneDto.description ?? original.description,
       userId: user.id,
       tenantId: user.tenantId,
       customerId: user.role === UserRole.CUSTOMER_USER ? user.customerId : undefined,
-      // null-safe deep clone — layout and settings may be null on new dashboards
+      // null-safe deep clone — layout and settings may be null on new dashboards.
+      // Every widget gets a fresh id so the copy's widgets are independent of
+      // the source's (ids are referenced by the widget PATCH/DELETE routes).
       widgets: original.widgets
-        ? JSON.parse(JSON.stringify(original.widgets)).map((w: any) => ({ ...w, id: uuidv4() }))
+        ? JSON.parse(JSON.stringify(original.widgets)).map((w: any) => ({
+            ...w,
+            id: randomUUID(),
+          }))
         : [],
       layout: original.layout ? JSON.parse(JSON.stringify(original.layout)) : undefined,
       settings: original.settings ? JSON.parse(JSON.stringify(original.settings)) : undefined,

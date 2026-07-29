@@ -49,8 +49,26 @@ export class WidgetType extends BaseEntity {
 
   @Column({ type: 'jsonb' })
   descriptor: {
-    // Widget data type
-    type: 'timeseries' | 'latest' | 'rpc' | 'alarm' | 'static';
+    // Widget data type.
+    // 'control' covers write-back widgets (switch, slider) — it sits alongside
+    // 'rpc' rather than replacing it: 'rpc' is a one-shot device call, while
+    // 'control' reflects and mutates a telemetry key.
+    type: 'timeseries' | 'latest' | 'rpc' | 'alarm' | 'static' | 'control';
+
+    /**
+     * Stable machine name for the frontend renderer registry, e.g. 'gauge'.
+     * Denormalised onto DashboardWidgetConfig.widgetTypeAlias when a widget is
+     * placed on a dashboard, so rendering needs no widget_types lookup.
+     */
+    alias?: string;
+
+    /** What data this widget needs — read by the dashboard widget validator. */
+    dataConfig?: {
+      maxDataPoints?: number;
+      supportsMultipleKeys?: boolean;
+      requiresDevice?: boolean;
+      [key: string]: any;
+    };
 
     // Size constraints (grid units)
     sizeX: number;          // Default width

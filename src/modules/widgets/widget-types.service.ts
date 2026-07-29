@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WidgetType } from './entities/widget-type.entity';
+import { WidgetBundle } from './entities/widget-bundle.entity';
 import { WidgetTypeCategory } from '@/common/enums/widget-type.enum';
 import {
   CreateWidgetTypeDto,
@@ -20,6 +21,8 @@ export class WidgetTypesService {
   constructor(
     @InjectRepository(WidgetType)
     private widgetTypeRepository: Repository<WidgetType>,
+    @InjectRepository(WidgetBundle)
+    private widgetBundleRepository: Repository<WidgetBundle>,
     private eventEmitter: EventEmitter2,
   ) { }
 
@@ -117,6 +120,93 @@ export class WidgetTypesService {
       limit,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  /**
+   * Every widget type this tenant can use, grouped by the bundle it belongs to.
+   *
+   * Visibility mirrors the solution-templates convention: a widget type is
+   * visible when it is a system type (tenantId IS NULL) or belongs to the
+   * calling tenant. Passing no tenantId returns system types only.
+   *
+   * Bundles and types are joined on `WidgetType.bundleFqn === WidgetBundle.title`
+   * — there is no FK between them. The match is case-insensitive here because
+   * the legacy widget-type seeder writes lowercase fqns ('charts') against
+   * bundles titled 'Charts', which an exact match silently drops.
+   *
+   * Types whose bundleFqn matches no bundle are returned under a synthetic
+   * "Ungrouped" entry rather than being dropped.
+   */
+  async findGroupedByBundle(tenantId?: string): Promise<{
+    bundles: Array<{
+      id: string | null;
+      name: string;
+      description: string | null;
+      widgets: WidgetType[];
+    }>;
+    total: number;
+  }> {
+    const visible = (alias: string) =>
+      tenantId
+        ? `(${alias}.tenantId IS NULL OR ${alias}.tenantId = :tenantId)`
+        : `${alias}.tenantId IS NULL`;
+    const params = tenantId ? { tenantId } : {};
+
+    const [bundles, widgetTypes] = await Promise.all([
+      this.widgetBundleRepository
+        .createQueryBuilder('bundle')
+        .where(visible('bundle'), params)
+        .orderBy('bundle.order', 'ASC')
+        .addOrderBy('bundle.title', 'ASC')
+        .getMany(),
+      this.widgetTypeRepository
+        .createQueryBuilder('widget')
+        .where(visible('widget'), params)
+        .andWhere('widget.deprecated = false')
+        .orderBy('widget.name', 'ASC')
+        .getMany(),
+    ]);
+
+    const key = (value?: string | null) => (value ?? '').trim().toLowerCase();
+    const byBundle = new Map<string, WidgetType[]>();
+    for (const widget of widgetTypes) {
+      const k = key(widget.bundleFqn);
+      const list = byBundle.get(k) ?? [];
+      list.push(widget);
+      byBundle.set(k, list);
+    }
+
+    type BundleGroup = {
+      id: string | null;
+      name: string;
+      description: string | null;
+      widgets: WidgetType[];
+    };
+
+    const grouped: BundleGroup[] = bundles.map((bundle) => {
+      const k = key(bundle.title);
+      const widgets = byBundle.get(k) ?? [];
+      byBundle.delete(k);
+      return {
+        id: bundle.id,
+        name: bundle.title,
+        description: bundle.description ?? null,
+        widgets,
+      };
+    });
+
+    // Anything left over referenced a bundle this tenant cannot see, or none.
+    const orphans = Array.from(byBundle.values()).flat();
+    if (orphans.length) {
+      grouped.push({
+        id: null,
+        name: 'Ungrouped',
+        description: 'Widget types not assigned to a visible bundle',
+        widgets: orphans.sort((a, b) => a.name.localeCompare(b.name)),
+      });
+    }
+
+    return { bundles: grouped, total: widgetTypes.length };
   }
 
   /**
@@ -369,7 +459,14 @@ export class WidgetTypesService {
       throw new BadRequestException('Descriptor must have a type');
     }
 
-    const validTypes = ['timeseries', 'latest', 'rpc', 'alarm', 'static'];
+    const validTypes = [
+      'timeseries',
+      'latest',
+      'rpc',
+      'alarm',
+      'static',
+      'control',
+    ];
     if (!validTypes.includes(descriptor.type)) {
       throw new BadRequestException(
         `Invalid descriptor type: ${descriptor.type}`,
