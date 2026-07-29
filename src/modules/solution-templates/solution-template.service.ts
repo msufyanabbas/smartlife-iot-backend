@@ -176,7 +176,28 @@ export class SolutionTemplatesService {
       .skip(skip)
       .take(limit);
 
-    const [data, total] = await qb.getManyAndCount();
+    const [templates, total] = await qb.getManyAndCount();
+
+    // Decorate each template with this tenant's ACTIVE installation, if any, so
+    // the catalogue can render an "Installed / Uninstall" state without a
+    // follow-up request per card. One extra query for the whole page.
+    //
+    // Only SUCCESS rows count as installed — a ROLLED_BACK row means the
+    // template was uninstalled and is installable again, which is exactly what
+    // install()'s idempotency check enforces.
+    const activeInstallations = await this.installationRepo.find({
+      where: { tenantId, status: InstallationStatus.SUCCESS },
+      select: ['id', 'templateId', 'installationName', 'installedAt'],
+    });
+    const installMap = new Map(
+      activeInstallations.map((i) => [i.templateId, i]),
+    );
+
+    const data = templates.map((template) => ({
+      ...template,
+      myInstallation: installMap.get(template.id) ?? null,
+      isInstalled: installMap.has(template.id),
+    }));
 
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
@@ -192,6 +213,88 @@ export class SolutionTemplatesService {
       throw new NotFoundException('Solution template not found');
     }
     return template;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PREVIEW — dry run of install()
+  //
+  // Answers "what would happen if I installed this?" without provisioning
+  // anything: the exact resources that would be created, whether this tenant
+  // already has it installed, and any quota that would block the install.
+  //
+  // Reuses checkQuotas() rather than duplicating the limit logic, so preview
+  // and install can never disagree about whether an install is possible.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  async preview(id: string, tenantId: string) {
+    // findOne() applies tenant visibility — a template this tenant cannot see
+    // is a 404 here just as it is everywhere else.
+    const template = await this.findOne(id, tenantId);
+    const config = (template.configuration ?? {}) as TemplateConfiguration;
+
+    const existingInstall = await this.installationRepo.findOne({
+      where: { tenantId, templateId: id, status: InstallationStatus.SUCCESS },
+    });
+
+    // checkQuotas() throws on the first ceiling it hits; a preview should
+    // report that as a warning rather than fail.
+    const quotaWarnings: string[] = [];
+    try {
+      await this.checkQuotas(tenantId, config);
+    } catch (error) {
+      quotaWarnings.push(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    const totalDevices =
+      config.devices?.reduce((sum, d) => sum + (d.count ?? 0), 0) ?? 0;
+
+    return {
+      templateId: id,
+      templateName: template.name,
+      category: template.category,
+      hasConfiguration: Object.keys(config).length > 0,
+      alreadyInstalled: !!existingInstall,
+      installationId: existingInstall?.id ?? null,
+      canInstall: !existingInstall && quotaWarnings.length === 0,
+      quotaWarnings,
+      willCreate: {
+        devices:
+          config.devices?.map((d) => ({
+            namePattern: d.name,
+            type: d.type,
+            count: d.count ?? 0,
+            protocol: d.protocol ?? DeviceProtocol.GENERIC_MQTT,
+            telemetryKeys: d.defaultTelemetryKeys ?? [],
+          })) ?? [],
+        dashboards:
+          config.dashboards?.map((d) => ({
+            name: d.name,
+            widgetCount: d.widgets?.length ?? 0,
+          })) ?? [],
+        ruleChains:
+          config.ruleChains?.map((r) => ({
+            name: r.name,
+            nodeCount: r.nodes?.length ?? 0,
+            connectionCount: r.connections?.length ?? 0,
+          })) ?? [],
+        alarms:
+          config.alarms?.map((a) => ({
+            name: a.name,
+            severity: a.severity,
+            condition: `${a.telemetryKey} ${a.condition} ${a.value}`,
+          })) ?? [],
+        summary: {
+          totalDevices,
+          totalDashboards: config.dashboards?.length ?? 0,
+          totalRuleChains: config.ruleChains?.length ?? 0,
+          // install() creates one alarm row per (spec × selected device), and
+          // every seeded template uses deviceSelector 'all'.
+          totalAlarms: (config.alarms?.length ?? 0) * totalDevices,
+        },
+      },
+    };
   }
 
   // ── Update / Delete ───────────────────────────────────────────────────────
@@ -273,12 +376,26 @@ export class SolutionTemplatesService {
     const limits = subscription.limits ?? {};
 
     // ── Lifetime install budget ───────────────────────────────────────────
-    // Counts EVERY attempt — SUCCESS, FAILED and ROLLED_BACK alike — so
-    // uninstalling never returns lifetime budget. On FREE (1) a tenant that
-    // installs once and uninstalls can never install again.
+    // Counts only INTENTIONAL installs — SUCCESS (still active) and
+    // ROLLED_BACK (installed, then deliberately uninstalled).
+    //
+    // FAILED and INSTALLING are deliberately excluded: a FAILED attempt is
+    // rolled back and provisions nothing, so charging lifetime budget for it
+    // would let a malformed template configuration permanently burn a tenant's
+    // only install slot (on FREE, templateInstallsLifetime is 1). INSTALLING
+    // rows are in flight or orphaned by a crash and have likewise created
+    // nothing that survived.
+    //
+    // Uninstalling still does NOT return lifetime budget — ROLLED_BACK counts.
     if (!this.isUnlimited(limits.templateInstallsLifetime)) {
       const lifetimeInstalls = await this.installationRepo.count({
-        where: { tenantId },
+        where: {
+          tenantId,
+          status: In([
+            InstallationStatus.SUCCESS,
+            InstallationStatus.ROLLED_BACK,
+          ]),
+        },
       });
       if (lifetimeInstalls >= limits.templateInstallsLifetime!) {
         throw new ForbiddenException(

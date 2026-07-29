@@ -105,6 +105,20 @@ export class SolutionTemplatesController {
     return this.solutionTemplatesService.uninstall(installationId, tenantId);
   }
 
+  @Get(':id/preview')
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth(
+    'Preview template installation',
+    'Shows what will be created without installing',
+  )
+  @ApiResponse({ status: 404, description: 'Template not found' })
+  preview(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.solutionTemplatesService.preview(id, tenantId);
+  }
+
   @Get(':id')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get template by ID', 'Template details')

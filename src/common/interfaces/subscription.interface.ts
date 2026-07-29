@@ -54,9 +54,11 @@ export interface SubscriptionLimits {
   /** Custom (non-system) templates the tenant may own. -1 = unlimited. */
   maxCustomTemplates?: number;
   /**
-   * Total install attempts ever allowed, counting FAILED and ROLLED_BACK ones.
-   * Uninstalling does NOT free lifetime budget — on FREE (1) a tenant that
-   * installs then uninstalls can never install again. -1 = unlimited.
+   * Total intentional installs ever allowed, counting SUCCESS and ROLLED_BACK
+   * (i.e. installed-then-uninstalled) rows. FAILED and INSTALLING attempts are
+   * NOT counted — a rolled-back failure provisions nothing, so it must not burn
+   * budget. Uninstalling does NOT free lifetime budget — on FREE (1) a tenant
+   * that installs then uninstalls can never install again. -1 = unlimited.
    */
   templateInstallsLifetime?: number;
 }
