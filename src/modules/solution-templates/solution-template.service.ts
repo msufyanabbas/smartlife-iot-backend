@@ -1076,14 +1076,9 @@ export class SolutionTemplatesService {
       { category: TemplateCategory.SMART_FACILITY, name: 'Smart Facility', icon: 'tools' },
       // Legacy categories — still selectable for custom templates
       { category: TemplateCategory.SMART_FACTORY, name: 'Smart Factory', icon: 'factory' },
-      { category: TemplateCategory.AGRICULTURE, name: 'Agriculture', icon: 'plant' },
-      { category: TemplateCategory.HEALTHCARE, name: 'Healthcare', icon: 'hospital' },
-      { category: TemplateCategory.ENERGY, name: 'Energy', icon: 'battery' },
-      { category: TemplateCategory.LOGISTICS, name: 'Logistics', icon: 'truck' },
-      { category: TemplateCategory.RETAIL, name: 'Retail', icon: 'shopping-cart' },
-      { category: TemplateCategory.WATER, name: 'Water Management', icon: 'droplet' },
-      { category: TemplateCategory.CLIMATE, name: 'Climate Control', icon: 'thermometer' },
-      { category: TemplateCategory.EDUCATION, name: 'Education', icon: 'graduation-cap' },
+      { category: TemplateCategory.SMART_HEALTHCARE, name: 'Healthcare', icon: 'hospital' },
+      { category: TemplateCategory.SMART_LOGISTICS, name: 'Logistics', icon: 'truck' },
+      { category: TemplateCategory.SMART_CLIMATE, name: 'Climate Control', icon: 'thermometer' },
     ];
 
     return categories.map((cat) => ({

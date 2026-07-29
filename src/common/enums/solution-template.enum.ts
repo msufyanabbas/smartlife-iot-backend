@@ -14,12 +14,8 @@ export enum SolutionTemplateCategory {
   // ── Legacy values ─────────────────────────────────────────────────────────
   // Superseded by the smart_* values above, but retained because existing rows
   // still reference them — dropping them from the PG enum would orphan data.
-  AGRICULTURE = 'agriculture',
-  HEALTHCARE = 'healthcare',
-  ENERGY = 'energy',
-  LOGISTICS = 'logistics',
-  RETAIL = 'retail',
-  WATER = 'water',
-  CLIMATE = 'climate',
-  EDUCATION = 'education',
+  SMART_HEALTHCARE = 'healthcare',
+  SMART_LOGISTICS = 'logistics',
+  SMART_CLIMATE = 'climate',
+  SMART_EDUCATION = 'education',
 }
