@@ -87,6 +87,17 @@ export class CreateDeviceDto {
   assetId?: string;
 
   @ApiPropertyOptional({
+    example: '9b1f3a2e-2c44-4a0e-9c1d-7e2b5f0a1d33',
+    description:
+      'DeviceProfile this device inherits transport settings and alarm rules ' +
+      'from. When the profile declares alarmRules, a dormant Alarm row is ' +
+      'created per rule so the device shows what is being watched.',
+  })
+  @IsUUID()
+  @IsOptional()
+  deviceProfileId?: string;
+
+  @ApiPropertyOptional({
     description: 'Device metadata — codec and gateway info',
     example: {
       manufacturer: 'Milesight',

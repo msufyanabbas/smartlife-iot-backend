@@ -17,16 +17,38 @@ import { AssetProfileType, ProfileFieldType } from '@common/enums/index.enum';
 // PROFILE SCHEMA (type + fields)
 // ─────────────────────────────────────────────────────────────────────────────
 
+export class ProfileFieldOptionDto {
+  @ApiProperty({ example: 'commercial', description: 'Stored value' })
+  @IsString()
+  @IsNotEmpty()
+  value: string;
+
+  @ApiProperty({ example: 'Commercial' })
+  @IsString()
+  @IsNotEmpty()
+  label: string;
+
+  @ApiProperty({ example: 'تجاري' })
+  @IsString()
+  @IsNotEmpty()
+  labelAr: string;
+}
+
 export class ProfileFieldDto {
   @ApiProperty({ example: 'totalFloors', description: 'Key under Asset.configuration' })
   @IsString()
   @IsNotEmpty()
   key: string;
 
-  @ApiProperty({ example: 'Total Floors' })
+  @ApiProperty({ example: 'Total Floors', description: 'English label' })
   @IsString()
   @IsNotEmpty()
   label: string;
+
+  @ApiProperty({ example: 'إجمالي الطوابق', description: 'Arabic label' })
+  @IsString()
+  @IsNotEmpty()
+  labelAr: string;
 
   @ApiProperty({
     type: String,
@@ -41,15 +63,25 @@ export class ProfileFieldDto {
   @IsBoolean()
   required: boolean;
 
+  @ApiPropertyOptional({ example: 'Building Info', description: 'UI grouping' })
+  @IsOptional()
+  @IsString()
+  group?: string;
+
+  @ApiPropertyOptional({ example: 1, description: 'Display order within the form' })
+  @IsOptional()
+  @IsNumber()
+  order?: number;
+
   @ApiPropertyOptional({
-    type: [String],
-    description: "Allowed values — only for type 'select'",
-    example: ['Commercial', 'Residential'],
+    type: [ProfileFieldOptionDto],
+    description: "Allowed values — only for type 'select' / 'multiselect'",
   })
   @IsOptional()
   @IsArray()
-  @IsString({ each: true })
-  options?: string[];
+  @ValidateNested({ each: true })
+  @Type(() => ProfileFieldOptionDto)
+  options?: ProfileFieldOptionDto[];
 
   @ApiPropertyOptional({ example: 1, description: "Minimum — only for type 'number'" })
   @IsOptional()
@@ -64,6 +96,52 @@ export class ProfileFieldDto {
   @ApiPropertyOptional({ description: 'Value pre-filled on new assets' })
   @IsOptional()
   defaultValue?: any;
+
+  @ApiPropertyOptional({ example: 'm²' })
+  @IsOptional()
+  @IsString()
+  unit?: string;
+
+  @ApiPropertyOptional({ example: 'e.g. Wheat, Tomatoes' })
+  @IsOptional()
+  @IsString()
+  placeholder?: string;
+
+  @ApiPropertyOptional({ example: 'مثل: قمح، طماطم' })
+  @IsOptional()
+  @IsString()
+  placeholderAr?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  helpText?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  helpTextAr?: string;
+}
+
+export class ProfileDeviceLinkingConfigDto {
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  allowMultipleDevices: boolean;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Restrict to these DeviceType values',
+    example: ['tracker', 'sensor'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  deviceTypeFilter?: string[];
+
+  @ApiPropertyOptional({ example: 1000 })
+  @IsOptional()
+  @IsNumber()
+  maxDevices?: number;
 }
 
 export class ProfileSchemaDto {
@@ -72,6 +150,12 @@ export class ProfileSchemaDto {
   @ValidateNested({ each: true })
   @Type(() => ProfileFieldDto)
   fields: ProfileFieldDto[];
+
+  @ApiPropertyOptional({ type: ProfileDeviceLinkingConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ProfileDeviceLinkingConfigDto)
+  deviceLinkingConfig?: ProfileDeviceLinkingConfigDto;
 }
 
 // Asset Profile DTOs

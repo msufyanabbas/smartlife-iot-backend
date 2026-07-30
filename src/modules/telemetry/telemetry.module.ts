@@ -11,6 +11,7 @@ import { RedisModule } from '@/lib/redis/redis.module';
 import { AutomationModule } from '@modules/automation/automation.module';
 import { WebsocketModule } from '@modules/websocket/websocket.module';
 import { AlarmsModule } from '@modules/alarms/alarms.module';
+import { ProfilesModule } from '@modules/profiles/profiles.module';
 import { Device } from '../index.entities';
 
 @Module({
@@ -21,6 +22,7 @@ import { Device } from '../index.entities';
     AutomationModule, // must export AutomationProcessor
     WebsocketModule,
     AlarmsModule, // exports AlarmsService → needed by TelemetryProcessor
+    ProfilesModule, // exports ProfileAlarmService → device-profile alarm rules
     BullModule.registerQueue({ name: 'telemetry' }),
   ],
   controllers: [TelemetryController],

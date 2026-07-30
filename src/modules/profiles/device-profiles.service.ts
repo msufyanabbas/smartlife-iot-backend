@@ -17,6 +17,12 @@ import {
 import { User } from '../index.entities';
 import { PaginatedResponseDto } from '@/common/dto/pagination.dto';
 import { UserRole } from '@/common/enums/user.enum';
+import {
+  CoapPowerMode,
+  DevicePayloadType,
+  DeviceTransportType,
+} from '@common/enums/index.enum';
+import type { DeviceTransportConfiguration } from '@common/interfaces/index.interface';
 
 @Injectable()
 export class DeviceProfilesService {
@@ -32,9 +38,10 @@ export class DeviceProfilesService {
    * Create a new device profile
    */
   async create(createDto: CreateDeviceProfileDto): Promise<DeviceProfile> {
-    // Check if name already exists
+    // Name uniqueness is scoped to the tenant — two tenants may each have a
+    // profile called "MQTT Sensor".
     const existing = await this.deviceProfileRepository.findOne({
-      where: { name: createDto.name },
+      where: { name: createDto.name, tenantId: createDto.tenantId },
     });
 
     if (existing) {
@@ -48,13 +55,67 @@ export class DeviceProfilesService {
       await this.unsetAllDefaults(createDto.tenantId);
     }
 
-    const profile = this.deviceProfileRepository.create(createDto);
+    const transportType = createDto.transportType ?? DeviceTransportType.DEFAULT;
+
+    const profile = this.deviceProfileRepository.create({
+      ...createDto,
+      transportType,
+      // Only synthesise defaults when the caller did not supply a config —
+      // an explicit {} is respected as "no protocol settings".
+      transportConfiguration:
+        createDto.transportConfiguration ??
+        this.getDefaultTransportConfig(transportType),
+    });
     const savedProfile = await this.deviceProfileRepository.save(profile);
 
     // Emit event
     this.eventEmitter.emit('device.profile.created', { profile: savedProfile });
 
     return savedProfile;
+  }
+
+  /**
+   * Sensible protocol settings for a freshly created profile.
+   *
+   * These mirror the ThingsBoard defaults so a device flashed against a
+   * ThingsBoard-compatible firmware works without further configuration.
+   * Returns null for DEFAULT / LWM2M / SNMP, which carry no defaults.
+   */
+  getDefaultTransportConfig(
+    transportType: string,
+  ): DeviceTransportConfiguration | null {
+    switch (transportType) {
+      case DeviceTransportType.MQTT:
+        return {
+          mqtt: {
+            deviceTelemetryTopic: 'v1/devices/me/telemetry',
+            deviceAttributesTopic: 'v1/devices/me/attributes',
+            deviceAttributesRequestTopic: 'v1/devices/me/attributes/request/+',
+            deviceRpcRequestTopic: 'v1/devices/me/rpc/request/+',
+            deviceRpcResponseTopic: 'v1/devices/me/rpc/response/',
+            sendAckOnValidationException: false,
+            devicePayloadType: DevicePayloadType.JSON,
+          },
+        };
+      case DeviceTransportType.HTTP:
+        return {
+          http: {
+            deviceTelemetryUrl: '/api/v1/{deviceToken}/telemetry',
+            deviceAttributesUrl: '/api/v1/{deviceToken}/attributes',
+            maxPayloadSize: 65536,
+          },
+        };
+      case DeviceTransportType.COAP:
+        return {
+          coap: {
+            deviceTelemetryPath: '/api/v1/{deviceToken}/telemetry',
+            deviceAttributesPath: '/api/v1/{deviceToken}/attributes',
+            powerMode: CoapPowerMode.DRX,
+          },
+        };
+      default:
+        return null;
+    }
   }
 
   /**
@@ -68,19 +129,16 @@ export class DeviceProfilesService {
     const queryBuilder =
       this.deviceProfileRepository.createQueryBuilder('profile');
 
-        // Customer filtering logic
-          if (user.role === UserRole.CUSTOMER_USER) {
-            if (!user.customerId) {
-              return PaginatedResponseDto.create([], page, limit, 0);
-            }
-            queryBuilder.andWhere('profile.customerId = :customerId', {
-              customerId: user.customerId,
-            });
-          } else if (user.role === UserRole.TENANT_ADMIN) {
-            queryBuilder.andWhere('profile.tenantId = :tenantId', {
-              tenantId: user.tenantId,
-            });
-          }
+    // Device profiles are tenant-scoped only — there is no customerId column,
+    // so customer-scoped roles see every profile belonging to their tenant.
+    if (user.role !== UserRole.SUPER_ADMIN) {
+      if (!user.tenantId) {
+        return PaginatedResponseDto.create([], page, limit, 0);
+      }
+      queryBuilder.andWhere('profile.tenantId = :tenantId', {
+        tenantId: user.tenantId,
+      });
+    }
 
     // Apply filters
     if (queryDto.search) {

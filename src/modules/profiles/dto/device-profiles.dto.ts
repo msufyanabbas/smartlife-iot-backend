@@ -8,6 +8,8 @@ import {
   IsNotEmpty,
   IsObject,
   IsNumber,
+  IsIn,
+  IsUUID,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -43,20 +45,51 @@ export class CreateDeviceProfileDto {
   @IsString()
   type?: string;
 
-  @ApiProperty({ type: String, enum: DeviceTransportType, enumName: 'DeviceTransportType', default: DeviceTransportType.MQTT })
-  @IsEnum(DeviceTransportType)
-  transportType: DeviceTransportType;
+  @ApiPropertyOptional({
+    type: String,
+    enum: DeviceTransportType,
+    enumName: 'DeviceTransportType',
+    default: DeviceTransportType.DEFAULT,
+    description:
+      'When omitted the profile defaults to DEFAULT. Supplying MQTT / HTTP / COAP ' +
+      'auto-populates transportConfiguration unless one is given explicitly.',
+  })
+  @IsOptional()
+  @IsIn(Object.values(DeviceTransportType))
+  transportType?: DeviceTransportType;
 
-  @ApiProperty({
-    type: String, enum: DeviceProvisionType, enumName: 'DeviceProvisionType',
+  @ApiPropertyOptional({
+    type: String,
+    enum: DeviceProvisionType,
+    enumName: 'DeviceProvisionType',
     default: DeviceProvisionType.DISABLED,
   })
-  @IsEnum(DeviceProvisionType)
-  provisionType: DeviceProvisionType;
-
-  @ApiPropertyOptional()
   @IsOptional()
-  transportConfiguration?: any;
+  @IsIn(Object.values(DeviceProvisionType))
+  provisionType?: DeviceProvisionType;
+
+  @ApiPropertyOptional({
+    description: 'Protocol-specific settings, keyed by protocol (mqtt/http/coap/lwm2m).',
+    example: {
+      mqtt: {
+        deviceTelemetryTopic: 'v1/devices/me/telemetry',
+        devicePayloadType: 'JSON',
+      },
+    },
+  })
+  @IsOptional()
+  @IsObject()
+  transportConfiguration?: Record<string, any>;
+
+  @ApiPropertyOptional({ description: 'Shared provisioning key for this profile' })
+  @IsOptional()
+  @IsString()
+  provisionDeviceKey?: string;
+
+  @ApiPropertyOptional({ description: 'Shared provisioning secret for this profile' })
+  @IsOptional()
+  @IsString()
+  provisionDeviceSecret?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -70,33 +103,39 @@ export class CreateDeviceProfileDto {
   @IsOptional()
   attributesConfig?: any;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    type: [Object],
+    description:
+      'Alarm rule templates. Evaluated on every telemetry message for devices ' +
+      'using this profile — see DeviceProfileAlarmRule.',
+  })
   @IsOptional()
   @IsArray()
   alarmRules?: any[];
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ deprecated: true, description: 'Legacy — use provisionDeviceKey/Secret' })
   @IsOptional()
   provisionConfiguration?: any;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Firmware/OTA package for this profile' })
   @IsOptional()
-  firmwareConfiguration?: any;
+  @IsObject()
+  firmwareConfig?: Record<string, any>;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   defaultRuleChainId?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
-  @IsString()
+  @IsUUID()
   defaultDashboardId?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Kafka queue for this profile telemetry' })
   @IsOptional()
   @IsString()
-  defaultQueueName?: string;
+  queueName?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

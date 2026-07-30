@@ -12,13 +12,18 @@ import { UsersModule } from '../users/users.module';
 import { MailModule } from '../mail/mail.module';
 import { RolesModule } from '@modules/roles/roles.module';
 import { CodecModule } from './codecs/codec.module';
+import { DeviceProfile } from '../profiles/entities/device-profile.entity';
+import { ProfilesModule } from '../profiles/profiles.module';
 
 
 @Module({
   imports: [
     // Asset is registered as a repository rather than by importing AssetsModule,
     // to keep device↔asset validation from creating a module cycle.
-    TypeOrmModule.forFeature([Device, DeviceCredentials, Asset]),
+    TypeOrmModule.forFeature([Device, DeviceCredentials, Asset, DeviceProfile]),
+    // ProfilesModule exports ProfileAlarmService, used to materialise a
+    // profile's alarm rules when a device is created against it.
+    ProfilesModule,
     SubscriptionsModule,
     RolesModule,
     ProtocolsModule,

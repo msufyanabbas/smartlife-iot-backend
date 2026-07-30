@@ -334,6 +334,81 @@ Repositories (`Subscription`, `FloorPlan`, `FloorPlanDevice`) are registered dir
 
 ---
 
+## 4b. Device Profile → Device → Alarm Chain
+
+Device profiles carry transport settings, provisioning strategy and **alarm rule
+templates** that apply to every device using the profile.
+
+```
+DeviceProfile (transportType + transportConfiguration + alarmRules)
+     ↓ deviceProfileId  (CreateDeviceDto, validated against the caller's tenant)
+Device
+     ↓ ProfileAlarmService
+Alarm   (one row per enabled rule, keyed on metadata.profileRuleId)
+```
+
+### Transport & provisioning
+- `transportType`: `DEFAULT | MQTT | COAP | HTTP | LWM2M | SNMP` — **varchar, not a
+  PG enum**, UPPERCASE (ThingsBoard contract). `SNMP` is retained beyond the
+  ThingsBoard set because a seeded profile uses it.
+- `transportConfiguration` (jsonb): per-protocol settings (`mqtt`, `http`, `coap`,
+  `lwm2m`). `DeviceProfilesService.getDefaultTransportConfig()` fills in ThingsBoard
+  defaults on create when the caller supplies none — an explicit `{}` is respected.
+- `provisionType`: `DISABLED | ALLOW_CREATE_NEW_DEVICES | CHECK_PRE_PROVISIONED_DEVICES`
+  plus flat `provisionDeviceKey` / `provisionDeviceSecret`. The legacy
+  `provisionConfiguration` jsonb is **deprecated but retained** (the migration
+  backfills the flat columns from it). *Provisioning itself is still not implemented —
+  no code reads these yet.*
+- `queueName` (was `defaultQueueName`) and `firmwareConfig` (was
+  `firmwareConfiguration`) — renamed, not recreated, so seeded values survive.
+
+### Alarm rules (`DeviceProfile.alarmRules`)
+Shape: `DeviceProfileAlarmRule` in `src/common/interfaces/device-profile.interface.ts`.
+Each rule has `condition.condition[]` filters (AND semantics), an optional `clearRule`,
+a severity drawn from `AlarmSeverity` (`critical|error|warning|info`), and propagation
+flags.
+
+`ProfileAlarmService` (`src/modules/profiles/profile-alarm.service.ts`) is the engine:
+
+| When | What happens |
+|---|---|
+| `POST /devices` with a `deviceProfileId` | `materialiseProfileAlarms()` writes one **INACTIVE** Alarm row per enabled rule, so the device's alarm list shows what is being watched before anything fires. Non-fatal on error. |
+| Telemetry arrives (`TelemetryConsumer` step 2b) | `evaluateProfileAlarmRules()` tests each rule; a match triggers the existing row (ACTIVE, `triggerCount++`), a matching `clearRule` returns it to CLEARED. |
+
+Key details:
+- Rows are located by **`metadata.profileRuleId`**, never by `name` — the rule engine's
+  action node (`src/modules/nodes/action-node.ts`) also creates alarms and can collide
+  on name.
+- Telemetry is normalised before evaluation: the ThingsBoard envelope
+  `{ts, values:{temperature:45}}` is hoisted so rules can name the bare key
+  `temperature`. Dotted paths (`values.temperature`) also resolve.
+- `Alarm.rule` is NOT NULL, so the first filter is collapsed into the flat `AlarmRule`
+  shape; the full rule lives in `metadata.profileRule`.
+- **Not implemented:** `spec.type` `DURATION`/`REPEATING` are evaluated as `SIMPLE`
+  (logged as a warning); `predicate.value.dynamicValue` causes the rule to be skipped;
+  propagation flags are recorded but nothing acts on them.
+
+## 4c. Asset Profile Schema Validation (bilingual)
+
+`AssetProfile.schema` is `{ fields: ProfileField[], deviceLinkingConfig? }`.
+
+- Every field carries **both** `label` (English) and `labelAr` (Arabic) — likewise every
+  `select`/`multiselect` option is `{value, label, labelAr}`.
+  **BREAKING:** `options` was previously `string[]`.
+- `group` / `order` drive form layout; `unit`, `placeholder(Ar)`, `helpText(Ar)` are
+  presentation hints.
+- Field types: `text | number | boolean | select | multiselect | date | floors_array |
+  devices_array`. `floors_array` still drives the floor-plan chain (see §4a).
+- `AssetsService.create()` and `update()` now **reject** an asset whose `configuration`
+  fails the profile schema (`validateAssetConfiguration()` → 400 with bilingual text).
+  An unknown/foreign `assetProfileId` is also a 400.
+- `deviceLinkingConfig` (`allowMultipleDevices`, `deviceTypeFilter`, `maxDevices`) is
+  enforced in `assignDevice()` and `bulkAssignDevices()`.
+
+Note: the older `AssetProfilesService.validateAssetData()` validates the **legacy**
+`attributesSchema`/`Asset.attributes` pair and is only reachable via
+`POST /profiles/asset/:id/validate`. It is not the create-time path.
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
@@ -738,7 +813,8 @@ import { DevicesService } from '@modules/index.service';
 
 | Location | Issue |
 |---|---|
-| `src/database/migrations/` | **Empty** — no migration files generated. Schema driven by seeds + `schema:sync` for now. Must generate migrations before production schema changes. |
+| `src/database/migrations/` | Contains 5 migrations. Run them against **`dist`** (`npx typeorm migration:run -d dist/database/data-source.js`) — `data-source.ts` globs `*.js` only, so `npm run migration:run` reports "No migrations are pending" from source. |
+| Entity/DB drift | `migration:generate` currently also wants to create 8 assignment junction tables, narrow `solution_templates_category_enum` (**destructive** — removes 6 in-use values), rebuild the firmware indexes and rewrite several jsonb defaults. This is pre-existing drift left out of `DeviceAssetProfileEnhancements`; it needs its own reviewed migration. |
 | `src/modules/automation/automation.processor.ts` lines ~23, 193, 213 | `DeviceCommandService`, `MQTTService`, and `NotificationService` injections are TODOs — automation actions do not yet publish MQTT commands or send notifications |
 | `src/modules/automation/automation.service.ts` lines ~187, 269 | `AutomationLog` entity not created; direct automation execution is a stub |
 | `src/modules/attributes/attributes.service.ts` line 253 | `getTimeseries()` is a stub — needs to query telemetry table |

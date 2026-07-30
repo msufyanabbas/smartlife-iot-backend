@@ -13,6 +13,7 @@
  */
 export enum AssetProfileType {
   BUILDING = 'building',
+  VEHICLE = 'vehicle',
   SHOP = 'shop',
   FARM = 'farm',
   WAREHOUSE = 'warehouse',
@@ -27,13 +28,17 @@ export enum AssetProfileType {
  *
  * `floors_array` is special: its value on the asset is a FloorConfig[] and it
  * is what drives multi-floor floor plans (GET /assets/:id/floors).
+ * `devices_array` holds a list of linked device ids.
  */
 export enum ProfileFieldType {
   TEXT = 'text',
   NUMBER = 'number',
   BOOLEAN = 'boolean',
   SELECT = 'select',
+  MULTISELECT = 'multiselect',
+  DATE = 'date',
   FLOORS_ARRAY = 'floors_array',
+  DEVICES_ARRAY = 'devices_array',
 }
 
 export enum QueueName {

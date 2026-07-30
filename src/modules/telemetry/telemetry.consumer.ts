@@ -8,6 +8,7 @@ import { WebsocketGateway } from '@modules/websocket/websocket.gateway';
 import { CodecRegistryService } from '../devices/codecs/codec-registry.service';
 import { AlarmsService } from '../index.service';
 import { AlarmStatus } from '@/common/enums/alarm.enum';
+import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
 
 @Injectable()
 export class TelemetryConsumer implements OnModuleInit {
@@ -21,6 +22,7 @@ export class TelemetryConsumer implements OnModuleInit {
     private readonly websocketGateway: WebsocketGateway,
     private readonly codecService: CodecRegistryService,
     private readonly alarmsService: AlarmsService, //
+    private readonly profileAlarmService: ProfileAlarmService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -87,11 +89,29 @@ export class TelemetryConsumer implements OnModuleInit {
       const telemetry = await this.storeTelemetry(payload);
 
       // ── Step 2: Check alarms ───────────────────────────────────────────────
+      // Two independent sources, both non-fatal:
+      //   a) per-device Alarm rows configured by hand (AlarmsService)
+      //   b) alarm rule templates on the device's DeviceProfile
       try {
         await this.checkAlarms(payload.deviceId, payload.data);
       } catch (alarmError) {
         this.logger.error(
           `Alarm check failed: ${(alarmError as Error).message}`,
+        );
+      }
+
+      try {
+        // Pass the raw payload — ProfileAlarmService normalises the
+        // {ts, values:{…}} envelope itself so rules can name bare keys.
+        await this.profileAlarmService.evaluateProfileAlarmRules(
+          payload.deviceId,
+          payload.data ?? {},
+        );
+      } catch (profileAlarmError) {
+        this.logger.error(
+          `Device profile alarm check failed: ${
+            (profileAlarmError as Error).message
+          }`,
         );
       }
 

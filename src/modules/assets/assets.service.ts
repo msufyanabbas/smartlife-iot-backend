@@ -8,9 +8,19 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, IsNull } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Asset, Device, User, FloorPlan, FloorPlanDevice } from '@modules/index.entities';
+import {
+  Asset,
+  AssetProfile,
+  Device,
+  User,
+  FloorPlan,
+  FloorPlanDevice,
+} from '@modules/index.entities';
 import { AssetType } from '@common/enums/index.enum';
-import type { FloorConfig } from '@common/interfaces/index.interface';
+import type {
+  FloorConfig,
+  ProfileField,
+} from '@common/interfaces/index.interface';
 import {
   CreateAssetDto,
   UpdateAssetDto,
@@ -34,6 +44,10 @@ export class AssetsService {
     private floorPlanRepository: Repository<FloorPlan>,
     @InjectRepository(FloorPlanDevice)
     private floorPlanDeviceRepository: Repository<FloorPlanDevice>,
+    // Registered directly rather than importing ProfilesModule — ProfilesModule
+    // already depends on the Asset repository, so importing it here would cycle.
+    @InjectRepository(AssetProfile)
+    private assetProfileRepository: Repository<AssetProfile>,
     private eventEmitter: EventEmitter2,
   ) {}
 
@@ -69,6 +83,13 @@ export class AssetsService {
         }
       }
     }
+
+    // Reject the asset if its configuration does not satisfy the profile schema.
+    await this.assertConfigurationValid(
+      createAssetDto.assetProfileId,
+      createAssetDto.configuration,
+      user.tenantId,
+    );
 
     const asset = this.assetRepository.create(
       {
@@ -264,6 +285,20 @@ async findAll(
       }
     }
 
+    // Validate against whichever profile the asset will end up on, using the
+    // configuration it will end up with — a partial PATCH of `configuration`
+    // still has to satisfy the schema as a whole.
+    if (
+      updateAssetDto.assetProfileId !== undefined ||
+      updateAssetDto.configuration !== undefined
+    ) {
+      await this.assertConfigurationValid(
+        updateAssetDto.assetProfileId ?? asset.assetProfileId,
+        updateAssetDto.configuration ?? asset.configuration,
+        asset.tenantId,
+      );
+    }
+
     Object.assign(asset, updateAssetDto);
     const updatedAsset = await this.assetRepository.save(asset);
 
@@ -271,6 +306,207 @@ async findAll(
     this.eventEmitter.emit('asset.updated', { asset: updatedAsset });
 
     return updatedAsset;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PROFILE SCHEMA VALIDATION
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Validate an asset's `configuration` against its AssetProfile `schema`.
+   *
+   * Only required fields are enforced; optional fields are range/option checked
+   * when present. Returns the error list rather than throwing so it can also
+   * back a dry-run endpoint.
+   */
+  async validateAssetConfiguration(
+    profileId: string,
+    configuration: Record<string, any> | undefined,
+    tenantId: string | undefined,
+  ): Promise<{ valid: boolean; errors: string[] }> {
+    const profile = await this.assetProfileRepository.findOne({
+      where: { id: profileId, tenantId },
+    });
+
+    // Unknown profile is a caller error, not a silent pass.
+    if (!profile) {
+      return {
+        valid: false,
+        errors: [`Asset profile ${profileId} not found for this tenant`],
+      };
+    }
+
+    if (!profile.schema?.fields?.length) return { valid: true, errors: [] };
+
+    const errors: string[] = [];
+
+    for (const field of profile.schema.fields) {
+      const value = configuration?.[field.key];
+      const missing = value === undefined || value === null || value === '';
+
+      if (field.required && missing) {
+        errors.push(`Field "${field.label}" (${field.labelAr}) is required`);
+        continue;
+      }
+
+      // Optional-and-absent needs no further checks.
+      if (missing) continue;
+
+      errors.push(...this.validateFieldValue(field, value));
+    }
+
+    return { valid: errors.length === 0, errors };
+  }
+
+  /** Type / range / option checks for a single supplied value. */
+  private validateFieldValue(field: ProfileField, value: any): string[] {
+    const errors: string[] = [];
+
+    switch (field.type) {
+      case 'number': {
+        const num = Number(value);
+        if (typeof value === 'boolean' || Number.isNaN(num)) {
+          errors.push(`Field "${field.label}" must be a number`);
+          break;
+        }
+        if (field.min !== undefined && num < field.min) {
+          errors.push(`"${field.label}" must be at least ${field.min}`);
+        }
+        if (field.max !== undefined && num > field.max) {
+          errors.push(`"${field.label}" must be at most ${field.max}`);
+        }
+        break;
+      }
+
+      case 'boolean':
+        if (typeof value !== 'boolean') {
+          errors.push(`Field "${field.label}" must be true or false`);
+        }
+        break;
+
+      case 'select': {
+        const allowed = (field.options ?? []).map((o) => o.value);
+        if (allowed.length && !allowed.includes(String(value))) {
+          errors.push(
+            `"${field.label}" must be one of: ${allowed.join(', ')}`,
+          );
+        }
+        break;
+      }
+
+      case 'multiselect': {
+        if (!Array.isArray(value)) {
+          errors.push(`Field "${field.label}" must be an array`);
+          break;
+        }
+        const allowed = (field.options ?? []).map((o) => o.value);
+        if (allowed.length) {
+          const invalid = value
+            .map(String)
+            .filter((v) => !allowed.includes(v));
+          if (invalid.length) {
+            errors.push(
+              `"${field.label}" contains invalid value(s): ${invalid.join(', ')}. ` +
+                `Allowed: ${allowed.join(', ')}`,
+            );
+          }
+        }
+        break;
+      }
+
+      case 'date':
+        if (Number.isNaN(Date.parse(String(value)))) {
+          errors.push(`Field "${field.label}" must be a valid date`);
+        }
+        break;
+
+      case 'floors_array':
+      case 'devices_array':
+        if (!Array.isArray(value)) {
+          errors.push(`Field "${field.label}" must be an array`);
+        }
+        break;
+
+      case 'text':
+      default:
+        break;
+    }
+
+    return errors;
+  }
+
+  /** Throws BadRequestException when the configuration fails validation. */
+  private async assertConfigurationValid(
+    profileId: string | undefined,
+    configuration: Record<string, any> | undefined,
+    tenantId: string | undefined,
+  ): Promise<void> {
+    if (!profileId) return;
+
+    const validation = await this.validateAssetConfiguration(
+      profileId,
+      configuration,
+      tenantId,
+    );
+
+    if (!validation.valid) {
+      throw new BadRequestException(
+        `Asset configuration invalid: ${validation.errors.join('; ')}`,
+      );
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DEVICE LINKING RULES (AssetProfile.schema.deviceLinkingConfig)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Enforce the profile's device-linking constraints before attaching devices.
+   *
+   * @param incoming devices about to be attached (already excluding ones
+   *                 already on this asset)
+   */
+  private async assertDeviceLinkingAllowed(
+    asset: Asset,
+    incoming: Device[],
+  ): Promise<void> {
+    if (!asset.assetProfileId || incoming.length === 0) return;
+
+    const profile = await this.assetProfileRepository.findOne({
+      where: { id: asset.assetProfileId },
+    });
+
+    const cfg = profile?.schema?.deviceLinkingConfig;
+    if (!cfg) return;
+
+    const currentCount = await this.deviceRepository.count({
+      where: { assetId: asset.id },
+    });
+
+    if (cfg.allowMultipleDevices === false && currentCount + incoming.length > 1) {
+      throw new BadRequestException(
+        'This asset type allows only one linked device',
+      );
+    }
+
+    if (cfg.maxDevices !== undefined && currentCount + incoming.length > cfg.maxDevices) {
+      throw new BadRequestException(
+        `This asset type allows maximum ${cfg.maxDevices} devices ` +
+          `(currently ${currentCount})`,
+      );
+    }
+
+    if (cfg.deviceTypeFilter?.length) {
+      const rejected = incoming.filter(
+        (d) => !cfg.deviceTypeFilter!.includes(d.type),
+      );
+      if (rejected.length) {
+        throw new BadRequestException(
+          `This asset only allows device types: ${cfg.deviceTypeFilter.join(', ')}. ` +
+            `Rejected: ${rejected.map((d) => `${d.name} (${d.type})`).join(', ')}`,
+        );
+      }
+    }
   }
 
   /**
@@ -562,6 +798,12 @@ async findAll(
       }
     }
 
+    // Enforce the asset profile's deviceLinkingConfig. Re-assigning a device
+    // that is already on this asset is a no-op, so it is not counted.
+    if (device.assetId !== assetId) {
+      await this.assertDeviceLinkingAllowed(asset, [device]);
+    }
+
     device.assetId = assetId;
     await this.deviceRepository.save(device);
 
@@ -592,7 +834,9 @@ async findAll(
       );
     }
 
-    device.assetId = '';
+    // Must be null, not '' — assetId is a uuid FK and Postgres rejects an
+    // empty string with "invalid input syntax for type uuid".
+    device.assetId = null as unknown as undefined;
     await this.deviceRepository.save(device);
 
     // Emit event
@@ -613,12 +857,12 @@ async findAll(
   ): Promise<void> {
     const asset = await this.findOne(assetId, user);
 
+    const devices = await this.deviceRepository.find({
+      where: { id: In(deviceIds) },
+    });
+
     // Validate all devices belong to the same customer (for customer users)
     if (user.role === UserRole.CUSTOMER_USER) {
-      const devices = await this.deviceRepository.find({
-        where: { id: In(deviceIds) },
-      });
-
       const invalidDevices = devices.filter(
         (d) => d.customerId !== user.customerId,
       );
@@ -629,6 +873,13 @@ async findAll(
         );
       }
     }
+
+    // Enforce the asset profile's deviceLinkingConfig against the devices that
+    // are not already on this asset.
+    await this.assertDeviceLinkingAllowed(
+      asset,
+      devices.filter((d) => d.assetId !== assetId),
+    );
 
     await this.deviceRepository.update({ id: In(deviceIds) }, { assetId });
 

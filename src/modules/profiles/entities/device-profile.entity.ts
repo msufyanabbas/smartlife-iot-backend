@@ -3,6 +3,11 @@ import { BaseEntity } from '@common/entities/base.entity';
 import type { Relation } from 'typeorm';
 import type { Tenant } from '../../tenants/entities/tenant.entity';
 import { DeviceProvisionType, DeviceTransportType } from '@common/enums/index.enum';
+import type {
+  DeviceProfileAlarmRule,
+  DeviceProfileFirmwareConfig,
+  DeviceTransportConfiguration,
+} from '@common/interfaces/index.interface';
 
 @Entity('device_profiles')
 @Index(['tenantId', 'name'])
@@ -55,78 +60,49 @@ export class DeviceProfile extends BaseEntity {
   // TRANSPORT & PROVISION
   // ══════════════════════════════════════════════════════════════════════════
 
-  @Column({ type: 'enum', enum: DeviceTransportType, default: DeviceTransportType.MQTT })
+  /**
+   * Stored as varchar rather than a PG enum so new transports need no DB enum
+   * migration. Values are UPPERCASE (ThingsBoard contract) — the original
+   * lowercase values were converted in the DeviceAssetProfileEnhancements
+   * migration.
+   */
+  @Column({ type: 'varchar', default: DeviceTransportType.DEFAULT })
   transportType: DeviceTransportType;
 
-  @Column({ type: 'enum', enum: DeviceProvisionType, default: DeviceProvisionType.DISABLED })
+  @Column({ type: 'varchar', default: DeviceProvisionType.DISABLED })
   provisionType: DeviceProvisionType;
+
+  /**
+   * Shared key/secret a device presents to self-register under this profile.
+   * Only meaningful when provisionType !== DISABLED.
+   *
+   * NOTE: these supersede the legacy `provisionConfiguration` jsonb below,
+   * which is retained (and backfilled from) for backwards compatibility.
+   */
+  @Column({ type: 'varchar', nullable: true })
+  provisionDeviceKey?: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  provisionDeviceSecret?: string | null;
 
   // ══════════════════════════════════════════════════════════════════════════
   // TRANSPORT CONFIGURATION (Protocol Settings)
   // ══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * Protocol-specific settings. Populated with sensible defaults for the
+   * chosen `transportType` by DeviceProfilesService.getDefaultTransportConfig()
+   * when the caller does not supply one.
+   *
+   * Shape: see DeviceTransportConfiguration in
+   * src/common/interfaces/device-profile.interface.ts
+   *
+   * Example (MQTT):
+   *   { mqtt: { deviceTelemetryTopic: 'v1/devices/me/telemetry',
+   *             devicePayloadType: 'JSON' } }
+   */
   @Column({ type: 'jsonb', nullable: true })
-  transportConfiguration?: {
-    mqtt?: {
-      deviceTelemetryTopic?: string;      // WHERE device publishes telemetry
-      deviceAttributesTopic?: string;     // WHERE device reads attributes
-      deviceRpcRequestTopic?: string;     // WHERE device receives commands
-      deviceRpcResponseTopic?: string;    // WHERE device sends command responses
-      sparkplug?: boolean;                // Use Sparkplug B protocol?
-    };
-    http?: {
-      baseUrl?: string;                   // API endpoint
-      authMethod?: 'basic' | 'bearer' | 'apikey';
-      headers?: Record<string, string>;
-    };
-    coap?: {
-      powerMode?: 'PSM' | 'DRX' | 'ALWAYS_ON';  // Power Saving Mode
-      edrxCycle?: number;                 // Extended DRX cycle (seconds)
-      psmActiveTimer?: number;
-    };
-    lwm2m?: {
-      bootstrapServer?: string;
-      securityMode?: 'PSK' | 'RPK' | 'X509';
-    };
-  };
-
-  // Example for MQTT Temperature Sensor:
-  // transportConfiguration: {
-  //   mqtt: {
-  //     deviceTelemetryTopic: 'devices/temp-sensors/telemetry',
-  //     deviceAttributesTopic: 'devices/temp-sensors/attributes',
-  //     deviceRpcRequestTopic: 'devices/temp-sensors/rpc/request',
-  //     deviceRpcResponseTopic: 'devices/temp-sensors/rpc/response',
-  //     sparkplug: false
-  //   }
-  // }
-  //
-  // Example for HTTP Webhook Device:
-  // transportConfiguration: {
-  //   http: {
-  //     baseUrl: 'https://api.smartlife.sa/telemetry',
-  //     authMethod: 'bearer',
-  //     headers: {
-  //       'Content-Type': 'application/json',
-  //       'X-API-Version': 'v1'
-  //     }
-  //   }
-  // }
-  //
-  // Example for LoRaWAN (via CoAP):
-  // transportConfiguration: {
-  //   coap: {
-  //     powerMode: 'PSM',               // Power Saving Mode
-  //     edrxCycle: 20,                  // Wake every 20 seconds
-  //     psmActiveTimer: 60              // Active for 60 seconds
-  //   }
-  // }
-  //
-  // NOTE: Your MQTT service subscribes to broad patterns like:
-  // - 'devices/+/telemetry'  (catches devices/temp-sensors/telemetry)
-  // - 'sensors/+/data'       (catches sensors/ws202/data)
-  // So when you create a profile with topic 'devices/temp-sensors/telemetry',
-  // your wildcard subscription 'devices/+/telemetry' automatically catches it!
+  transportConfiguration?: DeviceTransportConfiguration | null;
 
   // ══════════════════════════════════════════════════════════════════════════
   // TELEMETRY CONFIGURATION (What data does this device send?)
@@ -218,135 +194,62 @@ export class DeviceProfile extends BaseEntity {
   // ALARM RULES (Templates for creating Alarm entities)
   // ══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * Alarm templates evaluated by ProfileAlarmService every time telemetry
+   * arrives for a device using this profile. This is NOT an alarm — when a
+   * rule matches, a concrete Alarm entity is materialised / triggered.
+   *
+   * Shape: see DeviceProfileAlarmRule in
+   * src/common/interfaces/device-profile.interface.ts
+   *
+   * Example:
+   *   [{ id: 'alarm-1', alarmType: 'High Temperature', enabled: true,
+   *      severity: 'critical', propagate: true, propagateToOwner: true,
+   *      propagateToTenant: false,
+   *      condition: { spec: { type: 'SIMPLE' }, condition: [{
+   *        key: 'temperature', type: 'TIME_SERIES', valueType: 'NUMERIC',
+   *        predicate: { operation: 'GREATER', value: { defaultValue: 40 } } }] },
+   *      clearRule: { condition: [{ key: 'temperature', type: 'TIME_SERIES',
+   *        valueType: 'NUMERIC',
+   *        predicate: { operation: 'LESS_OR_EQUAL', value: { defaultValue: 35 } } }] } }]
+   */
   @Column({ type: 'jsonb', nullable: true })
-  alarmRules?: Array<{
-    id: string;
-    alarmType: string;
-    severity: 'CRITICAL' | 'MAJOR' | 'MINOR' | 'WARNING' | 'INDETERMINATE';
-    createCondition: {
-      condition: Array<{
-        key: { key: string; type: string };
-        valueType: string;
-        predicate: {
-          operation: string;
-          value: any;
-        };
-      }>;
-      spec?: {
-        type: string;
-      };
-    };
-    clearCondition?: any;
-    propagate?: boolean;
-    propagateRelationTypes?: string[];
-  }>;
-
-  // Example:
-  // alarmRules: [
-  //   {
-  //     id: 'high-temp-alarm',
-  //     alarmType: 'HIGH_TEMPERATURE',
-  //     severity: 'CRITICAL',
-  //     createCondition: {
-  //       condition: [
-  //         {
-  //           key: { key: 'temperature', type: 'TIME_SERIES' },
-  //           valueType: 'NUMERIC',
-  //           predicate: {
-  //             operation: 'GREATER',
-  //             value: { defaultValue: 35 }
-  //           }
-  //         }
-  //       ],
-  //       spec: { type: 'SIMPLE' }
-  //     },
-  //     clearCondition: {
-  //       condition: [
-  //         {
-  //           key: { key: 'temperature', type: 'TIME_SERIES' },
-  //           predicate: {
-  //             operation: 'LESS_OR_EQUAL',
-  //             value: { defaultValue: 30 }
-  //           }
-  //         }
-  //       ]
-  //     },
-  //     propagate: true,
-  //     propagateRelationTypes: ['Contains']
-  //   }
-  // ]
-  //
-  // NOTE: This is a TEMPLATE. When temperature > 35°C:
-  // 1. System reads this rule from DeviceProfile
-  // 2. Creates an actual Alarm ENTITY with status='ACTIVE'
-  // 3. When temperature drops to 30°C, Alarm entity status → 'CLEARED'
+  alarmRules?: DeviceProfileAlarmRule[] | null;
 
   // ══════════════════════════════════════════════════════════════════════════
-  // PROVISIONING (How new devices register)
+  // PROVISIONING (legacy jsonb — superseded by provisionDeviceKey/Secret)
   // ══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * @deprecated Use `provisionType` + `provisionDeviceKey` +
+   * `provisionDeviceSecret`. Retained so seeded rows are not lost; the
+   * DeviceAssetProfileEnhancements migration backfills the flat columns
+   * from this object.
+   */
   @Column({ type: 'jsonb', nullable: true })
   provisionConfiguration?: {
-    type?: 'DISABLED' | 'ALLOW_CREATE_NEW_DEVICES' | 'CHECK_PRE_PROVISIONED_DEVICES';
-    provisionDeviceKey?: string;        // Shared key for all devices of this profile
-    provisionDeviceSecret?: string;     // Shared secret
-  };
-
-  // Example for Auto-Provisioning:
-  // provisionConfiguration: {
-  //   type: 'ALLOW_CREATE_NEW_DEVICES',
-  //   provisionDeviceKey: 'smart-life-temp-sensors',
-  //   provisionDeviceSecret: 'abc123xyz'
-  // }
-  //
-  // How it works:
-  // 1. New device connects with key='smart-life-temp-sensors' and secret='abc123xyz'
-  // 2. Server checks: Does this match a DeviceProfile?
-  // 3. Server auto-creates Device entity with this profile
-  //
-  // Example for Pre-Provisioned Only:
-  // provisionConfiguration: {
-  //   type: 'CHECK_PRE_PROVISIONED_DEVICES'
-  // }
-  // → Device MUST be manually added to DB before it can connect
+    type?: string;
+    provisionDeviceKey?: string;
+    provisionDeviceSecret?: string;
+  } | null;
 
   // ══════════════════════════════════════════════════════════════════════════
-  // FIRMWARE OTA UPDATES
+  // QUEUE, DASHBOARD & OTA
   // ══════════════════════════════════════════════════════════════════════════
 
-  @Column({ type: 'jsonb', nullable: true })
-  firmwareConfiguration?: {
-    defaultFirmwareId?: string;         // Which firmware to use
-    firmwareUpdateStrategy?: 'immediately' | 'on_connect' | 'scheduled';
-    scheduledTime?: string;             // "02:00" (2 AM daily)
-  };
-
-  // Example:
-  // firmwareConfiguration: {
-  //   defaultFirmwareId: 'fw-ws202-v1.2.3',
-  //   firmwareUpdateStrategy: 'on_connect',
-  //   scheduledTime: '02:00'
-  // }
-  //
-  // How it works:
-  // 1. Device connects and reports: firmwareVersion='1.0.0'
-  // 2. Server checks: defaultFirmwareId points to 'fw-ws202-v1.2.3'
-  // 3. Server sends: "Update firmware to v1.2.3 from https://firmware.smartlife.sa/..."
-  // 4. Device downloads, updates, reboots
-  // 5. Device reconnects and reports: firmwareVersion='1.2.3'
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // RULE CHAINS & DASHBOARDS 
-  // ══════════════════════════════════════════════════════════════════════════
+  /** Kafka queue this profile's telemetry is routed to. */
+  @Column({ type: 'varchar', nullable: true })
+  queueName?: string | null;
 
   @Column({ nullable: true })
   defaultRuleChainId?: string;
 
-  @Column({ nullable: true })
-  defaultDashboardId?: string;
+  @Column({ type: 'uuid', nullable: true })
+  defaultDashboardId?: string | null;
 
-  @Column({ nullable: true })
-  defaultQueueName?: string;
+  /** Firmware package pushed to devices of this profile. */
+  @Column({ type: 'jsonb', nullable: true })
+  firmwareConfig?: DeviceProfileFirmwareConfig | null;
 
   // ══════════════════════════════════════════════════════════════════════════
   // METADATA

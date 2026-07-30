@@ -11,7 +11,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import { Asset, Device, User } from '@modules/index.entities';
+import { Asset, Device, DeviceProfile, User } from '@modules/index.entities';
 import { DeviceStatus } from '@common/enums/index.enum';
 import { CreateDeviceDto } from '@modules/devices/dto/create-device.dto';
 import { UpdateDeviceDto } from '@modules/devices/dto/update-device.dto';
@@ -25,6 +25,7 @@ import { UsersService } from '@modules/users/users.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as crypto from 'crypto';
 import { CodecRegistryService } from './codecs/codec-registry.service';
+import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
 
 @Injectable()
 export class DevicesService {
@@ -35,6 +36,8 @@ export class DevicesService {
     private deviceRepository: Repository<Device>,
     @InjectRepository(Asset)
     private assetRepository: Repository<Asset>,
+    @InjectRepository(DeviceProfile)
+    private deviceProfileRepository: Repository<DeviceProfile>,
     @Inject(ConfigService)
     private configService: ConfigService,
      @Inject(forwardRef(() => UsersService))
@@ -47,6 +50,8 @@ export class DevicesService {
     private codecRegistry: CodecRegistryService,
     @Inject(SubscriptionsService)
     private subscriptionsService: SubscriptionsService,
+    @Inject(ProfileAlarmService)
+    private profileAlarmService: ProfileAlarmService,
   ) {}
 
   /**
@@ -82,6 +87,21 @@ export class DevicesService {
 
     if (dto.assetId) {
       await this.assertAssetInTenant(dto.assetId, user.tenantId);
+    }
+
+    // Resolve the profile up front so an unknown/foreign id fails before the
+    // device row (and its credentials) are written.
+    let deviceProfile: DeviceProfile | null = null;
+    if (dto.deviceProfileId) {
+      deviceProfile = await this.deviceProfileRepository.findOne({
+        where: { id: dto.deviceProfileId, tenantId: user.tenantId },
+      });
+
+      if (!deviceProfile) {
+        throw new NotFoundException(
+          'Device profile not found for this tenant',
+        );
+      }
     }
 
     // ── Resolve codecId from manufacturer + model ─────────────────────────
@@ -132,6 +152,22 @@ export class DevicesService {
       'devices',
       1,
     );
+
+    // Materialise the profile's alarm rules as dormant Alarm rows so the
+    // device's alarm list shows what is being watched before anything fires.
+    // Non-fatal: a device must still be creatable if alarm seeding fails.
+    if (deviceProfile) {
+      try {
+        savedDevice.deviceProfile = deviceProfile;
+        await this.profileAlarmService.materialiseProfileAlarms(savedDevice);
+      } catch (err) {
+        this.logger.error(
+          `Failed to materialise profile alarms for ${savedDevice.deviceKey}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
 
     // Create credentials — pass the full user object so verifyAccess works
     await this.credentialsService.createCredentials(savedDevice);
