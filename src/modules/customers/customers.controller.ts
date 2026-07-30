@@ -113,24 +113,15 @@ export class CustomersController {
     @Query('tenantId') tenantId?: string,
     @Query('isPublic') isPublic?: boolean,
   ) {
-    const result = await this.customersService.findAll({
+    // Returned as-is: the service already produces the standard
+    // { data, meta } PaginatedResponseDto envelope.
+    return this.customersService.findAll({
       page: page ? +page : undefined,
       limit: limit ? +limit : undefined,
       search,
       status,
       isPublic: isPublic !== undefined ? isPublic === true : undefined,
     }, user.tenantId);
-
-    return {
-      message: 'Customers retrieved successfully',
-      data: result.customers,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
   }
 
   /**

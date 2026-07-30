@@ -10,8 +10,9 @@ import { ShareType } from '@common/enums/index.enum';
 import { Share } from '../index.entities';
 import { CreateShareDto } from './dto/create-sharing.dto';
 import { UpdateShareDto } from './dto/update-sharing.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginationDto, PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { v4 as uuidv4 } from 'uuid';
+
 
 @Injectable()
 export class SharingService {
@@ -72,13 +73,7 @@ export class SharingService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async findOne(id: string, userId: string): Promise<Share> {
@@ -207,13 +202,7 @@ export class SharingService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async revokeByResourceId(

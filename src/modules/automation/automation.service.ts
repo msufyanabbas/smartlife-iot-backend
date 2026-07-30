@@ -11,7 +11,8 @@ import { Automation } from '@modules/index.entities';
 import { AutomationStatus, UserRole } from '@common/enums/index.enum';
 import { CreateAutomationDto } from './dto/create-automation.dto';
 import { UpdateAutomationDto } from './dto/update-automation.dto';
-import { PaginationDto } from '@common/dto/pagination.dto';
+import { PaginationDto, PaginatedResponseDto } from '@common/dto/pagination.dto';
+
 
 @Injectable()
 export class AutomationService {
@@ -96,13 +97,7 @@ export class AutomationService {
 
     const [data, total] = await qb.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async findOne(

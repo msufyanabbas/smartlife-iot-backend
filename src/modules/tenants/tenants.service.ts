@@ -9,7 +9,8 @@ import { Tenant } from './entities/tenant.entity';
 import { TenantStatus } from '@/common/enums/index.enum';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
-import { PaginationDto } from '@common/dto/pagination.dto';
+import { PaginationDto, PaginatedResponseDto } from '@common/dto/pagination.dto';
+
 
 @Injectable()
 export class TenantsService {
@@ -68,13 +69,7 @@ export class TenantsService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async findOne(id: string | undefined): Promise<Tenant> {

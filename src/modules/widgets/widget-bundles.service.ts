@@ -14,6 +14,7 @@ import {
   UpdateWidgetBundleDto,
   QueryWidgetBundlesDto,
 } from './dto/widgets.dto';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class WidgetBundlesService {
@@ -40,13 +41,9 @@ export class WidgetBundlesService {
     return saved;
   }
 
-  async findAll(queryDto: QueryWidgetBundlesDto): Promise<{
-    bundles: WidgetBundle[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
+  async findAll(
+    queryDto: QueryWidgetBundlesDto,
+  ): Promise<PaginatedResponseDto<WidgetBundle>> {
     const page = queryDto.page ?? 1;
     const limit = queryDto.limit ?? 10;
     const skip = (page - 1) * limit;
@@ -76,7 +73,7 @@ export class WidgetBundlesService {
       .addOrderBy('bundle.title', 'ASC')
       .getMany();
 
-    return { bundles, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return PaginatedResponseDto.create(bundles, page, limit, total);
   }
 
   async findOne(id: string): Promise<WidgetBundle> {

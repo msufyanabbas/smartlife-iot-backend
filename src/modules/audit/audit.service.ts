@@ -6,6 +6,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AuditAction, AuditEntityType, AuditSeverity, UserRole } from '@common/enums/index.enum';
 import { AuditLog, User, Customer } from '@modules/index.entities';
 import { CreateAuditLogDto, QueryAuditLogsDto } from './dto/audit.dto';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 export interface AuditContext {
   user: User;
@@ -230,13 +231,7 @@ export class AuditService {
   async findAll(
     queryDto: QueryAuditLogsDto,
     currentUser: User,
-  ): Promise<{
-    logs: AuditLog[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
+  ): Promise<PaginatedResponseDto<AuditLog>> {
     // Build audit context from current user
     const context = await this.buildAuditContext(currentUser);
 
@@ -312,13 +307,7 @@ export class AuditService {
       .take(limit)
       .getMany();
 
-    return {
-      logs,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(logs, page, limit, total);
   }
 
   /**
@@ -667,7 +656,7 @@ export class AuditService {
     queryDto: QueryAuditLogsDto,
     currentUser: User,
   ): Promise<string> {
-    const { logs } = await this.findAll(
+    const { data: logs } = await this.findAll(
       { ...queryDto, limit: 10000 },
       currentUser,
     );

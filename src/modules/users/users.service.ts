@@ -37,6 +37,7 @@ import { MailService } from '../../modules/mail/mail.service';
 import { Permission } from '../permissions/entities/permissions.entity';
 import { Role } from '../roles/entities/roles.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class UsersService {
@@ -95,13 +96,7 @@ export class UsersService {
     role?: UserRole;
     status?: UserStatus;
     tenantId?: string;
-  }): Promise<{
-    users: User[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
+  }): Promise<PaginatedResponseDto<User>> {
     const page = options.page || 1;
     const limit = options.limit || 10;
     const skip = (page - 1) * limit;
@@ -142,13 +137,7 @@ export class UsersService {
       .orderBy('user.createdAt', 'DESC')
       .getMany();
 
-    return {
-      users,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(users, page, limit, total);
   }
 
   /**

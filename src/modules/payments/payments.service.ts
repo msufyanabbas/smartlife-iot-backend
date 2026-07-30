@@ -22,6 +22,7 @@ import {
   RefundPaymentDto,
 } from './dto/create-payment.dto';
 import { SubscriptionPlan, BillingPeriod } from '@common/enums/index.enum'
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class PaymentsService {
@@ -497,7 +498,7 @@ export class PaymentsService {
     userId: string,
     page: number = 1,
     limit: number = 10,
-  ) {
+  ): Promise<PaginatedResponseDto<Payment>> {
     const [payments, total] = await this.paymentRepository.findAndCount({
       where: { userId },
       order: { createdAt: 'DESC' },
@@ -505,15 +506,7 @@ export class PaymentsService {
       take: limit,
     });
 
-    return {
-      payments,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+    return PaginatedResponseDto.create(payments, page, limit, total);
   }
 
   /**

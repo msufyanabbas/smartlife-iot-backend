@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Image } from './entities/image.entity';
 import { CreateImageDto } from './dto/create-image.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginationDto, PaginatedResponseDto } from '../../common/dto/pagination.dto';
 
 @Injectable()
 export class ImagesService {
@@ -51,13 +51,7 @@ export class ImagesService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async findOne(id: string, userId: string): Promise<Image> {

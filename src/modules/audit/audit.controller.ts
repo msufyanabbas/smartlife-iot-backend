@@ -95,21 +95,16 @@ export class AuditController {
     @CurrentUser() user: User,
   ) {
     const result = await this.auditService.findAll(queryDto, user);
-    return {
-      message: 'Audit logs retrieved successfully',
-      data: result.logs,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-        context: {
-          role: user.role,
-          tenantId: user.tenantId,
-          customerId: user.customerId,
-        },
+    // Standard { data, meta } envelope. `context` echoes back which role-based
+    // filter was applied — carried alongside rather than inside meta, which is
+    // strictly page metadata.
+    return Object.assign(result, {
+      context: {
+        role: user.role,
+        tenantId: user.tenantId,
+        customerId: user.customerId,
       },
-    };
+    });
   }
 
   // ============================================
@@ -152,16 +147,8 @@ export class AuditController {
       },
     );
 
-    return {
-      message: 'User module audit logs retrieved successfully',
-      data: result.logs,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
+    // findAll() already returns the standard { data, meta } envelope.
+    return result;
   }
 
   /**
@@ -200,16 +187,8 @@ export class AuditController {
       },
     );
 
-    return {
-      message: 'Device module audit logs retrieved successfully',
-      data: result.logs,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
+    // findAll() already returns the standard { data, meta } envelope.
+    return result;
   }
 
   /**
@@ -241,16 +220,8 @@ export class AuditController {
       },
     );
 
-    return {
-      message: 'Alarm module audit logs retrieved successfully',
-      data: result.logs,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
+    // findAll() already returns the standard { data, meta } envelope.
+    return result;
   }
 
   /**
@@ -281,16 +252,8 @@ export class AuditController {
       },
     );
 
-    return {
-      message: 'Device profile module audit logs retrieved successfully',
-      data: result.logs,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
+    // findAll() already returns the standard { data, meta } envelope.
+    return result;
   }
 
   /**
@@ -322,16 +285,8 @@ export class AuditController {
       },
     );
 
-    return {
-      message: 'Asset module audit logs retrieved successfully',
-      data: result.logs,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
+    // findAll() already returns the standard { data, meta } envelope.
+    return result;
   }
 
   /**
@@ -363,16 +318,8 @@ export class AuditController {
       },
     );
 
-    return {
-      message: 'Dashboard module audit logs retrieved successfully',
-      data: result.logs,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
+    // findAll() already returns the standard { data, meta } envelope.
+    return result;
   }
 
   /**
@@ -400,16 +347,8 @@ export class AuditController {
       },
     );
 
-    return {
-      message: 'Customer module audit logs retrieved successfully',
-      data: result.logs,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
+    // findAll() already returns the standard { data, meta } envelope.
+    return result;
   }
 
   // ============================================

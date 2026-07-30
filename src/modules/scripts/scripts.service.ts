@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { Script } from './entities/script.entity';
 import { CreateScriptDto } from './dto/create-script.dto';
 import { UpdateScriptDto } from './dto/update-script.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginationDto, PaginatedResponseDto } from '../../common/dto/pagination.dto';
 
 @Injectable()
 export class ScriptsService {
@@ -60,13 +60,7 @@ export class ScriptsService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async findOne(id: string, userId: string): Promise<Script> {

@@ -29,6 +29,7 @@ import { NotificationsRepository } from './repositories/notifications.repository
 import { UserRole } from '@common/enums/index.enum';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { UsersService } from '@modules/users/users.service';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class NotificationsService {
@@ -203,14 +204,13 @@ export class NotificationsService {
       this.notificationsRepo.getCountForUser(user, { type, status, isRead }),
     ]);
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-      unreadCount: await this.getUnreadCount(user),
-    };
+    // Standard { data, meta } wrapper. `unreadCount` is carried alongside it
+    // rather than dropped — it is a genuine payload the notification bell needs,
+    // and it does not belong in PaginationMetaDto (it is not page-scoped).
+    return Object.assign(
+      PaginatedResponseDto.create(data, page, limit, total),
+      { unreadCount: await this.getUnreadCount(user) },
+    );
   }
 
   /**

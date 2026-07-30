@@ -15,6 +15,7 @@ import {
   UpdateWidgetTypeDto,
   QueryWidgetTypesDto,
 } from './dto/widgets.dto';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class WidgetTypesService {
@@ -54,13 +55,9 @@ export class WidgetTypesService {
   /**
    * Find all widget types with filters
    */
-  async findAll(queryDto: QueryWidgetTypesDto): Promise<{
-    widgetTypes: WidgetType[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
+  async findAll(
+    queryDto: QueryWidgetTypesDto,
+  ): Promise<PaginatedResponseDto<WidgetType>> {
     const page = queryDto.page || 1;
     const limit = queryDto.limit || 10;
     const skip = (page - 1) * limit;
@@ -113,13 +110,7 @@ export class WidgetTypesService {
       .orderBy('widget.createdAt', 'DESC')
       .getMany();
 
-    return {
-      widgetTypes,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(widgetTypes, page, limit, total);
   }
 
   /**

@@ -14,6 +14,7 @@ import {
   RuleChainQueryDto,
 } from './dto/rule-chain.dto';
 import { Node } from '../nodes/entities/node.entity';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class RulesService {
@@ -92,13 +93,7 @@ export class RulesService {
 
     const [data, total] = await qb.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async findOne(tenantId: string, id: string): Promise<RuleChain> {

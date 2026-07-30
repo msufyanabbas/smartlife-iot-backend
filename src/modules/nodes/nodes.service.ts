@@ -5,7 +5,7 @@ import { Node } from './entities/node.entity';
 import { NodeType } from '@common/enums/index.enum';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginationDto, PaginatedResponseDto } from '../../common/dto/pagination.dto';
 
 @Injectable()
 export class NodesService {
@@ -60,13 +60,7 @@ export class NodesService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async findByRuleChain(

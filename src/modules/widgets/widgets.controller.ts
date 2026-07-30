@@ -64,17 +64,9 @@ export class WidgetsController {
   @Get('types')
   @ApiOperation({ summary: 'Get all widget types' })
   async findAllWidgetTypes(@Query() queryDto: QueryWidgetTypesDto) {
-    const result = await this.widgetTypesService.findAll(queryDto);
-    return {
-      message: 'Widget types retrieved successfully',
-      data: result.widgetTypes,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
+    // Returned as-is: the service already produces the standard
+    // { data, meta } PaginatedResponseDto envelope.
+    return this.widgetTypesService.findAll(queryDto);
   }
 
   @Get('types/statistics')
@@ -163,17 +155,9 @@ export class WidgetsController {
   @Get('bundles')
   @ApiOperation({ summary: 'Get all widget bundles' })
   async findAllWidgetBundles(@Query() queryDto: QueryWidgetBundlesDto) {
-    const result = await this.widgetBundlesService.findAll(queryDto);
-    return {
-      message: 'Widget bundles retrieved successfully',
-      data: result.bundles,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
+    // Returned as-is: the service already produces the standard
+    // { data, meta } PaginatedResponseDto envelope.
+    return this.widgetBundlesService.findAll(queryDto);
   }
 
   @Get('bundles/statistics')

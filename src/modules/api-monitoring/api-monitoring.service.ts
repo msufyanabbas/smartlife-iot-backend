@@ -5,6 +5,7 @@ import { Repository, Between, MoreThan, LessThan } from 'typeorm';
 import { APILog, Tenant } from '@modules/index.entities';
 import { APILogFilterDto } from './dto/api-log-filter.dto';
 import { Cron } from '@nestjs/schedule';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class ApiMonitoringService {
@@ -82,13 +83,7 @@ export class ApiMonitoringService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   /**
@@ -140,13 +135,7 @@ export class ApiMonitoringService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   /**
@@ -374,13 +363,7 @@ export class ApiMonitoringService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   /**
@@ -417,13 +400,7 @@ export class ApiMonitoringService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   /**

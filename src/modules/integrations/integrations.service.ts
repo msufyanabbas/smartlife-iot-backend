@@ -14,7 +14,7 @@ import { Integration } from './entities/integration.entity';
 import { IntegrationStatus, IntegrationType } from '@common/enums/index.enum';
 import { CreateIntegrationDto } from './dto/create-integration.dto';
 import { UpdateIntegrationDto } from './dto/update-integration.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginationDto, PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { IntegrationActivityDto } from './dto/integration-activity.dto';
 
 type ConnectionTestResult = {
@@ -83,13 +83,7 @@ export class IntegrationsService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async findOne(id: string, userId: string): Promise<Integration> {
@@ -391,13 +385,7 @@ export class IntegrationsService {
 
     const data = integrations.map((i) => this.toActivity(i));
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   /**

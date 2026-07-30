@@ -105,7 +105,9 @@ export class UsersController {
   @ApiOperation({ summary: 'Get all users' })
   @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
   async findAll(@CurrentUser() user: User, @Query() queryDto: QueryUsersDto) {
-    const result = await this.usersService.findAll({
+    // Returned as-is: the service already produces the standard
+    // { data, meta } PaginatedResponseDto envelope.
+    return this.usersService.findAll({
       page: queryDto.page,
       limit: queryDto.limit,
       search: queryDto.search,
@@ -113,16 +115,6 @@ export class UsersController {
       status: queryDto.status,
       tenantId: user.tenantId,
     });
-    return {
-      message: 'Users retrieved successfully',
-      data: result.users,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        totalPages: result.totalPages,
-      },
-    };
   }
 
   /**

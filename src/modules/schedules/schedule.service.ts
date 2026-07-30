@@ -11,9 +11,10 @@ import {
 } from './entities/schedule-execution-log.entity';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginationDto, PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { ScheduleExecutorService } from './schedule-executor.service';
 import { ScheduleCronService } from './schedule-cron.service';
+
 
 @Injectable()
 export class SchedulesService {
@@ -87,13 +88,7 @@ export class SchedulesService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async findOne(id: string, userId: string, tenantId: string): Promise<Schedule> {

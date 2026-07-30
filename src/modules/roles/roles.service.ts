@@ -9,6 +9,7 @@ import { UpdateRoleDto } from './dto/update-role.dto';
 import { QueryRoleDto } from './dto/query-role.dto';
 import { AssignPermissionsDto } from './dto/assign-permissions.dto';
 import { User } from '../index.entities';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class RolesService {
@@ -124,17 +125,13 @@ async findAll(queryDto: QueryRoleDto, user: User) {
     customCountQuery.getCount(),
   ]);
 
-  return {
-    data,
-    meta: {
-      total,
-      systemRoles,
-      customRoles,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    },
-  };
+  // Standard { data, meta } wrapper. The systemRoles / customRoles breakdown is
+  // carried alongside it rather than dropped — those are whole-collection counts,
+  // not page-scoped metadata, so they do not belong in PaginationMetaDto.
+  return Object.assign(
+    PaginatedResponseDto.create(data, page, limit, total),
+    { systemRoles, customRoles },
+  );
 }
 
   async findOne(id: string): Promise<Role> {

@@ -25,6 +25,7 @@ import { Roles } from '@/common/decorators/roles.decorator';
 import { UserRole } from '@common/enums/index.enum';
 import { CodecRegistryService } from './codec-registry.service';
 import { SwaggerAuth } from '@/common/decorators/access-control.decorator';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @ApiTags('Codecs')
 @Controller('codecs')
@@ -192,7 +193,10 @@ getStructuredCatalog() {
   @ApiOperation({ summary: 'List all registered codecs (raw)' })
   listCodecs() {
     const codecs = this.codecRegistry.listCodecs();
-    return { data: codecs, total: codecs.length };
+    // Not a paged query — the whole registry is returned. Wrapped in the
+    // standard envelope anyway so every list endpoint has one shape;
+    // meta reports a single page covering all codecs.
+    return PaginatedResponseDto.create(codecs, 1, codecs.length || 1, codecs.length);
   }
 
   @Post('test-decode')

@@ -23,6 +23,7 @@ import { TenantsService } from '../tenants/tenants.service';
 import { UsersService } from '../users/users.service';
 import { SubscriptionsService } from '../index.service';
 import { SubscriptionLimits, SubscriptionUsage } from '@/common/interfaces/subscription.interface';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 @Injectable()
 export class CustomersService {
    private readonly logger = new Logger(CustomersService.name);
@@ -234,13 +235,7 @@ export class CustomersService {
     search?: string;
     status?: CustomerStatus;
     isPublic?: boolean;
-  }, tenantId: string | undefined): Promise<{
-    customers: Customer[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
+  }, tenantId: string | undefined): Promise<PaginatedResponseDto<Customer>> {
     const page = options.page || 1;
     const limit = options.limit || 10;
     const skip = (page - 1) * limit;
@@ -283,13 +278,7 @@ export class CustomersService {
       .orderBy('customer.createdAt', 'DESC')
       .getMany();
 
-    return {
-      customers,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(customers, page, limit, total);
   }
 
   /**

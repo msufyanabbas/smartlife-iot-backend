@@ -460,7 +460,7 @@ private usersService: UsersService,
     // Super Admin: all customers
     if (user.role === UserRole.SUPER_ADMIN) {
       const result = await this.customersService.findAll({}, user.tenantId);
-      return result.customers;
+      return result.data;
     }
 
     // Tenant Admin: all customers in their tenant

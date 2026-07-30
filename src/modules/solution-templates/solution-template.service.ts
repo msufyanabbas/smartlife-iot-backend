@@ -1040,13 +1040,7 @@ export class SolutionTemplatesService {
     tenantId: string,
     page = 1,
     limit = 20,
-  ): Promise<{
-    data: TemplateInstallation[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
+  ): Promise<PaginatedResponseDto<TemplateInstallation>> {
     const skip = (page - 1) * limit;
 
     const [data, total] = await this.installationRepo
@@ -1064,7 +1058,7 @@ export class SolutionTemplatesService {
       .take(limit)
       .getManyAndCount();
 
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   // ── Categories / statistics ───────────────────────────────────────────────

@@ -20,7 +20,7 @@ import { KafkaService } from '@/lib/kafka/kafka.service';
 import { CreateFirmwareDto } from './dto/create-firmware.dto';
 import { AssignFirmwareDto } from './dto/assign-firmware.dto';
 import { OtaStatusDto } from './dto/ota-status.dto';
-import { PaginationDto } from '@common/dto/pagination.dto';
+import { PaginationDto, PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 export const FIRMWARE_UPDATE_TOPIC = 'firmware.update';
 export const FIRMWARE_STATUS_TOPIC = 'firmware.status';
@@ -110,7 +110,7 @@ export class FirmwareService {
       .take(limit);
 
     const [data, total] = await qb.getManyAndCount();
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async findOne(id: string, tenantId: string | undefined): Promise<Firmware> {

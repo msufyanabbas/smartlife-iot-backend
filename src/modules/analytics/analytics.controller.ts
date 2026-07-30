@@ -56,10 +56,11 @@ export class AnalyticsController {
   @Get()
   @ApiOperation({ summary: 'Query analytics records' })
   async findAll(@CurrentUser() user: User, @Query() dto: QueryAnalyticsDto) {
-    const result = await this.analyticsService.findAll(
+    // Returned as-is: the service already produces the standard
+    // { data, meta } PaginatedResponseDto envelope.
+    return this.analyticsService.findAll(
       this.tenantId(user), dto, user.customerId,
     );
-    return { message: 'Analytics retrieved', data: result.data, meta: result };
   }
 
   // ── overview ──────────────────────────────────────────────────────────────

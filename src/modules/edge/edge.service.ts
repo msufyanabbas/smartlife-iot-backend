@@ -19,9 +19,10 @@ import { UpdateEdgeInstanceDto } from './dto/update-edge-instance.dto';
 import { HeartbeatDto } from './dto/heartbeat.dto';
 import { DispatchCommandDto } from './dto/dispatch-command.dto';
 import { AckCommandDto } from './dto/ack-command.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginationDto, PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { EdgeStatus } from '@common/enums/edge.enum';
 import { Device } from '@modules/devices/entities/device.entity';
+
 
 @Injectable()
 export class EdgeService {
@@ -110,13 +111,7 @@ async findAll(
 
   data.forEach((e) => { e.edgeToken = undefined as any; });
 
-  return {
-    data,
-    total,
-    page,
-    limit,
-    totalPages: Math.ceil(total / limit),
-  };
+  return PaginatedResponseDto.create(data, page, limit, total);
 }
 
 async findOne(

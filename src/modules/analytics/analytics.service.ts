@@ -29,6 +29,7 @@ import {
   EnergyAnalyticsQueryDto,
   GeoAnalyticsQueryDto,
 } from './dto/analytics.dto';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 // Average telemetry payload size estimate in bytes
 const AVG_TELEMETRY_PAYLOAD_BYTES = 250;
@@ -121,7 +122,7 @@ export class AnalyticsService {
       .take(limit)
       .getMany();
 
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async deleteOld(tenantId: string | undefined, daysOld: number): Promise<number> {

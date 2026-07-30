@@ -18,6 +18,7 @@ import {
 } from './dto/alarm.dto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User } from '@modules/users/entities/user.entity';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class AlarmsService {
@@ -145,13 +146,7 @@ export class AlarmsService {
 
     const [data, total] = await queryBuilder.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   /**
