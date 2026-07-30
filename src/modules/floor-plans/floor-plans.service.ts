@@ -32,7 +32,10 @@ import {
 import { PlaceDeviceDto, UpdatePlacementDto } from './dto/place-device.dto';
 import { UpdateFloorPlanDto } from './dto/update-floor-plan.dto';
 import { UpdateFloorPlanSettingsDto } from './dto/floor-plan-settings.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import {
+  PaginationDto,
+  PaginatedResponseDto,
+} from '../../common/dto/pagination.dto';
 import { DWGParserService } from './dwg-parser.service';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs/promises';
@@ -332,7 +335,7 @@ export class FloorPlansService {
     tenantId: string,
     paginationDto: PaginationDto,
     assetId?: string,
-  ) {
+  ): Promise<PaginatedResponseDto<FloorPlan>> {
     const {
       page = 1,
       limit = 10,
@@ -373,13 +376,7 @@ export class FloorPlansService {
 
     const [data, total] = await qb.getManyAndCount();
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   /** Raw entity fetch, tenant-scoped, with the asset joined. */

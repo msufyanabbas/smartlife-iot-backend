@@ -28,6 +28,7 @@ import type {
   EnrichedDashboardWidget,
 } from './interfaces/dashboard-widget.interface';
 import { User } from '../index.entities';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 import { WidgetType } from '@modules/widgets/entities/widget-type.entity';
 import { Device } from '@modules/devices/entities/device.entity';
 import { WebsocketGateway } from '@modules/websocket/websocket.gateway';
@@ -68,7 +69,10 @@ export class DashboardsService {
 
   // ── Find all ──────────────────────────────────────────────────────────────
 
-  async findAll(user: User, query: DashboardQueryDto) {
+  async findAll(
+    user: User,
+    query: DashboardQueryDto,
+  ): Promise<PaginatedResponseDto<Dashboard>> {
     const { page = 1, limit = 10, search, visibility, isFavorite, tags } = query;
 
     const qb = this.dashboardRepository.createQueryBuilder('dashboard');
@@ -117,7 +121,7 @@ export class DashboardsService {
 
     const [data, total] = await qb.getManyAndCount();
 
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   // ── Find one ──────────────────────────────────────────────────────────────

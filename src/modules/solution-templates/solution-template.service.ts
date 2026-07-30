@@ -30,6 +30,7 @@ import {
 } from '@common/enums/index.enum';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import type { SubscriptionLimits } from '@common/interfaces/index.interface';
+import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 import {
   CreateSolutionTemplateDto,
@@ -42,6 +43,27 @@ import {
   type TemplateConfiguration,
   type InstallResult,
 } from './interfaces/template-configuration.interface';
+
+/** An entity's data properties, without its instance methods. */
+type PlainEntity<T> = {
+  [K in keyof T as T[K] extends (...args: any[]) => any ? never : K]: T[K];
+};
+
+/**
+ * A template as returned by the catalogue listing: the entity's data plus this
+ * tenant's ACTIVE installation, so a card can render "Installed / Uninstall"
+ * without a follow-up request.
+ *
+ * Spread from the entity, so instance methods (isUserTemplate, save, …) are
+ * intentionally absent.
+ */
+export type CatalogueTemplate = PlainEntity<SolutionTemplate> & {
+  myInstallation: Pick<
+    TemplateInstallation,
+    'id' | 'templateId' | 'installationName' | 'installedAt'
+  > | null;
+  isInstalled: boolean;
+};
 
 @Injectable()
 export class SolutionTemplatesService {
@@ -149,7 +171,10 @@ export class SolutionTemplatesService {
 
   // ── Read ──────────────────────────────────────────────────────────────────
 
-  async findAll(tenantId: string, filters?: FindAllTemplatesDto) {
+  async findAll(
+    tenantId: string,
+    filters?: FindAllTemplatesDto,
+  ): Promise<PaginatedResponseDto<CatalogueTemplate>> {
     const { page = 1, limit = 12, search, category, isPremium } = filters || {};
     const skip = (page - 1) * limit;
 
@@ -193,13 +218,13 @@ export class SolutionTemplatesService {
       activeInstallations.map((i) => [i.templateId, i]),
     );
 
-    const data = templates.map((template) => ({
+    const data: CatalogueTemplate[] = templates.map((template) => ({
       ...template,
       myInstallation: installMap.get(template.id) ?? null,
       isInstalled: installMap.has(template.id),
     }));
 
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   async findOne(id: string, tenantId: string): Promise<SolutionTemplate> {
