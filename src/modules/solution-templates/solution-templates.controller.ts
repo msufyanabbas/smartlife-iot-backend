@@ -9,9 +9,20 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+  Res,
 } from '@nestjs/common';
-import { ApiTags, ApiResponse } from '@nestjs/swagger';
-import { SolutionTemplatesService } from './solution-template.service';
+import { ApiTags, ApiResponse, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { File as MulterFile } from 'multer';
+import type { Response } from 'express';
+import { createReadStream } from 'fs';
+import {
+  SolutionTemplatesService,
+  MAX_IMAGE_BYTES,
+} from './solution-template.service';
 import {
   CreateSolutionTemplateDto,
   InstallTemplateDto,
@@ -21,6 +32,7 @@ import { RateTemplateDto } from './dto/rate-template.dto';
 import { FindAllTemplatesDto } from './dto/find-all-templates.dto';
 import { FindInstallationsDto } from './dto/find-installations.dto';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
+import { Roles } from '@common/decorators/roles.decorator';
 import {
   TenantOrCustomerAdmin,
   SwaggerAuth,
@@ -176,6 +188,86 @@ export class SolutionTemplatesController {
     @Param('id', ParseIdPipe) id: string,
   ) {
     return this.solutionTemplatesService.remove(id, userId, tenantId, role);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // TEMPLATE IMAGE
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // SUPER_ADMIN is listed explicitly: @TenantOrCustomerAdmin() resolves to
+  // Roles(TENANT_ADMIN, CUSTOMER) and would otherwise block the super admin,
+  // who is the only role allowed to replace a system template's image.
+  @Post(':id/image')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  @SwaggerAuth('Upload a template image', 'Template updated with image')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'No file, unsupported format, or file too large',
+  })
+  @ApiResponse({ status: 404, description: 'Template not found' })
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_IMAGE_BYTES } }),
+  )
+  uploadImage(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('role') role: UserRole,
+    @Param('id', ParseIdPipe) id: string,
+    @UploadedFile() file: MulterFile,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+    return this.solutionTemplatesService.uploadImage(
+      id,
+      tenantId,
+      userId,
+      role,
+      file,
+    );
+  }
+
+  @Get(':id/image')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  @SwaggerAuth('Download the uploaded template image', 'Image stream')
+  @ApiResponse({ status: 404, description: 'Template has no uploaded image' })
+  async getImage(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const { path: filePath, contentType, fileName } =
+      await this.solutionTemplatesService.getImageFile(id, tenantId);
+
+    // @Res() bypasses the global TransformInterceptor so raw bytes are sent.
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    createReadStream(filePath).pipe(res);
+  }
+
+  @Delete(':id/image')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  @SwaggerAuth('Remove the template image', 'Image removed')
+  @ApiResponse({ status: 404, description: 'Template not found' })
+  removeImage(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('role') role: UserRole,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.solutionTemplatesService.removeImage(
+      id,
+      tenantId,
+      userId,
+      role,
+    );
   }
 
   @Post(':id/install')

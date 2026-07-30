@@ -10,6 +10,9 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, DataSource, In, IsNull, Repository } from 'typeorm';
 import * as crypto from 'crypto';
+import * as path from 'path';
+import { promises as fs } from 'fs';
+import type { File as MulterFile } from 'multer';
 
 import { SolutionTemplate } from './entities/solution-template.entity';
 import { TemplateInstallation } from './entities/template-installation.entity';
@@ -57,6 +60,26 @@ type PlainEntity<T> = {
  * Spread from the entity, so instance methods (isUserTemplate, save, …) are
  * intentionally absent.
  */
+/** Image formats accepted by POST /solution-templates/:id/image. */
+export const ALLOWED_IMAGE_EXTENSIONS = [
+  'jpg',
+  'jpeg',
+  'png',
+  'webp',
+  'svg',
+] as const;
+
+/** 5 MB — also enforced by the controller's FileInterceptor limit. */
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+const IMAGE_CONTENT_TYPES: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+};
+
 export type CatalogueTemplate = PlainEntity<SolutionTemplate> & {
   myInstallation: Pick<
     TemplateInstallation,
@@ -374,6 +397,167 @@ export class SolutionTemplatesService {
 
     await this.templateRepository.softRemove(template);
     this.logger.log(`Solution template deleted: ${id} by user ${userId}`);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // TEMPLATE IMAGE
+  //
+  // Files land in ./uploads/solution-templates/<templateId>.<ext>. That path is
+  // NOT statically served, so `imageUrl` for an uploaded file is read back
+  // through GET /solution-templates/:id/image, which streams it.
+  //
+  // System templates are seeder-owned (see update()/remove()), so only a
+  // SUPER_ADMIN may replace their image. The seeder deliberately preserves an
+  // uploaded /uploads/... image on re-seed so that override is not reverted.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  private readonly imageDir =
+    process.env.UPLOAD_PATH_TEMPLATES || './uploads/solution-templates';
+
+  async uploadImage(
+    id: string,
+    tenantId: string,
+    userId: string,
+    role: UserRole,
+    file: MulterFile,
+  ): Promise<SolutionTemplate> {
+    const template = await this.findOne(id, tenantId);
+    this.assertCanModifyImage(template, userId, role);
+
+    const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
+    if (!(ALLOWED_IMAGE_EXTENSIONS as readonly string[]).includes(ext)) {
+      throw new BadRequestException(
+        `Unsupported image format '${ext || file.originalname}'. ` +
+          `Allowed: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}`,
+      );
+    }
+
+    // FileInterceptor already caps this; re-checked here so the service is safe
+    // to call from anywhere, not just that one route.
+    if (file.size > MAX_IMAGE_BYTES) {
+      throw new BadRequestException(
+        `Image exceeds the ${MAX_IMAGE_BYTES / (1024 * 1024)}MB limit`,
+      );
+    }
+
+    await fs.mkdir(this.imageDir, { recursive: true });
+
+    // Filename is derived from the template id, never from client input.
+    const fileName = `${template.id}.${ext}`;
+    const filePath = path.join(this.imageDir, fileName);
+    await fs.writeFile(filePath, file.buffer);
+
+    // Drop a previously uploaded image that used a different extension.
+    const previous = template.imageUrl;
+    if (previous?.startsWith('/uploads/') && !previous.endsWith(`.${ext}`)) {
+      await this.deleteImageFile(previous);
+    }
+
+    template.imageUrl = `/uploads/solution-templates/${fileName}`;
+    template.imageAlt = template.imageAlt || template.name;
+    template.updatedBy = userId;
+
+    const saved = await this.templateRepository.save(template);
+    this.logger.log(`Template image uploaded: ${id} (${fileName})`);
+    return saved;
+  }
+
+  async removeImage(
+    id: string,
+    tenantId: string,
+    userId: string,
+    role: UserRole,
+  ): Promise<{ removed: boolean }> {
+    const template = await this.findOne(id, tenantId);
+    this.assertCanModifyImage(template, userId, role);
+
+    // Only locally-stored files are unlinked; a seeded remote URL has nothing
+    // on disk to remove.
+    if (template.imageUrl?.startsWith('/uploads/')) {
+      await this.deleteImageFile(template.imageUrl);
+    }
+
+    template.imageUrl = null;
+    template.imageAlt = null;
+    template.updatedBy = userId;
+    await this.templateRepository.save(template);
+
+    this.logger.log(`Template image removed: ${id}`);
+    return { removed: true };
+  }
+
+  /**
+   * Resolve an uploaded image for streaming.
+   * Throws NotFound when the template has no image or it is a remote URL —
+   * remote URLs are fetched by the client directly, not proxied.
+   */
+  async getImageFile(
+    id: string,
+    tenantId: string,
+  ): Promise<{ path: string; contentType: string; fileName: string }> {
+    const template = await this.findOne(id, tenantId);
+
+    if (!template.imageUrl) {
+      throw new NotFoundException('This template has no image');
+    }
+
+    if (!template.imageUrl.startsWith('/uploads/')) {
+      throw new NotFoundException(
+        'This template uses a remote image URL — fetch it directly',
+      );
+    }
+
+    const filePath = path.join(process.cwd(), template.imageUrl);
+    try {
+      await fs.access(filePath);
+    } catch {
+      throw new NotFoundException('Image file is missing from disk');
+    }
+
+    const ext = path.extname(filePath).toLowerCase().replace('.', '');
+    return {
+      path: filePath,
+      contentType: IMAGE_CONTENT_TYPES[ext] ?? 'application/octet-stream',
+      fileName: path.basename(filePath),
+    };
+  }
+
+  /**
+   * System templates are refreshed by the seeder, so they are immutable via the
+   * API for everyone except SUPER_ADMIN — mirroring update()/remove(), which
+   * block them outright. The image is the one field a SUPER_ADMIN may override,
+   * and the seeder preserves that override.
+   */
+  private assertCanModifyImage(
+    template: SolutionTemplate,
+    userId: string,
+    role: UserRole,
+  ): void {
+    if (template.isSystem) {
+      if (role !== UserRole.SUPER_ADMIN) {
+        throw new ForbiddenException(
+          'System template images can only be changed by a super admin',
+        );
+      }
+      return;
+    }
+
+    if (template.userId !== userId && role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException(
+        'You do not have permission to change this template image',
+      );
+    }
+  }
+
+  private async deleteImageFile(imageUrl: string): Promise<void> {
+    try {
+      await fs.unlink(path.join(process.cwd(), imageUrl));
+    } catch (error: any) {
+      // Missing file is not an error worth failing the request over.
+      this.logger.warn(
+        `Failed to delete template image ${imageUrl}: ${error.message}`,
+      );
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════

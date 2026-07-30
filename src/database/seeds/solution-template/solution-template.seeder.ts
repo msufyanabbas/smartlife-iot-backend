@@ -81,6 +81,8 @@ export class SolutionTemplateSeeder implements ISeeder {
       // ══════════════════════════════════════════════════════════════════════
       {
         name: 'Smart Home',
+        imageUrl: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
+        imageAlt: 'Modern smart home automation',
         description:
           'Complete smart home automation with lighting, climate, security, and energy management',
         category: SolutionTemplateCategory.SMART_HOME,
@@ -208,6 +210,8 @@ export class SolutionTemplateSeeder implements ISeeder {
       // ══════════════════════════════════════════════════════════════════════
       {
         name: 'Smart Building',
+        imageUrl: 'https://images.unsplash.com/photo-1486325212027-8081e485255e?w=400',
+        imageAlt: 'Intelligent commercial building',
         description:
           'Enterprise building management with HVAC, access control, energy monitoring, and occupancy tracking',
         category: SolutionTemplateCategory.SMART_BUILDING,
@@ -337,6 +341,8 @@ export class SolutionTemplateSeeder implements ISeeder {
       // ══════════════════════════════════════════════════════════════════════
       {
         name: 'Smart City',
+        imageUrl: 'https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=400',
+        imageAlt: 'Connected smart city infrastructure',
         description:
           'City-wide infrastructure monitoring including street lighting, waste management, traffic, and environmental sensors',
         category: SolutionTemplateCategory.SMART_CITY,
@@ -459,6 +465,8 @@ export class SolutionTemplateSeeder implements ISeeder {
       // ══════════════════════════════════════════════════════════════════════
       {
         name: 'Smart Agriculture',
+        imageUrl: 'https://images.unsplash.com/photo-1500937386664-56d1dfef3854?w=400',
+        imageAlt: 'Precision agriculture technology',
         description:
           'Precision farming with soil monitoring, weather stations, irrigation control, and crop health tracking',
         category: SolutionTemplateCategory.SMART_AGRICULTURE,
@@ -591,6 +599,8 @@ export class SolutionTemplateSeeder implements ISeeder {
       // ══════════════════════════════════════════════════════════════════════
       {
         name: 'Smart Energy',
+        imageUrl: 'https://images.unsplash.com/photo-1509391366360-2e959784a276?w=400',
+        imageAlt: 'Solar energy management',
         description:
           'Energy management with solar monitoring, grid analytics, battery storage, and consumption optimization',
         category: SolutionTemplateCategory.SMART_ENERGY,
@@ -725,6 +735,8 @@ export class SolutionTemplateSeeder implements ISeeder {
       // ══════════════════════════════════════════════════════════════════════
       {
         name: 'Smart Retail Shop',
+        imageUrl: 'https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=400',
+        imageAlt: 'Smart retail store',
         description:
           'Retail store management with customer counting, queue management, inventory tracking, and energy optimization',
         category: SolutionTemplateCategory.SMART_RETAIL,
@@ -847,6 +859,8 @@ export class SolutionTemplateSeeder implements ISeeder {
       // ══════════════════════════════════════════════════════════════════════
       {
         name: 'Smart Water Management',
+        imageUrl: 'https://images.unsplash.com/photo-1523741543316-beb7fc7023d8?w=400',
+        imageAlt: 'Water management system',
         description:
           'Water network monitoring with leak detection, quality analysis, pressure management, and consumption tracking',
         category: SolutionTemplateCategory.SMART_WATER,
@@ -982,6 +996,8 @@ export class SolutionTemplateSeeder implements ISeeder {
       // ══════════════════════════════════════════════════════════════════════
       {
         name: 'Smart Facility',
+        imageUrl: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=400',
+        imageAlt: 'Facility management',
         description:
           'Facility management with maintenance tracking, asset monitoring, cleaning management, and visitor management',
         category: SolutionTemplateCategory.SMART_FACILITY,
@@ -1171,6 +1187,16 @@ export class SolutionTemplateSeeder implements ISeeder {
       existing.isSystem = true;
       existing.tenantId = undefined;
       existing.configuration = templateData.configuration;
+
+      // A SUPER_ADMIN may replace a system template's image via
+      // POST /solution-templates/:id/image. That upload lives under /uploads,
+      // and re-seeding must not revert it — only the seeded remote URL is
+      // refreshed.
+      if (!existing.imageUrl?.startsWith('/uploads/')) {
+        existing.imageUrl = templateData.imageUrl ?? null;
+        existing.imageAlt = templateData.imageAlt ?? null;
+      }
+
       existing.lastUpdated = new Date();
       await this.solutionTemplateRepository.save(existing);
       this.logger.log(

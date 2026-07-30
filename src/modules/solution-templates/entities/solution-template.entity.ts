@@ -53,8 +53,30 @@ export class SolutionTemplate extends BaseEntity {
   @Column()
   icon: string;
 
+  /**
+   * @deprecated Superseded by `imageUrl`. Declared on the entity and the create
+   * DTO but never seeded, read or written anywhere — kept only so existing rows
+   * are not dropped. New code should use imageUrl / imageAlt.
+   */
   @Column({ nullable: true })
   previewImage?: string;
+
+  /**
+   * Card image for the template catalogue.
+   *
+   * Either an absolute URL (system templates seed Unsplash URLs) or a local
+   * path of the form `/uploads/solution-templates/<id>.<ext>` written by
+   * POST /solution-templates/:id/image.
+   *
+   * Local paths are NOT statically served — fetch them through
+   * GET /solution-templates/:id/image, which streams the file.
+   */
+  @Column({ type: 'varchar', nullable: true })
+  imageUrl: string | null;
+
+  /** Alt text for `imageUrl`, for accessibility. */
+  @Column({ type: 'varchar', nullable: true })
+  imageAlt: string | null;
 
   @Column()
   author: string;

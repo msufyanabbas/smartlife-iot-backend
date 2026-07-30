@@ -6,8 +6,9 @@ import {
   IsBoolean,
   IsNumber,
   IsObject,
+  IsUrl,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SolutionTemplateCategory as TemplateCategory } from '@common/enums/index.enum';
 import type { TemplateConfiguration } from '../interfaces/template-configuration.interface';
 
@@ -84,10 +85,29 @@ export class CreateSolutionTemplateDto {
   @IsObject()
   configuration?: TemplateConfiguration;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, deprecated: true, description: 'Superseded by imageUrl' })
   @IsOptional()
   @IsString()
   previewImage?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Image URL for the template. Must be an absolute URL — to attach a local ' +
+      'file use POST /solution-templates/:id/image instead.',
+    example: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
+  })
+  @IsOptional()
+  @IsString()
+  @IsUrl()
+  imageUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Image alt text',
+    example: 'Modern smart home automation',
+  })
+  @IsOptional()
+  @IsString()
+  imageAlt?: string;
 }
 
 export class InstallTemplateDto {
