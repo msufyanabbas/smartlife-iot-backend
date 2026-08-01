@@ -12,6 +12,7 @@ import { Device } from './entities/device.entity';
 import { DeviceProtocol } from './entities/device.entity';
 import { DeviceCredentials, CredentialsType } from './entities/device-credentials.entity';
 import { DeviceCredentialsDto } from './dto/device-credentials.dto';
+import { DeviceCredentialsSummaryDto } from './dto/device-credentials-summary.dto';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '@common/enums/index.enum';
 
@@ -20,6 +21,16 @@ import { UserRole } from '@common/enums/index.enum';
 interface TopicStrategy {
   telemetryTopic: string;
   attributesTopic: string;
+  /**
+   * Downlink the device SUBSCRIBES to for server-set shared attributes.
+   *
+   * Deliberately one level deeper than attributesTopic: the platform's MQTT
+   * client subscribes to `devices/+/attributes` and treats anything arriving
+   * there as telemetry, so a shared-attribute push onto that topic would be
+   * re-ingested as a fake sensor reading. `+` matches a single level, so the
+   * deeper topic cannot be caught by that subscription.
+   */
+  sharedAttributesTopic: string;
   statusTopic: string;
   alertsTopic: string;
   commandsTopic: string;
@@ -130,6 +141,88 @@ export class DeviceCredentialsService {
     return credentials;
   }
 
+  // ── Masked summary (safe for repeat reads) ────────────────────────────────
+
+  /**
+   * First 8 characters followed by ****. Deliberately not enough to
+   * authenticate with — it exists so an operator can tell two credentials
+   * apart in the UI, nothing more.
+   */
+  private static mask(value?: string | null): string {
+    if (!value) return '';
+    return `${value.slice(0, 8)}****`;
+  }
+
+  /**
+   * Non-secret view of a device's credentials.
+   *
+   * The full secret is returned only at creation (DevicesService.create) and
+   * at rotation (regenerateCredentials) — never on a plain read, so an
+   * attacker with a stolen session cannot harvest live device tokens.
+   */
+  async getMaskedSummary(
+    deviceId: string,
+    user: User,
+  ): Promise<DeviceCredentialsSummaryDto> {
+    const device = await this.deviceRepository.findOne({ where: { id: deviceId } });
+
+    if (!device) {
+      throw new NotFoundException(`Device not found: ${deviceId}`);
+    }
+
+    this.verifyAccess(device, user);
+
+    const credentials = await this.getCredentialsWithSecret(deviceId);
+
+    // For ACCESS_TOKEN the credentialsId IS the secret, so it is masked too.
+    // For MQTT_BASIC / X509 the credentialsId is a username / certificate CN —
+    // non-secret — and the secret lives in credentialsValue.
+    const idIsSecret =
+      credentials.credentialsType === CredentialsType.ACCESS_TOKEN;
+
+    const secret = idIsSecret
+      ? credentials.credentialsId
+      : credentials.credentialsValue;
+
+    return {
+      deviceId: device.id,
+      deviceKey: device.deviceKey,
+      credentialsType: credentials.credentialsType,
+      credentialsId: idIsSecret
+        ? DeviceCredentialsService.mask(credentials.credentialsId)
+        : credentials.credentialsId,
+      maskedToken: DeviceCredentialsService.mask(secret),
+      isActive: credentials.isActive,
+      lastUsedAt: credentials.lastUsedAt,
+      expiresAt: credentials.expiresAt,
+      createdAt: credentials.createdAt,
+    };
+  }
+
+  /**
+   * The value a device must present to authenticate, for the provisioning
+   * handshake only. Unlike getMaskedSummary() this returns the real secret —
+   * the caller is the device itself, which has already proven possession of
+   * the profile's provision key and secret.
+   */
+  async getProvisioningCredentials(
+    deviceId: string,
+  ): Promise<{ credentialsType: CredentialsType; credentialsValue: string }> {
+    const credentials = await this.getCredentialsWithSecret(deviceId);
+
+    if (!credentials.isValid()) {
+      throw new ForbiddenException('Device credentials are revoked or expired');
+    }
+
+    return {
+      credentialsType: credentials.credentialsType,
+      credentialsValue:
+        credentials.credentialsType === CredentialsType.ACCESS_TOKEN
+          ? credentials.credentialsId
+          : (credentials.credentialsValue ?? credentials.credentialsId),
+    };
+  }
+
   // ── Build full MQTT configuration ─────────────────────────────────────────
 
   async getMqttConfiguration(
@@ -224,6 +317,9 @@ export class DeviceCredentialsService {
         return {
           telemetryTopic: `application/1/device/${devEUI}/rx`,
           attributesTopic: `application/1/device/${devEUI}/event/up`,
+          // LoRaWAN downlinks are codec-encoded onto the tx topic; shared
+          // attributes are not pushed for this protocol.
+          sharedAttributesTopic: `application/1/device/${devEUI}/tx`,
           statusTopic: `application/1/device/${devEUI}/event/status`,
           alertsTopic: `application/1/device/${devEUI}/event/error`,
           commandsTopic: `application/1/device/${devEUI}/tx`,
@@ -243,6 +339,8 @@ export class DeviceCredentialsService {
         return {
           telemetryTopic: `application/+/device/${devEUI}/event/up`,
           attributesTopic: `application/+/device/${devEUI}/event/join`,
+          // As above — ChirpStack downlinks go through command/down.
+          sharedAttributesTopic: `application/+/device/${devEUI}/command/down`,
           statusTopic: `application/+/device/${devEUI}/event/status`,
           alertsTopic: `application/+/device/${devEUI}/event/error`,
           commandsTopic: `application/+/device/${devEUI}/command/down`,
@@ -259,6 +357,7 @@ export class DeviceCredentialsService {
         return {
           telemetryTopic: `devices/${device.deviceKey}/telemetry`,
           attributesTopic: `devices/${device.deviceKey}/attributes`,
+          sharedAttributesTopic: `devices/${device.deviceKey}/attributes/shared`,
           statusTopic: `devices/${device.deviceKey}/status`,
           alertsTopic: `devices/${device.deviceKey}/alerts`,
           commandsTopic: `devices/${device.deviceKey}/commands`,
@@ -354,6 +453,7 @@ export class DeviceCredentialsService {
         `4. Set password: ${password}`,
         `5. Publish telemetry to: ${topics.telemetryTopic}`,
         `6. Subscribe to commands at: ${topics.commandsTopic}`,
+        `7. Subscribe to shared attributes at: ${topics.sharedAttributesTopic}`,
       ],
       documentation: 'https://docs.smartlife.sa/device-setup',
       notes: [

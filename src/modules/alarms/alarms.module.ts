@@ -7,11 +7,15 @@ import { Alarm } from './entities/alarm.entity';
 import { AlarmsRepository } from './repositories/alarms.repository';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { Device, Tenant } from '../index.entities';
+import { Device, Tenant, User } from '../index.entities';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Alarm, Device, Tenant]),
+    // User is read-only here — assign() validates the assignee shares the
+    // alarm's tenant. Registered as a repository rather than importing
+    // UsersModule, which would pull DevicesModule back in through its own
+    // forwardRef chain.
+    TypeOrmModule.forFeature([Alarm, Device, Tenant, User]),
     ConfigModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

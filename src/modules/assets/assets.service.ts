@@ -9,19 +9,22 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, IsNull } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
+  Alarm,
   Asset,
   AssetProfile,
   Device,
+  Telemetry,
   User,
   FloorPlan,
   FloorPlanDevice,
 } from '@modules/index.entities';
-import { AssetType } from '@common/enums/index.enum';
+import { AlarmStatus, AssetType } from '@common/enums/index.enum';
 import type {
   FloorConfig,
   ProfileField,
 } from '@common/interfaces/index.interface';
 import {
+  AssetAlarmsQueryDto,
   CreateAssetDto,
   UpdateAssetDto,
   QueryAssetsDto,
@@ -48,6 +51,13 @@ export class AssetsService {
     // already depends on the Asset repository, so importing it here would cycle.
     @InjectRepository(AssetProfile)
     private assetProfileRepository: Repository<AssetProfile>,
+    // Read-only, for the asset roll-ups. Registered as repositories rather
+    // than by importing TelemetryModule / AlarmsModule — see assets.module.ts
+    // for why that direction would cycle.
+    @InjectRepository(Telemetry)
+    private telemetryRepository: Repository<Telemetry>,
+    @InjectRepository(Alarm)
+    private alarmRepository: Repository<Alarm>,
     private eventEmitter: EventEmitter2,
   ) {}
 
@@ -748,9 +758,16 @@ async findAll(
   }
 
   /**
-   * Get child assets
+   * Get child assets, each carrying a live device count.
+   *
+   * `deviceCount` is computed here rather than read from the denormalised
+   * Asset.deviceCount column — nothing in the codebase maintains that column,
+   * so it is always 0 and would report every child as empty.
    */
-  async getChildren(id: string, user: User): Promise<Asset[]> {
+  async getChildren(
+    id: string,
+    user: User,
+  ): Promise<Array<Asset & { deviceCount: number }>> {
     await this.findOne(id, user); // Validate access to parent
 
     const queryBuilder = this.assetRepository
@@ -768,7 +785,160 @@ async findAll(
       });
     }
 
-    return await queryBuilder.orderBy('asset.name', 'ASC').getMany();
+    const children = await queryBuilder.orderBy('asset.name', 'ASC').getMany();
+
+    if (children.length === 0) return [];
+
+    const counts = await this.countDevicesByAsset(children.map((c) => c.id));
+
+    return children.map((child) =>
+      Object.assign(child, { deviceCount: counts.get(child.id) ?? 0 }),
+    );
+  }
+
+  /** One grouped query for device counts — not one per asset. */
+  private async countDevicesByAsset(
+    assetIds: string[],
+  ): Promise<Map<string, number>> {
+    if (assetIds.length === 0) return new Map();
+
+    const rows: Array<{ assetId: string; count: string }> =
+      await this.deviceRepository
+        .createQueryBuilder('device')
+        .select('device.assetId', 'assetId')
+        .addSelect('COUNT(*)', 'count')
+        .where('device.assetId IN (:...assetIds)', { assetIds })
+        .groupBy('device.assetId')
+        .getRawMany();
+
+    return new Map(rows.map((r) => [r.assetId, parseInt(r.count, 10) || 0]));
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ROLL-UPS ACROSS THE ASSET'S DEVICES
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Latest telemetry for every device linked to this asset.
+   *
+   * One DISTINCT ON query covers all devices rather than a per-device "latest"
+   * lookup, so an asset with 200 sensors still costs two queries.
+   *
+   * Devices that have never reported are included with `telemetry: null` —
+   * "installed but silent" is exactly what an operator needs to see here.
+   */
+  async getAssetTelemetry(assetId: string, user: User) {
+    const asset = await this.findOne(assetId, user); // access check
+    const devices = await this.getDevices(assetId, user);
+
+    if (devices.length === 0) {
+      return {
+        assetId: asset.id,
+        assetName: asset.name,
+        deviceCount: 0,
+        devices: [],
+      };
+    }
+
+    const deviceIds = devices.map((d) => d.id);
+
+    const latest = await this.telemetryRepository
+      .createQueryBuilder('telemetry')
+      .distinctOn(['telemetry.deviceId'])
+      .where('telemetry.deviceId IN (:...deviceIds)', { deviceIds })
+      .andWhere('telemetry.tenantId = :tenantId', { tenantId: asset.tenantId })
+      .orderBy('telemetry.deviceId', 'ASC')
+      .addOrderBy('telemetry.timestamp', 'DESC')
+      .getMany();
+
+    const latestByDevice = new Map(latest.map((t) => [t.deviceId, t]));
+
+    return {
+      assetId: asset.id,
+      assetName: asset.name,
+      deviceCount: devices.length,
+      devices: devices.map((device) => {
+        const telemetry = latestByDevice.get(device.id);
+
+        return {
+          deviceId: device.id,
+          deviceKey: device.deviceKey,
+          deviceName: device.name,
+          deviceType: device.type,
+          status: device.status,
+          lastSeenAt: device.lastSeenAt ?? null,
+          telemetry: telemetry
+            ? {
+                timestamp: telemetry.timestamp,
+                data: telemetry.data,
+                temperature: telemetry.temperature ?? null,
+                humidity: telemetry.humidity ?? null,
+                pressure: telemetry.pressure ?? null,
+                batteryLevel: telemetry.batteryLevel ?? null,
+                signalStrength: telemetry.signalStrength ?? null,
+              }
+            : null,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Alarms raised by any device linked to this asset.
+   *
+   * Defaults to currently-raised alarms (ACTIVE + ACKNOWLEDGED) — the common
+   * question is "what is wrong with this building right now". Pass ?status to
+   * widen it to cleared/resolved history.
+   */
+  async getAssetAlarms(
+    assetId: string,
+    user: User,
+    query: AssetAlarmsQueryDto,
+  ): Promise<PaginatedResponseDto<any>> {
+    const { page = 1, limit = 20, status, severity } = query;
+
+    const asset = await this.findOne(assetId, user); // access check
+    const devices = await this.getDevices(assetId, user);
+
+    if (devices.length === 0) {
+      return PaginatedResponseDto.create([], page, limit, 0);
+    }
+
+    const qb = this.alarmRepository
+      .createQueryBuilder('alarm')
+      .leftJoin('alarm.device', 'device')
+      .addSelect(['device.id', 'device.name', 'device.deviceKey', 'device.type'])
+      .where('alarm.deviceId IN (:...deviceIds)', {
+        deviceIds: devices.map((d) => d.id),
+      })
+      .andWhere('alarm.tenantId = :tenantId', { tenantId: asset.tenantId });
+
+    if (status) {
+      qb.andWhere('alarm.status = :status', { status });
+    } else {
+      qb.andWhere('alarm.status IN (:...activeStatuses)', {
+        activeStatuses: [AlarmStatus.ACTIVE, AlarmStatus.ACKNOWLEDGED],
+      });
+    }
+
+    if (severity) {
+      qb.andWhere('alarm.severity = :severity', { severity });
+    }
+
+    qb.orderBy('alarm.triggeredAt', 'DESC', 'NULLS LAST')
+      .addOrderBy('alarm.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const [alarms, total] = await qb.getManyAndCount();
+
+    const data = alarms.map((alarm) => ({
+      ...alarm,
+      deviceName: alarm.device?.name ?? null,
+      deviceKey: alarm.device?.deviceKey ?? null,
+    }));
+
+    return PaginatedResponseDto.create(data, page, limit, total);
   }
 
   /**

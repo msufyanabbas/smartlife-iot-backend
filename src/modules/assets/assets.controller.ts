@@ -20,6 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { AssetsService } from './assets.service';
 import {
+  AssetAlarmsQueryDto,
   CreateAssetDto,
   UpdateAssetDto,
   QueryAssetsDto,
@@ -269,6 +270,44 @@ findAll(
       message: 'Child assets retrieved successfully',
       data: children,
     };
+  }
+
+  @Get(':id/telemetry')
+  @UseGuards(CustomerAccessGuard)
+  @ApiOperation({
+    summary: 'Get latest telemetry across every device on this asset',
+    description:
+      'One row per linked device with its most recent reading. Devices that ' +
+      'have never reported are returned with telemetry: null. For history or ' +
+      'aggregation on a single device use GET /telemetry/devices/:deviceId.',
+  })
+  @ApiResponse({ status: 200, description: 'Asset telemetry roll-up retrieved' })
+  @ApiResponse({ status: 404, description: 'Asset not found' })
+  async getAssetTelemetry(@CurrentUser() user: User, @Param('id') id: string) {
+    const telemetry = await this.assetsService.getAssetTelemetry(id, user);
+    return {
+      message: 'Asset telemetry retrieved successfully',
+      data: telemetry,
+    };
+  }
+
+  @Get(':id/alarms')
+  @UseGuards(CustomerAccessGuard)
+  @ApiOperation({
+    summary: 'Get alarms across every device on this asset',
+    description:
+      'Defaults to currently-raised alarms (active + acknowledged). Pass ' +
+      '?status to include cleared or resolved history. Each row carries ' +
+      'deviceName and deviceKey.',
+  })
+  @ApiResponse({ status: 200, description: 'Asset alarms retrieved' })
+  @ApiResponse({ status: 404, description: 'Asset not found' })
+  async getAssetAlarms(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Query() queryDto: AssetAlarmsQueryDto,
+  ) {
+    return this.assetsService.getAssetAlarms(id, user, queryDto);
   }
 
   @Get(':id/devices')

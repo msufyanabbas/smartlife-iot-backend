@@ -8,6 +8,8 @@ import {
   IsNumber,
   IsArray,
   ValidateNested,
+  ValidateIf,
+  IsUUID,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -223,4 +225,15 @@ export class ResolveAlarmDto {
   @ApiProperty({ example: 'Issue resolved, temperature back to normal' })
   @IsString()
   note: string;
+}
+
+export class AssignAlarmDto {
+  @ApiProperty({
+    example: '0e387c70-0d03-43e3-a116-401abbad1382',
+    nullable: true,
+    description: 'User to assign the alarm to. Pass null to unassign.',
+  })
+  @ValidateIf((_, value) => value !== null)
+  @IsUUID()
+  userId: string | null;
 }

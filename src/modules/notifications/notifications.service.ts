@@ -674,14 +674,22 @@ export class NotificationsService {
    */
   @OnEvent('alarm.triggered')
   async handleAlarmTriggered(payload: any) {
-    const { alarm, user } = payload;
+    const { alarm } = payload;
+
+    // The Alarm entity has no `userId` column and AlarmsService emits
+    // { alarm } with no `user`, so the previous `alarm.userId` / `payload.user`
+    // were undefined on every alarm notification. `createdBy` (from
+    // BaseEntity) is the owning user, and the actor is that same user here
+    // since the trigger is system-initiated.
+    const owningUserId = alarm.createdBy ?? alarm.acknowledgedBy ?? null;
+    const user = payload.user ?? { id: owningUserId, tenantId: alarm.tenantId };
 
     // Send notifications based on alarm configuration
     if (alarm.notifications?.email && alarm.recipients?.emails) {
       for (const email of alarm.recipients.emails) {
         await this.create(
           {
-            userId: alarm.userId,
+            userId: owningUserId,
             type: NotificationType.ALARM,
             channel: NotificationChannel.EMAIL,
             priority:

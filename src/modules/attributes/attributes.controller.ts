@@ -24,6 +24,7 @@ import {
   CreateAttributeDto,
   SaveAttributesDto,
 } from './dto/create-attribute.dto';
+import { AttributeTimeseriesQueryDto } from './dto/attribute-timeseries.dto';
 import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/users/entities/user.entity';
@@ -118,26 +119,32 @@ export class AttributesController {
   }
 
   @Get(':entityType/:entityId/timeseries')
-  @ApiOperation({ summary: 'Get timeseries data for entity' })
-  @ApiResponse({ status: 200, description: 'Timeseries data' })
+  @ApiOperation({
+    summary: 'Get historical time-series for an entity',
+    description:
+      'Reads the telemetry table. `agg=NONE` (default) returns raw stored ' +
+      'points; any other value buckets by `interval` milliseconds and ' +
+      'aggregates numeric readings. `limit` is points per key, not total. ' +
+      'Only `device` entities carry telemetry — other entity types return an ' +
+      'empty series.',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Series keyed by telemetry key, e.g. ' +
+      '{ "temperature": [{ "ts": 1785600000000, "value": 22.5 }] }',
+  })
   async getTimeseries(
     @CurrentUser() user: User,
     @Param('entityType') entityType: string,
     @Param('entityId') entityId: string,
-    @Query('keys') keys: string,
-    @Query('startTs') startTs?: number,
-    @Query('endTs') endTs?: number,
-    @Query('limit') limit?: number,
+    @Query() query: AttributeTimeseriesQueryDto,
   ) {
-    const keyArray = keys.split(',').map((k) => k.trim());
     const timeseries = await this.attributesService.getTimeseries(
       user.tenantId,
       entityType,
       entityId,
-      keyArray,
-      startTs,
-      endTs,
-      limit,
+      query,
     );
 
     return {

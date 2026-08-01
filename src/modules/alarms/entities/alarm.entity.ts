@@ -1,5 +1,5 @@
 // src/modules/alarms/entities/alarm.entity.ts
-import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
+import { Entity, Column, ManyToOne, JoinColumn, Index, AfterLoad } from 'typeorm';
 import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
 import type { User } from '../../users/entities/user.entity';
@@ -104,11 +104,14 @@ export class Alarm extends BaseEntity {
   // ══════════════════════════════════════════════════════════════════════════
 
   // Acknowledged (user saw it)
+  // Typed `| null` because clearing a column requires assigning null —
+  // TypeORM's save() treats an undefined property as "leave unchanged", so
+  // resetting these on re-trigger with undefined would silently no-op.
   @Column({ type: 'timestamp', nullable: true })
-  acknowledgedAt?: Date;
+  acknowledgedAt?: Date | null;
 
   @Column({ nullable: true })
-  acknowledgedBy?: string;
+  acknowledgedBy?: string | null;
 
   @ManyToOne('User', { nullable: true })
   @JoinColumn({ name: 'acknowledgedBy' })
@@ -116,7 +119,25 @@ export class Alarm extends BaseEntity {
 
   // Cleared (condition no longer true)
   @Column({ type: 'timestamp', nullable: true })
-  clearedAt?: Date;
+  clearedAt?: Date | null;
+
+  /**
+   * Who cleared it. Null when the clear was automatic (autoClear on the rule
+   * engine), which is how ThingsBoard distinguishes an operator clear from a
+   * condition-resolved clear.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  clearedBy?: string | null;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ASSIGNMENT (who is handling this alarm)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ type: 'uuid', nullable: true })
+  assignedTo?: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  assignedAt?: Date | null;
 
   // Resolved (fixed by user)
   @Column({ type: 'timestamp', nullable: true })
@@ -173,6 +194,51 @@ export class Alarm extends BaseEntity {
   tags?: string[];
 
   // ══════════════════════════════════════════════════════════════════════════
+  // THINGSBOARD-COMPATIBLE COMPOUND STATUS (derived, not stored)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * ThingsBoard expresses alarm state as a 2×2 matrix of
+   * active/cleared × acked/unacked. This platform stores a flat 5-value
+   * `status` plus `acknowledgedAt`, which carries strictly more information
+   * (it also has INACTIVE for a dormant profile rule and RESOLVED for the
+   * operator resolve workflow, neither of which ThingsBoard models).
+   *
+   * Rather than collapse the stored enum and lose those two states, the
+   * ThingsBoard value is computed here and serialised alongside `status`.
+   * Populated on load and after every state transition, so it is an own
+   * property and survives JSON.stringify (a prototype getter would not).
+   *
+   * INACTIVE has no ThingsBoard equivalent and is passed through as-is;
+   * RESOLVED maps to CLEARED_ACK, since resolving implies both.
+   */
+  tbStatus: string;
+
+  @AfterLoad()
+  computeTbStatus(): void {
+    const acked = !!this.acknowledgedAt;
+
+    switch (this.status) {
+      case AlarmStatus.INACTIVE:
+        this.tbStatus = 'INACTIVE';
+        break;
+      case AlarmStatus.RESOLVED:
+        this.tbStatus = 'CLEARED_ACK';
+        break;
+      case AlarmStatus.CLEARED:
+        this.tbStatus = acked ? 'CLEARED_ACK' : 'CLEARED_UNACK';
+        break;
+      case AlarmStatus.ACKNOWLEDGED:
+        this.tbStatus = 'ACTIVE_ACK';
+        break;
+      case AlarmStatus.ACTIVE:
+      default:
+        this.tbStatus = acked ? 'ACTIVE_ACK' : 'ACTIVE_UNACK';
+        break;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   // HELPER METHODS
   // ══════════════════════════════════════════════════════════════════════════
 
@@ -186,27 +252,46 @@ export class Alarm extends BaseEntity {
     this.triggeredAt = this.triggeredAt || new Date(); // Set only on first trigger
     this.lastTriggeredAt = new Date();
     this.triggerCount++;
+    // A re-trigger after a clear starts a fresh unacknowledged cycle —
+    // otherwise a stale acknowledgedAt would report the new occurrence as
+    // ACTIVE_ACK and it would be filtered out of "needs attention" views.
+    // null, not undefined: save() skips undefined properties.
+    this.acknowledgedAt = null;
+    this.acknowledgedBy = null;
+    this.clearedAt = null;
+    this.clearedBy = null;
+    this.computeTbStatus();
   }
 
   /**
-   * Acknowledge the alarm (user has seen it)
+   * Acknowledge the alarm (user has seen it).
+   *
+   * Acknowledging a CLEARED alarm is allowed and leaves it cleared — that is
+   * the ThingsBoard CLEARED_UNACK → CLEARED_ACK transition. Only the stored
+   * `status` stays put; the acknowledgement is recorded on the timestamp
+   * columns, which is what tbStatus reads.
    */
   acknowledge(userId: string): void {
     if (this.status === AlarmStatus.ACTIVE) {
       this.status = AlarmStatus.ACKNOWLEDGED;
-      this.acknowledgedAt = new Date();
-      this.acknowledgedBy = userId;
     }
+    this.acknowledgedAt = new Date();
+    this.acknowledgedBy = userId;
+    this.computeTbStatus();
   }
 
   /**
-   * Clear the alarm (condition no longer true)
+   * Clear the alarm (condition no longer true).
+   *
+   * @param userId operator who cleared it; omit for an automatic clear.
    */
-  clear(): void {
+  clear(userId?: string): void {
     if (this.status !== AlarmStatus.RESOLVED) {
       this.status = AlarmStatus.CLEARED;
       this.clearedAt = new Date();
+      this.clearedBy = userId;
     }
+    this.computeTbStatus();
   }
 
   /**
@@ -217,6 +302,18 @@ export class Alarm extends BaseEntity {
     this.resolvedAt = new Date();
     this.resolvedBy = userId;
     this.resolutionNote = note;
+    this.computeTbStatus();
+  }
+
+  /**
+   * Assign the alarm to a user for handling. Pass null to unassign.
+   *
+   * Unassigning writes null rather than undefined — save() ignores undefined
+   * properties, so undefined would leave the previous assignee in place.
+   */
+  assign(userId: string | null): void {
+    this.assignedTo = userId;
+    this.assignedAt = userId ? new Date() : null;
   }
 
   /**

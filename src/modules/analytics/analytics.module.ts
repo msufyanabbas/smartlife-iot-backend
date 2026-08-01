@@ -1,7 +1,6 @@
 // src/modules/analytics/analytics.module.ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 
 import { AnalyticsController } from './analytics.controller';
@@ -31,7 +30,10 @@ import { EdgeMetricsSnapshot } from '@modules/edge/entities/edge-metrics-snapsho
       Dashboard,
       EdgeMetricsSnapshot,
     ]),
-    ScheduleModule.forRoot(),
+    // ScheduleModule.forRoot() is registered once in AppModule and is global.
+    // Calling it again here created a second ScheduleExplorer, which re-scanned
+    // every provider and registered every @Cron in the application a second
+    // time — so all crons fired once per forRoot() call.
     EventEmitterModule.forRoot(),
   ],
   controllers: [AnalyticsController],

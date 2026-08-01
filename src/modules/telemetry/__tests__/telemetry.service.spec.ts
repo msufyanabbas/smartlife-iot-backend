@@ -9,6 +9,7 @@ import { Telemetry } from '../entities/telemetry.entity';
 import { Device } from '../../devices/entities/device.entity';
 import { NotFoundException } from '@nestjs/common';
 import { RedisService } from '@/lib/redis/redis.service';
+import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
 
 // NOTE: do NOT jest.mock('@lib/redis/redis.service') with a factory that only
 // exports a `redisService` instance — TelemetryService injects the RedisService
@@ -46,6 +47,12 @@ describe('TelemetryService', () => {
     hgetall: jest.fn().mockResolvedValue({}),
   };
 
+  // The HTTP ingestion path evaluates device-profile alarm rules directly
+  // (it bypasses Kafka, so TelemetryConsumer never sees these readings).
+  const mockProfileAlarmService = {
+    evaluateProfileAlarmRules: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     // Create testing module
     const module: TestingModule = await Test.createTestingModule({
@@ -62,6 +69,10 @@ describe('TelemetryService', () => {
         {
           provide: RedisService,
           useValue: mockRedisService,
+        },
+        {
+          provide: ProfileAlarmService,
+          useValue: mockProfileAlarmService,
         },
       ],
     }).compile();

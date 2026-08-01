@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { DeviceCommand } from './entities/device-commands.entity';
 import { Device } from '@modules/devices/entities/device.entity';
 import { CreateCommandDto } from './dto/create-command.dto';
+import { AcknowledgeCommandDto } from './dto/acknowledge-command.dto';
 import { KafkaService } from '@/lib/kafka/kafka.service';
 
 @Injectable()
@@ -149,6 +150,65 @@ export class DeviceCommandsService {
 
     command.status = 'CANCELLED';
     command.statusMessage = 'Cancelled by user';
+
+    return this.commandRepository.save(command);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ACKNOWLEDGE (terminal outcome reported after execution)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Closes the loop on a command.
+   *
+   * DELIVERED only means the payload reached the broker. This records what the
+   * device actually did: COMPLETED on success, FAILED when `error` is set.
+   * Until this is called, COMPLETED is never reached by any code path.
+   *
+   * Stored in existing columns so no migration is needed:
+   *   response → metadata.response
+   *   error    → statusMessage
+   */
+  async acknowledgeCommand(
+    commandId: string,
+    tenantId: string | undefined,
+    dto: AcknowledgeCommandDto,
+  ): Promise<DeviceCommand> {
+    const command = await this.commandRepository.findOne({
+      where: { id: commandId, tenantId },
+    });
+
+    if (!command) {
+      throw new NotFoundException('Command not found');
+    }
+
+    // A cancelled command was never executed; a second acknowledgement must
+    // not overwrite the first outcome.
+    if (command.status === 'CANCELLED') {
+      throw new BadRequestException('Cannot acknowledge a cancelled command');
+    }
+
+    if (command.status === 'COMPLETED' || command.status === 'FAILED') {
+      throw new BadRequestException(
+        `Command already acknowledged with status: ${command.status}`,
+      );
+    }
+
+    const failed = Boolean(dto.error);
+
+    command.status = failed ? 'FAILED' : 'COMPLETED';
+    command.statusMessage = failed
+      ? dto.error
+      : 'Acknowledged by device';
+    command.completedAt = new Date();
+
+    // A device can acknowledge without the platform having observed the
+    // publish (e.g. the broker ack was lost) — record delivery too.
+    command.deliveredAt ??= new Date();
+
+    if (dto.response) {
+      command.metadata = { ...(command.metadata ?? {}), response: dto.response };
+    }
 
     return this.commandRepository.save(command);
   }

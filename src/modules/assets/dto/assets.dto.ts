@@ -8,10 +8,12 @@ import {
   IsNumber,
   IsDateString,
   IsObject,
+  Min,
+  Max,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { AssetType } from '@common/enums/index.enum';
+import { AlarmSeverity, AlarmStatus, AssetType } from '@common/enums/index.enum';
 import { SortOrder } from '@/common/dto/pagination.dto';
 
 class LocationDto {
@@ -281,6 +283,33 @@ export class BulkAssignDevicesDto {
 export class UpdateAttributesDto {
   @ApiProperty()
   attributes: Record<string, any>;
+}
+
+export class AssetAlarmsQueryDto {
+  @ApiPropertyOptional({ type: String, enum: AlarmStatus, enumName: 'AlarmStatus' })
+  @IsOptional()
+  @IsEnum(AlarmStatus)
+  status?: AlarmStatus;
+
+  @ApiPropertyOptional({ type: String, enum: AlarmSeverity, enumName: 'AlarmSeverity' })
+  @IsOptional()
+  @IsEnum(AlarmSeverity)
+  severity?: AlarmSeverity;
+
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  page: number = 1;
+
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(100)
+  limit: number = 20;
 }
 
 export class AssetHierarchyDto {

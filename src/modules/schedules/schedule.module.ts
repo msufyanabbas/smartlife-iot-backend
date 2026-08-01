@@ -1,7 +1,6 @@
 // src/modules/schedules/schedule.module.ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { SchedulesService } from './schedule.service';
 import { SchedulesController } from './schedule.controller';
@@ -15,8 +14,10 @@ import { ScheduleCronService } from './schedule-cron.service';
     // Register both entities with TypeORM
     TypeOrmModule.forFeature([Schedule, ScheduleExecutionLog]),
 
-    // NestJS cron scheduler (needed by ScheduleCronService)
-    ScheduleModule.forRoot(),
+    // NestJS cron scheduler: registered once in AppModule and global, so it is
+    // not re-registered here. Each extra forRoot() added another
+    // ScheduleExplorer that re-registered every @Cron in the application,
+    // making every cron fire once per duplicate call.
 
     // Event emitter (needed by ScheduleExecutorService)
     // Use .forRoot() here only if it hasn't been registered at the app level.

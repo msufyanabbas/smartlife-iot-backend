@@ -28,8 +28,10 @@ import { ProfilesModule } from '../profiles/profiles.module';
     RolesModule,
     ProtocolsModule,
     CodecModule,
+    // UsersModule was listed twice — once wrapped in forwardRef and once
+    // directly. The redundant plain entry is dropped; the forwardRef is the one
+    // that matters, since UsersModule imports DevicesModule back.
     forwardRef(() => UsersModule),
-    UsersModule,
     MailModule,
   ],
   controllers: [DevicesController],

@@ -39,6 +39,13 @@ import { NotificationChannel, NotificationPriority, NotificationType } from '@co
 import { Audit } from '@common/decorators/audit.decorator';
 import { CodecRegistryService } from './codecs/codec-registry.service';
 import { SwaggerAuth, TenantOrCustomerAdmin } from '@/common/decorators/access-control.decorator';
+import { Public } from '@common/decorators/public.decorator';
+import { Throttle } from '@nestjs/throttler';
+import {
+  ProvisionDeviceDto,
+  ProvisionDeviceResponseDto,
+} from './dto/provision-device.dto';
+import { DeviceCredentialsSummaryDto } from './dto/device-credentials-summary.dto';
 // Device control endpoints (command, rpc, telemetry) live in GatewayController
 // at POST /gateway/devices/:deviceKey/command|rpc|telemetry.
 // Keeping them here would create a circular dependency:
@@ -55,6 +62,36 @@ export class DevicesController {
     private readonly subscriptionsService: SubscriptionsService,
     private readonly codecRegistry: CodecRegistryService,
   ) {}
+
+  // ── Provisioning (public) ─────────────────────────────────────────────────
+  //
+  // Declared first so it is matched before any ':id' route. @Public() is
+  // honoured by every guard in the global stack, so no JWT is required — the
+  // profile's provision key/secret pair is the credential. Throttled because
+  // an unauthenticated endpoint that can create rows is a brute-force target.
+
+  @Post('provision')
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Self-register a device against a device profile (public)',
+    description:
+      'Authenticated by the DeviceProfile provision key/secret, not by JWT. ' +
+      'Always returns HTTP 200 — check the `status` field. Re-provisioning an ' +
+      'already-provisioned device returns its existing credentials rather ' +
+      'than creating a duplicate.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Provisioning outcome',
+    type: ProvisionDeviceResponseDto,
+  })
+  async provision(
+    @Body() provisionDeviceDto: ProvisionDeviceDto,
+  ): Promise<ProvisionDeviceResponseDto> {
+    return this.devicesService.provisionDevice(provisionDeviceDto);
+  }
 
   // ── Device management ─────────────────────────────────────────────────────
 
@@ -163,15 +200,45 @@ async getDeviceCapabilities(
   }
 
   @Get(':id/credentials')
-  @ApiOperation({ summary: 'Get device MQTT credentials' })
+  @ApiOperation({
+    summary: 'Get device credentials (masked)',
+    description:
+      'Returns credential metadata with the secret masked to its first 8 ' +
+      'characters. The full secret is shown only when the device is created ' +
+      'and when credentials are rotated.',
+  })
+  @ApiResponse({ status: 200, type: DeviceCredentialsSummaryDto })
+  @ApiResponse({ status: 404, description: 'Device or credentials not found' })
   getCredentials(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.devicesService.getCredentials(id, user);
+    return this.devicesService.getCredentialsSummary(id, user);
   }
 
+  @Post(':id/credentials/regenerate')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Rotate device credentials',
+    description:
+      'Issues a new secret and revokes the old one. This response is the only ' +
+      'place the new secret is returned in full — store it now. The device ' +
+      'must be reconfigured before it can reconnect.',
+  })
+  @ApiResponse({ status: 200, description: 'New credentials — shown once' })
+  regenerateCredentials(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
+    return this.devicesService.regenerateCredentials(id, user);
+  }
+
+  /** @deprecated Use POST /devices/:id/credentials/regenerate. */
   @Post(':id/regenerate-credentials')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Regenerate device credentials' })
-  regenerateCredentials(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
+  @ApiOperation({
+    summary: '[Deprecated] Regenerate device credentials',
+    deprecated: true,
+    description: 'Kept for existing clients. Use /credentials/regenerate.',
+  })
+  regenerateCredentialsLegacy(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
     return this.devicesService.regenerateCredentials(id, user);
   }
 

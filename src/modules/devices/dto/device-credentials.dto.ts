@@ -57,6 +57,16 @@ export class DeviceCredentialsDto {
   attributesTopic: string;
 
   @ApiProperty({
+    example: 'devices/dev_abc123xyz/attributes/shared',
+    description:
+      'DOWNLINK. Topic the device should SUBSCRIBE to for server-set shared ' +
+      'attributes. Distinct from attributesTopic on purpose — the platform ' +
+      'consumes attributesTopic as an uplink, so a push there would be ' +
+      're-ingested as telemetry.',
+  })
+  sharedAttributesTopic: string;
+
+  @ApiProperty({
     example: 'devices/dev_abc123xyz/status',
     description: 'Topic where device publishes status updates',
   })

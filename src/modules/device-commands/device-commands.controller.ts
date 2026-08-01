@@ -3,6 +3,7 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
   Param,
   Body,
   Query,
@@ -18,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 import { DeviceCommandsService } from './device-commands.service';
 import { CreateCommandDto } from './dto/create-command.dto';
+import { AcknowledgeCommandDto } from './dto/acknowledge-command.dto';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/index.entities';
 import { TenantOrCustomerAdmin } from '@common/decorators/access-control.decorator';
@@ -56,26 +58,31 @@ export class DeviceCommandsController {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // GET COMMAND STATUS
+  // GET USER COMMAND HISTORY
   // ══════════════════════════════════════════════════════════════════════════
+  //
+  // Declared before @Get(':id'). Nest matches in declaration order, so while
+  // this sat below ':id' the literal 'my-commands' was captured as an id and
+  // rejected by ParseIdPipe with 400 — the route was unreachable.
 
-  @Get(':id')
+  @Get('my-commands')
   @TenantOrCustomerAdmin()
-  @ApiOperation({ summary: 'Get command status' })
-  @ApiResponse({ status: 200, description: 'Command status retrieved' })
-  @ApiResponse({ status: 404, description: 'Command not found' })
-  async getCommandStatus(
+  @ApiOperation({ summary: 'Get your command history' })
+  @ApiResponse({ status: 200, description: 'Command history retrieved' })
+  async getMyCommands(
     @CurrentUser() user: User,
-    @Param('id', ParseIdPipe) commandId: string,
+    @Query('limit') limit: number = 100,
   ) {
-    const command = await this.commandsService.getCommandStatus(
-      commandId,
+    const commands = await this.commandsService.getUserCommands(
+      user.id,
       user.tenantId,
+      limit,
     );
 
     return {
       success: true,
-      data: command,
+      data: commands,
+      count: commands.length,
     };
   }
 
@@ -106,27 +113,65 @@ export class DeviceCommandsController {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // GET USER COMMAND HISTORY
+  // GET COMMAND STATUS
   // ══════════════════════════════════════════════════════════════════════════
 
-  @Get('my-commands')
+  @Get(':id')
   @TenantOrCustomerAdmin()
-  @ApiOperation({ summary: 'Get your command history' })
-  @ApiResponse({ status: 200, description: 'Command history retrieved' })
-  async getMyCommands(
+  @ApiOperation({ summary: 'Get command status' })
+  @ApiResponse({ status: 200, description: 'Command status retrieved' })
+  @ApiResponse({ status: 404, description: 'Command not found' })
+  async getCommandStatus(
     @CurrentUser() user: User,
-    @Query('limit') limit: number = 100,
+    @Param('id', ParseIdPipe) commandId: string,
   ) {
-    const commands = await this.commandsService.getUserCommands(
-      user.id,
+    const command = await this.commandsService.getCommandStatus(
+      commandId,
       user.tenantId,
-      limit,
     );
 
     return {
       success: true,
-      data: commands,
-      count: commands.length,
+      data: command,
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ACKNOWLEDGE COMMAND
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Patch(':id/acknowledge')
+  @TenantOrCustomerAdmin()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Record the terminal outcome of a command',
+    description:
+      'Marks the command COMPLETED, or FAILED when `error` is supplied. ' +
+      'DELIVERED only means the command reached the broker — this is what ' +
+      'reports whether the device actually executed it. JWT-protected: it is ' +
+      'called by trusted backend components (rule engine, edge relay, ops UI). ' +
+      'A device-facing variant would need device-token authentication rather ' +
+      'than being left unauthenticated, since an open route here would let ' +
+      'anyone mark any tenant\'s command delivered.',
+  })
+  @ApiResponse({ status: 200, description: 'Command acknowledged' })
+  @ApiResponse({ status: 400, description: 'Command cancelled or already acknowledged' })
+  @ApiResponse({ status: 404, description: 'Command not found' })
+  async acknowledgeCommand(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) commandId: string,
+    @Body() acknowledgeDto: AcknowledgeCommandDto,
+  ) {
+    const command = await this.commandsService.acknowledgeCommand(
+      commandId,
+      user.tenantId,
+      acknowledgeDto,
+    );
+
+    return {
+      success: true,
+      message: 'Command acknowledged successfully',
+      data: command,
     };
   }
 

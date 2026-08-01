@@ -1,14 +1,22 @@
 // src/modules/attributes/services/attributes.service.ts
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
-import { Attribute, Device, Asset, User as UserEntity } from '@modules/index.entities';
+import { Attribute, Device, Asset, Telemetry, User as UserEntity } from '@modules/index.entities';
 import { DataType, AttributeScope } from '@common/enums/index.enum';
+import { DeviceProtocol } from '@modules/devices/entities/device.entity';
+import { MQTTService } from '@/lib/mqtt/mqtt.service';
 import { CreateAttributeDto } from './dto/create-attribute.dto';
+import {
+  AttributeTimeseriesQueryDto,
+  TimeseriesAggregation,
+} from './dto/attribute-timeseries.dto';
 import { User } from '@modules/users/entities/user.entity';
 
 @Injectable()
 export class AttributesService {
+  private readonly logger = new Logger(AttributesService.name);
+
   constructor(
     @InjectRepository(Attribute)
     private readonly attributeRepository: Repository<Attribute>,
@@ -16,6 +24,14 @@ export class AttributesService {
     private readonly deviceRepository: Repository<Device>,
     @InjectRepository(Asset)
     private readonly assetRepository: Repository<Asset>,
+    // Registered as a repository rather than by importing TelemetryModule:
+    // TelemetryModule → ProfilesModule → Asset repo, and ProtocolsModule
+    // imports AttributesModule, so importing TelemetryModule here would close
+    // a module cycle. Same idiom as AssetsModule's roll-up repositories.
+    @InjectRepository(Telemetry)
+    private readonly telemetryRepository: Repository<Telemetry>,
+    // MQTTModule is @Global, so MQTTService needs no module import.
+    private readonly mqttService: MQTTService,
   ) {}
 
   /**
@@ -102,7 +118,79 @@ export class AttributesService {
       savedAttributes.push(saved);
     }
 
+    // SHARED scope is the only one the device is allowed to read back, so it
+    // is the only one worth pushing. Fire-and-forget: the attributes are
+    // already committed and an unreachable broker must not fail the request.
+    if (scope === AttributeScope.SHARED && entityType.toLowerCase() === 'device') {
+      void this.pushSharedAttributesToDevice(entityId, savedAttributes);
+    }
+
     return savedAttributes;
+  }
+
+  /**
+   * Publish shared attributes down to the device over MQTT.
+   *
+   * Topic is `devices/{deviceKey}/attributes/shared`, NOT
+   * `devices/{deviceKey}/attributes`. The platform's own MQTT client
+   * subscribes to `devices/+/attributes` (UPLINK_TOPICS in mqtt.service.ts)
+   * and routes everything it receives there into DeviceListenerService as
+   * telemetry. Publishing a downlink to that topic therefore feeds straight
+   * back into our own ingestion: the attribute values get stored as fake
+   * sensor readings, the alarm engine evaluates them, and the device's
+   * lastSeenAt/messageCount move as though it had reported. Measured during
+   * testing — 5 spurious telemetry rows and 5 spurious "High Temperature"
+   * alarms before the topic was changed.
+   *
+   * `+` matches exactly one level, so the four-level downlink topic is not
+   * matched by the three-level uplink subscription and cannot loop.
+   *
+   * Only GENERIC_MQTT devices get a push: LoRaWAN downlinks are codec-encoded
+   * onto the commands topic and a raw JSON payload there would reach the
+   * device as an unparseable frame.
+   */
+  private async pushSharedAttributesToDevice(
+    deviceId: string,
+    attributes: Attribute[],
+  ): Promise<void> {
+    try {
+      const device = await this.deviceRepository.findOne({
+        where: { id: deviceId },
+      });
+
+      if (!device?.deviceKey) return;
+
+      if (device.protocol !== DeviceProtocol.GENERIC_MQTT) {
+        this.logger.debug(
+          `Skipping shared-attribute push for ${device.deviceKey}: ` +
+            `protocol ${device.protocol} has no attributes topic`,
+        );
+        return;
+      }
+
+      const payload: Record<string, any> = {};
+      for (const attr of attributes) {
+        payload[attr.attributeKey] = this.getAttributeValue(attr);
+      }
+
+      // publish() stringifies internally — pass the object, not a JSON string,
+      // or the device receives a double-encoded payload.
+      await this.mqttService.publish(
+        `devices/${device.deviceKey}/attributes/shared`,
+        payload,
+      );
+
+      this.logger.log(
+        `Pushed ${Object.keys(payload).length} shared attribute(s) to ` +
+          `${device.deviceKey}: [${Object.keys(payload).join(', ')}]`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to push shared attributes to device ${deviceId}: ${
+          (err as Error).message
+        }`,
+      );
+    }
   }
 
   /**
@@ -250,34 +338,139 @@ export class AttributesService {
   }
 
   /**
-   * Get timeseries data (stub - implement with actual timeseries table)
+   * Historical time-series for an entity, read from the telemetry table.
+   *
+   * Telemetry here is one row per message with a `data` jsonb blob — there is
+   * no key/value row model — so a key's series is extracted with `data->>key`
+   * and rows lacking the key are filtered out with the `?` containment
+   * operator. One query per key keeps `limit` meaning "points per key" rather
+   * than "rows in total", and each query rides the
+   * (tenantId, deviceId, timestamp) index.
+   *
+   * Only `device` entities have telemetry; anything else returns {} rather
+   * than silently reporting another entity's data.
    */
   async getTimeseries(
     tenantId: string | undefined,
     entityType: string,
     entityId: string,
-    keys: string[],
-    startTs?: number,
-    endTs?: number,
-    limit: number = 100,
-  ): Promise<Record<string, any[]>> {
-    // TODO: Implement actual timeseries data retrieval from telemetry table
-    // For now, return latest attributes as single data points
-    const attributes = await this.findByKeys(tenantId, entityType, entityId, keys);
+    query: AttributeTimeseriesQueryDto,
+  ): Promise<Record<string, Array<{ ts: number; value: any }>>> {
+    const keys = query.keyList;
+    const result: Record<string, Array<{ ts: number; value: any }>> = {};
 
-    const result: Record<string, any[]> = {};
+    if (keys.length === 0) return result;
+
+    if (entityType.toLowerCase() !== 'device') {
+      this.logger.debug(
+        `Timeseries requested for entityType '${entityType}' — only 'device' ` +
+          `has telemetry; returning empty series`,
+      );
+      return result;
+    }
+
+    const limit = query.limit ?? 100;
+    const agg = query.agg ?? TimeseriesAggregation.NONE;
+
     for (const key of keys) {
-      if (attributes[key] !== undefined) {
-        result[key] = [
-          {
-            ts: Date.now(),
-            value: attributes[key],
-          },
-        ];
-      }
+      result[key] =
+        agg === TimeseriesAggregation.NONE
+          ? await this.readRawSeries(tenantId, entityId, key, query, limit)
+          : await this.readAggregatedSeries(tenantId, entityId, key, query, limit, agg);
     }
 
     return result;
+  }
+
+  /** Raw stored points, newest first. */
+  private async readRawSeries(
+    tenantId: string | undefined,
+    deviceId: string,
+    key: string,
+    query: AttributeTimeseriesQueryDto,
+    limit: number,
+  ): Promise<Array<{ ts: number; value: any }>> {
+    const qb = this.telemetryRepository
+      .createQueryBuilder('t')
+      .select(['t.timestamp AS "timestamp"'])
+      .addSelect('t.data -> :key', 'value')
+      .where('t.deviceId = :deviceId', { deviceId })
+      // `data ? :key` — jsonb key-existence, so a row that never carried this
+      // key is skipped instead of yielding a null point.
+      .andWhere('t.data ? :key')
+      .setParameter('key', key)
+      .orderBy('t.timestamp', 'DESC')
+      .limit(limit);
+
+    if (tenantId) qb.andWhere('t.tenantId = :tenantId', { tenantId });
+    this.applyWindow(qb, query);
+
+    const rows: Array<{ timestamp: Date; value: any }> = await qb.getRawMany();
+
+    return rows.map((row) => ({
+      ts: new Date(row.timestamp).getTime(),
+      value: row.value,
+    }));
+  }
+
+  /** Interval-bucketed aggregate, newest bucket first. */
+  private async readAggregatedSeries(
+    tenantId: string | undefined,
+    deviceId: string,
+    key: string,
+    query: AttributeTimeseriesQueryDto,
+    limit: number,
+    agg: TimeseriesAggregation,
+  ): Promise<Array<{ ts: number; value: any }>> {
+    // Default bucket: one hour. Validated as an integer >= 1000 by the DTO, so
+    // it is safe to inline — it cannot be bound as a parameter inside a
+    // GROUP BY expression that must match the SELECT expression exactly.
+    const interval = Math.floor(query.interval ?? 3_600_000);
+
+    const bucket = `floor(extract(epoch from t.timestamp) * 1000 / ${interval}) * ${interval}`;
+
+    const valueExpr =
+      agg === TimeseriesAggregation.COUNT
+        ? 'COUNT(*)'
+        : `${agg}((t.data ->> :key)::numeric)`;
+
+    const qb = this.telemetryRepository
+      .createQueryBuilder('t')
+      .select(bucket, 'bucket')
+      .addSelect(valueExpr, 'value')
+      .where('t.deviceId = :deviceId', { deviceId })
+      .andWhere('t.data ? :key')
+      .setParameter('key', key);
+
+    if (agg !== TimeseriesAggregation.COUNT) {
+      // Guard the ::numeric cast — a single non-numeric reading for this key
+      // would otherwise abort the whole query with a 22P02.
+      qb.andWhere(`(t.data ->> :key) ~ '^-?[0-9]+(\\.[0-9]+)?$'`);
+    }
+
+    if (tenantId) qb.andWhere('t.tenantId = :tenantId', { tenantId });
+    this.applyWindow(qb, query);
+
+    const rows: Array<{ bucket: string; value: string }> = await qb
+      .groupBy(bucket)
+      .orderBy('bucket', 'DESC')
+      .limit(limit)
+      .getRawMany();
+
+    return rows.map((row) => ({
+      ts: Number(row.bucket),
+      value: row.value === null ? null : Number(row.value),
+    }));
+  }
+
+  /** Shared startTs/endTs window, applied identically to both read paths. */
+  private applyWindow(qb: any, query: AttributeTimeseriesQueryDto): void {
+    if (query.startTs !== undefined) {
+      qb.andWhere('t.timestamp >= :startTs', { startTs: new Date(query.startTs) });
+    }
+    if (query.endTs !== undefined) {
+      qb.andWhere('t.timestamp <= :endTs', { endTs: new Date(query.endTs) });
+    }
   }
 
   /**

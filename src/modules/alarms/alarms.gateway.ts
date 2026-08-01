@@ -174,6 +174,7 @@ export class AlarmsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       name:         alarm.name,
       severity:     alarm.severity,
       status:       alarm.status,
+      tbStatus:     alarm.tbStatus,
       message:      alarm.message,
       deviceId:     alarm.deviceId,
       customerId:   alarm.customerId,
@@ -194,6 +195,52 @@ export class AlarmsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     }
   }
 
+  /**
+   * A newly created alarm rule. AlarmsService emits alarm.created on every
+   * create() but nothing was listening, so a rule added from another session
+   * never appeared until the page was reloaded.
+   */
+  @OnEvent('alarm.created')
+  handleAlarmCreated(payload: { alarm: Alarm }) {
+    const { alarm } = payload;
+    this.logger.log(`Broadcasting alarm created: ${alarm.id}`);
+
+    const eventData = {
+      id:       alarm.id,
+      name:     alarm.name,
+      severity: alarm.severity,
+      status:   alarm.status,
+      tbStatus: alarm.tbStatus,
+      deviceId: alarm.deviceId,
+      isEnabled: alarm.isEnabled,
+    };
+
+    this.server.to(`tenant:${alarm.tenantId}`).emit('alarm:created', eventData);
+    if (alarm.customerId) this.server.to(`customer:${alarm.customerId}`).emit('alarm:created', eventData);
+    if (alarm.deviceId)   this.server.to(`device:${alarm.deviceId}`).emit('alarm:created', eventData);
+  }
+
+  @OnEvent('alarm.assigned')
+  handleAlarmAssigned(payload: { alarm: Alarm; userId: string | null }) {
+    const { alarm, userId } = payload;
+    this.logger.log(`Broadcasting alarm assigned: ${alarm.id} → ${userId ?? 'unassigned'}`);
+
+    const eventData = {
+      id:         alarm.id,
+      name:       alarm.name,
+      status:     alarm.status,
+      tbStatus:   alarm.tbStatus,
+      assignedTo: alarm.assignedTo ?? null,
+      assignedAt: alarm.assignedAt ?? null,
+    };
+
+    this.server.to(`tenant:${alarm.tenantId}`).emit('alarm:assigned', eventData);
+    if (alarm.customerId) this.server.to(`customer:${alarm.customerId}`).emit('alarm:assigned', eventData);
+    if (alarm.deviceId)   this.server.to(`device:${alarm.deviceId}`).emit('alarm:assigned', eventData);
+    // The new assignee gets it directly, even with no tenant room joined.
+    if (userId) this.server.to(`user:${userId}`).emit('alarm:assigned', eventData);
+  }
+
   @OnEvent('alarm.acknowledged')
   handleAlarmAcknowledged(payload: { alarm: Alarm; userId: string }) {
     const { alarm } = payload;
@@ -203,6 +250,7 @@ export class AlarmsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       id:              alarm.id,
       name:            alarm.name,
       status:          alarm.status,
+      tbStatus:        alarm.tbStatus,
       acknowledgedAt:  alarm.acknowledgedAt,
       acknowledgedBy:  alarm.acknowledgedBy,
     };
@@ -221,7 +269,9 @@ export class AlarmsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       id:        alarm.id,
       name:      alarm.name,
       status:    alarm.status,
+      tbStatus:  alarm.tbStatus,
       clearedAt: alarm.clearedAt,
+      clearedBy: alarm.clearedBy ?? null,
     };
 
     this.server.to(`tenant:${alarm.tenantId}`).emit('alarm:cleared', eventData);

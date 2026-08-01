@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
-import { Alarm, Device } from '@modules/index.entities';
+import { Alarm, Device, User as UserEntity } from '@modules/index.entities';
 import { AlarmCondition, AlarmStatus, AlarmSeverity } from '@common/enums/index.enum';
 import {
   CreateAlarmDto,
@@ -28,6 +28,9 @@ export class AlarmsService {
     private alarmRepository: Repository<Alarm>,
     @InjectRepository(Device)
     private deviceRepository: Repository<Device>,
+    // Read-only: validates that an assignee belongs to the alarm's tenant.
+    @InjectRepository(UserEntity)
+    private userRepository: Repository<UserEntity>,
     private eventEmitter: EventEmitter2,
   ) {}
 
@@ -207,8 +210,21 @@ export class AlarmsService {
   ): Promise<Alarm> {
     const alarm = await this.findOne(id, tenantId);
 
-    if (alarm.status !== AlarmStatus.ACTIVE) {
-      throw new BadRequestException('Only active alarms can be acknowledged');
+    // ThingsBoard allows acknowledging a cleared alarm (CLEARED_UNACK →
+    // CLEARED_ACK): an operator still needs to confirm they saw an alarm that
+    // auto-cleared before they got to it. Only already-acknowledged, resolved
+    // and dormant rows are rejected.
+    if (
+      alarm.status !== AlarmStatus.ACTIVE &&
+      alarm.status !== AlarmStatus.CLEARED
+    ) {
+      throw new BadRequestException(
+        `Cannot acknowledge an alarm with status: ${alarm.status}`,
+      );
+    }
+
+    if (alarm.acknowledgedAt) {
+      throw new BadRequestException('Alarm is already acknowledged');
     }
 
     alarm.acknowledge(userId);
@@ -231,7 +247,11 @@ export class AlarmsService {
   /**
    * Clear alarm
    */
-  async clear(id: string, tenantId: string | undefined): Promise<Alarm> {
+  async clear(
+    id: string,
+    tenantId: string | undefined,
+    userId?: string,
+  ): Promise<Alarm> {
     const alarm = await this.findOne(id, tenantId);
 
     if (
@@ -243,13 +263,122 @@ export class AlarmsService {
       );
     }
 
-    alarm.clear();
+    alarm.clear(userId);
     const saved = await this.alarmRepository.save(alarm);
 
     // Emit event
     this.eventEmitter.emit('alarm.cleared', { alarm: saved });
 
     return saved;
+  }
+
+  /**
+   * Assign an alarm to a user for handling, or unassign with userId = null.
+   *
+   * The assignee must belong to the same tenant — an alarm assigned to a user
+   * who cannot see it would silently never be actioned.
+   */
+  async assign(
+    id: string,
+    tenantId: string | undefined,
+    userId: string | null,
+  ): Promise<Alarm> {
+    const alarm = await this.findOne(id, tenantId);
+
+    if (userId) {
+      const assignee = await this.userRepository.findOne({
+        where: { id: userId, tenantId },
+      });
+
+      if (!assignee) {
+        throw new NotFoundException('Assignee not found in this tenant');
+      }
+    }
+
+    alarm.assign(userId);
+    const saved = await this.alarmRepository.save(alarm);
+
+    this.eventEmitter.emit('alarm.assigned', { alarm: saved, userId });
+
+    return saved;
+  }
+
+  /**
+   * Lean counts for an alarm dashboard.
+   *
+   * Reported in the ThingsBoard active/cleared × ack/unack shape, derived from
+   * the stored status plus acknowledgedAt. One grouped query per axis rather
+   * than the 13 sequential counts getStatistics() issues.
+   */
+  async getCounts(tenantId: string | undefined, customerId?: string) {
+    const base = () => {
+      const qb = this.alarmRepository
+        .createQueryBuilder('alarm')
+        .where('alarm.tenantId = :tenantId', { tenantId });
+      if (customerId) {
+        qb.andWhere('alarm.customerId = :customerId', { customerId });
+      }
+      return qb;
+    };
+
+    // Bucket on the same rule tbStatus uses, in SQL so it is one pass.
+    const statusRows: Array<{ bucket: string; count: string }> = await base()
+      .select(
+        `CASE
+           WHEN alarm.status = '${AlarmStatus.INACTIVE}' THEN 'INACTIVE'
+           WHEN alarm.status = '${AlarmStatus.RESOLVED}' THEN 'CLEARED_ACK'
+           WHEN alarm.status = '${AlarmStatus.CLEARED}'
+             THEN CASE WHEN alarm.acknowledgedAt IS NULL
+                       THEN 'CLEARED_UNACK' ELSE 'CLEARED_ACK' END
+           WHEN alarm.status = '${AlarmStatus.ACKNOWLEDGED}' THEN 'ACTIVE_ACK'
+           ELSE CASE WHEN alarm.acknowledgedAt IS NULL
+                     THEN 'ACTIVE_UNACK' ELSE 'ACTIVE_ACK' END
+         END`,
+        'bucket',
+      )
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('bucket')
+      .getRawMany();
+
+    const severityRows: Array<{ severity: string; count: string }> = await base()
+      .select('alarm.severity', 'severity')
+      .addSelect('COUNT(*)', 'count')
+      .andWhere('alarm.status IN (:...activeStatuses)', {
+        activeStatuses: [AlarmStatus.ACTIVE, AlarmStatus.ACKNOWLEDGED],
+      })
+      .groupBy('alarm.severity')
+      .getRawMany();
+
+    const byBucket = (name: string) =>
+      parseInt(statusRows.find((r) => r.bucket === name)?.count ?? '0', 10);
+
+    const bySev = (name: string) =>
+      parseInt(severityRows.find((r) => r.severity === name)?.count ?? '0', 10);
+
+    const activeUnack = byBucket('ACTIVE_UNACK');
+    const activeAck = byBucket('ACTIVE_ACK');
+    const clearedUnack = byBucket('CLEARED_UNACK');
+    const clearedAck = byBucket('CLEARED_ACK');
+    const inactive = byBucket('INACTIVE');
+
+    return {
+      total: activeUnack + activeAck + clearedUnack + clearedAck + inactive,
+      active: activeUnack + activeAck,
+      activeUnack,
+      activeAck,
+      cleared: clearedUnack + clearedAck,
+      clearedUnack,
+      clearedAck,
+      // Dormant device-profile rules — watched but never fired. Reported
+      // separately so they do not inflate the cleared bucket.
+      inactive,
+      bySeverity: {
+        critical: bySev(AlarmSeverity.CRITICAL),
+        error: bySev(AlarmSeverity.ERROR),
+        warning: bySev(AlarmSeverity.WARNING),
+        info: bySev(AlarmSeverity.INFO),
+      },
+    };
   }
 
   /**
@@ -398,7 +527,11 @@ private evaluateCondition(rule: any, value: any): boolean {
       where: whereCondition,
       relations: ['device'],
       order: {
-        severity: 'ASC', // CRITICAL first
+        // Postgres orders an enum by its declared position, and
+        // alarms_severity_enum is declared info(1) → warning → error →
+        // critical(4). ASC therefore returned INFO first, the opposite of what
+        // the comment claimed. DESC is what puts CRITICAL at the top.
+        severity: 'DESC',
         triggeredAt: 'DESC',
       },
     });
@@ -432,8 +565,11 @@ private evaluateCondition(rule: any, value: any): boolean {
     return await this.alarmRepository.find({
       where: { tenantId, deviceId },
       order: {
-        status: 'ASC', // ACTIVE first
-        severity: 'ASC', // CRITICAL first
+        // alarms_status_enum is declared active(1) first, so ASC is correct
+        // here; alarms_severity_enum is declared critical LAST, so severity
+        // needs DESC to surface critical first.
+        status: 'ASC',
+        severity: 'DESC',
         triggeredAt: 'DESC',
       },
     });

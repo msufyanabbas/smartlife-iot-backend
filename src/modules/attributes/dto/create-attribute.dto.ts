@@ -4,6 +4,8 @@ import {
   IsOptional,
   IsNumber,
   IsBoolean,
+  IsNotEmptyObject,
+  IsObject,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { AttributeScope, DataType } from '@common/enums/index.enum';
@@ -50,6 +52,12 @@ export class CreateAttributeDto {
 }
 
 export class SaveAttributesDto {
+  // @IsObject/@IsNotEmptyObject are required, not decorative: the global
+  // ValidationPipe runs with whitelist + forbidNonWhitelisted, so a property
+  // carrying no class-validator decorator is stripped and then rejected as
+  // "property attributes should not exist". Without these, every request to
+  // POST /attributes/:entityType/:entityId/:scope returned 400 and there was
+  // no working REST path to write attributes in bulk.
   @ApiProperty({
     example: {
       firmwareVersion: '1.2.3',
@@ -57,5 +65,7 @@ export class SaveAttributesDto {
       temperature: 25.5,
     },
   })
+  @IsObject()
+  @IsNotEmptyObject()
   attributes: Record<string, any>;
 }

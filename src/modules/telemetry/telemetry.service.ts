@@ -6,6 +6,8 @@ import { Device } from '../devices/entities/device.entity';
 import { CreateTelemetryDto } from './dto/create-telemetry.dto';
 import { QueryTelemetryDto } from './dto/telemetry-query.dto';
 import { RedisService } from '@/lib/redis/redis.service';
+import { DeviceStatus } from '@common/enums/index.enum';
+import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
 
 // NOTE: TelemetryService does NOT inject KafkaService.
 // The HTTP ingestion path (POST /telemetry/devices/:deviceKey) stores the
@@ -14,6 +16,12 @@ import { RedisService } from '@/lib/redis/redis.service';
 // path and publishes to telemetry.device.raw.
 // If you want HTTP ingestion to also trigger automations and WebSocket
 // broadcasts, emit an EventEmitter2 event here instead of a Kafka message.
+//
+// Because this path skips Kafka it also skips TelemetryConsumer, which is
+// where device-profile alarm rules are evaluated. That evaluation is therefore
+// invoked directly below — without it, a device ingesting over HTTP would
+// never fire its profile's alarm rules. Automations, the WebSocket broadcast
+// and the rule-engine forward remain Kafka-only.
 
 @Injectable()
 export class TelemetryService {
@@ -25,7 +33,56 @@ export class TelemetryService {
     @InjectRepository(Device)
     private readonly deviceRepository: Repository<Device>,
     private readonly redisService: RedisService,
+    // Provided by ProfilesModule, already imported by TelemetryModule.
+    private readonly profileAlarmService: ProfileAlarmService,
   ) {}
+
+  /**
+   * Device columns to touch after an inbound message.
+   *
+   * A device sending data is by definition reachable, so INACTIVE (never seen)
+   * and OFFLINE (went quiet) both return to ACTIVE. Any other status —
+   * MAINTENANCE, ERROR — is operator-set and left alone.
+   *
+   * DeviceStatus has no 'online' member; ACTIVE is the reachable state and
+   * checkOfflineDevices() is what moves it back to OFFLINE after 5 minutes
+   * of silence.
+   */
+  private activityPatch(device: Device, messageCount: number) {
+    const revived =
+      device.status === DeviceStatus.INACTIVE ||
+      device.status === DeviceStatus.OFFLINE;
+
+    return {
+      lastActivityAt: new Date(),
+      lastSeenAt: new Date(),
+      messageCount: () => `"messageCount" + ${messageCount}`,
+      status: revived ? DeviceStatus.ACTIVE : device.status,
+      ...(revived && !device.activatedAt ? { activatedAt: new Date() } : {}),
+    };
+  }
+
+  /**
+   * Evaluate the device profile's alarm rules for an HTTP-ingested reading.
+   *
+   * Never throws: an alarm-rule problem must not fail the ingestion request
+   * and cause the device to retry a reading that was already stored.
+   */
+  private async evaluateProfileAlarms(
+    deviceId: string,
+    data: Record<string, any> | undefined,
+  ): Promise<void> {
+    try {
+      await this.profileAlarmService.evaluateProfileAlarmRules(
+        deviceId,
+        data ?? {},
+      );
+    } catch (err) {
+      this.logger.error(
+        `Device profile alarm check failed for ${deviceId}: ${(err as Error).message}`,
+      );
+    }
+  }
 
   // ── Create (HTTP ingestion path) ──────────────────────────────────────────
 
@@ -61,12 +118,10 @@ export class TelemetryService {
     // Update device activity
     await this.deviceRepository.update(
       { id: device.id },
-      {
-        lastActivityAt: new Date(),
-        lastSeenAt: new Date(),
-        messageCount: () => '"messageCount" + 1',
-      },
+      this.activityPatch(device, 1),
     );
+
+    await this.evaluateProfileAlarms(device.id, dto.data);
 
     return saved;
   }
@@ -104,12 +159,20 @@ export class TelemetryService {
 
     await this.deviceRepository.update(
       { id: device.id },
-      {
-        lastActivityAt: new Date(),
-        lastSeenAt: new Date(),
-        messageCount: () => `"messageCount" + ${dtos.length}`,
-      },
+      this.activityPatch(device, dtos.length),
     );
+
+    // Only the newest reading in the batch is evaluated — alarm rules are
+    // level checks against current state, and replaying an entire backfill
+    // would flap the alarm through every historical value.
+    // Guarded: reduce() with no initial value throws on an empty array.
+    if (dtos.length > 0) {
+      const newest = dtos.reduce((latest, dto) =>
+        new Date(dto.timestamp ?? 0) > new Date(latest.timestamp ?? 0) ? dto : latest,
+      );
+
+      await this.evaluateProfileAlarms(device.id, newest.data);
+    }
 
     return saved;
   }

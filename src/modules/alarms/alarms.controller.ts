@@ -28,6 +28,7 @@ import {
   TestAlarmDto,
   BulkAcknowledgeAlarmDto,
   BulkResolveAlarmDto,
+  AssignAlarmDto,
 } from './dto/alarm.dto';
 import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
@@ -74,6 +75,24 @@ export class AlarmsController {
   @ApiResponse({ status: 200, description: 'Critical alarms' })
   getCritical(@CurrentUser() user: User) {
     return this.alarmsService.getCritical(user.tenantId, user.customerId);
+  }
+
+  // Declared before @Get(':id') — a literal segment must be registered ahead
+  // of the param route or Nest matches 'counts' as an id.
+  @Get('counts')
+  @ApiOperation({
+    summary: 'Alarm counts for a dashboard',
+    description:
+      'Counts bucketed in the ThingsBoard active/cleared × ack/unack shape, ' +
+      'derived from the stored status plus acknowledgedAt. Dormant ' +
+      'device-profile rules are reported under `inactive` rather than being ' +
+      'folded into the cleared bucket. Severity counts cover raised alarms ' +
+      '(active + acknowledged) only. For the richer payload — most-triggered ' +
+      'and recent lists — use GET /alarms/statistics.',
+  })
+  @ApiResponse({ status: 200, description: 'Alarm counts' })
+  getCounts(@CurrentUser() user: User) {
+    return this.alarmsService.getCounts(user.tenantId, user.customerId);
   }
 
   @Get('device/:deviceId')
@@ -142,10 +161,34 @@ export class AlarmsController {
 
   @Post(':id/clear')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Clear alarm' })
+  @ApiOperation({
+    summary: 'Clear alarm',
+    description:
+      'Records the operator in clearedBy. An automatic clear by the rule ' +
+      'engine leaves clearedBy null, which is how the two are told apart.',
+  })
   @ApiResponse({ status: 200, description: 'Alarm cleared' })
   clear(@Param('id', ParseIdPipe) id: string, @CurrentUser() user: User) {
-    return this.alarmsService.clear(id, user.tenantId);
+    return this.alarmsService.clear(id, user.tenantId, user.id);
+  }
+
+  @Patch(':id/assign')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Assign an alarm to a user for handling',
+    description:
+      'Pass userId: null to unassign. The assignee must belong to the same ' +
+      'tenant, otherwise the alarm would be assigned to someone who cannot ' +
+      'see it.',
+  })
+  @ApiResponse({ status: 200, description: 'Alarm assigned' })
+  @ApiResponse({ status: 404, description: 'Alarm or assignee not found' })
+  assign(
+    @Param('id', ParseIdPipe) id: string,
+    @CurrentUser() user: User,
+    @Body() assignDto: AssignAlarmDto,
+  ) {
+    return this.alarmsService.assign(id, user.tenantId, assignDto.userId);
   }
 
   @Post(':id/resolve')

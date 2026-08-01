@@ -1,7 +1,6 @@
 // src/modules/edge/edge.module.ts
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EdgeService } from './edge.service';
 import { EdgeController } from './edge.controller';
@@ -19,8 +18,11 @@ import { Device } from '@modules/devices/entities/device.entity';
       Device,
     ]),
 
-    // Required for @Cron decorator in EdgeService
-    ScheduleModule.forRoot(),
+    // ScheduleModule.forRoot() is NOT needed here. It is registered once in
+    // AppModule and is global — the @Cron decorators in EdgeService are picked
+    // up by that registration. Calling forRoot() again added a second
+    // ScheduleExplorer that re-registered every @Cron in the application,
+    // making every cron fire once per duplicate call.
 
     // Required for EventEmitter2 in EdgeService.
     // Remove if already registered in AppModule.

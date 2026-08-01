@@ -12,10 +12,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Asset, Device, DeviceProfile, User } from '@modules/index.entities';
-import { DeviceStatus } from '@common/enums/index.enum';
+import { DeviceProvisionType, DeviceStatus, DeviceType } from '@common/enums/index.enum';
 import { CreateDeviceDto } from '@modules/devices/dto/create-device.dto';
 import { UpdateDeviceDto } from '@modules/devices/dto/update-device.dto';
 import { DeviceCredentialsDto } from '@modules/devices/dto/device-credentials.dto';
+import { DeviceCredentialsSummaryDto } from '@modules/devices/dto/device-credentials-summary.dto';
+import {
+  ProvisionDeviceDto,
+  ProvisionDeviceResponseDto,
+} from '@modules/devices/dto/provision-device.dto';
 import { PaginationDto, PaginatedResponseDto } from '@/common/dto/pagination.dto';
 import { UserRole } from '@common/enums/index.enum';
 import { DeviceCredentialsService } from './device-credentials.service';
@@ -324,6 +329,27 @@ export class DevicesService {
 
   // ── Credentials passthrough ───────────────────────────────────────────────
 
+  /**
+   * Masked view — what GET /devices/:id/credentials returns.
+   *
+   * The full secret is deliberately not reachable through a plain read; it is
+   * returned only by create() and regenerateCredentials().
+   */
+  async getCredentialsSummary(
+    id: string,
+    user: User,
+  ): Promise<DeviceCredentialsSummaryDto> {
+    await this.findOne(id, user); // access check
+    return this.credentialsService.getMaskedSummary(id, user);
+  }
+
+  /**
+   * Full MQTT configuration including the live secret, broker topics and
+   * copy-paste firmware snippets.
+   *
+   * Not bound to a read route — it backs the response of device creation and
+   * credential rotation, where showing the secret once is the point.
+   */
   async getCredentials(id: string, user: User): Promise<DeviceCredentialsDto> {
     await this.findOne(id, user); // access check
     return this.credentialsService.getMqttConfiguration(id, user);
@@ -332,6 +358,187 @@ export class DevicesService {
   async regenerateCredentials(id: string, user: User): Promise<DeviceCredentialsDto> {
     await this.findOne(id, user); // access check
     return this.credentialsService.regenerateCredentials(id, user);
+  }
+
+  // ── Provisioning (self-registration) ──────────────────────────────────────
+  //
+  // Backs the @Public() POST /devices/provision. There is no caller identity:
+  // the profile's provisionDeviceKey + provisionDeviceSecret pair IS the
+  // credential, and the tenant is taken from the profile that owns the key —
+  // never from the request — so a caller cannot provision into a tenant they
+  // do not hold a key for.
+  //
+  // Always resolves (never throws) so a constrained device firmware only has
+  // to parse one response shape. Failures are deliberately vague: a caller
+  // probing keys learns only that the pair was rejected, not which half.
+
+  async provisionDevice(
+    dto: ProvisionDeviceDto,
+  ): Promise<ProvisionDeviceResponseDto> {
+    const fail = (errorMsg: string): ProvisionDeviceResponseDto => ({
+      status: 'FAILURE',
+      errorMsg,
+    });
+
+    const profile = await this.deviceProfileRepository.findOne({
+      where: { provisionDeviceKey: dto.provisionDeviceKey },
+    });
+
+    // Same message for unknown key and wrong secret — do not confirm that a
+    // provision key exists.
+    if (
+      !profile ||
+      !profile.provisionDeviceSecret ||
+      profile.provisionDeviceSecret !== dto.provisionDeviceSecret
+    ) {
+      this.logger.warn(
+        `Provisioning rejected for key '${dto.provisionDeviceKey}': invalid credentials`,
+      );
+      return fail('Invalid provision credentials');
+    }
+
+    if (
+      !profile.provisionType ||
+      profile.provisionType === DeviceProvisionType.DISABLED
+    ) {
+      return fail('Provisioning is disabled for this device profile');
+    }
+
+    // ── Pre-provisioned: the device must already exist ─────────────────────
+    if (profile.provisionType === DeviceProvisionType.CHECK_PRE_PROVISIONED_DEVICES) {
+      const existing = await this.deviceRepository.findOne({
+        where: {
+          name: dto.deviceName,
+          deviceProfileId: profile.id,
+          tenantId: profile.tenantId,
+        },
+      });
+
+      if (!existing) return fail('Device is not pre-provisioned');
+
+      return this.buildProvisioningSuccess(existing);
+    }
+
+    // ── Allow-create-new ───────────────────────────────────────────────────
+
+    // Idempotent re-provision: a device that reboots and re-provisions must
+    // get its existing credentials back, not a duplicate row. Without this a
+    // crash-looping device would create unbounded devices through a public
+    // endpoint.
+    const alreadyProvisioned = await this.deviceRepository.findOne({
+      where: {
+        name: dto.deviceName,
+        deviceProfileId: profile.id,
+        tenantId: profile.tenantId,
+      },
+    });
+
+    if (alreadyProvisioned) {
+      this.logger.log(
+        `Re-provisioning existing device ${alreadyProvisioned.deviceKey}`,
+      );
+      return this.buildProvisioningSuccess(alreadyProvisioned);
+    }
+
+    // The subscription guard cannot run on a public route, so the tenant's
+    // device quota is enforced here instead — otherwise provisioning would be
+    // an unmetered way past the plan limit.
+    const withinQuota = await this.subscriptionsService.canTenantPerformAction(
+      profile.tenantId,
+      'devices',
+    );
+
+    if (!withinQuota) {
+      return fail('Device limit reached for this tenant');
+    }
+
+    // devices.userId is NOT NULL. A provisioned device has no interactive
+    // creator, so it inherits the profile's creator, falling back to a
+    // configured service account.
+    const ownerUserId = profile.createdBy ?? process.env.SYSTEM_USER_ID;
+
+    if (!ownerUserId) {
+      this.logger.error(
+        `Cannot provision against profile ${profile.id}: profile has no createdBy ` +
+          `and SYSTEM_USER_ID is not set`,
+      );
+      return fail('Provisioning is not configured for this device profile');
+    }
+
+    const deviceKey = `dev_${crypto.randomBytes(8).toString('hex')}`;
+
+    const collision = await this.deviceRepository.findOne({
+      where: { deviceKey },
+    });
+
+    if (collision) return fail('Device key collision — please retry');
+
+    // INACTIVE (not OFFLINE) on purpose: DeviceListenerService only promotes
+    // INACTIVE → ACTIVE on first telemetry, so a device parked in OFFLINE
+    // would never come online through the MQTT path.
+    const device = this.deviceRepository.create({
+      deviceKey,
+      name: dto.deviceName,
+      type: dto.deviceType ?? DeviceType.SENSOR,
+      tenantId: profile.tenantId,
+      deviceProfileId: profile.id,
+      userId: ownerUserId,
+      status: DeviceStatus.INACTIVE,
+      metadata: { provisioned: true, provisionedAt: new Date().toISOString() },
+    });
+
+    const savedDevice = await this.deviceRepository.save(device);
+
+    void this.subscriptionsService.incrementTenantUsage(
+      profile.tenantId as any,
+      'devices',
+      1,
+    );
+
+    // Same post-create side effect as DevicesService.create() — non-fatal.
+    try {
+      savedDevice.deviceProfile = profile;
+      await this.profileAlarmService.materialiseProfileAlarms(savedDevice);
+    } catch (err) {
+      this.logger.error(
+        `Failed to materialise profile alarms for provisioned device ` +
+          `${savedDevice.deviceKey}: ${(err as Error).message}`,
+      );
+    }
+
+    await this.credentialsService.createCredentials(savedDevice);
+
+    this.logger.log(
+      `Provisioned device ${savedDevice.deviceKey} on profile ${profile.name}`,
+    );
+
+    return this.buildProvisioningSuccess(savedDevice);
+  }
+
+  /** Reads back a device's real secret for the provisioning handshake. */
+  private async buildProvisioningSuccess(
+    device: Device,
+  ): Promise<ProvisionDeviceResponseDto> {
+    try {
+      const { credentialsType, credentialsValue } =
+        await this.credentialsService.getProvisioningCredentials(device.id);
+
+      return {
+        status: 'SUCCESS',
+        credentialsType,
+        credentialsValue,
+        deviceKey: device.deviceKey,
+        deviceId: device.id,
+      };
+    } catch (err) {
+      this.logger.error(
+        `Provisioning failed for ${device.deviceKey}: ${(err as Error).message}`,
+      );
+      return {
+        status: 'FAILURE',
+        errorMsg: 'Device has no active credentials',
+      };
+    }
   }
 
   // ── Activity ──────────────────────────────────────────────────────────────
@@ -465,17 +672,38 @@ export class DevicesService {
       where: { status: DeviceStatus.ACTIVE, lastSeenAt: LessThan(fiveMinutesAgo) },
     });
 
+    if (staleDevices.length === 0) return;
+
+    // One UPDATE for the whole sweep. This cron is not tenant-partitioned, so
+    // the previous per-device save() was a write per stale device across every
+    // tenant, every five minutes.
+    await this.deviceRepository.update(
+      { id: In(staleDevices.map((d) => d.id)) },
+      { status: DeviceStatus.OFFLINE },
+    );
+
+    // Owners are looked up once per distinct userId, not once per device —
+    // devices in a tenant overwhelmingly share a handful of owners.
+    const ownerIds = [...new Set(staleDevices.map((d) => d.userId).filter(Boolean))];
+    const owners = new Map<string, User>();
+
+    for (const ownerId of ownerIds) {
+      try {
+        owners.set(ownerId, await this.userService.findOne(ownerId));
+      } catch {
+        // A deleted owner must not abort the sweep for every other device —
+        // previously the NotFoundException from findOne() did exactly that,
+        // leaving the remaining devices stuck in ACTIVE.
+        this.logger.warn(`Owner ${ownerId} not found while marking devices offline`);
+      }
+    }
+
     for (const device of staleDevices) {
       device.status = DeviceStatus.OFFLINE;
-      await this.deviceRepository.save(device);
-
-      const user = await this.userService.findOne(device.userId);
-      this.handleDeviceOffline(device, user);
+      this.handleDeviceOffline(device, owners.get(device.userId));
     }
 
-    if (staleDevices.length > 0) {
-      this.logger.log(`Marked ${staleDevices.length} device(s) as offline`);
-    }
+    this.logger.log(`Marked ${staleDevices.length} device(s) as offline`);
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
@@ -519,7 +747,7 @@ export class DevicesService {
     }
   }
 
-  private handleDeviceOffline(device: Device, user: User): void {
+  private handleDeviceOffline(device: Device, user?: User): void {
     this.eventEmitter.emit('device.offline', { device, user });
     this.logger.warn(`Device offline: ${device.name} (${device.id})`);
   }
