@@ -125,6 +125,56 @@ export class DeviceCredentialsService {
     return credentials;
   }
 
+  // ── Internal: read-or-heal ────────────────────────────────────────────────
+
+  /**
+   * Same as getCredentialsWithSecret(), but mints a default ACCESS_TOKEN set
+   * when the device has no credentials row instead of throwing 404.
+   *
+   * A missing row is a data gap, not a client error: devices predating the
+   * credentials flow, rows lost to a partial restore, or devices inserted by
+   * a seeder that skipped them. 404 left the operator with no way to recover
+   * short of deleting and re-creating the device. Self-healing is safe here
+   * precisely because there is nothing to invalidate — no device can already
+   * be authenticating with a credential that does not exist.
+   *
+   * Deliberately NOT used by getCredentialsWithSecret() itself: rotation and
+   * the provisioning handshake must keep failing loudly on a missing row,
+   * since there a gap means something upstream went wrong.
+   */
+  private async getOrCreateCredentialsWithSecret(
+    device: Device,
+  ): Promise<DeviceCredentials> {
+    const existing = await this.credentialsRepository
+      .createQueryBuilder('creds')
+      .addSelect('creds.credentialsValue')
+      .where('creds.deviceId = :deviceId', { deviceId: device.id })
+      .getOne();
+
+    if (existing) return existing;
+
+    this.logger.warn(
+      `No credentials found for device ${device.deviceKey} — creating a ` +
+        `default ACCESS_TOKEN set on read`,
+    );
+
+    try {
+      await this.createCredentials(device, CredentialsType.ACCESS_TOKEN);
+    } catch (error) {
+      // Two concurrent reads both see "missing" and both insert; the unique
+      // index on deviceId lets exactly one win. The loser re-reads the
+      // winner's row rather than surfacing a spurious 409.
+      const pgCode = (error as { code?: string; driverError?: { code?: string } })
+        ?.driverError?.code ?? (error as { code?: string })?.code;
+
+      if (!(error instanceof ConflictException) && pgCode !== '23505') {
+        throw error;
+      }
+    }
+
+    return this.getCredentialsWithSecret(device.id);
+  }
+
   // ── Public: get credentials without secret (safe for relations/logging) ───
 
   async getByDeviceId(deviceId: string): Promise<DeviceCredentials> {
@@ -159,6 +209,11 @@ export class DeviceCredentialsService {
    * The full secret is returned only at creation (DevicesService.create) and
    * at rotation (regenerateCredentials) — never on a plain read, so an
    * attacker with a stolen session cannot harvest live device tokens.
+   *
+   * Self-heals: a device with no credentials row gets a default ACCESS_TOKEN
+   * set minted here rather than a 404. The caller has already passed the
+   * access check below, so this cannot be used to mint credentials for a
+   * device the caller cannot see.
    */
   async getMaskedSummary(
     deviceId: string,
@@ -172,7 +227,7 @@ export class DeviceCredentialsService {
 
     this.verifyAccess(device, user);
 
-    const credentials = await this.getCredentialsWithSecret(deviceId);
+    const credentials = await this.getOrCreateCredentialsWithSecret(device);
 
     // For ACCESS_TOKEN the credentialsId IS the secret, so it is masked too.
     // For MQTT_BASIC / X509 the credentialsId is a username / certificate CN —

@@ -4,6 +4,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Device } from '@modules/devices/entities/device.entity';
 import { DeviceType, DeviceStatus, DeviceConnectionType } from '@common/enums/index.enum';
+import {
+  DeviceCredentials,
+  CredentialsType,
+} from '@modules/devices/entities/device-credentials.entity';
 import { User } from '@modules/users/entities/user.entity';
 import { Tenant } from '@modules/tenants/entities/tenant.entity';
 import { ISeeder } from '../seeder.interface';
@@ -20,7 +24,45 @@ export class DeviceSeeder implements ISeeder {
 
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
+
+    @InjectRepository(DeviceCredentials)
+    private readonly credentialsRepository: Repository<DeviceCredentials>,
   ) {}
+
+  /**
+   * Give a device an ACCESS_TOKEN credential set if it has none.
+   *
+   * Mirrors DeviceCredentialsService.createCredentials() — same
+   * `{deviceKey}_{token}` shape — so a seeded device authenticates exactly
+   * like one created through POST /devices.
+   *
+   * DeviceCredentialsSeeder (position 32 in SEEDERS, vs 4 for this one) also
+   * assigns credentials, with a varied type mix for demo data. Because it now
+   * gap-fills rather than bailing out, it simply finds nothing to do for the
+   * devices seeded here — these end up ACCESS_TOKEN across the board.
+   *
+   * Idempotent: safe to call for devices that already have credentials.
+   */
+  private async ensureCredentials(device: Device): Promise<boolean> {
+    const existing = await this.credentialsRepository.findOne({
+      where: { deviceId: device.id },
+    });
+
+    if (existing) return false;
+
+    await this.credentialsRepository.save(
+      this.credentialsRepository.create({
+        deviceId: device.id,
+        credentialsType: CredentialsType.ACCESS_TOKEN,
+        credentialsId: `${device.deviceKey}_${DeviceCredentials.generateToken()}`,
+        // ACCESS_TOKEN is self-contained in credentialsId — no separate secret.
+        credentialsValue: undefined,
+        isActive: true,
+      }),
+    );
+
+    return true;
+  }
 
   async seed(): Promise<void> {
     const users = await this.userRepository.find({ take: 5 });
@@ -182,19 +224,34 @@ export class DeviceSeeder implements ISeeder {
       },
     ];
 
+    let credentialsCreated = 0;
+
     for (const data of devices) {
       const exists = await this.deviceRepository.findOne({
         where: { deviceKey: data.deviceKey },
       });
 
-      if (!exists) {
-        await this.deviceRepository.save(
+      // Every device leaves this loop with credentials — whether it was
+      // created just now or already existed from an earlier run.
+      const device =
+        exists ??
+        ((await this.deviceRepository.save(
           this.deviceRepository.create(data as any),
-        );
+        )) as unknown as Device);
+
+      if (!exists) {
         console.log(`✅ Created: ${data.name}`);
+      }
+
+      if (await this.ensureCredentials(device)) {
+        credentialsCreated++;
+        console.log(`   🔑 Credentials created for: ${data.name}`);
       }
     }
 
-    console.log('🎉 Device seeding completed (5 records only).');
+    console.log(
+      `🎉 Device seeding completed (5 records only). ` +
+        `Credentials created: ${credentialsCreated}.`,
+    );
   }
 }

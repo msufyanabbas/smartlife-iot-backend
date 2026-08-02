@@ -25,24 +25,37 @@ export class DeviceCredentialsSeeder implements ISeeder {
   async seed(): Promise<void> {
     this.logger.log('🌱 Starting device credentials seeding...');
 
-    // Check if credentials already exist
-    const existingCredentials = await this.credentialsRepository.count();
-    if (existingCredentials > 0) {
-      this.logger.log(
-        `⏭️  Device credentials already seeded (${existingCredentials} records). Skipping...`,
-      );
-      return;
-    }
-
     // Fetch all devices
-    const devices = await this.deviceRepository.find();
+    const allDevices = await this.deviceRepository.find();
 
-    if (devices.length === 0) {
+    if (allDevices.length === 0) {
       this.logger.warn('⚠️  No devices found. Please seed devices first.');
       return;
     }
 
-    this.logger.log(`📊 Found ${devices.length} devices to create credentials for`);
+    // Gap-fill, don't all-or-nothing. This used to bail out entirely when the
+    // credentials table was non-empty, which meant a single pre-existing row
+    // left every other device permanently without credentials. DeviceSeeder
+    // now creates an ACCESS_TOKEN set alongside each device it inserts, so
+    // that early-return would skip this seeder on every run.
+    const credentialledDeviceIds = new Set(
+      (
+        await this.credentialsRepository.find({ select: { deviceId: true } })
+      ).map((c) => c.deviceId),
+    );
+
+    const devices = allDevices.filter((d) => !credentialledDeviceIds.has(d.id));
+
+    if (devices.length === 0) {
+      this.logger.log(
+        `⏭️  All ${allDevices.length} devices already have credentials. Nothing to do.`,
+      );
+      return;
+    }
+
+    this.logger.log(
+      `📊 ${devices.length} of ${allDevices.length} devices need credentials`,
+    );
 
     // ════════════════════════════════════════════════════════════════
     // HELPER FUNCTIONS
