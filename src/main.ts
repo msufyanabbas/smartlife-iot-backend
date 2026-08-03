@@ -1,9 +1,11 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@modules/index.service';
 import compression from 'compression';
 import helmet from 'helmet';
+import { join } from 'path';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from '@common/filters/index.filter';
 import {
@@ -13,7 +15,7 @@ import {
 } from '@common/interceptors/index.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
     rawBody: true,
   });
@@ -67,6 +69,22 @@ async function bootstrap() {
   }
 
   app.use(compression());
+
+  // ── Static uploads ─────────────────────────────────────────────────────────
+  // Everything written under ./uploads (images, floor plans, firmware, solution
+  // template images) is served read-only at /uploads/**. Registered after helmet
+  // so these headers win: helmet's default Cross-Origin-Resource-Policy is
+  // same-origin, which would block the frontend from rendering an <img>.
+  // The CSP + nosniff pair neutralises an uploaded SVG opened directly.
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
+    prefix: '/uploads',
+    index: false,
+    setHeaders: (res) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  });
 
   // ── CORS ───────────────────────────────────────────────────────────────────
   const corsOrigin = configService.get('CORS_ORIGIN');

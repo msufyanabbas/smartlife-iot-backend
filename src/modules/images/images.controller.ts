@@ -2,82 +2,191 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Delete,
-  UseGuards,
   Query,
   HttpCode,
   HttpStatus,
   UseInterceptors,
   UploadedFile,
+  BadRequestException,
+  Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiResponse, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import type { File as MulterFile } from 'multer';
+import type { Response } from 'express';
+import { createReadStream } from 'fs';
 import {
-  ApiTags,
-  ApiOperation,
-  ApiBearerAuth,
-  ApiConsumes,
-} from '@nestjs/swagger';
-import { ImagesService } from './images.service';
+  ImagesService,
+  MAX_IMAGE_BYTES,
+  ALLOWED_IMAGE_MIME_TYPES,
+} from './images.service';
 import { CreateImageDto } from './dto/create-image.dto';
-import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { User } from '../users/entities/user.entity';
-import { PaginationDto } from '../../common/dto/pagination.dto';
-import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import { UpdateImageDto } from './dto/update-image.dto';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
+import {
+  TenantOrCustomerAdmin,
+  SwaggerAuth,
+} from '@common/decorators/access-control.decorator';
+import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
+import { PaginationDto } from '@common/dto/pagination.dto';
 
-@ApiTags('images')
+// Rejected here as well as in the service so multer stops reading the stream
+// as soon as the part header shows an unsupported type.
+const imageFileFilter = (
+  _req: unknown,
+  file: MulterFile,
+  callback: (error: Error | null, acceptFile: boolean) => void,
+): void => {
+  if (ALLOWED_IMAGE_MIME_TYPES[file.mimetype]) {
+    callback(null, true);
+    return;
+  }
+  callback(
+    new BadRequestException(
+      `File type '${file.mimetype}' is not allowed. ` +
+        `Allowed: ${[...new Set(Object.values(ALLOWED_IMAGE_MIME_TYPES))].join(', ')}`,
+    ),
+    false,
+  );
+};
+
+@ApiTags('Images')
 @Controller('images')
-@UseGuards(JwtAuthGuard)
-@ApiBearerAuth()
 export class ImagesController {
   constructor(private readonly imagesService: ImagesService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Upload a new image' })
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Upload a new image', 'Image uploaded')
   @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('file'))
-  async upload(
-    @CurrentUser() user: User,
-    @UploadedFile() file: Express.Multer.File,
-    @Body() body: any,
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        name: { type: 'string' },
+        description: { type: 'string' },
+        alt: { type: 'string' },
+        title: { type: 'string' },
+        entityType: { type: 'string' },
+        entityId: { type: 'string', format: 'uuid' },
+        fieldName: { type: 'string' },
+        isPublic: { type: 'boolean' },
+        tags: { type: 'string', description: 'Comma-separated' },
+        dimensions: {
+          type: 'string',
+          description: 'JSON, e.g. {"width":1920,"height":1080}',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'No file, unsupported type, or invalid metadata',
+  })
+  @ApiResponse({ status: 413, description: 'File exceeds the size limit' })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_IMAGE_BYTES },
+      fileFilter: imageFileFilter,
+    }),
+  )
+  create(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @UploadedFile() file: MulterFile,
+    @Body() createImageDto: CreateImageDto,
   ) {
-    // TODO: Handle actual file upload to storage (S3, local, etc.)
-    const createImageDto: CreateImageDto = {
-      name: body.name || file.originalname,
-      originalName: file.originalname,
-      mimeType: file.mimetype,
-      size: file.size,
-      url: `/uploads/images/${file.filename}`,
-      path: `/uploads/images/${file.filename}`,
-    };
-
-    return this.imagesService.create(user.id, createImageDto);
+    if (!file) {
+      throw new BadRequestException('Image file is required');
+    }
+    return this.imagesService.create(
+      createImageDto,
+      file,
+      userId,
+      tenantId,
+      customerId,
+    );
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all images' })
-  findAll(@CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
-    return this.imagesService.findAll(user.id, paginationDto);
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Get all images', 'List of images')
+  findAll(
+    @CurrentUser('tenantId') tenantId: string,
+    @Query() paginationDto: PaginationDto,
+  ) {
+    return this.imagesService.findAll(tenantId, paginationDto);
   }
 
   @Get('statistics')
-  @ApiOperation({ summary: 'Get image statistics' })
-  getStatistics(@CurrentUser() user: User) {
-    return this.imagesService.getStatistics(user.id);
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Get image statistics')
+  getStatistics(@CurrentUser('tenantId') tenantId: string) {
+    return this.imagesService.getStatistics(tenantId);
+  }
+
+  @Get(':id/download')
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Stream the stored image file', 'Image stream')
+  @ApiResponse({ status: 404, description: 'Image or file not found' })
+  async download(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const { path: filePath, contentType, fileName } =
+      await this.imagesService.getImageFile(id, tenantId);
+
+    // @Res() bypasses the global TransformInterceptor so raw bytes are sent.
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    // An uploaded SVG is an active document; deny it any capability of its own.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    createReadStream(filePath).pipe(res);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get image by ID' })
-  findOne(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.imagesService.findOne(id, user.id);
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Get image by ID')
+  @ApiResponse({ status: 404, description: 'Image not found' })
+  findOne(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.imagesService.findOne(id, tenantId);
+  }
+
+  @Patch(':id')
+  @TenantOrCustomerAdmin()
+  @SwaggerAuth('Update image metadata', 'Image updated')
+  @ApiResponse({ status: 404, description: 'Image not found' })
+  update(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+    @Body() updateImageDto: UpdateImageDto,
+  ) {
+    return this.imagesService.update(id, tenantId, userId, updateImageDto);
   }
 
   @Delete(':id')
+  @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete image' })
-  remove(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
-    return this.imagesService.remove(id, user.id);
+  @SwaggerAuth('Delete image')
+  @ApiResponse({ status: 404, description: 'Image not found' })
+  remove(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.imagesService.remove(id, tenantId, userId);
   }
 }

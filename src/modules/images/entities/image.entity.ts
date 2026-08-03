@@ -64,7 +64,17 @@ export class Image extends BaseEntity {
   @Column()
   mimeType: string;  // "image/jpeg", "image/png"
 
-  @Column({ type: 'bigint' })
+  // The transformer is TypeScript-side only (no schema change): without it
+  // TypeORM hands back `bigint` as a string, so a freshly-created Image would
+  // report `size: 12345` while the same row re-read reports `size: "12345"`.
+  @Column({
+    type: 'bigint',
+    transformer: {
+      to: (value?: number) => value,
+      from: (value?: string | number | null) =>
+        value === null || value === undefined ? value : Number(value),
+    },
+  })
   size: number;  // File size in bytes
 
   // ══════════════════════════════════════════════════════════════════════════
