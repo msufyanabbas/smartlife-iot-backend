@@ -8,7 +8,6 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
 import { Dashboard } from './entities/dashboard.entity';
 import { DashboardVisibility, UserRole } from '@common/enums/index.enum';
 import {
@@ -53,7 +52,10 @@ export class DashboardsService {
   // ── Create ────────────────────────────────────────────────────────────────
 
   async create(user: User, createDto: CreateDashboardDto): Promise<Dashboard> {
-    const widgets = (createDto.widgets ?? []).map((w) => ({ ...w, id: uuidv4() }));
+    // randomUUID(), not uuidv4() — both produce a valid v4, but every other
+    // widget-id site in the codebase uses node:crypto, and one generator is
+    // easier to keep correct than two.
+    const widgets = (createDto.widgets ?? []).map((w) => ({ ...w, id: randomUUID() }));
 
     const dashboard = this.dashboardRepository.create({
       ...createDto,

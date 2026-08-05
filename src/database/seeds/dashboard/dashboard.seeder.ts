@@ -2,6 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
 import { Dashboard, User, Device, Tenant, Customer } from '@modules/index.entities';
 import { DashboardVisibility } from '@common/enums/index.enum';
 import { WidgetConfig } from '@common/interfaces/index.interface';
@@ -64,9 +65,10 @@ export class DashboardSeeder implements ISeeder {
       return;
     }
 
-    const generateWidgetId = (): string => {
-      return 'widget-' + Math.random().toString(36).substring(2, 15);
-    };
+    // Must be a UUID: the widget routes validate :widgetId with ParseIdPipe and
+    // the layout endpoint with @IsUUID(), so a 'widget-xxxx' id seeds a widget
+    // that cannot be renamed, moved or deleted through the API.
+    const generateWidgetId = (): string => randomUUID();
 
     const getRandomDate = (daysAgo: number): Date => {
       const date = new Date();

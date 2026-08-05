@@ -1,6 +1,6 @@
 // src/modules/analytics/dto/analytics.dto.ts
 import {
-  IsEnum, IsOptional, IsDateString, IsString,
+  IsEnum, IsOptional, IsDateString, IsString, IsObject,
   IsInt, Min, Max,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -166,7 +166,12 @@ export class CreateAnalyticsDto {
   @IsString()
   entityType?: string;
 
+  // @IsObject() is load-bearing, not decoration: the global ValidationPipe runs
+  // with whitelist + forbidNonWhitelisted, so a property with no class-validator
+  // decorator is rejected outright — POST /analytics answered
+  // "property metrics should not exist" for every request without it.
   @ApiProperty({ description: 'Free-form metric payload stored as jsonb' })
+  @IsObject()
   metrics: Record<string, any>;
 
   @ApiProperty()

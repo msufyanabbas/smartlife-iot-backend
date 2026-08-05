@@ -1,4 +1,5 @@
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
+import { randomUUID } from 'crypto';
 import { BaseEntity } from '@common/entities/base.entity';
 import type { Relation } from 'typeorm';
 import type { Tenant } from '../../tenants/entities/tenant.entity';
@@ -127,7 +128,7 @@ export class Dashboard extends BaseEntity {
 
   addWidget(widget: Omit<WidgetConfig, 'id'>): void {
     if (!this.widgets) this.widgets = [];
-    this.widgets.push({ ...widget, id: this.generateWidgetId() } as WidgetConfig);
+    this.widgets.push({ ...widget, id: randomUUID() } as WidgetConfig);
   }
 
   removeWidget(widgetId: string): void {
@@ -182,8 +183,11 @@ export class Dashboard extends BaseEntity {
     return this.widgets?.some((w) => w.dataSource?.useWebSocket) ?? false;
   }
 
-  private generateWidgetId(): string {
-    // substring is the modern replacement for the deprecated substr
-    return `widget-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-  }
+  // generateWidgetId() used to return `widget-${Date.now()}-${random}`. Widget
+  // ids are addressable: PATCH/DELETE /dashboards/:id/widgets/:widgetId run
+  // them through ParseIdPipe, and PATCH /dashboards/:id/layout validates them
+  // with @IsUUID(). A non-UUID id therefore produced a widget that could never
+  // be renamed, moved or deleted — every call 400'd before reaching the
+  // service. All widget ids are now randomUUID(), matching what
+  // DashboardsService.addWidget() and the solution-template installer write.
 }
