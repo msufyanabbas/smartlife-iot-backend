@@ -1,41 +1,90 @@
 // src/modules/analytics/analytics.service.ts
-import { Injectable, Logger } from '@nestjs/common';
+//
+// Every figure returned by this service is read from Postgres. There are no
+// synthetic series, no Math.random(), and no hardcoded percentages.
+//
+// ─── Two facts about this schema drive most of the SQL below ────────────────
+//
+// 1. `telemetry` has NO key/value columns. One row is one *reading set*:
+//    `data jsonb` (e.g. {"temperature":34.29,"co2":622,"status":"online"})
+//    plus denormalised `temperature/humidity/pressure/latitude/longitude/
+//    batteryLevel/signalStrength` columns. Anything "per telemetry key" is
+//    therefore a LATERAL expansion of `data` — see expandKeys() below — not a
+//    GROUP BY on a key column.
+//
+// 2. `telemetry.tenantId` exists and is indexed as (tenantId, deviceId,
+//    timestamp). Queries scope on that column directly rather than joining
+//    `devices`, so the composite index is actually used. The join is added
+//    only when a customer-scoped caller needs `device.customerId`.
+//
+// ─── Isolation ──────────────────────────────────────────────────────────────
+// tenantId is required on every public method and always comes from the JWT.
+// A CUSTOMER / CUSTOMER_USER caller additionally narrows to their customerId,
+// so one customer can never read another's devices inside a shared tenant.
+
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Inject } from '@nestjs/common';
-import { Repository, Between, LessThan } from 'typeorm';
+import { Repository, In, Between, MoreThanOrEqual, SelectQueryBuilder } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { promises as fs } from 'fs';
 
 import { Analytics } from './entities/analytics.entity';
 import { DashboardViewLog } from './entities/dashboard-view-log.entity';
 import { Device } from '@modules/devices/entities/device.entity';
 import { Telemetry } from '@modules/telemetry/entities/telemetry.entity';
 import { Alarm } from '@modules/alarms/entities/alarm.entity';
+import { Asset } from '@modules/assets/entities/asset.entity';
+import { APILog } from '@modules/api-monitoring/entities/api-log.entity';
+import { Attribute } from '@modules/attributes/entities/attribute.entity';
+import { DeviceCommand } from '@modules/device-commands/entities/device-commands.entity';
 import { User } from '@modules/users/entities/user.entity';
 import { Tenant } from '@modules/tenants/entities/tenant.entity';
 import { Dashboard } from '@modules/dashboards/entities/dashboard.entity';
-import { EdgeMetricsSnapshot } from '@modules/edge/entities/edge-metrics-snapshot.entity';
+import { Subscription } from '@modules/subscriptions/entities/subscription.entity';
 
 import { AnalyticsType, AnalyticsPeriod } from '@common/enums/analytics.enum';
-import { DeviceStatus, AlarmStatus, AlarmSeverity } from '@common/enums/index.enum';
+import { DeviceStatus, AlarmSeverity, AlarmStatus } from '@common/enums/index.enum';
+import { RedisService } from '@lib/redis/redis.service';
+import { KafkaService } from '@lib/kafka/kafka.service';
 
 import {
+  AnalyticsTimeRange,
   CreateAnalyticsDto,
   QueryAnalyticsDto,
-  DeviceAnalyticsDto,
-  RecordDashboardViewDto,
-  DataConsumptionQueryDto,
-  SystemPerformanceQueryDto,
-  EnergyAnalyticsQueryDto,
+  DeviceAnalyticsQueryDto,
+  DeviceDetailQueryDto,
   GeoAnalyticsQueryDto,
+  TimeRangeQueryDto,
+  RecordDashboardViewDto,
 } from './dto/analytics.dto';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
-// Average telemetry payload size estimate in bytes
-const AVG_TELEMETRY_PAYLOAD_BYTES = 250;
-const BYTES_PER_GB = 1_073_741_824;
-const BYTES_PER_TB = 1_099_511_627_776;
+// ── Alarm status groupings ──────────────────────────────────────────────────
+// This platform stores a flat 5-value AlarmStatus; ThingsBoard's ACTIVE_UNACK /
+// ACTIVE_ACK / CLEARED_UNACK / CLEARED_ACK are *derived* (Alarm.tbStatus, an
+// @AfterLoad hook) and are NOT stored, so they can never appear in a WHERE
+// clause. These are the storable equivalents.
+const ACTIVE_ALARM_STATUSES = [AlarmStatus.ACTIVE, AlarmStatus.ACKNOWLEDGED];
+const CLOSED_ALARM_STATUSES = [AlarmStatus.CLEARED, AlarmStatus.RESOLVED];
+
+/** Matches an integer or decimal, optionally signed — used to skip string values in `data`. */
+const NUMERIC_JSON_VALUE = String.raw`^-?[0-9]+(\.[0-9]+)?$`;
+
 const BYTES_PER_MB = 1_048_576;
+
+interface ResolvedRange {
+  since: Date;
+  until: Date;
+  hours: number;
+  days: number;
+  /** Postgres DATE_TRUNC unit appropriate to the window length. */
+  bucket: 'hour' | 'day';
+}
 
 @Injectable()
 export class AnalyticsService {
@@ -43,1495 +92,1939 @@ export class AnalyticsService {
 
   constructor(
     @InjectRepository(Analytics)
-    private readonly analyticsRepository: Repository<Analytics>,
-
+    private readonly analyticsRepo: Repository<Analytics>,
     @InjectRepository(DashboardViewLog)
-    private readonly viewLogRepository: Repository<DashboardViewLog>,
-
+    private readonly viewLogRepo: Repository<DashboardViewLog>,
     @InjectRepository(Device)
-    private readonly deviceRepository: Repository<Device>,
-
+    private readonly deviceRepo: Repository<Device>,
     @InjectRepository(Telemetry)
-    private readonly telemetryRepository: Repository<Telemetry>,
-
+    private readonly telemetryRepo: Repository<Telemetry>,
     @InjectRepository(Alarm)
-    private readonly alarmRepository: Repository<Alarm>,
-
+    private readonly alarmRepo: Repository<Alarm>,
+    @InjectRepository(Asset)
+    private readonly assetRepo: Repository<Asset>,
+    @InjectRepository(APILog)
+    private readonly apiLogRepo: Repository<APILog>,
+    @InjectRepository(Attribute)
+    private readonly attributeRepo: Repository<Attribute>,
+    @InjectRepository(DeviceCommand)
+    private readonly commandRepo: Repository<DeviceCommand>,
     @InjectRepository(User)
-    private readonly userRepository: Repository<User>,
-
+    private readonly userRepo: Repository<User>,
     @InjectRepository(Tenant)
-    private readonly tenantRepository: Repository<Tenant>,
-
+    private readonly tenantRepo: Repository<Tenant>,
     @InjectRepository(Dashboard)
-    private readonly dashboardRepository: Repository<Dashboard>,
-
-    @InjectRepository(EdgeMetricsSnapshot)
-    private readonly edgeSnapshotRepository: Repository<EdgeMetricsSnapshot>,
-
-    @Inject(EventEmitter2)
-    private readonly eventEmitter: EventEmitter2,
+    private readonly dashboardRepo: Repository<Dashboard>,
+    // Subscription is read through its repository rather than by importing
+    // SubscriptionsModule — the same cycle-avoidance pattern DashboardsService
+    // and FloorPlansService use.
+    @InjectRepository(Subscription)
+    private readonly subscriptionRepo: Repository<Subscription>,
+    // Both are @Global() providers; no module import needed.
+    private readonly redis: RedisService,
+    private readonly kafka: KafkaService,
   ) {}
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // CORE CRUD
-  // ──────────────────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // SCOPING HELPERS
+  // ══════════════════════════════════════════════════════════════════════════
 
-  async create(
-    tenantId: string | undefined,
-    customerId: string | undefined,
-    dto: CreateAnalyticsDto,
-  ): Promise<Analytics> {
-    const record = this.analyticsRepository.create({
-      ...dto,
-      tenantId,
-      customerId,
-      timestamp: new Date(dto.timestamp),
-    });
-    return this.analyticsRepository.save(record);
-  }
-
-  async findAll(
-    tenantId: string | undefined,
-    dto: QueryAnalyticsDto,
-    customerId?: string,
-  ) {
-    const page  = dto.page  || 1;
-    const limit = dto.limit || 50;
-
-    const qb = this.analyticsRepository
-      .createQueryBuilder('a')
-      .where('a.tenantId = :tenantId', { tenantId });
-
-    if (customerId)    qb.andWhere('a.customerId = :customerId', { customerId });
-    if (dto.type)      qb.andWhere('a.type = :type',             { type: dto.type });
-    if (dto.period)    qb.andWhere('a.period = :period',         { period: dto.period });
-    if (dto.entityId)  qb.andWhere('a.entityId = :entityId',     { entityId: dto.entityId });
-    if (dto.entityType)qb.andWhere('a.entityType = :entityType', { entityType: dto.entityType });
-    if (dto.startDate && dto.endDate) {
-      qb.andWhere('a.timestamp BETWEEN :start AND :end', {
-        start: new Date(dto.startDate),
-        end:   new Date(dto.endDate),
-      });
+  /**
+   * Every public method starts here.
+   *
+   * SUPER_ADMIN carries no tenantId, so an unguarded `WHERE tenantId = NULL`
+   * silently matched nothing and every endpoint reported zeros. Failing loudly
+   * is the honest behaviour: analytics is a per-tenant view, and a super admin
+   * must say which tenant they mean.
+   */
+  private assertTenant(tenantId: string | undefined | null): string {
+    if (!tenantId) {
+      throw new BadRequestException(
+        'Analytics is tenant-scoped. This account has no tenant context — ' +
+          'call as a tenant user, or pass ?tenantId= as a super admin.',
+      );
     }
-
-    const total = await qb.getCount();
-    const data  = await qb
-      .orderBy('a.timestamp', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit)
-      .getMany();
-
-    return PaginatedResponseDto.create(data, page, limit, total);
+    return tenantId;
   }
 
-  async deleteOld(tenantId: string | undefined, daysOld: number): Promise<number> {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - daysOld);
-    const result = await this.analyticsRepository
-      .createQueryBuilder()
-      .delete()
-      .where('tenantId = :tenantId', { tenantId })
-      .andWhere('timestamp < :cutoff', { cutoff })
-      .execute();
-    return result.affected || 0;
+  /**
+   * Device ids visible to this caller. Returns null when the caller is not
+   * customer-scoped (meaning "all devices in the tenant"), so callers can skip
+   * the extra predicate entirely.
+   */
+  private async visibleDeviceIds(
+    tenantId: string,
+    customerId?: string | null,
+  ): Promise<string[] | null> {
+    if (!customerId) return null;
+    const rows = await this.deviceRepo.find({
+      where: { tenantId, customerId },
+      select: ['id'],
+    });
+    return rows.map((r) => r.id);
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // 1. OVERVIEW  (GET /analytics/overview)
-  // ──────────────────────────────────────────────────────────────────────────
+  private resolveRange(timeRange?: AnalyticsTimeRange): ResolvedRange {
+    const hoursByRange: Record<AnalyticsTimeRange, number> = {
+      [AnalyticsTimeRange.ONE_HOUR]: 1,
+      [AnalyticsTimeRange.ONE_DAY]: 24,
+      [AnalyticsTimeRange.SEVEN_DAYS]: 24 * 7,
+      [AnalyticsTimeRange.THIRTY_DAYS]: 24 * 30,
+      [AnalyticsTimeRange.NINETY_DAYS]: 24 * 90,
+    };
+    const hours = hoursByRange[timeRange ?? AnalyticsTimeRange.ONE_DAY];
+    const until = new Date();
+    return {
+      since: new Date(until.getTime() - hours * 3_600_000),
+      until,
+      hours,
+      days: hours / 24,
+      // Anything up to 48h reads better hour-by-hour; longer windows would
+      // return hundreds of near-empty buckets.
+      bucket: hours <= 48 ? 'hour' : 'day',
+    };
+  }
 
-  async getSystemOverview(tenantId: string | undefined, customerId?: string) {
-    const base: any = { tenantId };
-    if (customerId) base.customerId = customerId;
+  private startOfToday(): Date {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RAW SQL BUILDING BLOCKS
+  //
+  // `data jsonb` is expanded with LATERAL jsonb_each_text, which TypeORM's
+  // QueryBuilder cannot express. Everything is parameterised ($1, $2, …) —
+  // no caller input is ever interpolated into these strings.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Numeric min/max/avg/sample-count for every key in `data`, for one device.
+   * Non-numeric values (e.g. "status":"online") are filtered out by regex so
+   * the ::float cast can never fail.
+   */
+  private async expandKeys(
+    tenantId: string,
+    deviceId: string,
+    since: Date,
+    until: Date,
+  ): Promise<Array<{ key: string; min: string; max: string; avg: string; samples: string }>> {
+    return this.telemetryRepo.query(
+      `SELECT kv.key            AS key,
+              MIN(kv.value::float) AS min,
+              MAX(kv.value::float) AS max,
+              AVG(kv.value::float) AS avg,
+              COUNT(*)             AS samples
+         FROM telemetry t
+         CROSS JOIN LATERAL jsonb_each_text(t.data) kv
+        WHERE t."tenantId" = $1
+          AND t."deviceId" = $2
+          AND t.timestamp BETWEEN $3 AND $4
+          AND t.deleted_at IS NULL
+          AND kv.value ~ $5
+        GROUP BY kv.key
+        ORDER BY kv.key`,
+      [tenantId, deviceId, since, until, NUMERIC_JSON_VALUE],
+    );
+  }
+
+  /** Most recent value of every key for one device, numeric or not. */
+  private async latestKeyValues(
+    tenantId: string,
+    deviceId: string,
+  ): Promise<Array<{ key: string; value: string; timestamp: Date }>> {
+    return this.telemetryRepo.query(
+      `SELECT DISTINCT ON (kv.key) kv.key AS key, kv.value AS value, t.timestamp AS timestamp
+         FROM telemetry t
+         CROSS JOIN LATERAL jsonb_each_text(t.data) kv
+        WHERE t."tenantId" = $1
+          AND t."deviceId" = $2
+          AND t.deleted_at IS NULL
+        ORDER BY kv.key, t.timestamp DESC`,
+      [tenantId, deviceId],
+    );
+  }
+
+  /**
+   * Real bytes per telemetry row, measured from the physical table size rather
+   * than assumed. Falls back to a stated constant only when the table is empty
+   * (nothing to measure), and the caller is told which happened.
+   */
+  private async telemetryBytesPerRow(): Promise<{ bytesPerRow: number; measured: boolean }> {
+    const [row] = await this.telemetryRepo.query(
+      `SELECT pg_total_relation_size('telemetry') AS total_bytes,
+              (SELECT COUNT(*) FROM telemetry)    AS row_count`,
+    );
+    const totalBytes = Number(row?.total_bytes ?? 0);
+    const rowCount = Number(row?.row_count ?? 0);
+    if (!rowCount || !totalBytes) return { bytesPerRow: 0, measured: false };
+    return { bytesPerRow: totalBytes / rowCount, measured: true };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 1. OVERVIEW — GET /analytics/overview
+  // ══════════════════════════════════════════════════════════════════════════
+
+  async getOverview(tenantIdRaw: string, customerId?: string | null) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const deviceIds = await this.visibleDeviceIds(tenantId, customerId);
+    // A customer with zero devices must see zeros, not the whole tenant —
+    // `IN ()` is invalid SQL, so an impossible sentinel stands in.
+    const scopedIds = deviceIds?.length ? deviceIds : deviceIds ? ['00000000-0000-0000-0000-000000000000'] : null;
+
+    const startOfDay = this.startOfToday();
+    const startOfWeek = new Date(Date.now() - 7 * 24 * 3_600_000);
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    const deviceWhere: any = { tenantId };
+    if (customerId) deviceWhere.customerId = customerId;
+
+    const alarmWhere: any = { tenantId };
+    if (customerId) alarmWhere.customerId = customerId;
+
+    const telemetryCount = (since: Date) => {
+      const qb = this.telemetryRepo
+        .createQueryBuilder('t')
+        .where('t.tenantId = :tenantId', { tenantId })
+        .andWhere('t.timestamp >= :since', { since });
+      if (scopedIds) qb.andWhere('t.deviceId IN (:...scopedIds)', { scopedIds });
+      return qb.getCount();
+    };
 
     const [
       totalDevices,
       onlineDevices,
-      offlineDevices,
-      maintenanceDevices,
-      activeAlarms,
-      highAlarms,
-      mediumAlarms,
-      lowAlarms,
-      totalTelemetryRows,
+      messagesToday,
+      messagesWeek,
+      messagesMonth,
+      totalActive,
+      critical,
+      warning,
+      info,
+      error,
+      resolvedToday,
+      totalAssets,
+      assetsWithDevices,
+      subscription,
+      peak,
     ] = await Promise.all([
-      this.deviceRepository.count({ where: base }),
-      this.deviceRepository.count({ where: { ...base, status: DeviceStatus.ACTIVE } }),
-      this.deviceRepository.count({ where: { ...base, status: DeviceStatus.INACTIVE } }),
-      this.deviceRepository.count({ where: { ...base, status: DeviceStatus.MAINTENANCE } }),
-      this.alarmRepository.count({ where: { ...base, status: AlarmStatus.ACTIVE } }),
-      this.alarmRepository.count({ where: { ...base, status: AlarmStatus.ACTIVE, severity: AlarmSeverity.CRITICAL } }),
-      this.alarmRepository.count({ where: { ...base, status: AlarmStatus.ACTIVE, severity: AlarmSeverity.WARNING } }),
-      this.alarmRepository.count({ where: { ...base, status: AlarmStatus.ACTIVE, severity: AlarmSeverity.INFO} }),
-      this.getTodayTelemetryCount(tenantId, customerId),
+      this.deviceRepo.count({ where: deviceWhere }),
+      this.deviceRepo.count({ where: { ...deviceWhere, status: DeviceStatus.ACTIVE } }),
+      telemetryCount(startOfDay),
+      telemetryCount(startOfWeek),
+      telemetryCount(startOfMonth),
+      this.alarmRepo.count({ where: { ...alarmWhere, status: In(ACTIVE_ALARM_STATUSES) } }),
+      this.alarmRepo.count({ where: { ...alarmWhere, severity: AlarmSeverity.CRITICAL, status: In(ACTIVE_ALARM_STATUSES) } }),
+      this.alarmRepo.count({ where: { ...alarmWhere, severity: AlarmSeverity.WARNING, status: In(ACTIVE_ALARM_STATUSES) } }),
+      this.alarmRepo.count({ where: { ...alarmWhere, severity: AlarmSeverity.INFO, status: In(ACTIVE_ALARM_STATUSES) } }),
+      this.alarmRepo.count({ where: { ...alarmWhere, severity: AlarmSeverity.ERROR, status: In(ACTIVE_ALARM_STATUSES) } }),
+      // CLEARED sets clearedAt, RESOLVED sets resolvedAt — COALESCE covers both
+      // so an operator-resolved alarm is not missed from today's tally.
+      this.alarmRepo
+        .createQueryBuilder('a')
+        .where('a.tenantId = :tenantId', { tenantId })
+        .andWhere('a.status IN (:...statuses)', { statuses: CLOSED_ALARM_STATUSES })
+        .andWhere('COALESCE(a.clearedAt, a.resolvedAt) >= :startOfDay', { startOfDay })
+        .andWhere(customerId ? 'a.customerId = :customerId' : '1=1', { customerId })
+        .getCount(),
+      this.assetRepo.count({ where: customerId ? { tenantId, customerId } : { tenantId } }),
+      this.countAssetsWithDevices(tenantId, customerId),
+      this.subscriptionRepo.findOne({ where: { tenantId } }),
+      this.peakTelemetryHour(tenantId, startOfWeek, scopedIds),
     ]);
 
-    // Derive storage from telemetry count
-    const totalBytesEstimate = totalTelemetryRows * AVG_TELEMETRY_PAYLOAD_BYTES;
-    const totalGeneratedTB   = parseFloat((totalBytesEstimate / BYTES_PER_TB).toFixed(2));
-    const avgDailyGB         = parseFloat(((totalBytesEstimate / 30) / BYTES_PER_GB).toFixed(2));
+    const devicesLimit = subscription?.limits?.devices ?? -1;
+    // SubscriptionLimits has no telemetry-message ceiling; apiCallsPerMonth is
+    // the closest declared quota, and -1 (the platform's "unlimited" sentinel)
+    // is returned when the plan defines neither.
+    const messagesLimit = subscription?.limits?.apiCallsPerMonth ?? -1;
 
-    // Peak usage hour — find hour with most telemetry in last 7 days
-    const peakHour = await this.findPeakUsageHour(tenantId, customerId);
-
-    // Storage efficiency heuristic: lower pending sync = higher efficiency
-    const storageEfficiencyPercent = 87.5;
-
-    // Platform uptime from latest edge snapshot or mock
-    const latestSnapshot = await this.edgeSnapshotRepository
-      .createQueryBuilder('snap')
-      .innerJoin('snap.edge', 'edge')
-      .where('edge.tenantId = :tenantId', { tenantId })
-      .orderBy('snap.recordedAt', 'DESC')
-      .getOne();
-
-    const platformUptimePercent = latestSnapshot ? 99.8 : 99.5;
-
-    // Recent activity — last 10 events from alarms + telemetry
-    const recentAlarms = await this.alarmRepository
-      .createQueryBuilder('alarm')
-      .where('alarm.tenantId = :tenantId', { tenantId })
-      .orderBy('alarm.triggeredAt', 'DESC')
-      .take(5)
-      .getMany();
-
-    const recentTelemetry = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .orderBy('t.timestamp', 'DESC')
-      .take(5)
-      .getMany();
-
-    const recentActivity = [
-      ...recentAlarms.map((a) => ({
-        type:      'alarm',
-        message:   `Alert triggered: ${a.name || a.message}`,
-        timestamp: a.triggeredAt,
-        entityId:  a.deviceId,
-      })),
-      ...recentTelemetry.map((t) => ({
-        type:      'telemetry',
-        message:   `Device "${t.deviceId}" generated telemetry data`,
-        timestamp: t.timestamp,
-        entityId:  t.deviceId,
-      })),
-    ]
-      .sort((a: any, b: any) => b.timestamp.getTime() - a.timestamp.getTime())
-      .slice(0, 10);
+    const usagePercentage =
+      devicesLimit > 0 ? Math.round((totalDevices / devicesLimit) * 100) : 0;
 
     return {
-      devices: { total: totalDevices, online: onlineDevices, offline: offlineDevices, maintenance: maintenanceDevices },
-      data: { totalGeneratedTB, avgDailyGB, peakUsageHour: peakHour, storageEfficiencyPercent },
-      alerts: { active: activeAlarms, high: highAlarms, medium: mediumAlarms, low: lowAlarms },
-      uptime: { platformUptimePercent },
-      recentActivity,
-      timestamp: new Date(),
+      devices: {
+        total: totalDevices,
+        online: onlineDevices,
+        offline: totalDevices - onlineDevices,
+        onlinePercentage: totalDevices > 0 ? Math.round((onlineDevices / totalDevices) * 100) : 0,
+      },
+      telemetry: {
+        totalMessagesToday: messagesToday,
+        totalMessagesThisWeek: messagesWeek,
+        totalMessagesThisMonth: messagesMonth,
+        // Elapsed hours, not a flat 24 — dividing by 24 at 09:00 understates
+        // the rate by ~3x and made the number useless before noon.
+        avgMessagesPerHour: Math.round(
+          messagesToday / Math.max(1, (Date.now() - startOfDay.getTime()) / 3_600_000),
+        ),
+        peakHour: peak.label,
+        peakHourMessages: peak.count,
+      },
+      alarms: {
+        totalActive,
+        critical,
+        error,
+        warning,
+        info,
+        resolvedToday,
+      },
+      assets: {
+        total: totalAssets,
+        withDevices: assetsWithDevices,
+      },
+      subscription: {
+        plan: subscription?.plan ?? null,
+        devicesUsed: totalDevices,
+        devicesLimit,
+        messagesUsed: messagesMonth,
+        messagesLimit,
+        usagePercentage,
+      },
     };
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // 2. DEVICE ANALYTICS  (GET /analytics/devices)
-  // ──────────────────────────────────────────────────────────────────────────
+  /** Assets that have at least one device attached, tenant-scoped. */
+  private async countAssetsWithDevices(tenantId: string, customerId?: string | null): Promise<number> {
+    const qb = this.deviceRepo
+      .createQueryBuilder('d')
+      .select('COUNT(DISTINCT d.assetId)', 'count')
+      .where('d.tenantId = :tenantId', { tenantId })
+      .andWhere('d.assetId IS NOT NULL');
+    if (customerId) qb.andWhere('d.customerId = :customerId', { customerId });
+    const row = await qb.getRawOne();
+    return parseInt(row?.count ?? '0', 10);
+  }
+
+  /** Busiest hour-of-day by telemetry volume in the given window. */
+  private async peakTelemetryHour(
+    tenantId: string,
+    since: Date,
+    scopedIds: string[] | null,
+  ): Promise<{ label: string; hour: number | null; count: number }> {
+    const qb = this.telemetryRepo
+      .createQueryBuilder('t')
+      .select('EXTRACT(HOUR FROM t.timestamp)', 'hour')
+      .addSelect('COUNT(*)', 'count')
+      .where('t.tenantId = :tenantId', { tenantId })
+      .andWhere('t.timestamp >= :since', { since });
+    if (scopedIds) qb.andWhere('t.deviceId IN (:...scopedIds)', { scopedIds });
+
+    const row = await qb.groupBy('hour').orderBy('count', 'DESC').limit(1).getRawOne();
+    if (!row) return { label: 'N/A', hour: null, count: 0 };
+
+    const hour = Math.round(parseFloat(row.hour));
+    return {
+      label: `${String(hour).padStart(2, '0')}:00`,
+      hour,
+      count: parseInt(row.count, 10),
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 2. DEVICE ANALYTICS LIST — GET /analytics/devices
+  // ══════════════════════════════════════════════════════════════════════════
 
   async getDeviceAnalytics(
-    tenantId: string | undefined,
-    dto: DeviceAnalyticsDto,
-    customerId?: string,
+    tenantIdRaw: string,
+    query: DeviceAnalyticsQueryDto,
+    customerId?: string | null,
   ) {
-    const endDate   = dto.endDate   ? new Date(dto.endDate)   : new Date();
-    const startDate = dto.startDate ? new Date(dto.startDate) : this.daysAgo(7);
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const { since, until, days } = this.resolveRange(query.timeRange);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
 
-    const deviceQb = this.deviceRepository
-      .createQueryBuilder('device')
-      .where('device.tenantId = :tenantId', { tenantId });
+    const qb = this.deviceRepo
+      .createQueryBuilder('d')
+      .where('d.tenantId = :tenantId', { tenantId });
 
-    if (customerId)    deviceQb.andWhere('device.customerId = :customerId', { customerId });
-    if (dto.deviceType)deviceQb.andWhere('device.type = :deviceType',       { deviceType: dto.deviceType });
-    if (dto.status)    deviceQb.andWhere('device.status = :status',         { status: dto.status });
+    if (customerId) qb.andWhere('d.customerId = :customerId', { customerId });
+    if (query.type) qb.andWhere('d.type = :type', { type: query.type });
+    if (query.status) qb.andWhere('d.status = :status', { status: query.status });
 
-    const devices = await deviceQb.getMany();
+    // activeAlarms is computed after the page is fetched, so it cannot be a SQL
+    // sort key; fall back to messageCount for it.
+    const sortColumn =
+      query.sortBy && query.sortBy !== 'activeAlarms' ? query.sortBy : 'messageCount';
+    qb.orderBy(`d.${sortColumn}`, query.sortOrder ?? 'DESC', 'NULLS LAST')
+      .skip((page - 1) * limit)
+      .take(limit);
 
-    // Per-device telemetry counts in date range
-    const telemetryCounts = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .select('t.deviceId', 'deviceId')
-      .addSelect('COUNT(*)', 'cnt')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .andWhere('t.timestamp BETWEEN :start AND :end', { start: startDate, end: endDate })
-      .groupBy('t.deviceId')
-      .getRawMany();
+    const [devices, total] = await qb.getManyAndCount();
+    const deviceIds = devices.map((d) => d.id);
 
-    const countMap = new Map<string, number>(
-      telemetryCounts.map((r) => [r.deviceId, parseInt(r.cnt, 10)])
-    );
+    const [alarmCounts, keyCounts, windowCounts] = await Promise.all([
+      this.activeAlarmCountsByDevice(tenantId, deviceIds),
+      this.distinctKeyCountsByDevice(tenantId, deviceIds, since, until),
+      this.telemetryCountsByDevice(tenantId, deviceIds, since, until),
+    ]);
 
-    // Per-device alarm counts
-    const alarmCounts = await this.alarmRepository
-      .createQueryBuilder('a')
-      .select('a.deviceId', 'deviceId')
-      .addSelect('COUNT(*)', 'cnt')
-      .where('a.tenantId = :tenantId', { tenantId })
-      .groupBy('a.deviceId')
-      .getRawMany();
+    const { bytesPerRow, measured } = await this.telemetryBytesPerRow();
 
-    const alarmMap = new Map<string, number>(
-      alarmCounts.map((r) => [r.deviceId, parseInt(r.cnt, 10)])
-    );
-
-    const deviceRows = devices.map((d) => {
-      const telCount = countMap.get(d.id) ?? 0;
-      const dataMB   = parseFloat(((telCount * AVG_TELEMETRY_PAYLOAD_BYTES) / BYTES_PER_MB).toFixed(2));
+    const rows = devices.map((d) => {
+      const messagesInWindow = windowCounts.get(d.id) ?? 0;
       return {
-        deviceId:       d.id,
-        deviceName:     d.name,
-        deviceType:     d.type,
-        status:         d.status,
-        dataGeneratedMB: dataMB,
-        lastActive:     d.lastSeenAt ?? null,
-        uptimePercent:  d.status === DeviceStatus.ACTIVE ? 99.8 : 0,
-        alarmCount:     alarmMap.get(d.id) ?? 0,
+        id: d.id,
+        name: d.name,
+        type: d.type,
+        status: d.status,
+        lastSeenAt: d.lastSeenAt ?? null,
+        /** Lifetime counter maintained by the ingestion path. */
+        messageCount: d.messageCount ?? 0,
+        /** Messages inside the requested window — the figure the UI charts. */
+        messagesInWindow,
+        errorCount: d.errorCount ?? 0,
+        uptimePercentage: this.uptimePercentage(d, since, until),
+        activeAlarms: alarmCounts.get(d.id) ?? 0,
+        /** Measured from pg_total_relation_size / row count, not assumed. */
+        dataGeneratedBytes: Math.round(messagesInWindow * bytesPerRow),
+        telemetryKeyCount: keyCounts.get(d.id) ?? 0,
       };
     });
 
-    // Top 5 data generators
-    const topGenerators = [...deviceRows]
-      .sort((a, b) => b.dataGeneratedMB - a.dataGeneratedMB)
-      .slice(0, 5);
-
-    // Status distribution
-    const statusDistribution = {
-      online:      devices.filter((d) => d.status === DeviceStatus.ACTIVE).length,
-      offline:     devices.filter((d) => d.status === DeviceStatus.INACTIVE).length,
-      maintenance: devices.filter((d) => d.status === DeviceStatus.MAINTENANCE).length,
-    };
+    if (query.sortBy === 'activeAlarms') {
+      rows.sort((a, b) =>
+        query.sortOrder === 'ASC'
+          ? a.activeAlarms - b.activeAlarms
+          : b.activeAlarms - a.activeAlarms,
+      );
+    }
 
     return {
-      devices: deviceRows,
-      topGenerators,
-      statusDistribution,
-      total: deviceRows.length,
-      period: { startDate, endDate },
+      devices: rows,
+      period: { since, until, days },
+      bytesPerRowMeasured: measured,
+      meta: PaginatedResponseDto.create(rows, page, limit, total).meta,
     };
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // 3. DEVICE DRILL-DOWN  (GET /analytics/devices/:deviceId)
-  // ──────────────────────────────────────────────────────────────────────────
+  /**
+   * Share of the window during which the device was last seen.
+   *
+   * A device reporting now scores 100; one last seen at the start of the window
+   * scores ~0; one never seen scores 0. This is a real function of lastSeenAt
+   * rather than the previous `status === active ? 99.8 : 0` constant, which
+   * carried no information the `status` field did not already have.
+   */
+  private uptimePercentage(device: Device, since: Date, until: Date): number {
+    if (!device.lastSeenAt) return 0;
+    const windowMs = until.getTime() - since.getTime();
+    if (windowMs <= 0) return 0;
+    const silentMs = Math.max(0, until.getTime() - new Date(device.lastSeenAt).getTime());
+    const pct = 100 * (1 - Math.min(1, silentMs / windowMs));
+    return Math.round(pct * 10) / 10;
+  }
 
-  async getDeviceDrillDown(
-    deviceId: string,
+  private async activeAlarmCountsByDevice(
     tenantId: string,
-    days: number = 7,
-  ) {
-    const device = await this.deviceRepository.findOne({
-      where: { id: deviceId, tenantId },
-    });
-
-    if (!device) return null;
-
-    const since = this.daysAgo(days);
-    const now   = new Date();
-
-    // Telemetry count for data rate
-    const totalTelCount = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .where('t.deviceId = :deviceId', { deviceId })
-      .andWhere('t.timestamp BETWEEN :since AND :now', { since, now })
-      .getCount();
-
-    const dataRateMBperDay = parseFloat(
-      (((totalTelCount * AVG_TELEMETRY_PAYLOAD_BYTES) / BYTES_PER_MB) / days).toFixed(2)
-    );
-
-    // Active alarm count
-    const activeAlarmCount = await this.alarmRepository.count({
-      where: { deviceId, tenantId, status: AlarmStatus.ACTIVE },
-    });
-
-    // Data generation trend — daily rollup
-    const dailyTrend = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .select("DATE_TRUNC('day', t.timestamp)", 'date')
-      .addSelect('COUNT(*)', 'cnt')
-      .where('t.deviceId = :deviceId', { deviceId })
-      .andWhere('t.timestamp BETWEEN :since AND :now', { since, now })
-      .groupBy("DATE_TRUNC('day', t.timestamp)")
-      .orderBy('date', 'ASC')
-      .getRawMany();
-
-    const dataGenerationTrend = dailyTrend.map((r) => ({
-      date:    new Date(r.date).toISOString().slice(0, 10),
-      valueMB: parseFloat(
-        ((parseInt(r.cnt, 10) * AVG_TELEMETRY_PAYLOAD_BYTES) / BYTES_PER_MB).toFixed(3)
-      ),
-    }));
-
-    // Latest sensor readings per key with min/max/avg
-    const readings = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .select('t.key', 'key')
-      .addSelect('MAX(t.value::text::float)', 'maxVal')
-      .addSelect('MIN(t.value::text::float)', 'minVal')
-      .addSelect('AVG(t.value::text::float)', 'avgVal')
-      .addSelect('MAX(t.timestamp)', 'lastTs')
-      .where('t.deviceId = :deviceId', { deviceId })
-      .andWhere('t.timestamp BETWEEN :since AND :now', { since, now })
-      .andWhere("t.value ~ '^[0-9]+(\\.[0-9]+)?$'") // numeric values only
-      .groupBy('t.key')
-      .getRawMany();
-
-  const sensorReadings: Array<{
-  key: string; max: number; min: number; avg: number; lastAt: Date | null
-}> = [];
-
-// Dedicated columns on Telemetry — add each one that has data
-const numericCols = [
-  { key: 'temperature', col: 'temperature' },
-  { key: 'humidity',    col: 'humidity'    },
-  { key: 'pressure',    col: 'pressure'    },
-  { key: 'batteryLevel',col: 'batteryLevel'},
-] as const;
-
-for (const { key, col } of numericCols) {
-  const row = await this.telemetryRepository
-    .createQueryBuilder('t')
-    .select(`MAX(t.${col})`,  'maxVal')
-    .addSelect(`MIN(t.${col})`, 'minVal')
-    .addSelect(`AVG(t.${col})`, 'avgVal')
-    .addSelect('MAX(t.timestamp)', 'lastTs')
-    .where('t.deviceId = :deviceId', { deviceId })
-    .andWhere(`t.${col} IS NOT NULL`)
-    .andWhere('t.timestamp BETWEEN :since AND :now', { since, now })
-    .getRawOne();
-
-  if (row && row.maxVal !== null) {
-    sensorReadings.push({
-      key,
-      max:    parseFloat(parseFloat(row.maxVal).toFixed(2)),
-      min:    parseFloat(parseFloat(row.minVal).toFixed(2)),
-      avg:    parseFloat(parseFloat(row.avgVal).toFixed(2)),
-      lastAt: row.lastTs,
-    });
-  }
-}
-
-// Also extract numeric keys from data JSONB for non-dedicated fields (co2, energy, etc.)
-const jsonbKeys = await this.telemetryRepository
-  .createQueryBuilder('t')
-  .select('jsonb_object_keys(t.data)', 'key')
-  .where('t.deviceId = :deviceId', { deviceId })
-  .andWhere('t.timestamp BETWEEN :since AND :now', { since, now })
-  .distinct(true)
-  .getRawMany();
-
-for (const { key } of jsonbKeys) {
-  if (['temperature','humidity','pressure','batteryLevel'].includes(key)) continue; // already handled above
-  const row = await this.telemetryRepository
-    .createQueryBuilder('t')
-    .select(`MAX((t.data ->> :key)::float)`, 'maxVal')
-    .addSelect(`MIN((t.data ->> :key)::float)`, 'minVal')
-    .addSelect(`AVG((t.data ->> :key)::float)`, 'avgVal')
-    .addSelect('MAX(t.timestamp)', 'lastTs')
-    .where('t.deviceId = :deviceId', { deviceId })
-    .andWhere('t.timestamp BETWEEN :since AND :now', { since, now })
-    .andWhere(`(t.data ->> :key) ~ '^-?[0-9]+(\\.[0-9]+)?$'`)
-    .setParameter('key', key)
-    .getRawOne();
-
-  if (row && row.maxVal !== null) {
-    sensorReadings.push({
-      key,
-      max:    parseFloat(parseFloat(row.maxVal).toFixed(2)),
-      min:    parseFloat(parseFloat(row.minVal).toFixed(2)),
-      avg:    parseFloat(parseFloat(row.avgVal).toFixed(2)),
-      lastAt: row.lastTs,
-    });
-  }
-}
-
-    // Alert history — last 10
-    const alertHistory = await this.alarmRepository
+    deviceIds: string[],
+  ): Promise<Map<string, number>> {
+    if (!deviceIds.length) return new Map();
+    const rows = await this.alarmRepo
       .createQueryBuilder('a')
-      .where('a.deviceId = :deviceId', { deviceId })
-      .orderBy('a.triggeredAt', 'DESC')
-      .take(10)
-      .getMany();
+      .select('a.deviceId', 'deviceId')
+      .addSelect('COUNT(*)', 'count')
+      .where('a.tenantId = :tenantId', { tenantId })
+      .andWhere('a.deviceId IN (:...deviceIds)', { deviceIds })
+      .andWhere('a.status IN (:...statuses)', { statuses: ACTIVE_ALARM_STATUSES })
+      .groupBy('a.deviceId')
+      .getRawMany();
+    return new Map(rows.map((r) => [r.deviceId, parseInt(r.count, 10)]));
+  }
 
-      const latestTelemetry: Telemetry | null = await this.telemetryRepository.findOne({
-  where: { deviceId },
-  order: { timestamp: 'DESC' },
-});
+  private async telemetryCountsByDevice(
+    tenantId: string,
+    deviceIds: string[],
+    since: Date,
+    until: Date,
+  ): Promise<Map<string, number>> {
+    if (!deviceIds.length) return new Map();
+    const rows = await this.telemetryRepo
+      .createQueryBuilder('t')
+      .select('t.deviceId', 'deviceId')
+      .addSelect('COUNT(*)', 'count')
+      .where('t.tenantId = :tenantId', { tenantId })
+      .andWhere('t.deviceId IN (:...deviceIds)', { deviceIds })
+      .andWhere('t.timestamp BETWEEN :since AND :until', { since, until })
+      .groupBy('t.deviceId')
+      .getRawMany();
+    return new Map(rows.map((r) => [r.deviceId, parseInt(r.count, 10)]));
+  }
+
+  /** Distinct jsonb keys each device has reported in the window. */
+  private async distinctKeyCountsByDevice(
+    tenantId: string,
+    deviceIds: string[],
+    since: Date,
+    until: Date,
+  ): Promise<Map<string, number>> {
+    if (!deviceIds.length) return new Map();
+    const rows: Array<{ deviceId: string; count: string }> = await this.telemetryRepo.query(
+      `SELECT t."deviceId" AS "deviceId", COUNT(DISTINCT k) AS count
+         FROM telemetry t
+         CROSS JOIN LATERAL jsonb_object_keys(t.data) k
+        WHERE t."tenantId" = $1
+          AND t."deviceId" = ANY($2::uuid[])
+          AND t.timestamp BETWEEN $3 AND $4
+          AND t.deleted_at IS NULL
+        GROUP BY t."deviceId"`,
+      [tenantId, deviceIds, since, until],
+    );
+    return new Map(rows.map((r) => [r.deviceId, parseInt(r.count, 10)]));
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 3. SINGLE DEVICE DEEP ANALYTICS — GET /analytics/devices/:id
+  // ══════════════════════════════════════════════════════════════════════════
+
+  async getDeviceDetailAnalytics(
+    deviceId: string,
+    tenantIdRaw: string,
+    query: DeviceDetailQueryDto,
+    customerId?: string | null,
+  ) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+
+    // Tenant (and customer) membership is proven here, before any other query
+    // touches this deviceId — a foreign id 404s rather than leaking counts.
+    const where: any = { id: deviceId, tenantId };
+    if (customerId) where.customerId = customerId;
+    const device = await this.deviceRepo.findOne({ where, relations: ['deviceProfile'] });
+    if (!device) throw new NotFoundException('Device not found');
+
+    const { since, until, days } = this.resolveRange(query.timeRange);
+    const keys = query.keys?.split(',').map((k) => k.trim()).filter(Boolean) ?? [];
+
+    const [records, summaryRows, latestRows, alarms, activeAlarms, hourly, windowMessages] =
+      await Promise.all([
+        this.telemetryRepo.find({
+          where: { tenantId, deviceId, timestamp: Between(since, until) },
+          order: { timestamp: 'DESC' },
+          take: 200,
+        }),
+        this.expandKeys(tenantId, deviceId, since, until),
+        this.latestKeyValues(tenantId, deviceId),
+        this.alarmRepo.find({
+          where: { deviceId, tenantId },
+          order: { triggeredAt: 'DESC' },
+          take: 10,
+        }),
+        this.alarmRepo.count({
+          where: { deviceId, tenantId, status: In(ACTIVE_ALARM_STATUSES) },
+        }),
+        this.telemetryRepo
+          .createQueryBuilder('t')
+          .select("DATE_TRUNC('hour', t.timestamp)", 'hour')
+          .addSelect('COUNT(*)', 'count')
+          .where('t.tenantId = :tenantId', { tenantId })
+          .andWhere('t.deviceId = :deviceId', { deviceId })
+          .andWhere('t.timestamp >= :since', { since: new Date(Date.now() - 24 * 3_600_000) })
+          .groupBy("DATE_TRUNC('hour', t.timestamp)")
+          .orderBy('hour', 'ASC')
+          .getRawMany(),
+        this.telemetryRepo.count({
+          where: { tenantId, deviceId, timestamp: Between(since, until) },
+        }),
+      ]);
+
+    const latestMap = new Map(latestRows.map((r) => [r.key, r.value]));
+    const { bytesPerRow } = await this.telemetryBytesPerRow();
+
+    // One telemetry row carries many keys; flatten to {timestamp,key,value}
+    // triples so the trend is charted per key, filtered by ?keys= when given.
+    const telemetryTrend: Array<{ timestamp: string; key: string; value: any }> = [];
+    for (const record of records) {
+      for (const [key, value] of Object.entries(record.data ?? {})) {
+        if (keys.length && !keys.includes(key)) continue;
+        telemetryTrend.push({ timestamp: record.timestamp.toISOString(), key, value });
+      }
+    }
+
+    // 3dp, not 2 — a device emitting a few hundred rows over 90 days works out
+    // to ~0.004 MB/day, which two decimals would report as a flat "0.00".
+    const dataRateMBPerDay = (windowMessages * bytesPerRow) / BYTES_PER_MB / Math.max(1, days);
 
     return {
-      currentStatus:    device.status,
-      lastSeen:         device.lastSeenAt,
-      dataRateMBperDay,
-      uptimePercent:    device.status === DeviceStatus.ACTIVE ? 99.8 : 0,
-      activeAlarmCount,
-      dataGenerationTrend,
-      sensorReadings,
-      alertHistory: alertHistory.map((a) => ({
-        id:          a.id,
-        severity:    a.severity,
-        message:     a.message || a.name,
-        triggeredAt: a.triggeredAt,
-        status:      a.status,
-      })),
-      deviceInfo: {
-        deviceId:        device.id,
-        name:            device.name,
-        location:        device.location ?? null,
-        firmware:        device.firmwareVersion ?? null,
-        batteryPercent:  latestTelemetry?.batteryLevel   ?? null,
-        signalStrength:  latestTelemetry?.signalStrength  ?? null,
+      device: {
+        id: device.id,
+        name: device.name,
+        type: device.type,
+        status: device.status,
+        lastSeenAt: device.lastSeenAt ?? null,
+        firmwareVersion: device.firmwareVersion ?? null,
+        location: device.location ?? null,
+        latitude: device.latitude ?? null,
+        longitude: device.longitude ?? null,
+        deviceKey: device.deviceKey,
+        deviceProfileName: device.deviceProfile?.name ?? null,
       },
+      stats: {
+        uptimePercentage: this.uptimePercentage(device, since, until),
+        dataRate: `${dataRateMBPerDay.toFixed(3)} MB/day`,
+        messagesInWindow: windowMessages,
+        totalMessages: device.messageCount ?? 0,
+        errorCount: device.errorCount ?? 0,
+        activeAlarms,
+        lastSeenAgo: this.humaniseAge(device.lastSeenAt),
+      },
+      telemetryTrend,
+      telemetrySummary: summaryRows.map((s) => ({
+        key: s.key,
+        min: Math.round(parseFloat(s.min) * 100) / 100,
+        max: Math.round(parseFloat(s.max) * 100) / 100,
+        avg: Math.round(parseFloat(s.avg) * 100) / 100,
+        samples: parseInt(s.samples, 10),
+        latest: latestMap.get(s.key) ?? null,
+      })),
+      alarmHistory: alarms.map((a) => ({
+        id: a.id,
+        name: a.name,
+        severity: a.severity,
+        status: a.status,
+        tbStatus: a.tbStatus,
+        triggeredAt: a.triggeredAt ?? null,
+        clearedAt: a.clearedAt ?? null,
+        acknowledgedAt: a.acknowledgedAt ?? null,
+        durationMinutes:
+          a.clearedAt && a.triggeredAt
+            ? Math.round(
+                (new Date(a.clearedAt).getTime() - new Date(a.triggeredAt).getTime()) / 60_000,
+              )
+            : null,
+      })),
+      hourlyActivity: hourly.map((h) => ({
+        hour: new Date(h.hour).toISOString(),
+        messageCount: parseInt(h.count, 10),
+      })),
+      period: { since, until, days },
     };
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // 4. DASHBOARD ANALYTICS  (GET /analytics/dashboards)
-  // ──────────────────────────────────────────────────────────────────────────
+  private humaniseAge(at?: Date | null): string {
+    if (!at) return 'Never';
+    const ms = Date.now() - new Date(at).getTime();
+    if (ms < 60_000) return `${Math.floor(ms / 1000)}s ago`;
+    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+    if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+    return `${Math.floor(ms / 86_400_000)}d ago`;
+  }
 
-  async getDashboardAnalytics(tenantId: string, days: number = 7) {
-    const since = this.daysAgo(days);
-    const now   = new Date();
+  // ══════════════════════════════════════════════════════════════════════════
+  // 4. ALARM ANALYTICS — GET /analytics/alarms
+  // ══════════════════════════════════════════════════════════════════════════
 
-    const dashboards = await this.dashboardRepository.find({ where: { tenantId } });
+  async getAlarmAnalytics(
+    tenantIdRaw: string,
+    query: TimeRangeQueryDto,
+    customerId?: string | null,
+  ) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const { since, until, bucket } = this.resolveRange(query.timeRange);
 
-    const rows = await Promise.all(
-      dashboards.map(async (db) => {
-        // Aggregate view log data for this dashboard
-        const viewStats = await this.viewLogRepository
-          .createQueryBuilder('vl')
-          .select('AVG(vl.loadTimeMs)', 'avgLoad')
-          .addSelect('COUNT(*)',           'viewCount')
-          .addSelect('SUM(CASE WHEN vl.errorOccurred THEN 1 ELSE 0 END)', 'errorCount')
-          .where('vl.dashboardId = :dbId', { dbId: db.id })
-          .andWhere('vl.viewedAt BETWEEN :since AND :now', { since, now })
-          .getRawOne();
+    const startOfDay = this.startOfToday();
+    const startOfYesterday = new Date(startOfDay.getTime() - 86_400_000);
 
-        const viewCount   = parseInt(viewStats?.viewCount  ?? '0', 10);
-        const errorCount  = parseInt(viewStats?.errorCount ?? '0', 10);
-        const avgLoadMs   = parseFloat(viewStats?.avgLoad  ?? '0');
-        const errorRate   = viewCount > 0 ? parseFloat(((errorCount / viewCount) * 100).toFixed(2)) : 0;
-        const viewsPerDay = parseFloat((viewCount / days).toFixed(1));
+    const base: any = { tenantId };
+    if (customerId) base.customerId = customerId;
 
-        // Environmental telemetry from devices linked to this dashboard
-        // We look for telemetry keys matching co2/temperature/humidity patterns
-        const envMetrics = await this.getEnvironmentalMetricsForDashboard(db.id, tenantId, since, now);
+    /** Applies the tenant (and, for a customer caller, the customer) predicate. */
+    const scoped = (qb: SelectQueryBuilder<Alarm>): SelectQueryBuilder<Alarm> => {
+      qb.where('a.tenantId = :tenantId', { tenantId });
+      if (customerId) qb.andWhere('a.customerId = :customerId', { customerId });
+      return qb;
+    };
 
-        // Widget performance
-        const widgetPerf = await this.viewLogRepository
-          .createQueryBuilder('vl')
-          .select('vl.widgetId', 'widgetId')
-          .addSelect('AVG(vl.loadTimeMs)', 'avgLoad')
-          .addSelect('COUNT(*)', 'views')
-          .where('vl.dashboardId = :dbId', { dbId: db.id })
-          .andWhere('vl.widgetId IS NOT NULL')
-          .andWhere('vl.viewedAt BETWEEN :since AND :now', { since, now })
-          .groupBy('vl.widgetId')
-          .getRawMany();
+    const closedBetween = (from: Date, to: Date) =>
+      scoped(this.alarmRepo.createQueryBuilder('a'))
+        .andWhere('a.status IN (:...statuses)', { statuses: CLOSED_ALARM_STATUSES })
+        .andWhere('COALESCE(a.clearedAt, a.resolvedAt) BETWEEN :from AND :to', { from, to })
+        .getCount();
 
-        const widgetPerformance = widgetPerf.map((w) => {
-          const avg = parseFloat(w.avgLoad ?? '0');
-          return {
-            widgetId:   w.widgetId,
-            loadTimeMs: Math.round(avg),
-            status:     avg < 1000 ? 'good' : avg < 3000 ? 'slow' : 'poor',
-          };
-        });
+    const [
+      totalActive, critical, error, warning, info,
+      resolvedToday, resolvedYesterday,
+      criticalYesterday, warningYesterday, infoYesterday,
+    ] = await Promise.all([
+      this.alarmRepo.count({ where: { ...base, status: In(ACTIVE_ALARM_STATUSES) } }),
+      this.alarmRepo.count({ where: { ...base, severity: AlarmSeverity.CRITICAL, status: In(ACTIVE_ALARM_STATUSES) } }),
+      this.alarmRepo.count({ where: { ...base, severity: AlarmSeverity.ERROR, status: In(ACTIVE_ALARM_STATUSES) } }),
+      this.alarmRepo.count({ where: { ...base, severity: AlarmSeverity.WARNING, status: In(ACTIVE_ALARM_STATUSES) } }),
+      this.alarmRepo.count({ where: { ...base, severity: AlarmSeverity.INFO, status: In(ACTIVE_ALARM_STATUSES) } }),
+      closedBetween(startOfDay, new Date()),
+      closedBetween(startOfYesterday, startOfDay),
+      this.alarmRepo.count({ where: { ...base, severity: AlarmSeverity.CRITICAL, triggeredAt: Between(startOfYesterday, startOfDay) } }),
+      this.alarmRepo.count({ where: { ...base, severity: AlarmSeverity.WARNING, triggeredAt: Between(startOfYesterday, startOfDay) } }),
+      this.alarmRepo.count({ where: { ...base, severity: AlarmSeverity.INFO, triggeredAt: Between(startOfYesterday, startOfDay) } }),
+    ]);
 
-        return {
-          dashboardId:    db.id,
-          dashboardName:  db.name,
-          co2Emissions:   envMetrics.co2,
-          temperature:    envMetrics.temperature,
-          humidity:       envMetrics.humidity,
-          energyUsage:    envMetrics.energy,
-          lastUpdated:    db.updatedAt,
-          status: db.visibility !== 'private' ? 'ACTIVE' : 'PRIVATE',
-          performanceMetrics: {
-            avgLoadTimeMs:        Math.round(avgLoadMs),
-            viewsPerDay,
-            dataEfficiencyPercent: 85,
-            errorRatePercent:      errorRate,
-          },
-          widgetPerformance,
-        };
-      })
-    );
+    const criticalToday = await this.alarmRepo.count({
+      where: { ...base, severity: AlarmSeverity.CRITICAL, triggeredAt: MoreThanOrEqual(startOfDay) },
+    });
+    const warningToday = await this.alarmRepo.count({
+      where: { ...base, severity: AlarmSeverity.WARNING, triggeredAt: MoreThanOrEqual(startOfDay) },
+    });
+    const infoToday = await this.alarmRepo.count({
+      where: { ...base, severity: AlarmSeverity.INFO, triggeredAt: MoreThanOrEqual(startOfDay) },
+    });
 
-    // Environmental trends — aggregate across all dashboards
-    const envTrends = await this.getEnvironmentalTrends(tenantId, since, now);
+    // `bucket` is chosen by resolveRange from a closed enum, never from raw
+    // input, so interpolating it into DATE_TRUNC cannot be injected.
+    const trendRows = await scoped(this.alarmRepo.createQueryBuilder('a'))
+      .select(`DATE_TRUNC('${bucket}', a.triggeredAt)`, 'bucket')
+      .addSelect("COUNT(*) FILTER (WHERE a.severity = 'critical')", 'critical')
+      .addSelect("COUNT(*) FILTER (WHERE a.severity = 'error')", 'error')
+      .addSelect("COUNT(*) FILTER (WHERE a.severity = 'warning')", 'warning')
+      .addSelect("COUNT(*) FILTER (WHERE a.severity = 'info')", 'info')
+      .andWhere('a.triggeredAt BETWEEN :since AND :until', { since, until })
+      .groupBy(`DATE_TRUNC('${bucket}', a.triggeredAt)`)
+      .orderBy('bucket', 'ASC')
+      .getRawMany();
 
-    // Environmental impact summary
-    const co2Total  = rows.reduce((s, r) => s + (r.co2Emissions ?? 0), 0);
-    const energyTotal = rows.reduce((s, r) => s + (r.energyUsage ?? 0), 0);
+    const topSources = await scoped(this.alarmRepo.createQueryBuilder('a'))
+      .select('a.name', 'name')
+      .addSelect('a.severity', 'severity')
+      .addSelect('a.deviceId', 'deviceId')
+      .addSelect('COUNT(*)', 'count')
+      .addSelect('MAX(a.triggeredAt)', 'lastTriggeredAt')
+      .andWhere('a.triggeredAt BETWEEN :since AND :until', { since, until })
+      .groupBy('a.name, a.severity, a.deviceId')
+      .orderBy('count', 'DESC')
+      .limit(10)
+      .getRawMany();
+
+    const byDevice = await scoped(this.alarmRepo.createQueryBuilder('a'))
+      .select('a.deviceId', 'deviceId')
+      .addSelect('COUNT(*)', 'count')
+      .addSelect('MAX(a.triggeredAt)', 'lastAlarm')
+      .andWhere('a.triggeredAt BETWEEN :since AND :until', { since, until })
+      .andWhere('a.deviceId IS NOT NULL')
+      .groupBy('a.deviceId')
+      .orderBy('count', 'DESC')
+      .limit(10)
+      .getRawMany();
+
+    // Time-to-acknowledge, in minutes, over alarms actually acknowledged.
+    const response = await scoped(this.alarmRepo.createQueryBuilder('a'))
+      .select('AVG(EXTRACT(EPOCH FROM (a.acknowledgedAt - a.triggeredAt)) / 60)', 'avgMinutes')
+      .addSelect(
+        "AVG(EXTRACT(EPOCH FROM (a.acknowledgedAt - a.triggeredAt)) / 60) FILTER (WHERE a.severity = 'critical')",
+        'criticalAvg',
+      )
+      .addSelect('COUNT(*)', 'sampleSize')
+      .andWhere('a.acknowledgedAt IS NOT NULL')
+      .andWhere('a.triggeredAt IS NOT NULL')
+      .andWhere('a.triggeredAt BETWEEN :since AND :until', { since, until })
+      .getRawOne();
+
+    // Mean time to resolve — how long alarms stayed open before being closed.
+    const resolution = await scoped(this.alarmRepo.createQueryBuilder('a'))
+      .select(
+        'AVG(EXTRACT(EPOCH FROM (COALESCE(a.clearedAt, a.resolvedAt) - a.triggeredAt)) / 60)',
+        'avgMinutes',
+      )
+      .addSelect('COUNT(*)', 'sampleSize')
+      .andWhere('COALESCE(a.clearedAt, a.resolvedAt) IS NOT NULL')
+      .andWhere('a.triggeredAt IS NOT NULL')
+      .andWhere('a.triggeredAt BETWEEN :since AND :until', { since, until })
+      .getRawOne();
+
+    const deviceIds = [
+      ...new Set([...topSources, ...byDevice].map((r) => r.deviceId).filter(Boolean)),
+    ] as string[];
+    const deviceNames = await this.deviceNameMap(tenantId, deviceIds);
 
     return {
-      dashboards: rows,
-      environmentalTrends: envTrends,
-      environmentalImpact: {
-        totalCO2kg:            parseFloat(co2Total.toFixed(2)),
-        carbonFootprintKg:     parseFloat((co2Total * 1.2).toFixed(2)),
-        energyConsumptionKWh:  parseFloat(energyTotal.toFixed(2)),
-        efficiencyScore:       87,
+      summary: {
+        totalActive,
+        critical,
+        error,
+        warning,
+        info,
+        resolvedToday,
+        // Today's newly-triggered counts vs the same figure for yesterday.
+        // Comparing *active* totals against yesterday's *triggered* totals (as
+        // the old code did) subtracted two different quantities.
+        vsYesterday: {
+          critical: criticalToday - criticalYesterday,
+          warning: warningToday - warningYesterday,
+          info: infoToday - infoYesterday,
+          resolved: resolvedToday - resolvedYesterday,
+        },
+        todayTriggered: { critical: criticalToday, warning: warningToday, info: infoToday },
       },
+      trends: trendRows.map((t: any) => ({
+        bucket: new Date(t.bucket).toISOString(),
+        critical: parseInt(t.critical, 10) || 0,
+        error: parseInt(t.error, 10) || 0,
+        warning: parseInt(t.warning, 10) || 0,
+        info: parseInt(t.info, 10) || 0,
+      })),
+      topSources: topSources.map((s: any) => ({
+        name: s.name,
+        count: parseInt(s.count, 10),
+        severity: s.severity,
+        deviceId: s.deviceId ?? null,
+        deviceName: s.deviceId ? deviceNames.get(s.deviceId) ?? null : null,
+        lastTriggeredAt: s.lastTriggeredAt,
+      })),
+      responseTime: {
+        avgMinutes: this.round1(response?.avgMinutes),
+        criticalAvgMinutes: this.round1(response?.criticalAvg),
+        acknowledgedSampleSize: parseInt(response?.sampleSize ?? '0', 10),
+        avgResolutionMinutes: this.round1(resolution?.avgMinutes),
+        resolvedSampleSize: parseInt(resolution?.sampleSize ?? '0', 10),
+      },
+      byDevice: byDevice.map((d: any) => ({
+        deviceId: d.deviceId,
+        deviceName: deviceNames.get(d.deviceId) ?? null,
+        alarmCount: parseInt(d.count, 10),
+        lastAlarm: d.lastAlarm,
+      })),
+      period: { since, until },
+    };
+  }
+
+  /** null rather than 0 when there is nothing to average — 0 minutes is a claim. */
+  private round1(value: string | number | null | undefined): number | null {
+    if (value === null || value === undefined) return null;
+    const n = typeof value === 'number' ? value : parseFloat(value);
+    return Number.isFinite(n) ? Math.round(n * 10) / 10 : null;
+  }
+
+  private async deviceNameMap(tenantId: string, ids: string[]): Promise<Map<string, string>> {
+    if (!ids.length) return new Map();
+    const devices = await this.deviceRepo.find({
+      where: { id: In(ids), tenantId },
+      select: ['id', 'name'],
+    });
+    return new Map(devices.map((d) => [d.id, d.name]));
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 5. DATA CONSUMPTION — GET /analytics/data-consumption
+  // ══════════════════════════════════════════════════════════════════════════
+
+  async getDataConsumption(
+    tenantIdRaw: string,
+    query: TimeRangeQueryDto,
+    customerId?: string | null,
+  ) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const { since, until, days, bucket } = this.resolveRange(query.timeRange);
+    const prevSince = new Date(since.getTime() - (until.getTime() - since.getTime()));
+
+    const deviceIds = await this.visibleDeviceIds(tenantId, customerId);
+    const scopedIds = deviceIds?.length
+      ? deviceIds
+      : deviceIds
+        ? ['00000000-0000-0000-0000-000000000000']
+        : null;
+
+    const telemetryQb = () => {
+      const qb = this.telemetryRepo.createQueryBuilder('t').where('t.tenantId = :tenantId', { tenantId });
+      if (scopedIds) qb.andWhere('t.deviceId IN (:...scopedIds)', { scopedIds });
+      return qb;
+    };
+
+    const [totalMessages, prevMessages, trendRows, hourlyRows, topDevices, attributeWrites, commandCount, apiCalls] =
+      await Promise.all([
+        telemetryQb().andWhere('t.timestamp BETWEEN :since AND :until', { since, until }).getCount(),
+        telemetryQb().andWhere('t.timestamp BETWEEN :prevSince AND :since', { prevSince, since }).getCount(),
+        telemetryQb()
+          .select(`DATE_TRUNC('${bucket}', t.timestamp)`, 'bucket')
+          .addSelect('COUNT(*)', 'messages')
+          .andWhere('t.timestamp BETWEEN :since AND :until', { since, until })
+          .groupBy(`DATE_TRUNC('${bucket}', t.timestamp)`)
+          .orderBy('bucket', 'ASC')
+          .getRawMany(),
+        telemetryQb()
+          .select('EXTRACT(HOUR FROM t.timestamp)', 'hour')
+          .addSelect('COUNT(*)', 'messages')
+          .andWhere('t.timestamp BETWEEN :since AND :until', { since, until })
+          .groupBy('hour')
+          .orderBy('hour', 'ASC')
+          .getRawMany(),
+        telemetryQb()
+          .select('t.deviceId', 'deviceId')
+          .addSelect('COUNT(*)', 'messages')
+          .andWhere('t.timestamp BETWEEN :since AND :until', { since, until })
+          .groupBy('t.deviceId')
+          .orderBy('messages', 'DESC')
+          .limit(10)
+          .getRawMany(),
+        // Real counts, not a fixed fraction of the telemetry total.
+        this.attributeRepo
+          .createQueryBuilder('at')
+          .where('at.tenantId = :tenantId', { tenantId })
+          .andWhere('at.updatedAt BETWEEN :since AND :until', { since, until })
+          .getCount(),
+        this.commandRepo
+          .createQueryBuilder('c')
+          .where('c.tenantId = :tenantId', { tenantId })
+          .andWhere('c.createdAt BETWEEN :since AND :until', { since, until })
+          .getCount(),
+        this.apiLogRepo
+          .createQueryBuilder('l')
+          .where('l.tenantId = :tenantId', { tenantId })
+          .andWhere('l.timestamp BETWEEN :since AND :until', { since, until })
+          .getCount(),
+      ]);
+
+    const { bytesPerRow, measured } = await this.telemetryBytesPerRow();
+    const deviceNames = await this.deviceNameMap(
+      tenantId,
+      topDevices.map((d) => d.deviceId).filter(Boolean),
+    );
+
+    const peakHourRow = [...hourlyRows].sort(
+      (a, b) => parseInt(b.messages, 10) - parseInt(a.messages, 10),
+    )[0];
+
+    // Logical payload size vs bytes actually on disk (indexes, TOAST and
+    // per-row overhead included) — a real ratio, replacing the old 87.5 literal.
+    const logicalBytes = await this.logicalPayloadBytes(tenantId, since, until, scopedIds);
+    const physicalBytes = totalMessages * bytesPerRow;
+    const storageEfficiency =
+      physicalBytes > 0 ? Math.round((logicalBytes / physicalBytes) * 1000) / 10 : null;
+
+    return {
+      summary: {
+        totalMessages,
+        avgDailyMessages: Math.round(totalMessages / Math.max(1, days)),
+        peakHour: peakHourRow
+          ? `${String(Math.round(parseFloat(peakHourRow.hour))).padStart(2, '0')}:00`
+          : 'N/A',
+        estimatedBytes: Math.round(physicalBytes),
+        bytesPerRow: Math.round(bytesPerRow),
+        bytesPerRowMeasured: measured,
+        storageEfficiencyPercent: storageEfficiency,
+        vsLastPeriodPercent:
+          prevMessages > 0 ? Math.round(((totalMessages - prevMessages) / prevMessages) * 100) : null,
+        previousPeriodMessages: prevMessages,
+      },
+      trend: trendRows.map((d) => ({
+        bucket: new Date(d.bucket).toISOString(),
+        messages: parseInt(d.messages, 10),
+        estimatedBytes: Math.round(parseInt(d.messages, 10) * bytesPerRow),
+      })),
+      byType: {
+        telemetry: totalMessages,
+        attributes: attributeWrites,
+        commands: commandCount,
+        apiCalls,
+      },
+      topConsumers: topDevices.map((d) => ({
+        type: 'device' as const,
+        id: d.deviceId,
+        name: deviceNames.get(d.deviceId) ?? null,
+        messages: parseInt(d.messages, 10),
+        estimatedBytes: Math.round(parseInt(d.messages, 10) * bytesPerRow),
+        percentage:
+          totalMessages > 0
+            ? Math.round((parseInt(d.messages, 10) / totalMessages) * 1000) / 10
+            : 0,
+      })),
+      hourlyDistribution: hourlyRows.map((h) => ({
+        hour: Math.round(parseFloat(h.hour)),
+        messages: parseInt(h.messages, 10),
+      })),
+      period: { since, until, days },
+    };
+  }
+
+  /** Sum of octet lengths of the raw jsonb payloads actually stored. */
+  private async logicalPayloadBytes(
+    tenantId: string,
+    since: Date,
+    until: Date,
+    scopedIds: string[] | null,
+  ): Promise<number> {
+    const rows = await this.telemetryRepo.query(
+      `SELECT COALESCE(SUM(octet_length(t.data::text)), 0) AS bytes
+         FROM telemetry t
+        WHERE t."tenantId" = $1
+          AND t.timestamp BETWEEN $2 AND $3
+          AND t.deleted_at IS NULL
+          AND ($4::uuid[] IS NULL OR t."deviceId" = ANY($4::uuid[]))`,
+      [tenantId, since, until, scopedIds],
+    );
+    return Number(rows?.[0]?.bytes ?? 0);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 6. SYSTEM PERFORMANCE — GET /analytics/system-performance
+  // ══════════════════════════════════════════════════════════════════════════
+
+  async getSystemPerformance(tenantIdRaw: string, query: TimeRangeQueryDto) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const { since, until, bucket } = this.resolveRange(query.timeRange);
+
+    const logQb = () =>
+      this.apiLogRepo
+        .createQueryBuilder('l')
+        .where('l.tenantId = :tenantId', { tenantId })
+        .andWhere('l.timestamp BETWEEN :since AND :until', { since, until });
+
+    const [totals, trendRows, topEndpoints, errorTypes, hourlyRows, recentErrors, health] =
+      await Promise.all([
+        logQb()
+          .select('COUNT(*)', 'total')
+          .addSelect('COUNT(*) FILTER (WHERE l.statusCode >= 400)', 'errors')
+          .addSelect('AVG(l.responseTime)', 'avgResponseTime')
+          .addSelect(
+            'PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY l.responseTime)',
+            'p95ResponseTime',
+          )
+          .addSelect('MAX(l.responseTime)', 'maxResponseTime')
+          .getRawOne(),
+        logQb()
+          .select(`DATE_TRUNC('${bucket}', l.timestamp)`, 'bucket')
+          .addSelect('AVG(l.responseTime)', 'avgResponseTime')
+          .addSelect('COUNT(*)', 'total')
+          .addSelect('COUNT(*) FILTER (WHERE l.statusCode >= 400)', 'errors')
+          .groupBy(`DATE_TRUNC('${bucket}', l.timestamp)`)
+          .orderBy('bucket', 'ASC')
+          .getRawMany(),
+        logQb()
+          .select('l.endpoint', 'endpoint')
+          .addSelect('COUNT(*)', 'calls')
+          .addSelect('AVG(l.responseTime)', 'avgResponseTime')
+          .addSelect('COUNT(*) FILTER (WHERE l.statusCode >= 400)', 'errors')
+          .groupBy('l.endpoint')
+          .orderBy('calls', 'DESC')
+          .limit(10)
+          .getRawMany(),
+        logQb()
+          .select('l.statusCode', 'statusCode')
+          .addSelect('COUNT(*)', 'count')
+          .andWhere('l.statusCode >= 400')
+          .groupBy('l.statusCode')
+          .orderBy('count', 'DESC')
+          .getRawMany(),
+        logQb()
+          .select('EXTRACT(HOUR FROM l.timestamp)', 'hour')
+          .addSelect('COUNT(*)', 'calls')
+          .groupBy('hour')
+          .orderBy('calls', 'DESC')
+          .limit(1)
+          .getRawOne(),
+        this.apiLogRepo.find({
+          where: { tenantId, statusCode: MoreThanOrEqual(500), timestamp: Between(since, until) },
+          order: { timestamp: 'DESC' },
+          take: 10,
+          select: ['id', 'method', 'endpoint', 'statusCode', 'errorMessage', 'timestamp'],
+        }),
+        this.checkSystemHealth(),
+      ]);
+
+    const totalCalls = parseInt(totals?.total ?? '0', 10);
+    const totalErrors = parseInt(totals?.errors ?? '0', 10);
+
+    return {
+      summary: {
+        totalApiCalls: totalCalls,
+        avgResponseTime: this.round1(totals?.avgResponseTime),
+        p95ResponseTime: this.round1(totals?.p95ResponseTime),
+        maxResponseTime: totals?.maxResponseTime ? parseInt(totals.maxResponseTime, 10) : null,
+        totalErrors,
+        errorRate: totalCalls > 0 ? Math.round((totalErrors / totalCalls) * 1000) / 10 : 0,
+        peakUsageHour: hourlyRows
+          ? `${String(Math.round(parseFloat(hourlyRows.hour))).padStart(2, '0')}:00`
+          : 'N/A',
+      },
+      apiResponseTrend: trendRows.map((l) => {
+        const total = parseInt(l.total, 10);
+        const errors = parseInt(l.errors, 10);
+        return {
+          bucket: new Date(l.bucket).toISOString(),
+          avgResponseTime: this.round1(l.avgResponseTime),
+          calls: total,
+          errorRate: total > 0 ? Math.round((errors / total) * 1000) / 10 : 0,
+        };
+      }),
+      errorBreakdown: errorTypes.map((e) => ({
+        type: `HTTP ${e.statusCode}`,
+        statusCode: parseInt(e.statusCode, 10),
+        count: parseInt(e.count, 10),
+        percentage:
+          totalErrors > 0 ? Math.round((parseInt(e.count, 10) / totalErrors) * 1000) / 10 : 0,
+      })),
+      topEndpoints: topEndpoints.map((e) => {
+        const calls = parseInt(e.calls, 10);
+        const errors = parseInt(e.errors, 10);
+        return {
+          endpoint: e.endpoint,
+          calls,
+          avgResponseTime: this.round1(e.avgResponseTime),
+          errorRate: calls > 0 ? Math.round((errors / calls) * 1000) / 10 : 0,
+        };
+      }),
+      systemHealth: health,
+      recentAlerts: recentErrors.map((l) => ({
+        message: `${l.method} ${l.endpoint} → ${l.statusCode}${l.errorMessage ? `: ${l.errorMessage}` : ''}`,
+        type: 'error' as const,
+        timestamp: l.timestamp,
+      })),
+      period: { since, until },
+    };
+  }
+
+  /**
+   * Every dependency is probed for real:
+   *   database  — SELECT 1 against the pool
+   *   cache     — Redis PING
+   *   messageQueue — the shared Kafka producer's live connection state
+   *   fileStorage  — write+unlink of a probe file in the upload directory
+   * The previous implementation returned three of these as string literals.
+   */
+  private async checkSystemHealth(): Promise<{
+    database: 'healthy' | 'down';
+    cache: 'healthy' | 'down';
+    messageQueue: 'healthy' | 'down';
+    fileStorage: 'healthy' | 'down';
+    checkedAt: Date;
+  }> {
+    const uploadDir = process.env.UPLOAD_PATH || './uploads';
+
+    const [database, cache, messageQueue, fileStorage] = await Promise.all([
+      this.analyticsRepo.query('SELECT 1').then(() => 'healthy' as const).catch(() => 'down' as const),
+      this.redis.client
+        .ping()
+        .then((r: string) => (r === 'PONG' ? ('healthy' as const) : ('down' as const)))
+        .catch(() => 'down' as const),
+      Promise.resolve(this.kafka.isHealthy() ? ('healthy' as const) : ('down' as const)),
+      (async () => {
+        const probe = `${uploadDir}/.analytics-health-probe`;
+        try {
+          await fs.mkdir(uploadDir, { recursive: true });
+          await fs.writeFile(probe, 'ok');
+          await fs.unlink(probe);
+          return 'healthy' as const;
+        } catch {
+          return 'down' as const;
+        }
+      })(),
+    ]);
+
+    return { database, cache, messageQueue, fileStorage, checkedAt: new Date() };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 7. GEO ANALYTICS — GET /analytics/geo
+  // ══════════════════════════════════════════════════════════════════════════
+
+  async getGeoAnalytics(
+    tenantIdRaw: string,
+    query: GeoAnalyticsQueryDto,
+    customerId?: string | null,
+  ) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const { since, until } = this.resolveRange(query.timeRange);
+
+    const qb = this.deviceRepo
+      .createQueryBuilder('d')
+      .where('d.tenantId = :tenantId', { tenantId });
+    if (customerId) qb.andWhere('d.customerId = :customerId', { customerId });
+    if (query.region) qb.andWhere('d.location ILIKE :region', { region: `%${query.region}%` });
+
+    const devices = await qb.getMany();
+    const deviceIds = devices.map((d) => d.id);
+
+    const [alarmCounts, messageCounts] = await Promise.all([
+      this.activeAlarmCountsByDevice(tenantId, deviceIds),
+      this.telemetryCountsByDevice(tenantId, deviceIds, since, until),
+    ]);
+    const { bytesPerRow } = await this.telemetryBytesPerRow();
+
+    // Grouped on the device's own `location` string — no invented world-region
+    // taxonomy and no hardcoded lat/lng per continent. Devices with no location
+    // are reported under 'Unlocated' rather than being silently bucketed.
+    const regions = new Map<
+      string,
+      { devices: number; online: number; alarms: number; messages: number; lat: number[]; lng: number[] }
+    >();
+
+    for (const d of devices) {
+      const region = d.location?.trim() || 'Unlocated';
+      if (!regions.has(region)) {
+        regions.set(region, { devices: 0, online: 0, alarms: 0, messages: 0, lat: [], lng: [] });
+      }
+      const r = regions.get(region)!;
+      r.devices++;
+      if (d.status === DeviceStatus.ACTIVE) r.online++;
+      r.alarms += alarmCounts.get(d.id) ?? 0;
+      r.messages += messageCounts.get(d.id) ?? 0;
+      if (d.latitude != null && d.longitude != null) {
+        r.lat.push(Number(d.latitude));
+        r.lng.push(Number(d.longitude));
+      }
+    }
+
+    const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+
+    return {
+      devices: devices.map((d) => ({
+        id: d.id,
+        name: d.name,
+        type: d.type,
+        status: d.status,
+        latitude: d.latitude != null ? Number(d.latitude) : null,
+        longitude: d.longitude != null ? Number(d.longitude) : null,
+        location: d.location ?? null,
+        lastSeenAt: d.lastSeenAt ?? null,
+        activeAlarms: alarmCounts.get(d.id) ?? 0,
+        messagesInWindow: messageCounts.get(d.id) ?? 0,
+      })),
+      regionStats: Array.from(regions.entries()).map(([region, s]) => ({
+        region,
+        deviceCount: s.devices,
+        onlineCount: s.online,
+        offlineCount: s.devices - s.online,
+        messages: s.messages,
+        dataGeneratedBytes: Math.round(s.messages * bytesPerRow),
+        activeAlarms: s.alarms,
+        /** Active alarms per device — a ratio, computed, not sampled. */
+        alertRate: s.devices > 0 ? Math.round((s.alarms / s.devices) * 100) / 100 : 0,
+        centroid: { latitude: avg(s.lat), longitude: avg(s.lng) },
+        status:
+          s.devices === 0 ? 'offline' : s.online === s.devices ? 'online' : s.online === 0 ? 'offline' : 'degraded',
+      })),
+      summary: {
+        totalDevices: devices.length,
+        locatedDevices: devices.filter((d) => d.latitude != null && d.longitude != null).length,
+        regions: regions.size,
+      },
+      period: { since, until },
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 8. ASSET ANALYTICS — GET /analytics/assets
+  // ══════════════════════════════════════════════════════════════════════════
+
+  async getAssetAnalytics(
+    tenantIdRaw: string,
+    query: TimeRangeQueryDto,
+    customerId?: string | null,
+  ) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const { since, until } = this.resolveRange(query.timeRange);
+
+    const where: any = { tenantId };
+    if (customerId) where.customerId = customerId;
+
+    const [assets, totalAssets] = await this.assetRepo.findAndCount({
+      where,
+      order: { createdAt: 'DESC' },
+      take: 100,
+    });
+    const assetIds = assets.map((a) => a.id);
+
+    // One query for every device on every listed asset; grouped in memory
+    // rather than a query per asset.
+    const devices = assetIds.length
+      ? await this.deviceRepo.find({
+          where: { tenantId, assetId: In(assetIds) },
+          select: ['id', 'assetId', 'status', 'lastSeenAt'],
+        })
+      : [];
+
+    const devicesByAsset = new Map<string, typeof devices>();
+    for (const d of devices) {
+      if (!d.assetId) continue;
+      const list = devicesByAsset.get(d.assetId) ?? [];
+      list.push(d);
+      devicesByAsset.set(d.assetId, list);
+    }
+
+    const deviceIds = devices.map((d) => d.id);
+    const [alarmCounts, messageCounts, keyStats] = await Promise.all([
+      this.activeAlarmCountsByDevice(tenantId, deviceIds),
+      this.telemetryCountsByDevice(tenantId, deviceIds, since, until),
+      this.assetKeyStats(tenantId, deviceIds, since, until),
+    ]);
+
+    const byType: Record<string, number> = {};
+    for (const a of assets) byType[a.type ?? 'unknown'] = (byType[a.type ?? 'unknown'] ?? 0) + 1;
+
+    const rows = assets.map((a) => {
+      const own = devicesByAsset.get(a.id) ?? [];
+      const activeAlarms = own.reduce((s, d) => s + (alarmCounts.get(d.id) ?? 0), 0);
+      const messages = own.reduce((s, d) => s + (messageCounts.get(d.id) ?? 0), 0);
+      const lastActivity = own
+        .map((d) => d.lastSeenAt)
+        .filter(Boolean)
+        .sort((x, y) => new Date(y!).getTime() - new Date(x!).getTime())[0];
+
+      // Telemetry averages across every device on this asset, per key.
+      const summary: Record<string, { avg: number; min: number; max: number; samples: number }> = {};
+      for (const d of own) {
+        for (const s of keyStats.get(d.id) ?? []) {
+          const existing = summary[s.key];
+          if (!existing) {
+            summary[s.key] = { avg: s.avg, min: s.min, max: s.max, samples: s.samples };
+          } else {
+            const total = existing.samples + s.samples;
+            existing.avg =
+              Math.round(((existing.avg * existing.samples + s.avg * s.samples) / total) * 100) / 100;
+            existing.min = Math.min(existing.min, s.min);
+            existing.max = Math.max(existing.max, s.max);
+            existing.samples = total;
+          }
+        }
+      }
+
+      return {
+        id: a.id,
+        name: a.name,
+        type: a.type,
+        deviceCount: own.length,
+        onlineDeviceCount: own.filter((d) => d.status === DeviceStatus.ACTIVE).length,
+        activeAlarms,
+        messagesInWindow: messages,
+        lastActivity: lastActivity ?? null,
+        location: a.location ?? null,
+        telemetrySummary: summary,
+      };
+    });
+
+    return {
+      summary: {
+        totalAssets,
+        listed: rows.length,
+        byType,
+        withDevices: rows.filter((r) => r.deviceCount > 0).length,
+        withAlarms: rows.filter((r) => r.activeAlarms > 0).length,
+      },
+      assets: rows,
+      period: { since, until },
+    };
+  }
+
+  /** Per-device numeric key stats for a set of devices, in one LATERAL query. */
+  private async assetKeyStats(
+    tenantId: string,
+    deviceIds: string[],
+    since: Date,
+    until: Date,
+  ): Promise<Map<string, Array<{ key: string; min: number; max: number; avg: number; samples: number }>>> {
+    if (!deviceIds.length) return new Map();
+    const rows: Array<{ deviceId: string; key: string; min: string; max: string; avg: string; samples: string }> =
+      await this.telemetryRepo.query(
+        `SELECT t."deviceId"        AS "deviceId",
+                kv.key              AS key,
+                MIN(kv.value::float) AS min,
+                MAX(kv.value::float) AS max,
+                AVG(kv.value::float) AS avg,
+                COUNT(*)             AS samples
+           FROM telemetry t
+           CROSS JOIN LATERAL jsonb_each_text(t.data) kv
+          WHERE t."tenantId" = $1
+            AND t."deviceId" = ANY($2::uuid[])
+            AND t.timestamp BETWEEN $3 AND $4
+            AND t.deleted_at IS NULL
+            AND kv.value ~ $5
+          GROUP BY t."deviceId", kv.key`,
+        [tenantId, deviceIds, since, until, NUMERIC_JSON_VALUE],
+      );
+
+    const map = new Map<string, Array<{ key: string; min: number; max: number; avg: number; samples: number }>>();
+    for (const r of rows) {
+      const list = map.get(r.deviceId) ?? [];
+      list.push({
+        key: r.key,
+        min: Math.round(parseFloat(r.min) * 100) / 100,
+        max: Math.round(parseFloat(r.max) * 100) / 100,
+        avg: Math.round(parseFloat(r.avg) * 100) / 100,
+        samples: parseInt(r.samples, 10),
+      });
+      map.set(r.deviceId, list);
+    }
+    return map;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 9. DASHBOARD ANALYTICS — GET /analytics/dashboards
+  // ══════════════════════════════════════════════════════════════════════════
+
+  async getDashboardAnalytics(tenantIdRaw: string, query: TimeRangeQueryDto) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const { since, until, days } = this.resolveRange(query.timeRange);
+
+    const dashboards = await this.dashboardRepo.find({ where: { tenantId } });
+    const dashboardIds = dashboards.map((d) => d.id);
+
+    const [viewStats, widgetStats] = await Promise.all([
+      dashboardIds.length
+        ? this.viewLogRepo
+            .createQueryBuilder('vl')
+            .select('vl.dashboardId', 'dashboardId')
+            .addSelect('COUNT(*)', 'views')
+            .addSelect('AVG(vl.loadTimeMs)', 'avgLoad')
+            .addSelect(
+              'PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY vl.loadTimeMs)',
+              'p95Load',
+            )
+            .addSelect('COUNT(*) FILTER (WHERE vl.errorOccurred)', 'errors')
+            .where('vl.tenantId = :tenantId', { tenantId })
+            .andWhere('vl.dashboardId IN (:...dashboardIds)', { dashboardIds })
+            .andWhere('vl.viewedAt BETWEEN :since AND :until', { since, until })
+            .groupBy('vl.dashboardId')
+            .getRawMany()
+        : Promise.resolve([]),
+      dashboardIds.length
+        ? this.viewLogRepo
+            .createQueryBuilder('vl')
+            .select('vl.dashboardId', 'dashboardId')
+            .addSelect('vl.widgetId', 'widgetId')
+            .addSelect('AVG(vl.loadTimeMs)', 'avgLoad')
+            .addSelect('COUNT(*)', 'views')
+            .where('vl.tenantId = :tenantId', { tenantId })
+            .andWhere('vl.dashboardId IN (:...dashboardIds)', { dashboardIds })
+            .andWhere('vl.widgetId IS NOT NULL')
+            .andWhere('vl.viewedAt BETWEEN :since AND :until', { since, until })
+            .groupBy('vl.dashboardId, vl.widgetId')
+            .getRawMany()
+        : Promise.resolve([]),
+    ]);
+
+    const statsById = new Map(viewStats.map((s) => [s.dashboardId, s]));
+    const widgetsById = new Map<string, any[]>();
+    for (const w of widgetStats) {
+      const list = widgetsById.get(w.dashboardId) ?? [];
+      list.push(w);
+      widgetsById.set(w.dashboardId, list);
+    }
+
+    return {
+      dashboards: dashboards.map((d) => {
+        const s = statsById.get(d.id);
+        const views = parseInt(s?.views ?? '0', 10);
+        const errors = parseInt(s?.errors ?? '0', 10);
+        return {
+          dashboardId: d.id,
+          dashboardName: d.name,
+          visibility: d.visibility,
+          widgetCount: d.widgets?.length ?? 0,
+          lastUpdated: d.updatedAt,
+          lastViewedAt: d.lastViewedAt ?? null,
+          /** Lifetime counter on the dashboard row. */
+          totalViewCount: d.viewCount ?? 0,
+          performanceMetrics: {
+            viewsInWindow: views,
+            viewsPerDay: Math.round((views / Math.max(1, days)) * 10) / 10,
+            avgLoadTimeMs: this.round1(s?.avgLoad),
+            p95LoadTimeMs: this.round1(s?.p95Load),
+            errorCount: errors,
+            errorRatePercent: views > 0 ? Math.round((errors / views) * 1000) / 10 : 0,
+          },
+          widgetPerformance: (widgetsById.get(d.id) ?? []).map((w) => {
+            const avg = parseFloat(w.avgLoad ?? '0');
+            return {
+              widgetId: w.widgetId,
+              views: parseInt(w.views, 10),
+              loadTimeMs: Math.round(avg),
+              status: avg < 1000 ? 'good' : avg < 3000 ? 'slow' : 'poor',
+            };
+          }),
+        };
+      }),
+      summary: {
+        totalDashboards: dashboards.length,
+        // Sum of the per-dashboard window counts — no view logs yet means 0,
+        // which is the truth rather than an estimate.
+        totalViewsInWindow: viewStats.reduce((s, v) => s + parseInt(v.views, 10), 0),
+      },
+      period: { since, until, days },
     };
   }
 
   async recordDashboardView(
     dashboardId: string,
-    tenantId: string,
+    tenantIdRaw: string,
     userId: string,
     dto: RecordDashboardViewDto,
   ): Promise<DashboardViewLog> {
-    const log = this.viewLogRepository.create({
-      dashboardId,
-      tenantId,
-      userId,
-      widgetId:      dto.widgetId,
-      loadTimeMs:    dto.loadTimeMs,
-      errorOccurred: dto.errorOccurred ?? false,
-      errorMessage:  dto.errorMessage,
+    const tenantId = this.assertTenant(tenantIdRaw);
+
+    // The dashboard must belong to the caller's tenant — otherwise a view log
+    // could be written against another tenant's dashboard id.
+    const dashboard = await this.dashboardRepo.findOne({
+      where: { id: dashboardId, tenantId },
+      select: ['id'],
     });
-    return this.viewLogRepository.save(log);
-  }
+    if (!dashboard) throw new NotFoundException('Dashboard not found');
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // 5. DATA CONSUMPTION  (GET /analytics/data-consumption)
-  // ──────────────────────────────────────────────────────────────────────────
-
-  async getDataConsumption(tenantId: string, dto: DataConsumptionQueryDto) {
-    const days  = dto.days ?? 30;
-    const since = this.daysAgo(days);
-    const now   = new Date();
-
-    // Total telemetry rows as proxy for total data
-    const totalRows = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .getCount();
-
-    const totalBytes = totalRows * AVG_TELEMETRY_PAYLOAD_BYTES;
-    const totalDataTB    = parseFloat((totalBytes / BYTES_PER_TB).toFixed(2));
-    const avgDailyUsageGB = parseFloat(((totalBytes / 30) / BYTES_PER_GB).toFixed(2));
-    const peakUsageHour   = await this.findPeakUsageHour(tenantId);
-
-    // 30-day trend: daily telemetry counts
-    const dailyRaw = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .select("DATE_TRUNC('day', t.timestamp)", 'date')
-      .addSelect('COUNT(*)', 'cnt')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .andWhere('t.timestamp BETWEEN :since AND :now', { since, now })
-      .groupBy("DATE_TRUNC('day', t.timestamp)")
-      .orderBy('date', 'ASC')
-      .getRawMany();
-
-    const consumptionTrend = dailyRaw.map((r) => ({
-      date:    new Date(r.date).toISOString().slice(0, 10),
-      valueGB: parseFloat(
-        ((parseInt(r.cnt, 10) * AVG_TELEMETRY_PAYLOAD_BYTES) / BYTES_PER_GB).toFixed(4)
-      ),
-    }));
-
-    // Dashboard view counts proxy for dashboard queries
-    const dashboardQueryRows = await this.viewLogRepository.count({
-      where: { tenantId },
-    });
-
-    // Distribution breakdown estimates
-    const deviceDataBytes     = totalBytes * 0.65;
-    const dashboardQueryBytes = dashboardQueryRows * 500; // 500 bytes per query
-    const apiCallsBytes       = totalBytes * 0.10;
-    const storageOverheadBytes = totalBytes * 0.05;
-    const grandTotal = deviceDataBytes + dashboardQueryBytes + apiCallsBytes + storageOverheadBytes;
-
-    const deviceStatusDistribution = {
-      deviceData:       parseFloat(((deviceDataBytes     / grandTotal) * 100).toFixed(1)),
-      dashboardQueries: parseFloat(((dashboardQueryBytes  / grandTotal) * 100).toFixed(1)),
-      apiCalls:         parseFloat(((apiCallsBytes        / grandTotal) * 100).toFixed(1)),
-      storageOverhead:  parseFloat(((storageOverheadBytes / grandTotal) * 100).toFixed(1)),
-    };
-
-    // Per-device breakdown — top consumers
-    const deviceBreakdown = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .select('t.deviceId', 'deviceId')
-      .addSelect('device.name', 'deviceName')
-      .addSelect('COUNT(*)', 'cnt')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .groupBy('t.deviceId, device.name')
-      .orderBy('cnt', 'DESC')
-      .take(10)
-      .getRawMany();
-
-    const totalDeviceRows = deviceBreakdown.reduce((s, r) => s + parseInt(r.cnt, 10), 0) || 1;
-
-    const consumptionBreakdown = deviceBreakdown.map((r) => {
-      const cnt  = parseInt(r.cnt, 10);
-      const gb   = parseFloat(((cnt * AVG_TELEMETRY_PAYLOAD_BYTES) / BYTES_PER_GB).toFixed(4));
-      const pct  = parseFloat(((cnt / totalDeviceRows) * 100).toFixed(1));
-      return {
-        type:             'Device',
-        name:             r.deviceName ?? r.deviceId,
-        dataConsumedGB:   gb,
-        percentOfTotal:   pct,
-        trendPercent:     parseFloat((Math.random() * 20 - 5).toFixed(1)), // requires historical comparison
-      };
-    });
-
-    return {
-      totalDataTB,
-      avgDailyUsageGB,
-      peakUsageHour,
-      storageEfficiencyPercent: 87.5,
-      consumptionTrend,
-      deviceStatusDistribution,
-      consumptionBreakdown,
-    };
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // 6. SYSTEM PERFORMANCE  (GET /analytics/system-performance)
-  // ──────────────────────────────────────────────────────────────────────────
-
-  async getSystemPerformance(tenantId: string, dto: SystemPerformanceQueryDto) {
-    const days  = dto.days ?? 30;
-    const since = this.daysAgo(days);
-    const now   = new Date();
-
-    // Reuse data consumption KPIs
-    const consumptionKpis = await this.getDataConsumption(tenantId, { days });
-
-    // Response time trends — from analytics records if available, else synthetic
-    const storedPerfRecords = await this.analyticsRepository
-      .createQueryBuilder('a')
-      .where('a.tenantId = :tenantId', { tenantId })
-      .andWhere('a.type = :type', { type: AnalyticsType.SYSTEM_PERFORMANCE })
-      .andWhere('a.timestamp BETWEEN :since AND :now', { since, now })
-      .orderBy('a.timestamp', 'ASC')
-      .take(100)
-      .getMany();
-
-    const responseTimeTrends = storedPerfRecords.length > 0
-      ? storedPerfRecords.map((r) => ({
-          timestamp: r.timestamp,
-          avgMs:     r.metrics?.responseTimeMs ?? 120,
-        }))
-      : this.generateSyntheticTimeSeries(30, 80, 200).map((p) => ({
-          timestamp: p.date,
-          avgMs:     p.value,
-        }));
-
-    // Resource utilization from EdgeMetricsSnapshot
-    const snapshots = await this.edgeSnapshotRepository
-      .createQueryBuilder('snap')
-      .innerJoin('snap.edge', 'edge')
-      .where('edge.tenantId = :tenantId', { tenantId })
-      .andWhere('snap.recordedAt BETWEEN :since AND :now', { since, now })
-      .orderBy('snap.recordedAt', 'ASC')
-      .take(200)
-      .getMany();
-
-    const resourceUtilization = snapshots.length > 0
-      ? snapshots.map((s) => ({
-          timestamp: s.recordedAt,
-          cpu:       s.cpu,
-          memory:    s.memory,
-          storage:   s.storage,
-        }))
-      : this.generateSyntheticTimeSeries(30, 20, 60).map((p) => ({
-          timestamp: p.date,
-          cpu:       p.value,
-          memory:    p.value * 1.2 > 100 ? 95 : p.value * 1.2,
-          storage:   38,
-        }));
-
-    // Error analysis — alarm counts by device as proxy for sensor errors
-    const timeoutErrors = await this.alarmRepository
-      .createQueryBuilder('a')
-      .where('a.tenantId = :tenantId', { tenantId })
-      .andWhere('LOWER(a.message) LIKE :pattern', { pattern: '%timeout%' })
-      .getCount();
-
-    const authErrors = await this.alarmRepository
-      .createQueryBuilder('a')
-      .where('a.tenantId = :tenantId', { tenantId })
-      .andWhere('LOWER(a.message) LIKE :pattern', { pattern: '%auth%' })
-      .getCount();
-
-    const sensorErrors = await this.alarmRepository
-      .createQueryBuilder('a')
-      .select('a.deviceId', 'deviceId')
-      .addSelect('COUNT(*)', 'cnt')
-      .where('a.tenantId = :tenantId', { tenantId })
-      .andWhere('LOWER(a.message) LIKE :pattern', { pattern: '%sensor%' })
-      .groupBy('a.deviceId')
-      .orderBy('cnt', 'DESC')
-      .take(3)
-      .getRawMany();
-
-    const errorAnalysis = {
-      timeout: timeoutErrors,
-      auth:    authErrors,
-      sensors: sensorErrors.map((s) => ({
-        deviceId: s.deviceId,
-        count:    parseInt(s.cnt, 10),
-      })),
-    };
-
-    // System health checks
-    const dbHealthy = await this.checkDatabaseHealth();
-    const systemHealthStatus = [
-      { service: 'DatabaseConnection', status: dbHealthy        ? 'healthy' : 'degraded' },
-      { service: 'MessageQueue',        status: 'healthy' as const },
-      { service: 'CacheService',        status: 'healthy' as const },
-      { service: 'FileStorage',         status: 'healthy' as const },
-    ];
-
-    // Recent system alerts — latest alarms of any severity
-    const recentAlarms = await this.alarmRepository
-      .createQueryBuilder('a')
-      .where('a.tenantId = :tenantId', { tenantId })
-      .orderBy('a.triggeredAt', 'DESC')
-      .take(10)
-      .getMany();
-
-    const recentSystemAlerts = recentAlarms.map((a) => ({
-      message:     a.message || a.name,
-      severity:    a.severity,
-      triggeredAt: a.triggeredAt,
-      deviceId:    a.deviceId,
-    }));
-
-    return {
-      kpis: {
-        totalDataTB:               consumptionKpis.totalDataTB,
-        avgDailyUsageGB:           consumptionKpis.avgDailyUsageGB,
-        peakUsageHour:             consumptionKpis.peakUsageHour,
-        storageEfficiencyPercent:  consumptionKpis.storageEfficiencyPercent,
-      },
-      responseTimeTrends,
-      resourceUtilization,
-      errorAnalysis,
-      systemHealthStatus,
-      recentSystemAlerts,
-    };
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // 7. GEO ANALYTICS  (GET /analytics/geo)
-  // ──────────────────────────────────────────────────────────────────────────
-
-  async getGeoAnalytics(tenantId: string, dto: GeoAnalyticsQueryDto) {
-    const devices = await this.deviceRepository
-      .createQueryBuilder('device')
-      .select(['device.id', 'device.name', 'device.location', 'device.status'])
-      .where('device.tenantId = :tenantId', { tenantId })
-      .getMany();
-
-    // Group devices by inferred region from location string
-    const regionMap = new Map<string, { devices: typeof devices; lat: number; lng: number }>();
-
-    for (const device of devices) {
-      const region = this.inferRegion(device.location);
-      if (!regionMap.has(region)) {
-        const coords = this.getRegionCoords(region);
-        regionMap.set(region, { devices: [], ...coords });
-      }
-      regionMap.get(region)!.devices.push(device);
-    }
-
-    // Telemetry volume per device
-    const telCounts = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .select('t.deviceId', 'deviceId')
-      .addSelect('COUNT(*)', 'cnt')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .groupBy('t.deviceId')
-      .getRawMany();
-
-    const telCountMap = new Map<string, number>(
-      telCounts.map((r) => [r.deviceId, parseInt(r.cnt, 10)])
+    return this.viewLogRepo.save(
+      this.viewLogRepo.create({
+        dashboardId,
+        tenantId,
+        userId,
+        widgetId: dto.widgetId,
+        loadTimeMs: dto.loadTimeMs,
+        errorOccurred: dto.errorOccurred ?? false,
+        errorMessage: dto.errorMessage,
+      }),
     );
-
-    // Build distribution
-    const deviceDistribution = Array.from(regionMap.entries()).map(([region, val]) => {
-      const dataBytes = val.devices.reduce((s, d) => s + (telCountMap.get(d.id) ?? 0), 0)
-                        * AVG_TELEMETRY_PAYLOAD_BYTES;
-      return {
-        region,
-        deviceCount: val.devices.length,
-        dataGB:      parseFloat((dataBytes / BYTES_PER_GB).toFixed(3)),
-        lat:         val.lat,
-        lng:         val.lng,
-      };
-    });
-
-    // Filter by region if requested
-    const filtered = dto.region
-      ? deviceDistribution.filter((d) => d.region.toLowerCase().includes(dto.region!.toLowerCase()))
-      : deviceDistribution;
-
-    const regionalStats = filtered.map((r) => ({
-      region:      r.region,
-      deviceCount: r.deviceCount,
-      dataGB:      r.dataGB,
-      growthPercent: parseFloat((Math.random() * 20 - 5).toFixed(1)),
-    }));
-
-    const locationPerformance = filtered.map((r) => ({
-      region:             r.region,
-      avgResponseMs:      Math.floor(80 + Math.random() * 200),
-      uptimePercent:      parseFloat((95 + Math.random() * 5).toFixed(1)),
-      dataQualityPercent: parseFloat((90 + Math.random() * 10).toFixed(1)),
-      alertRate:          parseFloat((Math.random() * 10).toFixed(1)),
-      status:             Math.random() > 0.2 ? 'Online' : 'Offline',
-    }));
-
-    return { deviceDistribution: filtered, regionalStats, locationPerformance };
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // 8. ENERGY MANAGEMENT  (GET /analytics/energy)
-  // ──────────────────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // 9b. ENERGY ANALYTICS — GET /analytics/energy
+  //
+  // Pre-existing endpoint, kept. It previously matched on `t.key`, a column
+  // that does not exist, so every call was a 400. Rewritten against `data`.
+  // ══════════════════════════════════════════════════════════════════════════
 
-  async getEnergyAnalytics(tenantId: string, dto: EnergyAnalyticsQueryDto) {
-    const endDate   = dto.endDate   ? new Date(dto.endDate)   : new Date();
-    const startDate = dto.startDate ? new Date(dto.startDate) : this.daysAgo(7);
-    const since24h  = this.hoursAgo(24);
+  /** jsonb keys treated as energy/environment signals, matched case-insensitively. */
+  private static readonly ENERGY_KEYS = ['co2', 'energy', 'power', 'kwh', 'watt', 'current', 'voltage'];
+  private static readonly CLIMATE_KEYS = ['temperature', 'temp', 'humidity'];
 
-    // Find telemetry keys matching energy/co2/temperature/humidity patterns
-    const energyKeyPatterns = ['co2', 'energy', 'power', 'kwh', 'watt'];
-    const tempKeyPatterns    = ['temperature', 'temp', 'celsius'];
-    const humidityKeyPatterns= ['humidity', 'rh', 'moisture'];
+  async getEnergyAnalytics(
+    tenantIdRaw: string,
+    query: TimeRangeQueryDto,
+    customerId?: string | null,
+  ) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const { since, until, bucket } = this.resolveRange(query.timeRange);
 
-    const buildKeyCondition = (patterns: string[], alias = 't') =>
-      patterns.map((p, i) => `LOWER(${alias}.key) LIKE :pattern_${p}`).join(' OR ');
+    const watched = [...AnalyticsService.ENERGY_KEYS, ...AnalyticsService.CLIMATE_KEYS];
+    const deviceIds = await this.visibleDeviceIds(tenantId, customerId);
 
-    const buildKeyParams = (patterns: string[]) =>
-      patterns.reduce((acc, p) => ({ ...acc, [`pattern_${p}`]: `%${p}%` }), {});
+    // One pass over the window: per-bucket, per-key averages for the watched
+    // keys only. `bucket` comes from the closed AnalyticsTimeRange enum.
+    const trendRows: Array<{ bucket: Date; key: string; avg: string; samples: string }> =
+      await this.telemetryRepo.query(
+        `SELECT DATE_TRUNC('${bucket}', t.timestamp) AS bucket,
+                LOWER(kv.key)        AS key,
+                AVG(kv.value::float) AS avg,
+                COUNT(*)             AS samples
+           FROM telemetry t
+           CROSS JOIN LATERAL jsonb_each_text(t.data) kv
+          WHERE t."tenantId" = $1
+            AND t.timestamp BETWEEN $2 AND $3
+            AND t.deleted_at IS NULL
+            AND kv.value ~ $4
+            AND LOWER(kv.key) = ANY($5::text[])
+            AND ($6::uuid[] IS NULL OR t."deviceId" = ANY($6::uuid[]))
+          GROUP BY 1, 2
+          ORDER BY 1 ASC`,
+        [tenantId, since, until, NUMERIC_JSON_VALUE, watched, deviceIds],
+      );
 
-    // Current CO2 reading
-    const co2Latest = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .andWhere(`(${buildKeyCondition(energyKeyPatterns)})`, buildKeyParams(energyKeyPatterns))
-      .orderBy('t.timestamp', 'DESC')
-      .getOne();
+    // Latest reading of each watched key across the tenant.
+    const latestRows: Array<{ key: string; value: string; timestamp: Date; deviceId: string }> =
+      await this.telemetryRepo.query(
+        `SELECT DISTINCT ON (LOWER(kv.key))
+                LOWER(kv.key) AS key, kv.value AS value, t.timestamp AS timestamp, t."deviceId" AS "deviceId"
+           FROM telemetry t
+           CROSS JOIN LATERAL jsonb_each_text(t.data) kv
+          WHERE t."tenantId" = $1
+            AND t.deleted_at IS NULL
+            AND kv.value ~ $2
+            AND LOWER(kv.key) = ANY($3::text[])
+            AND ($4::uuid[] IS NULL OR t."deviceId" = ANY($4::uuid[]))
+          ORDER BY LOWER(kv.key), t.timestamp DESC`,
+        [tenantId, NUMERIC_JSON_VALUE, watched, deviceIds],
+      );
 
-    // Current temperature
-    const tempLatest = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .andWhere(`(${buildKeyCondition(tempKeyPatterns)})`, buildKeyParams(tempKeyPatterns))
-      .orderBy('t.timestamp', 'DESC')
-      .getOne();
+    const latest = new Map(latestRows.map((r) => [r.key, parseFloat(r.value)]));
 
-    const currentCO2kg = co2Latest
-  ? parseFloat(
-      String(
-        co2Latest.data?.['co2']    ??
-        co2Latest.data?.['energy'] ??
-        co2Latest.data?.['power']  ??
-        co2Latest.data?.['kwh']    ??
-        0
-      )
-    )
-  : 0;
-    const energyConsumptionKWh = currentCO2kg * 0.5;
+    // Devices actually reporting an energy key, with their most recent reading.
+    const energyDevices: Array<{ deviceId: string; name: string; status: string; lastSeenAt: Date | null; keys: string[] }> =
+      await this.telemetryRepo.query(
+        `SELECT d.id AS "deviceId", d.name AS name, d.status AS status, d."lastSeenAt" AS "lastSeenAt",
+                ARRAY_AGG(DISTINCT LOWER(kv.key)) AS keys
+           FROM telemetry t
+           CROSS JOIN LATERAL jsonb_each_text(t.data) kv
+           JOIN devices d ON d.id = t."deviceId"
+          WHERE t."tenantId" = $1
+            AND t.timestamp BETWEEN $2 AND $3
+            AND t.deleted_at IS NULL
+            AND LOWER(kv.key) = ANY($4::text[])
+            AND ($5::uuid[] IS NULL OR t."deviceId" = ANY($5::uuid[]))
+          GROUP BY d.id, d.name, d.status, d."lastSeenAt"
+          ORDER BY d.name`,
+        [tenantId, since, until, AnalyticsService.ENERGY_KEYS, deviceIds],
+      );
 
-const temperature = tempLatest
-  ? parseFloat(
-      String(
-        tempLatest.temperature         ??   // dedicated column first
-        tempLatest.data?.['temperature'] ??
-        tempLatest.data?.['temp']        ??
-        tempLatest.data?.['celsius']     ??
-        0
-      )
-    )
-  : null;
-
-    // 24-hour trend grouped by hour
-    const hourlyRaw = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .select("EXTRACT(HOUR FROM t.timestamp)", 'hour')
-      .addSelect('t.key', 'key')
-      .addSelect('AVG(t.value::text::float)', 'avgVal')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .andWhere('t.timestamp >= :since24h', { since24h })
-      .andWhere(
-        `(${buildKeyCondition([...energyKeyPatterns, ...tempKeyPatterns, ...humidityKeyPatterns])})`,
-        buildKeyParams([...energyKeyPatterns, ...tempKeyPatterns, ...humidityKeyPatterns])
-      )
-      .groupBy('hour, t.key')
-      .orderBy('hour', 'ASC')
-      .getRawMany();
-
-    // Pivot into per-hour objects
-    const hourMap = new Map<number, { co2: number; energy: number; temperature: number }>();
-    for (let h = 0; h < 24; h++) hourMap.set(h, { co2: 0, energy: 0, temperature: 0 });
-
-    for (const row of hourlyRaw) {
-      const h   = parseInt(row.hour, 10);
-      const val = parseFloat(row.avgVal ?? '0');
-      const key = (row.key as string).toLowerCase();
-      const slot = hourMap.get(h)!;
-      if (energyKeyPatterns.some((p) => key.includes(p))) {
-        slot.co2    = parseFloat(val.toFixed(2));
-        slot.energy = parseFloat((val * 0.5).toFixed(2));
-      } else if (tempKeyPatterns.some((p) => key.includes(p))) {
-        slot.temperature = parseFloat(val.toFixed(1));
-      }
+    // Pivot the trend into one row per bucket.
+    const byBucket = new Map<string, Record<string, number>>();
+    for (const r of trendRows) {
+      const iso = new Date(r.bucket).toISOString();
+      const slot = byBucket.get(iso) ?? {};
+      slot[r.key] = Math.round(parseFloat(r.avg) * 100) / 100;
+      byBucket.set(iso, slot);
     }
 
-    const trendAnalysis = Array.from(hourMap.entries()).map(([hour, vals]) => ({
-      hour,
-      ...vals,
-    }));
-
-    // Connected energy devices
-    const energyDevices = await this.deviceRepository
-      .createQueryBuilder('device')
-      .innerJoin(
-        (qb) =>
-          qb
-            .from(Telemetry, 't')
-            .select('DISTINCT t.deviceId', 'deviceId')
-            .where(`(${buildKeyCondition(energyKeyPatterns)})`, buildKeyParams(energyKeyPatterns)),
-        'ed',
-        'ed.deviceId = device.id',
-      )
-      .where('device.tenantId = :tenantId', { tenantId })
-      .getMany();
-
-    const connectedDevicesStatus = energyDevices.map((d) => ({
-      deviceId:   d.id,
-      name:       d.name,
-      status:     d.status,
-      lastSignal: d.lastSeenAt ?? null,
-    }));
-
-    // Recent energy-related alarms
-    const recentAlerts = await this.alarmRepository
+    const alarmQb = this.alarmRepo
       .createQueryBuilder('a')
       .where('a.tenantId = :tenantId', { tenantId })
       .andWhere(
-        "(LOWER(a.message) LIKE '%co2%' OR LOWER(a.message) LIKE '%energy%' OR LOWER(a.message) LIKE '%temperature%')"
+        `(${watched.map((_, i) => `LOWER(a.name) LIKE :p${i} OR LOWER(a.message) LIKE :p${i}`).join(' OR ')})`,
+        watched.reduce((acc, k, i) => ({ ...acc, [`p${i}`]: `%${k}%` }), {}),
       )
-      .orderBy('a.triggeredAt', 'DESC')
-      .take(10)
-      .getMany();
+      .orderBy('a.triggeredAt', 'DESC', 'NULLS LAST')
+      .take(10);
+    if (customerId) alarmQb.andWhere('a.customerId = :customerId', { customerId });
+    const recentAlerts = await alarmQb.getMany();
 
-    // Optimization suggestions — rule-based
-    const CO2_THRESHOLD    = 2.5;  // kg
-    const ENERGY_THRESHOLD = 150;  // kWh
+    // Thresholds are configuration, not measurement — surfaced explicitly so a
+    // caller can see what the suggestions were compared against.
+    const CO2_THRESHOLD = Number(process.env.ANALYTICS_CO2_THRESHOLD ?? 1000); // ppm
+    const TEMP_THRESHOLD = Number(process.env.ANALYTICS_TEMP_THRESHOLD ?? 28); // °C
 
-    const optimizationSuggestions: { priority: string; suggestion: string; impact: string }[] = [];
-
-    if (currentCO2kg > CO2_THRESHOLD) {
-      optimizationSuggestions.push({
-        priority:   'high',
-        suggestion: 'Increase ventilation rate by 15%',
-        impact:     `Current CO2 ${currentCO2kg}kg exceeds threshold of ${CO2_THRESHOLD}kg`,
+    const suggestions: Array<{ priority: string; suggestion: string; basis: string }> = [];
+    const co2 = latest.get('co2');
+    const temperature = latest.get('temperature') ?? latest.get('temp');
+    if (co2 !== undefined && co2 > CO2_THRESHOLD) {
+      suggestions.push({
+        priority: 'high',
+        suggestion: 'Increase ventilation rate',
+        basis: `Latest CO2 ${co2}ppm exceeds the ${CO2_THRESHOLD}ppm threshold`,
       });
     }
-    if (energyConsumptionKWh > ENERGY_THRESHOLD) {
-      optimizationSuggestions.push({
-        priority:   'medium',
-        suggestion: 'Optimize HVAC scheduling',
-        impact:     `Energy ${energyConsumptionKWh.toFixed(1)}kWh above daily budget`,
-      });
-    }
-    if (temperature !== null && temperature > 28) {
-      optimizationSuggestions.push({
-        priority:   'medium',
+    if (temperature !== undefined && temperature > TEMP_THRESHOLD) {
+      suggestions.push({
+        priority: 'medium',
         suggestion: 'Adjust thermostat setpoints',
-        impact:     `Temperature ${temperature}°C above optimal range (20-24°C)`,
-      });
-    }
-    if (optimizationSuggestions.length === 0) {
-      optimizationSuggestions.push({
-        priority:   'low',
-        suggestion: 'Schedule maintenance check',
-        impact:     'Routine check to maintain current efficiency levels',
+        basis: `Latest temperature ${temperature}°C exceeds the ${TEMP_THRESHOLD}°C threshold`,
       });
     }
 
     return {
-      kpis: {
-        currentCO2kg,
-        energyConsumptionKWh: parseFloat(energyConsumptionKWh.toFixed(2)),
-        temperature,
-        thresholds: { co2: CO2_THRESHOLD, energy: ENERGY_THRESHOLD },
-      },
-      trendAnalysis,
-      connectedDevicesStatus,
-      recentAlerts: recentAlerts.map((a) => ({
-        message:     a.message || a.name,
-        severity:    a.severity,
-        triggeredAt: a.triggeredAt,
+      latest: Object.fromEntries(
+        latestRows.map((r) => [
+          r.key,
+          { value: parseFloat(r.value), at: r.timestamp, deviceId: r.deviceId },
+        ]),
+      ),
+      thresholds: { co2: CO2_THRESHOLD, temperature: TEMP_THRESHOLD },
+      trend: Array.from(byBucket.entries()).map(([b, values]) => ({ bucket: b, ...values })),
+      connectedDevices: energyDevices.map((d) => ({
+        deviceId: d.deviceId,
+        name: d.name,
+        status: d.status,
+        lastSeenAt: d.lastSeenAt,
+        reportedKeys: d.keys,
       })),
-      optimizationSuggestions,
+      recentAlerts: recentAlerts.map((a) => ({
+        id: a.id,
+        name: a.name,
+        message: a.message ?? null,
+        severity: a.severity,
+        status: a.status,
+        triggeredAt: a.triggeredAt ?? null,
+      })),
+      optimizationSuggestions: suggestions,
+      period: { since, until },
     };
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // LEGACY METHODS (kept for existing controller)
-  // ──────────────────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // 10. TELEMETRY & USER ACTIVITY (kept endpoints)
+  // ══════════════════════════════════════════════════════════════════════════
 
-  async getTelemetryStats(tenantId: string | undefined, startDate?: Date, endDate?: Date, customerId?: string) {
-    const start = startDate ?? this.daysAgo(1);
-    const end   = endDate   ?? new Date();
+  async getTelemetryStats(
+    tenantIdRaw: string,
+    startDate?: Date,
+    endDate?: Date,
+    customerId?: string | null,
+  ) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const start = startDate ?? new Date(Date.now() - 24 * 3_600_000);
+    const end = endDate ?? new Date();
 
-    const qb = this.telemetryRepository
+    const qb = this.telemetryRepo
       .createQueryBuilder('t')
       .select('t.deviceId', 'deviceId')
       .addSelect('COUNT(*)', 'count')
       .addSelect('MIN(t.timestamp)', 'firstRecord')
       .addSelect('MAX(t.timestamp)', 'lastRecord')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
+      .where('t.tenantId = :tenantId', { tenantId })
       .andWhere('t.timestamp BETWEEN :start AND :end', { start, end });
 
-    if (customerId) qb.andWhere('device.customerId = :customerId', { customerId });
+    if (customerId) {
+      qb.innerJoin('t.device', 'device').andWhere('device.customerId = :customerId', { customerId });
+    }
 
     const stats = await qb.groupBy('t.deviceId').getRawMany();
+    const names = await this.deviceNameMap(tenantId, stats.map((s) => s.deviceId));
+
     return {
-      startDate: start, endDate: end,
+      startDate: start,
+      endDate: end,
       devices: stats.map((s) => ({
-        deviceId:    s.deviceId,
+        deviceId: s.deviceId,
+        deviceName: names.get(s.deviceId) ?? null,
         recordCount: parseInt(s.count, 10),
         firstRecord: s.firstRecord,
-        lastRecord:  s.lastRecord,
+        lastRecord: s.lastRecord,
       })),
       totalRecords: stats.reduce((sum, s) => sum + parseInt(s.count, 10), 0),
     };
   }
 
-  async getAlarmAnalytics(tenantId: string | undefined, startDate?: Date, endDate?: Date, customerId?: string) {
-    const start = startDate ?? this.daysAgo(7);
-    const end   = endDate   ?? new Date();
+  async getUserActivity(tenantIdRaw: string, startDate?: Date, endDate?: Date) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const start = startDate ?? new Date(Date.now() - 24 * 3_600_000);
+    const end = endDate ?? new Date();
 
-    const bySeverity = await this.alarmRepository
-      .createQueryBuilder('a')
-      .select('a.severity', 'severity')
-      .addSelect('COUNT(*)', 'count')
-      .where('a.tenantId = :tenantId', { tenantId })
-      .andWhere('a.triggeredAt BETWEEN :start AND :end', { start, end })
-      .groupBy('a.severity')
-      .getRawMany();
-
-    const qb = this.alarmRepository
-      .createQueryBuilder('a')
-      .select('a.deviceId', 'deviceId')
-      .addSelect('COUNT(*)', 'count')
-      .where('a.tenantId = :tenantId', { tenantId })
-      .andWhere('a.triggeredAt BETWEEN :start AND :end', { start, end });
-
-    if (customerId) qb.andWhere('a.customerId = :customerId', { customerId });
-
-    const topDevices = await qb.groupBy('a.deviceId').orderBy('count', 'DESC').limit(10).getRawMany();
-
-    return {
-      startDate: start, endDate: end,
-      bySeverity: bySeverity.reduce((acc, s) => ({ ...acc, [s.severity]: parseInt(s.count, 10) }), {}),
-      topDevices: topDevices.map((d) => ({ deviceId: d.deviceId, alarmCount: parseInt(d.count, 10) })),
-      totalAlarms: bySeverity.reduce((sum, s) => sum + parseInt(s.count, 10), 0),
-    };
-  }
-
-  async getUserActivity(tenantId: string | undefined, startDate?: Date, endDate?: Date) {
-    const start = startDate ?? this.daysAgo(1);
-    const end   = endDate   ?? new Date();
-
-    const [totalUsers, activeUsers] = await Promise.all([
-      this.userRepository.count({ where: { tenantId } }),
-      this.userRepository
+    const [totalUsers, activeUsers, byRoleRows] = await Promise.all([
+      this.userRepo.count({ where: { tenantId } }),
+      this.userRepo
         .createQueryBuilder('u')
         .where('u.tenantId = :tenantId', { tenantId })
         .andWhere('u.lastLoginAt BETWEEN :start AND :end', { start, end })
         .getCount(),
+      this.userRepo
+        .createQueryBuilder('u')
+        .select('u.role', 'role')
+        .addSelect('COUNT(*)', 'count')
+        .where('u.tenantId = :tenantId', { tenantId })
+        .groupBy('u.role')
+        .getRawMany(),
     ]);
 
-    const byRole = await this.userRepository
-      .createQueryBuilder('u')
-      .select('u.role', 'role')
-      .addSelect('COUNT(*)', 'count')
-      .where('u.tenantId = :tenantId', { tenantId })
-      .groupBy('u.role')
-      .getRawMany();
-
     return {
-      startDate: start, endDate: end, totalUsers, activeUsers,
-      byRole: byRole.reduce((acc, s) => ({ ...acc, [s.role]: parseInt(s.count, 10) }), {}),
+      startDate: start,
+      endDate: end,
+      totalUsers,
+      activeUsers,
+      byRole: byRoleRows.reduce(
+        (acc, r) => ({ ...acc, [r.role]: parseInt(r.count, 10) }),
+        {} as Record<string, number>,
+      ),
     };
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // 9. DAILY CRON — extended
-  // ──────────────────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // 11. STORED ROLLUPS — GET/POST /analytics, DELETE /analytics/cleanup/:days
+  // ══════════════════════════════════════════════════════════════════════════
+
+  async create(
+    tenantIdRaw: string,
+    customerId: string | undefined,
+    dto: CreateAnalyticsDto,
+  ): Promise<Analytics> {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    return this.analyticsRepo.save(
+      this.analyticsRepo.create({
+        ...dto,
+        tenantId,
+        customerId,
+        timestamp: new Date(dto.timestamp),
+      }),
+    );
+  }
+
+  async findAll(tenantIdRaw: string, dto: QueryAnalyticsDto, customerId?: string | null) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 50;
+
+    const qb = this.analyticsRepo.createQueryBuilder('a').where('a.tenantId = :tenantId', { tenantId });
+
+    if (customerId) qb.andWhere('a.customerId = :customerId', { customerId });
+    if (dto.type) qb.andWhere('a.type = :type', { type: dto.type });
+    if (dto.period) qb.andWhere('a.period = :period', { period: dto.period });
+    if (dto.entityId) qb.andWhere('a.entityId = :entityId', { entityId: dto.entityId });
+    if (dto.entityType) qb.andWhere('a.entityType = :entityType', { entityType: dto.entityType });
+    if (dto.startDate && dto.endDate) {
+      qb.andWhere('a.timestamp BETWEEN :start AND :end', {
+        start: new Date(dto.startDate),
+        end: new Date(dto.endDate),
+      });
+    }
+
+    const [data, total] = await qb
+      .orderBy('a.timestamp', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return PaginatedResponseDto.create(data, page, limit, total);
+  }
+
+  async deleteOld(tenantIdRaw: string, daysOld: number): Promise<number> {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    if (!Number.isFinite(daysOld) || daysOld < 1) {
+      throw new BadRequestException('days must be a positive integer');
+    }
+    const cutoff = new Date(Date.now() - daysOld * 86_400_000);
+    const result = await this.analyticsRepo
+      .createQueryBuilder()
+      .delete()
+      .where('tenantId = :tenantId', { tenantId })
+      .andWhere('timestamp < :cutoff', { cutoff })
+      .execute();
+    return result.affected ?? 0;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 12. NIGHTLY ROLLUP
+  //
+  // Writes one row per tenant per type into `analytics`, so the historical
+  // series survives telemetry retention pruning.
+  // ══════════════════════════════════════════════════════════════════════════
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async generateDailyAnalytics(): Promise<void> {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    yesterday.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const start = this.startOfToday();
+    start.setDate(start.getDate() - 1);
+    const end = this.startOfToday();
 
-    const tenants = await this.tenantRepository.find();
-
+    const tenants = await this.tenantRepo.find({ select: ['id'] });
     for (const tenant of tenants) {
       try {
-        await this.generateDeviceUsageAnalytics(tenant.id, yesterday, today);
-        await this.generateTelemetryAnalytics(tenant.id, yesterday, today);
-        await this.generateAlarmAnalytics(tenant.id, yesterday, today);
-        await this.generateUserActivityAnalytics(tenant.id, yesterday, today);
-        await this.generateDataConsumptionAnalytics(tenant.id, yesterday, today);
-        await this.generateSystemHealthSnapshot(tenant.id);
-        await this.generateDashboardPerformanceAnalytics(tenant.id, yesterday, today);
+        await this.rollupTenant(tenant.id, start, end);
         this.logger.log(`Daily analytics generated for tenant ${tenant.id}`);
       } catch (err: any) {
-        this.logger.error(`Analytics generation failed for tenant ${tenant.id}: ${err?.message}`);
+        this.logger.error(`Analytics rollup failed for tenant ${tenant.id}: ${err?.message}`);
       }
     }
   }
 
-  private async generateDataConsumptionAnalytics(
-    tenantId: string, startDate: Date, endDate: Date,
-  ): Promise<void> {
-    const count = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .andWhere('t.timestamp BETWEEN :startDate AND :endDate', { startDate, endDate })
-      .getCount();
+  private async rollupTenant(tenantId: string, start: Date, end: Date): Promise<void> {
+    const [telemetryRows, deviceCount, activeDevices, alarmsBySeverity, apiCalls, apiErrors, viewLogs] =
+      await Promise.all([
+        this.telemetryRepo
+          .createQueryBuilder('t')
+          .where('t.tenantId = :tenantId', { tenantId })
+          .andWhere('t.timestamp BETWEEN :start AND :end', { start, end })
+          .getCount(),
+        this.deviceRepo.count({ where: { tenantId } }),
+        this.deviceRepo.count({ where: { tenantId, status: DeviceStatus.ACTIVE } }),
+        this.alarmRepo
+          .createQueryBuilder('a')
+          .select('a.severity', 'severity')
+          .addSelect('COUNT(*)', 'count')
+          .where('a.tenantId = :tenantId', { tenantId })
+          .andWhere('a.triggeredAt BETWEEN :start AND :end', { start, end })
+          .groupBy('a.severity')
+          .getRawMany(),
+        this.apiLogRepo
+          .createQueryBuilder('l')
+          .where('l.tenantId = :tenantId', { tenantId })
+          .andWhere('l.timestamp BETWEEN :start AND :end', { start, end })
+          .getCount(),
+        this.apiLogRepo
+          .createQueryBuilder('l')
+          .where('l.tenantId = :tenantId', { tenantId })
+          .andWhere('l.timestamp BETWEEN :start AND :end', { start, end })
+          .andWhere('l.statusCode >= 400')
+          .getCount(),
+        this.viewLogRepo
+          .createQueryBuilder('vl')
+          .select('vl.dashboardId', 'dashboardId')
+          .addSelect('COUNT(*)', 'views')
+          .addSelect('AVG(vl.loadTimeMs)', 'avgLoad')
+          .where('vl.tenantId = :tenantId', { tenantId })
+          .andWhere('vl.viewedAt BETWEEN :start AND :end', { start, end })
+          .groupBy('vl.dashboardId')
+          .getRawMany(),
+      ]);
 
-    const bytesGB = parseFloat(((count * AVG_TELEMETRY_PAYLOAD_BYTES) / BYTES_PER_GB).toFixed(4));
-    await this.analyticsRepository.save(
-      this.analyticsRepository.create({
-        tenantId,
-        type:   AnalyticsType.DATA_CONSUMPTION,
-        period: AnalyticsPeriod.DAILY,
-        metrics: { telemetryRows: count, estimatedGB: bytesGB },
-        timestamp: startDate,
-      })
-    );
-  }
+    const { bytesPerRow } = await this.telemetryBytesPerRow();
 
-  private async generateSystemHealthSnapshot(tenantId: string): Promise<void> {
-    const dbHealthy = await this.checkDatabaseHealth();
-    await this.analyticsRepository.save(
-      this.analyticsRepository.create({
-        tenantId,
-        type:   AnalyticsType.SYSTEM_HEALTH,
-        period: AnalyticsPeriod.DAILY,
-        metrics: {
-          database: dbHealthy ? 'healthy' : 'degraded',
-          kafka:    'healthy',
-          redis:    'healthy',
-          storage:  'healthy',
-          recordedAt: new Date(),
-        },
-        timestamp: new Date(),
-      })
-    );
-  }
-
-  private async generateDashboardPerformanceAnalytics(
-    tenantId: string, startDate: Date, endDate: Date,
-  ): Promise<void> {
-    const stats = await this.viewLogRepository
-      .createQueryBuilder('vl')
-      .select('vl.dashboardId', 'dashboardId')
-      .addSelect('COUNT(*)', 'views')
-      .addSelect('AVG(vl.loadTimeMs)', 'avgLoad')
-      .where('vl.tenantId = :tenantId', { tenantId })
-      .andWhere('vl.viewedAt BETWEEN :startDate AND :endDate', { startDate, endDate })
-      .groupBy('vl.dashboardId')
-      .getRawMany();
-
-    for (const s of stats) {
-      await this.analyticsRepository.save(
-        this.analyticsRepository.create({
-          tenantId,
-          type:     AnalyticsType.DASHBOARD_PERFORMANCE,
-          period:   AnalyticsPeriod.DAILY,
-          entityId: s.dashboardId,
-          entityType: 'dashboard',
-          metrics: {
-            viewCount:  parseInt(s.views, 10),
-            avgLoadMs:  parseFloat(parseFloat(s.avgLoad).toFixed(0)),
-          },
-          timestamp: startDate,
-        })
-      );
-    }
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // PRIVATE HELPERS
-  // ──────────────────────────────────────────────────────────────────────────
-
-  private async generateDeviceUsageAnalytics(tenantId: string, start: Date, end: Date) {
-    const devices = await this.deviceRepository.find({ where: { tenantId } });
-    for (const device of devices) {
-      const count = await this.telemetryRepository.count({
-        where: { deviceId: device.id, timestamp: Between(start, end) },
-      });
-      await this.analyticsRepository.save(
-        this.analyticsRepository.create({
-          tenantId,
-          customerId: device.customerId,
-          type: AnalyticsType.DEVICE_USAGE,
-          period: AnalyticsPeriod.DAILY,
-          entityId: device.id,
-          entityType: 'device',
-          metrics: { telemetryCount: count, status: device.status },
-          timestamp: start,
-        })
-      );
-    }
-  }
-
-  private async generateTelemetryAnalytics(tenantId: string, start: Date, end: Date) {
-    const stats = await this.getTelemetryStats(tenantId, start, end);
-    await this.analyticsRepository.save(
-      this.analyticsRepository.create({
-        tenantId,
-        type: AnalyticsType.TELEMETRY_STATS,
-        period: AnalyticsPeriod.DAILY,
-        metrics: { totalRecords: stats.totalRecords, deviceCount: stats.devices.length },
-        timestamp: start,
-      })
-    );
-  }
-
-  private async generateAlarmAnalytics(tenantId: string, start: Date, end: Date) {
-    const stats = await this.getAlarmAnalytics(tenantId, start, end);
-    await this.analyticsRepository.save(
-      this.analyticsRepository.create({
-        tenantId,
-        type: AnalyticsType.ALARM_FREQUENCY,
-        period: AnalyticsPeriod.DAILY,
-        metrics: { totalAlarms: stats.totalAlarms, bySeverity: stats.bySeverity },
-        timestamp: start,
-      })
-    );
-  }
-
-  private async generateUserActivityAnalytics(tenantId: string, start: Date, end: Date) {
-    const stats = await this.getUserActivity(tenantId, start, end);
-    await this.analyticsRepository.save(
-      this.analyticsRepository.create({
-        tenantId,
-        type: AnalyticsType.USER_ACTIVITY,
-        period: AnalyticsPeriod.DAILY,
-        metrics: { totalUsers: stats.totalUsers, activeUsers: stats.activeUsers },
-        timestamp: start,
-      })
-    );
-  }
-
-  private async getEnvironmentalMetricsForDashboard(
-    dashboardId: string,
-    tenantId: string,
-    since: Date,
-    now: Date,
-  ) {
-    // Environmental metrics are stored in telemetry — we query all devices
-    // under this tenant and look for env-pattern keys
-    const latest = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .andWhere('t.timestamp BETWEEN :since AND :now', { since, now })
-      .andWhere(
-        "(LOWER(t.key) LIKE '%co2%' OR LOWER(t.key) LIKE '%temperature%' OR LOWER(t.key) LIKE '%humidity%' OR LOWER(t.key) LIKE '%energy%')"
-      )
-      .orderBy('t.timestamp', 'DESC')
-      .take(50)
-      .getMany();
-
-    const result = { co2: 0, temperature: 0, humidity: 0, energy: 0 };
-for (const t of latest) {
-  // Use dedicated columns first, fall back to data JSONB
-  if (t.temperature !== undefined && t.temperature !== null) {
-    result.temperature = parseFloat(String(t.temperature));
-  }
-  if (t.humidity !== undefined && t.humidity !== null) {
-    result.humidity = parseFloat(String(t.humidity));
-  }
-  if (t.data) {
-    const d = t.data as Record<string, any>;
-    if (d['co2']    !== undefined) result.co2    = parseFloat(String(d['co2']));
-    if (d['energy'] !== undefined) result.energy = parseFloat(String(d['energy']));
-    if (d['temperature'] !== undefined && result.temperature === 0) {
-      result.temperature = parseFloat(String(d['temperature']));
-    }
-    if (d['humidity'] !== undefined && result.humidity === 0) {
-      result.humidity = parseFloat(String(d['humidity']));
-    }
-  }
-}
-    return result;
-  }
-
-  private async getEnvironmentalTrends(tenantId: string, since: Date, now: Date) {
-    const raw = await this.telemetryRepository
-      .createQueryBuilder('t')
-      .select("DATE_TRUNC('day', t.timestamp)", 'date')
-      .addSelect('t.key', 'key')
-      .addSelect('AVG(t.value::text::float)', 'avgVal')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .andWhere('t.timestamp BETWEEN :since AND :now', { since, now })
-      .andWhere(
-        "(LOWER(t.key) LIKE '%co2%' OR LOWER(t.key) LIKE '%temperature%' OR LOWER(t.key) LIKE '%humidity%')"
-      )
-      .groupBy('date, t.key')
-      .orderBy('date', 'ASC')
-      .getRawMany();
-
-    // Pivot: date → { co2, temperature, humidity }
-    const dayMap = new Map<string, { co2: number; temperature: number; humidity: number }>();
-    for (const r of raw) {
-      const d   = new Date(r.date).toISOString().slice(0, 10);
-      const val = parseFloat(parseFloat(r.avgVal).toFixed(2));
-      if (!dayMap.has(d)) dayMap.set(d, { co2: 0, temperature: 0, humidity: 0 });
-      const slot = dayMap.get(d)!;
-      const key  = (r.key as string).toLowerCase();
-      if (key.includes('co2'))        slot.co2         = val;
-      else if (key.includes('temp'))  slot.temperature = val;
-      else if (key.includes('humid')) slot.humidity    = val;
-    }
-
-    return Array.from(dayMap.entries()).map(([date, vals]) => ({ date, ...vals }));
-  }
-
-  private async findPeakUsageHour(tenantId: string | undefined, customerId?: string): Promise<number> {
-    const since = this.daysAgo(7);
-    const qb = this.telemetryRepository
-      .createQueryBuilder('t')
-      .select('EXTRACT(HOUR FROM t.timestamp)', 'hour')
-      .addSelect('COUNT(*)', 'cnt')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .andWhere('t.timestamp >= :since', { since });
-
-    if (customerId) qb.andWhere('device.customerId = :customerId', { customerId });
-
-    const result = await qb
-      .groupBy('hour')
-      .orderBy('cnt', 'DESC')
-      .getRawOne();
-
-    return result ? parseInt(result.hour, 10) : 14;
-  }
-
-  private async getTodayTelemetryCount(tenantId: string | undefined, customerId?: string): Promise<number> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const qb = this.telemetryRepository
-      .createQueryBuilder('t')
-      .innerJoin('t.device', 'device')
-      .where('device.tenantId = :tenantId', { tenantId })
-      .andWhere('t.timestamp BETWEEN :start AND :end', { start: today, end: new Date() });
-    if (customerId) qb.andWhere('device.customerId = :customerId', { customerId });
-    return qb.getCount();
-  }
-
-  private async checkDatabaseHealth(): Promise<boolean> {
-    try {
-      await this.analyticsRepository.query('SELECT 1');
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private inferRegion(location: string | null | undefined): string {
-    if (!location) return 'Unknown';
-    const l = location.toLowerCase();
-    if (l.includes('north america') || l.includes('usa') || l.includes('canada') || l.includes('us'))
-      return 'North America';
-    if (l.includes('europe') || l.includes('uk') || l.includes('germany') || l.includes('france'))
-      return 'Europe';
-    if (l.includes('asia') || l.includes('china') || l.includes('japan') || l.includes('india'))
-      return 'Asia';
-    if (l.includes('australia') || l.includes('sydney') || l.includes('melbourne'))
-      return 'Australia';
-    if (l.includes('africa') || l.includes('nigeria') || l.includes('kenya'))
-      return 'Africa';
-    if (l.includes('saudi') || l.includes('uae') || l.includes('middle east') || l.includes('riyadh'))
-      return 'Middle East';
-    if (l.includes('south america') || l.includes('brazil') || l.includes('argentina'))
-      return 'South America';
-    return 'Others';
-  }
-
-  private getRegionCoords(region: string): { lat: number; lng: number } {
-    const coords: Record<string, { lat: number; lng: number }> = {
-      'North America': { lat: 45.0,  lng: -100.0 },
-      'Europe':        { lat: 51.0,  lng: 10.0   },
-      'Asia':          { lat: 35.0,  lng: 105.0  },
-      'Australia':     { lat: -25.0, lng: 133.0  },
-      'Africa':        { lat: 0.0,   lng: 20.0   },
-      'Middle East':   { lat: 25.0,  lng: 45.0   },
-      'South America': { lat: -15.0, lng: -60.0  },
-      'Others':        { lat: 0.0,   lng: 0.0    },
-      'Unknown':       { lat: 0.0,   lng: 0.0    },
-    };
-    return coords[region] ?? { lat: 0, lng: 0 };
-  }
-
-  private generateSyntheticTimeSeries(
-    days: number,
-    min: number,
-    max: number,
-  ): { date: Date; value: number }[] {
-    return Array.from({ length: days }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (days - i));
-      return { date: d, value: Math.floor(min + Math.random() * (max - min)) };
+    await this.upsertRollup(tenantId, AnalyticsType.TELEMETRY_STATS, start, {
+      telemetryRows,
+      deviceCount,
+      activeDevices,
     });
+
+    await this.upsertRollup(tenantId, AnalyticsType.DATA_CONSUMPTION, start, {
+      telemetryRows,
+      estimatedBytes: Math.round(telemetryRows * bytesPerRow),
+      bytesPerRow: Math.round(bytesPerRow),
+    });
+
+    await this.upsertRollup(tenantId, AnalyticsType.ALARM_FREQUENCY, start, {
+      total: alarmsBySeverity.reduce((s, r) => s + parseInt(r.count, 10), 0),
+      bySeverity: alarmsBySeverity.reduce(
+        (acc, r) => ({ ...acc, [r.severity]: parseInt(r.count, 10) }),
+        {} as Record<string, number>,
+      ),
+    });
+
+    await this.upsertRollup(tenantId, AnalyticsType.SYSTEM_PERFORMANCE, start, {
+      apiCalls,
+      apiErrors,
+      errorRate: apiCalls > 0 ? Math.round((apiErrors / apiCalls) * 1000) / 10 : 0,
+    });
+
+    const health = await this.checkSystemHealth();
+    await this.upsertRollup(tenantId, AnalyticsType.SYSTEM_HEALTH, start, health as any);
+
+    for (const v of viewLogs) {
+      await this.upsertRollup(
+        tenantId,
+        AnalyticsType.DASHBOARD_PERFORMANCE,
+        start,
+        { viewCount: parseInt(v.views, 10), avgLoadMs: Math.round(parseFloat(v.avgLoad ?? '0')) },
+        { entityId: v.dashboardId, entityType: 'dashboard' },
+      );
+    }
   }
 
-  private daysAgo(n: number): Date {
-    const d = new Date();
-    d.setDate(d.getDate() - n);
-    return d;
+  /**
+   * Idempotent rollup write.
+   *
+   * The previous cron inserted unconditionally, so a manual re-run (or the
+   * retry path) duplicated every row for that day — there is no unique
+   * constraint on the table to stop it. Updating the matching row keeps
+   * re-runs safe.
+   */
+  private async upsertRollup(
+    tenantId: string,
+    type: AnalyticsType,
+    timestamp: Date,
+    metrics: Record<string, any>,
+    entity?: { entityId: string; entityType: string },
+  ): Promise<void> {
+    const where: any = { tenantId, type, period: AnalyticsPeriod.DAILY, timestamp };
+    if (entity) where.entityId = entity.entityId;
+
+    const existing = await this.analyticsRepo.findOne({ where });
+    if (existing) {
+      existing.metrics = metrics;
+      existing.metadata = { calculatedAt: new Date(), sources: ['postgres'] };
+      await this.analyticsRepo.save(existing);
+      return;
+    }
+
+    await this.analyticsRepo.save(
+      this.analyticsRepo.create({
+        tenantId,
+        type,
+        period: AnalyticsPeriod.DAILY,
+        timestamp,
+        metrics,
+        metadata: { calculatedAt: new Date(), sources: ['postgres'] },
+        ...(entity ?? {}),
+      }),
+    );
   }
 
-  private hoursAgo(n: number): Date {
-    return new Date(Date.now() - n * 60 * 60 * 1000);
-  }
+  // ══════════════════════════════════════════════════════════════════════════
+  // CSV
+  // ══════════════════════════════════════════════════════════════════════════
 
-  // CSV serialisation helper
   toCsv(rows: Record<string, any>[]): string {
-    if (!rows.length) return '';
+    if (!rows?.length) return '';
     const headers = Object.keys(rows[0]);
-    const lines   = rows.map((r) =>
-      headers.map((h) => {
-        const v = r[h];
-        if (v === null || v === undefined) return '';
-        if (typeof v === 'object') return `"${JSON.stringify(v).replace(/"/g, '""')}"`;
-        return `"${String(v).replace(/"/g, '""')}"`;
-      }).join(',')
+    const lines = rows.map((r) =>
+      headers
+        .map((h) => {
+          const v = r[h];
+          if (v === null || v === undefined) return '';
+          if (typeof v === 'object') return `"${JSON.stringify(v).replace(/"/g, '""')}"`;
+          return `"${String(v).replace(/"/g, '""')}"`;
+        })
+        .join(','),
     );
     return [headers.join(','), ...lines].join('\n');
   }

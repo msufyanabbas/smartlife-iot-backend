@@ -45,6 +45,13 @@ export { EmailTemplate } from './email-templates/entities/email-template.entity'
 
 // Monitoring & Analytics entities
 export { Analytics } from './analytics/entities/analytics.entity';
+// AppModule boots TypeORM from AppDataSource.options, whose `entities` is
+// Object.values() of THIS barrel — `autoLoadEntities` in database.config.ts is
+// never applied. An entity missing from here therefore has no metadata at
+// runtime, and every repository call against it threw
+// "No metadata for DashboardViewLog was found", taking down /analytics/dashboards,
+// /data-consumption and /system-performance.
+export { DashboardViewLog } from './analytics/entities/dashboard-view-log.entity';
 export { AuditLog } from './audit/entities/audit-log.entity';
 export { APILog } from './api-monitoring/entities/api-log.entity';
 

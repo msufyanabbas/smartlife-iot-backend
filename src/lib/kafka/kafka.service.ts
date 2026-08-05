@@ -51,6 +51,17 @@ export class KafkaService implements OnApplicationShutdown {
     this.logger.log('Kafka producer connected');
   }
 
+  /**
+   * Whether the shared producer is currently connected.
+   *
+   * Reflects the real connect/disconnect lifecycle (set in initProducer() and
+   * cleared in onApplicationShutdown()) rather than issuing a broker round-trip,
+   * so health endpoints can call it on every request without cost.
+   */
+  isHealthy(): boolean {
+    return this.isProducerConnected;
+  }
+
   // ── Topics ────────────────────────────────────────────────────────────────
 
   async createTopics(): Promise<void> {
