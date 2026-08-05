@@ -20,6 +20,8 @@ import { Device, DeviceProtocol } from '../devices/entities/device.entity';
 import { DeviceCredentials, CredentialsType } from '../devices/entities/device-credentials.entity';
 import { DeviceProfile } from '../profiles/entities/device-profile.entity';
 import { Dashboard } from '../dashboards/entities/dashboard.entity';
+import type { DashboardWidgetConfig } from '../dashboards/interfaces/dashboard-widget.interface';
+import { WidgetType } from '../widgets/entities/widget-type.entity';
 import { RuleChain } from '../rules/entities/rule-chain.entity';
 import { Node } from '../nodes/entities/node.entity';
 import { Alarm } from '../alarms/entities/alarm.entity';
@@ -45,6 +47,7 @@ import {
   InstallationStatus,
   type TemplateConfiguration,
   type InstallResult,
+  type WidgetSpec,
 } from './interfaces/template-configuration.interface';
 
 /** An entity's data properties, without its instance methods. */
@@ -652,6 +655,219 @@ export class SolutionTemplatesService {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
+  // DASHBOARD WIDGETS
+  //
+  // A template's WidgetSpec is a display-level description ('a timeseries chart
+  // called Solar Generation, 6×4 at row 0'). What a dashboard actually stores in
+  // its `widgets` jsonb column is a DashboardWidgetConfig — the same record
+  // POST /dashboards/:id/widgets writes, carrying a real widgetTypeId, the
+  // denormalised alias, a flat row/col/width/height and a datasource.
+  //
+  // install() used to write the WidgetSpec almost verbatim (nested `position`,
+  // no widgetTypeId, no datasource). Those rows are unusable to every reader:
+  // GET /dashboards/:id/widgets resolves widgetType by widgetTypeId, so it came
+  // back null, and getUsedDevices() found nothing to subscribe to. The helpers
+  // below reproduce DashboardsService.addWidget()'s output instead.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * WidgetSpec.type → WidgetType.descriptor.alias.
+   *
+   * Templates are authored against display names ('status-widget'), the widget
+   * library against renderer aliases ('status'). Only entries that cannot be
+   * derived mechanically need to be listed here; resolveWidgetType() also tries
+   * the raw type, the type minus a '-widget' suffix, '<type>-chart', and the
+   * widget type's own name.
+   */
+  private static readonly WIDGET_TYPE_ALIASES: Record<string, string> = {
+    timeseries: 'timeseries-chart',
+    chart: 'timeseries-chart',
+    line: 'timeseries-chart',
+    bar: 'bar-chart',
+    pie: 'pie-chart',
+    card: 'value-card',
+    stat: 'value-card',
+    'status-widget': 'status',
+    alarm: 'alarm-list',
+    'alarm-widget': 'alarm-list',
+    progress: 'progress-bar',
+    control: 'switch',
+  };
+
+  /**
+   * Every widget type this tenant may instantiate: the system library
+   * (tenantId IS NULL) plus its own. Loaded once per install rather than once
+   * per widget.
+   */
+  private async loadWidgetTypeIndex(
+    manager: DataSource['manager'],
+    tenantId: string,
+  ): Promise<{ byAlias: Map<string, WidgetType>; byName: Map<string, WidgetType> }> {
+    const widgetTypes = await manager.find(WidgetType, {
+      where: [{ tenantId: IsNull() }, { tenantId }],
+    });
+
+    const byAlias = new Map<string, WidgetType>();
+    const byName = new Map<string, WidgetType>();
+
+    for (const widgetType of widgetTypes) {
+      const alias = widgetType.descriptor?.alias?.trim().toLowerCase();
+      if (alias && !byAlias.has(alias)) byAlias.set(alias, widgetType);
+
+      const name = widgetType.name.trim().toLowerCase();
+      // 'Timeseries Chart' is reachable as both 'timeseries chart' and
+      // 'timeseries-chart', so a template may name either form.
+      for (const key of [name, name.replace(/\s+/g, '-')]) {
+        if (!byName.has(key)) byName.set(key, widgetType);
+      }
+    }
+
+    return { byAlias, byName };
+  }
+
+  private resolveWidgetType(
+    rawType: string,
+    index: { byAlias: Map<string, WidgetType>; byName: Map<string, WidgetType> },
+  ): WidgetType | undefined {
+    const type = (rawType ?? '').trim().toLowerCase();
+    if (!type) return undefined;
+
+    const candidates = [
+      SolutionTemplatesService.WIDGET_TYPE_ALIASES[type],
+      type,
+      type.replace(/-widget$/, ''),
+      `${type}-chart`,
+    ].filter(Boolean) as string[];
+
+    for (const candidate of candidates) {
+      const hit = index.byAlias.get(candidate) ?? index.byName.get(candidate);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+
+  /**
+   * Which of the devices this installation created a widget should read from.
+   *
+   * Explicit wins: `deviceName` (matched against the DeviceSpec name the device
+   * came from, so a template can say "Battery Storage {n}" without knowing how
+   * many were created) then `deviceIndex`. Failing that the widget title is
+   * matched against device names — template titles name the thing they show
+   * ("Battery State of Charge" → "Battery Storage 1") — and the first created
+   * device is the last resort so a widget is never left unbound by accident.
+   */
+  private resolveWidgetDevice(
+    spec: WidgetSpec,
+    devices: Array<{ id: string; name: string; specName: string; telemetryKeys: string[] }>,
+  ): (typeof devices)[number] | undefined {
+    if (!devices.length) return undefined;
+
+    if (spec.deviceName) {
+      const wanted = spec.deviceName.trim().toLowerCase();
+      const match = devices.find(
+        (d) =>
+          d.specName.trim().toLowerCase() === wanted ||
+          d.name.trim().toLowerCase() === wanted,
+      );
+      if (match) return match;
+    }
+
+    if (typeof spec.deviceIndex === 'number' && devices[spec.deviceIndex]) {
+      return devices[spec.deviceIndex];
+    }
+
+    const title = (spec.title ?? '').toLowerCase();
+    let best: (typeof devices)[number] | undefined;
+    let bestScore = 0;
+    for (const device of devices) {
+      // Score on the device's own name words — trailing {n} indices and short
+      // filler words carry no signal.
+      const words = device.name
+        .toLowerCase()
+        .split(/[^a-z]+/)
+        .filter((w) => w.length > 2);
+      const score = words.filter((w) => title.includes(w)).length;
+      if (score > bestScore) {
+        best = device;
+        bestScore = score;
+      }
+    }
+
+    return best ?? devices[0];
+  }
+
+  /**
+   * Turn a dashboard spec's widgets into stored DashboardWidgetConfig records —
+   * the same shape DashboardsService.addWidget() produces.
+   */
+  private buildDashboardWidgets(
+    specs: WidgetSpec[],
+    index: { byAlias: Map<string, WidgetType>; byName: Map<string, WidgetType> },
+    devices: Array<{ id: string; name: string; specName: string; telemetryKeys: string[] }>,
+    context: { dashboardName: string; templateId: string },
+  ): DashboardWidgetConfig[] {
+    const now = new Date().toISOString();
+    const widgets: DashboardWidgetConfig[] = [];
+
+    for (const spec of specs) {
+      const widgetType = this.resolveWidgetType(spec.type, index);
+      if (!widgetType) {
+        // Consistent with the rest of install(): an unresolvable reference is
+        // warned about and skipped, never a reason to roll back the install.
+        this.logger.warn(
+          `Template ${context.templateId}: widget type "${spec.type}" ` +
+            `("${spec.title}" on dashboard "${context.dashboardName}") matched no ` +
+            `widget type — widget skipped`,
+        );
+        continue;
+      }
+
+      const descriptor = widgetType.descriptor ?? ({} as WidgetType['descriptor']);
+
+      // Alarm and static widgets read the tenant, not one device; anything that
+      // declares requiresDevice: false opts out the same way.
+      const needsDevice =
+        spec.bindDevice !== false &&
+        descriptor.dataConfig?.requiresDevice !== false &&
+        descriptor.type !== 'alarm' &&
+        descriptor.type !== 'static';
+
+      const device = needsDevice ? this.resolveWidgetDevice(spec, devices) : undefined;
+
+      const datasource: DashboardWidgetConfig['datasource'] = device
+        ? {
+            deviceId: device.id,
+            // Denormalised at write time, exactly as addWidget() does it.
+            deviceName: device.name,
+            entityType: 'DEVICE',
+            telemetryKeys: spec.telemetryKeys ?? device.telemetryKeys,
+            ...(spec.timeWindow ? { timeWindow: spec.timeWindow } : {}),
+            ...(spec.aggregation ? { aggregation: spec.aggregation } : {}),
+          }
+        : {};
+
+      widgets.push({
+        id: crypto.randomUUID(),
+        widgetTypeId: widgetType.id,
+        widgetTypeAlias: descriptor.alias ?? widgetType.name,
+        title: spec.title,
+        row: spec.row ?? 0,
+        col: spec.col ?? 0,
+        // Fall back to the widget type's natural size, as addWidget() does
+        width: spec.width ?? descriptor.sizeX ?? 4,
+        height: spec.height ?? descriptor.sizeY ?? 3,
+        datasource,
+        // defaultConfig first so the template's overrides win, key by key
+        config: { ...(descriptor.defaultConfig ?? {}), ...(spec.config ?? {}) },
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    return widgets;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   // INSTALL — real transactional provisioning
   // ══════════════════════════════════════════════════════════════════════════
 
@@ -715,6 +931,15 @@ export class SolutionTemplatesService {
     await queryRunner.startTransaction();
 
     const createdDeviceIds: string[] = [];
+    // Same devices as createdDeviceIds, carrying the name and telemetry keys the
+    // dashboard widgets need to bind to them. `specName` is the un-substituted
+    // DeviceSpec name, so a WidgetSpec can target "Battery Storage {n}".
+    const createdDevices: Array<{
+      id: string;
+      name: string;
+      specName: string;
+      telemetryKeys: string[];
+    }> = [];
     const createdDashboardIds: string[] = [];
     const createdRuleChainIds: string[] = [];
     const createdAlarmIds: string[] = [];
@@ -779,31 +1004,45 @@ export class SolutionTemplatesService {
           await queryRunner.manager.save(credentials);
 
           createdDeviceIds.push(savedDevice.id);
+          createdDevices.push({
+            id: savedDevice.id,
+            name: savedDevice.name,
+            specName: spec.name,
+            telemetryKeys: spec.defaultTelemetryKeys ?? [],
+          });
         }
       }
 
       // ── DASHBOARDS ────────────────────────────────────────────────────────
+      // The widget library is only read when a dashboard actually declares
+      // widgets, so a template without dashboards costs no extra query.
+      const widgetTypeIndex = (config.dashboards ?? []).some(
+        (d) => (d.widgets ?? []).length > 0,
+      )
+        ? await this.loadWidgetTypeIndex(queryRunner.manager, tenantId)
+        : null;
+
       for (const dashSpec of config.dashboards ?? []) {
+        const dashboardName = applyPlaceholders(dashSpec.name);
+        const widgets = widgetTypeIndex
+          ? this.buildDashboardWidgets(
+              dashSpec.widgets ?? [],
+              widgetTypeIndex,
+              createdDevices,
+              { dashboardName, templateId: id },
+            )
+          : [];
+
         const dashboard = queryRunner.manager.create(Dashboard, {
           // Dashboard's column is `name`, not `title`
-          name: applyPlaceholders(dashSpec.name),
+          name: dashboardName,
           description: dashSpec.description,
           tenantId,
           userId,
           ...(customerId ? { customerId } : {}),
-          // Widgets live in their own top-level jsonb column
-          widgets: (dashSpec.widgets ?? []).map((w) => ({
-            id: crypto.randomUUID(),
-            type: w.type,
-            title: w.title,
-            config: w.config ?? {},
-            position: {
-              row: w.row,
-              col: w.col,
-              width: w.width,
-              height: w.height,
-            },
-          })) as any,
+          // Widgets live in their own top-level jsonb column, in the same
+          // DashboardWidgetConfig shape POST /dashboards/:id/widgets writes.
+          widgets: widgets as any,
           settings: {
             installedFromTemplate: id,
             installationId: installation.id,

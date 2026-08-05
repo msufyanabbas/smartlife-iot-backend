@@ -39,7 +39,13 @@ export interface DeviceSpec {
 }
 
 export interface WidgetSpec {
-  /** Widget type identifier, e.g. 'timeseries' | 'gauge' | 'status-widget'. */
+  /**
+   * Widget type identifier, e.g. 'timeseries' | 'gauge' | 'status-widget'.
+   * Resolved against WidgetType.descriptor.alias (then WidgetType.name) at
+   * install time — see SolutionTemplatesService.resolveWidgetType(). A spec
+   * whose type matches no widget type is skipped with a warning rather than
+   * failing the whole install.
+   */
   type: string;
   title: string;
   config?: Record<string, any>;
@@ -47,6 +53,24 @@ export interface WidgetSpec {
   col: number;
   width: number;
   height: number;
+
+  // ── Optional datasource binding ─────────────────────────────────────────
+  // install() binds each widget to one of the devices it just created. These
+  // fields let a template say exactly which one; when all are omitted the
+  // device is inferred (see SolutionTemplatesService.resolveWidgetDevice()).
+
+  /** DeviceSpec.name of the device to bind to, e.g. "Battery Storage {n}". */
+  deviceName?: string;
+  /** 0-based index into the devices created by this installation. */
+  deviceIndex?: number;
+  /** Overrides the bound device's defaultTelemetryKeys. */
+  telemetryKeys?: string[];
+  /** e.g. '1h' — passed through to the widget datasource. */
+  timeWindow?: string;
+  /** e.g. 'AVG' — passed through to the widget datasource. */
+  aggregation?: string;
+  /** Set false for a widget that should render without a device binding. */
+  bindDevice?: boolean;
 }
 
 export interface DashboardSpec {
