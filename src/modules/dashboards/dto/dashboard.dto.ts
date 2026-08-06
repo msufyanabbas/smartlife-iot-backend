@@ -15,7 +15,6 @@ import { Type } from 'class-transformer';
 import {
   DashboardVisibility,
 } from '@common/enums/index.enum';
-import { WidgetConfig } from '@/common/interfaces/widget.interface';
 
 export class WidgetPositionDto {
   @ApiProperty()
@@ -160,11 +159,17 @@ export class UpdateDashboardDto {
   @IsEnum(DashboardVisibility)
   visibility?: DashboardVisibility;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsArray()
-  widgets?: WidgetConfig[];
+  // `widgets` is deliberately NOT updatable here. update() does a blind
+  // Object.assign onto the entity, so this field replaced the entire jsonb
+  // array wholesale: PATCH /dashboards/:id with {"widgets": []} — or with a
+  // stale copy from an editor that had not loaded them yet — destroyed every
+  // widget on the dashboard, unvalidated (@IsArray() alone never checked the
+  // element shape). Widgets are only ever mutated one at a time, through
+  // POST/PATCH/DELETE /dashboards/:id/widgets/… and PATCH /dashboards/:id/layout.
+  // Sending it here now fails validation (forbidNonWhitelisted) instead of
+  // silently wiping data.
 
+  /** Grid settings (cols, rowHeight, margins) — not widget positions. */
   @ApiPropertyOptional()
   @IsOptional()
   @IsObject()

@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 import { Dashboard } from './entities/dashboard.entity';
 import { DashboardVisibility, UserRole } from '@common/enums/index.enum';
@@ -189,7 +189,15 @@ export class DashboardsService {
       );
     }
 
-    Object.assign(dashboard, updateDto);
+    // Belt-and-braces: UpdateDashboardDto no longer declares `widgets`, but this
+    // is a blind assign onto the entity, so anything that reaches it with a
+    // `widgets` key would replace the whole jsonb array in one shot. Widgets are
+    // only ever changed through the per-widget endpoints.
+    const { widgets: _ignored, ...safeUpdate } = updateDto as UpdateDashboardDto & {
+      widgets?: unknown;
+    };
+
+    Object.assign(dashboard, safeUpdate);
     return this.dashboardRepository.save(dashboard);
   }
 
@@ -237,6 +245,46 @@ export class DashboardsService {
     return (dashboard.widgets ?? []) as unknown as DashboardWidgetConfig[];
   }
 
+  /**
+   * Loads a dashboard for a widget write, holding a row lock until the
+   * surrounding transaction commits.
+   *
+   * `widgets` is a single jsonb column, so every widget mutation is a
+   * read-modify-write of the whole array: read it, change one entry, write it
+   * all back. Without the lock two overlapping requests both read the same
+   * array and the second write silently discards the first one's widget —
+   * which is how widgets "disappeared" when the editor fired several calls at
+   * once (add two widgets, or drag several and save). SELECT … FOR UPDATE
+   * serialises them, so the array we write is always the current one with
+   * exactly the intended entry changed.
+   *
+   * Deliberately not findOne(): that bumps viewCount as a side effect, and a
+   * widget write is not a dashboard view. It also fires that increment without
+   * awaiting it, which would contend with this very lock.
+   */
+  private async loadForWidgetWrite(
+    manager: EntityManager,
+    id: string,
+    user: User,
+  ): Promise<Dashboard> {
+    const dashboard = await manager.findOne(Dashboard, {
+      where: { id, tenantId: user.tenantId },
+      lock: { mode: 'pessimistic_write' },
+    });
+
+    if (!dashboard) {
+      throw new NotFoundException(`Dashboard ${id} not found`);
+    }
+
+    if (!this.checkAccess(dashboard, user)) {
+      throw new ForbiddenException('You do not have access to this dashboard');
+    }
+
+    this.assertCanEdit(dashboard, user);
+
+    return dashboard;
+  }
+
   private async loadWidgetType(widgetTypeId: string): Promise<WidgetType> {
     const widgetType = await this.widgetTypeRepository.findOne({
       where: { id: widgetTypeId },
@@ -272,48 +320,58 @@ export class DashboardsService {
     user: User,
     dto: AddWidgetDto,
   ): Promise<Dashboard> {
-    const dashboard = await this.findOne(id, user);
-    this.assertCanEdit(dashboard, user);
-
+    // Resolved before the transaction opens: it does not depend on the
+    // dashboard, and an unknown widget type should 404 without taking a lock.
     const widgetType = await this.loadWidgetType(dto.widgetTypeId);
     const descriptor = widgetType.descriptor ?? ({} as any);
 
-    const datasource: DashboardWidgetConfig['datasource'] = {
-      ...(dto.datasource ?? {}),
-    };
-    if (datasource.deviceId) {
-      const device = await this.resolveDevice(
-        datasource.deviceId,
-        dashboard.tenantId,
-      );
-      datasource.deviceName = device.name;
-      datasource.entityType = datasource.entityType ?? 'DEVICE';
-    }
+    const { saved, widget } = await this.dashboardRepository.manager.transaction(
+      async (manager) => {
+        const dashboard = await this.loadForWidgetWrite(manager, id, user);
 
-    const now = new Date().toISOString();
-    const widget: DashboardWidgetConfig = {
-      id: randomUUID(),
-      widgetTypeId: widgetType.id,
-      widgetTypeAlias: descriptor.alias ?? widgetType.name,
-      title: dto.title,
-      row: dto.row ?? 0,
-      col: dto.col ?? 0,
-      // Fall back to the widget type's natural size rather than an arbitrary 1×1
-      width: dto.width ?? descriptor.sizeX ?? 4,
-      height: dto.height ?? descriptor.sizeY ?? 3,
-      datasource,
-      // defaultConfig first so caller overrides win, key by key
-      config: { ...(descriptor.defaultConfig ?? {}), ...(dto.config ?? {}) },
-      createdAt: now,
-      updatedAt: now,
-    };
+        const datasource: DashboardWidgetConfig['datasource'] = {
+          ...(dto.datasource ?? {}),
+        };
+        if (datasource.deviceId) {
+          const device = await this.resolveDevice(
+            datasource.deviceId,
+            dashboard.tenantId,
+          );
+          datasource.deviceName = device.name;
+          datasource.entityType = datasource.entityType ?? 'DEVICE';
+        }
 
-    dashboard.widgets = [
-      ...this.widgetsOf(dashboard),
-      widget,
-    ] as unknown as Dashboard['widgets'];
-    const saved = await this.dashboardRepository.save(dashboard);
+        const now = new Date().toISOString();
+        const widget: DashboardWidgetConfig = {
+          id: randomUUID(),
+          widgetTypeId: widgetType.id,
+          widgetTypeAlias: descriptor.alias ?? widgetType.name,
+          title: dto.title,
+          row: dto.row ?? 0,
+          col: dto.col ?? 0,
+          // Fall back to the widget type's natural size rather than an arbitrary 1×1
+          width: dto.width ?? descriptor.sizeX ?? 4,
+          height: dto.height ?? descriptor.sizeY ?? 3,
+          datasource,
+          // defaultConfig first so caller overrides win, key by key
+          config: { ...(descriptor.defaultConfig ?? {}), ...(dto.config ?? {}) },
+          createdAt: now,
+          updatedAt: now,
+        };
 
+        // Append to the widgets read under the lock — never to a copy captured
+        // before another request may have written.
+        dashboard.widgets = [
+          ...this.widgetsOf(dashboard),
+          widget,
+        ] as unknown as Dashboard['widgets'];
+
+        const saved = await manager.save(Dashboard, dashboard);
+        return { saved, widget };
+      },
+    );
+
+    // Broadcast after commit so clients are never told about a rolled-back write.
     // Notify connected clients that this dashboard's device list changed.
     // The frontend should re-evaluate which device rooms to subscribe to.
     this.websocketGateway.broadcastDashboardUpdate(id, {
@@ -331,49 +389,58 @@ export class DashboardsService {
     user: User,
     dto: UpdateWidgetDto,
   ): Promise<DashboardWidgetConfig> {
-    const dashboard = await this.findOne(id, user);
-    this.assertCanEdit(dashboard, user);
+    const { saved, updated } = await this.dashboardRepository.manager.transaction(
+      async (manager) => {
+        const dashboard = await this.loadForWidgetWrite(manager, id, user);
 
-    const widgets = this.widgetsOf(dashboard);
-    const index = widgets.findIndex((w) => w.id === widgetId);
-    if (index === -1) {
-      throw new NotFoundException(
-        `Widget ${widgetId} not found on dashboard ${id}`,
-      );
-    }
+        const widgets = this.widgetsOf(dashboard);
+        const index = widgets.findIndex((w) => w.id === widgetId);
+        if (index === -1) {
+          throw new NotFoundException(
+            `Widget ${widgetId} not found on dashboard ${id}`,
+          );
+        }
 
-    const current = widgets[index];
+        const current = widgets[index];
 
-    // datasource and config merge one level deep so a partial update does not
-    // wipe sibling keys; everything else is a straight replace.
-    const datasource = dto.datasource
-      ? { ...current.datasource, ...dto.datasource }
-      : current.datasource;
+        // datasource and config merge one level deep so a partial update does not
+        // wipe sibling keys; everything else is a straight replace.
+        const datasource = dto.datasource
+          ? { ...current.datasource, ...dto.datasource }
+          : current.datasource;
 
-    if (dto.datasource?.deviceId) {
-      const device = await this.resolveDevice(
-        dto.datasource.deviceId,
-        dashboard.tenantId,
-      );
-      datasource.deviceName = device.name;
-      datasource.entityType = datasource.entityType ?? 'DEVICE';
-    }
+        if (dto.datasource?.deviceId) {
+          const device = await this.resolveDevice(
+            dto.datasource.deviceId,
+            dashboard.tenantId,
+          );
+          datasource.deviceName = device.name;
+          datasource.entityType = datasource.entityType ?? 'DEVICE';
+        }
 
-    const updated: DashboardWidgetConfig = {
-      ...current,
-      title: dto.title ?? current.title,
-      row: dto.row ?? current.row,
-      col: dto.col ?? current.col,
-      width: dto.width ?? current.width,
-      height: dto.height ?? current.height,
-      datasource,
-      config: dto.config ? { ...current.config, ...dto.config } : current.config,
-      updatedAt: new Date().toISOString(),
-    };
+        const updated: DashboardWidgetConfig = {
+          ...current,
+          title: dto.title ?? current.title,
+          row: dto.row ?? current.row,
+          col: dto.col ?? current.col,
+          width: dto.width ?? current.width,
+          height: dto.height ?? current.height,
+          datasource,
+          config: dto.config
+            ? { ...current.config, ...dto.config }
+            : current.config,
+          updatedAt: new Date().toISOString(),
+        };
 
-    widgets[index] = updated;
-    dashboard.widgets = [...widgets] as unknown as Dashboard['widgets'];
-    const saved = await this.dashboardRepository.save(dashboard);
+        // Replace the one entry at its index; every sibling is carried through
+        // untouched.
+        widgets[index] = updated;
+        dashboard.widgets = [...widgets] as unknown as Dashboard['widgets'];
+
+        const saved = await manager.save(Dashboard, dashboard);
+        return { saved, updated };
+      },
+    );
 
     this.websocketGateway.broadcastDashboardUpdate(id, {
       action: 'widget_updated',
@@ -389,19 +456,22 @@ export class DashboardsService {
     widgetId: string,
     user: User,
   ): Promise<{ removed: boolean; widgetId: string }> {
-    const dashboard = await this.findOne(id, user);
-    this.assertCanEdit(dashboard, user);
+    const saved = await this.dashboardRepository.manager.transaction(
+      async (manager) => {
+        const dashboard = await this.loadForWidgetWrite(manager, id, user);
 
-    const widgets = this.widgetsOf(dashboard);
-    const remaining = widgets.filter((w) => w.id !== widgetId);
-    if (remaining.length === widgets.length) {
-      throw new NotFoundException(
-        `Widget ${widgetId} not found on dashboard ${id}`,
-      );
-    }
+        const widgets = this.widgetsOf(dashboard);
+        const remaining = widgets.filter((w) => w.id !== widgetId);
+        if (remaining.length === widgets.length) {
+          throw new NotFoundException(
+            `Widget ${widgetId} not found on dashboard ${id}`,
+          );
+        }
 
-    dashboard.widgets = remaining as unknown as Dashboard['widgets'];
-    const saved = await this.dashboardRepository.save(dashboard);
+        dashboard.widgets = remaining as unknown as Dashboard['widgets'];
+        return manager.save(Dashboard, dashboard);
+      },
+    );
 
     this.websocketGateway.broadcastDashboardUpdate(id, {
       action: 'widget_removed',
@@ -500,31 +570,40 @@ export class DashboardsService {
     user: User,
     dto: UpdateLayoutDto,
   ): Promise<DashboardWidgetConfig[]> {
-    const dashboard = await this.findOne(id, user);
-    this.assertCanEdit(dashboard, user);
+    const widgets = await this.dashboardRepository.manager.transaction(
+      async (manager) => {
+        const dashboard = await this.loadForWidgetWrite(manager, id, user);
 
-    const widgets = this.widgetsOf(dashboard);
-    const byId = new Map(widgets.map((w) => [w.id, w]));
+        const widgets = this.widgetsOf(dashboard);
+        const byId = new Map(widgets.map((w) => [w.id, w]));
 
-    const unknown = dto.widgets.filter((p) => !byId.has(p.id)).map((p) => p.id);
-    if (unknown.length) {
-      throw new NotFoundException(
-        `Widget(s) not found on dashboard ${id}: ${unknown.join(', ')}`,
-      );
-    }
+        const unknown = dto.widgets
+          .filter((p) => !byId.has(p.id))
+          .map((p) => p.id);
+        if (unknown.length) {
+          throw new NotFoundException(
+            `Widget(s) not found on dashboard ${id}: ${unknown.join(', ')}`,
+          );
+        }
 
-    const now = new Date().toISOString();
-    for (const position of dto.widgets) {
-      const widget = byId.get(position.id)!;
-      widget.row = position.row;
-      widget.col = position.col;
-      widget.width = position.width;
-      widget.height = position.height;
-      widget.updatedAt = now;
-    }
+        // Positions are written onto the existing widget objects, so a widget
+        // the layout does not mention keeps its position and all its other
+        // fields — the payload is a patch, not the new widget list.
+        const now = new Date().toISOString();
+        for (const position of dto.widgets) {
+          const widget = byId.get(position.id)!;
+          widget.row = position.row;
+          widget.col = position.col;
+          widget.width = position.width;
+          widget.height = position.height;
+          widget.updatedAt = now;
+        }
 
-    dashboard.widgets = [...widgets] as unknown as Dashboard['widgets'];
-    await this.dashboardRepository.save(dashboard);
+        dashboard.widgets = [...widgets] as unknown as Dashboard['widgets'];
+        await manager.save(Dashboard, dashboard);
+        return widgets;
+      },
+    );
 
     this.websocketGateway.broadcastDashboardUpdate(id, {
       action: 'layout_updated',
