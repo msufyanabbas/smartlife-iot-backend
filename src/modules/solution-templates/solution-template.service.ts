@@ -342,6 +342,52 @@ export class SolutionTemplatesService {
   /** Fallback height for a widget spec that does not declare one. */
   private static readonly DEFAULT_WIDGET_HEIGHT = 3;
 
+  /** Fallback width for a widget spec that does not declare one. */
+  private static readonly DEFAULT_WIDGET_WIDTH = 4;
+
+  /**
+   * The identity and geometry of one template widget — the single place either
+   * code path derives them.
+   *
+   * preview() and install() previously computed these separately and disagreed
+   * in three ways: preview echoed `w.width`/`w.row` raw (undefined when the
+   * spec omitted them) where install fell back to the widget type's natural
+   * size, and their height fallbacks differed (a flat 3 vs descriptor.sizeY).
+   * Both now call this, so a preview cannot promise geometry install won't
+   * produce.
+   *
+   * `widgetType` is undefined when the spec's type resolves to nothing — the
+   * caller decides what that means (install skips the widget, preview flags it).
+   */
+  private buildWidgetSpec(spec: WidgetSpec, widgetType?: WidgetType) {
+    const descriptor = widgetType?.descriptor ?? ({} as WidgetType['descriptor']);
+
+    return {
+      widgetTypeId: widgetType?.id,
+      widgetTypeAlias: widgetType
+        ? descriptor.alias ?? widgetType.name
+        : undefined,
+      title: spec.title,
+      row: spec.row ?? 0,
+      col: spec.col ?? 0,
+      // Fall back to the widget type's natural size, as addWidget() does.
+      width:
+        spec.width ??
+        descriptor.sizeX ??
+        SolutionTemplatesService.DEFAULT_WIDGET_WIDTH,
+      height:
+        (spec.height ??
+          descriptor.sizeY ??
+          SolutionTemplatesService.DEFAULT_WIDGET_HEIGHT) *
+        SolutionTemplatesService.WIDGET_HEIGHT_MULTIPLIER,
+      // defaultConfig first so the template's overrides win, key by key
+      config: {
+        ...(descriptor.defaultConfig ?? {}),
+        ...(spec.config ?? {}),
+      },
+    };
+  }
+
   /**
    * Operator symbols for rendering an AlarmSpec as a readable expression
    * ("soc < 20") instead of echoing the enum name ("soc LESS_THAN 20").
@@ -416,6 +462,65 @@ export class SolutionTemplatesService {
     const totalDevices =
       config.devices?.reduce((sum, d) => sum + (d.count ?? 0), 0) ?? 0;
 
+    // Resolve widget types exactly as install() does. Without this a preview
+    // could only echo the template's raw spec: it would list a widget install
+    // is going to skip, and fall back to different sizes when the spec omits
+    // them. Loaded on the same condition install() uses, so a template with no
+    // widgets costs no extra query.
+    const widgetTypeIndex = (config.dashboards ?? []).some(
+      (d) => (d.widgets ?? []).length > 0,
+    )
+      ? await this.loadWidgetTypeIndex(this.dataSource.manager, tenantId)
+      : null;
+
+    const dashboards = (config.dashboards ?? []).map((d) => {
+      // The full spec of every widget, so a preview can draw the grid rather
+      // than just state a count.
+      const widgets = (d.widgets ?? []).map((w) => {
+        const widgetType = widgetTypeIndex
+          ? this.resolveWidgetType(w.type, widgetTypeIndex)
+          : undefined;
+        const meta = this.getWidgetMeta(w.type);
+        const shared = this.buildWidgetSpec(w, widgetType);
+
+        return {
+          type: w.type,
+          title: shared.title,
+          width: shared.width,
+          height: shared.height,
+          row: shared.row,
+          col: shared.col,
+          icon: meta.icon,
+          description: meta.description,
+          // install() skips a widget whose type matches no widget type. Saying
+          // so here keeps the preview honest instead of promising a tile that
+          // will never be created.
+          willBeCreated: !!widgetType,
+        };
+      });
+
+      const created = widgets.filter((w) => w.willBeCreated);
+
+      return {
+        name: d.name,
+        // The number install() will actually create — `skippedWidgetCount`
+        // accounts for any difference from the template's spec list.
+        widgetCount: created.length,
+        skippedWidgetCount: widgets.length - created.length,
+        widgets,
+        layout: {
+          totalColumns: SolutionTemplatesService.DASHBOARD_GRID_COLUMNS,
+          // Lowest edge any widget reaches — the grid height needed to show the
+          // whole dashboard, not the widget count. Read off the widgets that
+          // will exist, at the sizes they will have.
+          estimatedRows: created.reduce(
+            (rows, w) => Math.max(rows, (w.row ?? 0) + (w.height ?? 0)),
+            0,
+          ),
+        },
+      };
+    });
+
     return {
       templateId: id,
       templateName: template.name,
@@ -435,45 +540,7 @@ export class SolutionTemplatesService {
             telemetryKeys: d.defaultTelemetryKeys ?? [],
             icon: SolutionTemplatesService.DEVICE_ICON,
           })) ?? [],
-        dashboards:
-          config.dashboards?.map((d) => {
-            // The full spec of every widget, so a preview can draw the grid
-            // rather than just state a count.
-            const widgets = (d.widgets ?? []).map((w) => {
-              const meta = this.getWidgetMeta(w.type);
-              return {
-                type: w.type,
-                title: w.title,
-                width: w.width,
-                // Scaled to match what install() will create.
-                height:
-                  (w.height ||
-                    SolutionTemplatesService.DEFAULT_WIDGET_HEIGHT) *
-                  SolutionTemplatesService.WIDGET_HEIGHT_MULTIPLIER,
-                row: w.row,
-                col: w.col,
-                icon: meta.icon,
-                description: meta.description,
-              };
-            });
-
-            return {
-              name: d.name,
-              widgetCount: widgets.length,
-              widgets,
-              layout: {
-                totalColumns:
-                  SolutionTemplatesService.DASHBOARD_GRID_COLUMNS,
-                // Lowest edge any widget reaches — the grid height needed to
-                // show the whole dashboard, not the widget count. Read off the
-                // scaled heights above, so it describes the grid actually drawn.
-                estimatedRows: widgets.reduce(
-                  (rows, w) => Math.max(rows, (w.row ?? 0) + (w.height ?? 0)),
-                  0,
-                ),
-              },
-            };
-          }) ?? [],
+        dashboards,
         ruleChains:
           config.ruleChains?.map((r) => ({
             name: r.name,
@@ -832,17 +899,29 @@ export class SolutionTemplatesService {
    * widget type's own name.
    */
   private static readonly WIDGET_TYPE_ALIASES: Record<string, string> = {
+    // → timeseries-chart
     timeseries: 'timeseries-chart',
     chart: 'timeseries-chart',
     line: 'timeseries-chart',
-    bar: 'bar-chart',
-    pie: 'pie-chart',
+    'line-chart': 'timeseries-chart',
+    // → value-card
     card: 'value-card',
     stat: 'value-card',
+    value: 'value-card',
+    // → bar-chart
+    bar: 'bar-chart',
+    // → pie-chart
+    pie: 'pie-chart',
+    donut: 'pie-chart',
+    // → status
     'status-widget': 'status',
+    // → alarm-list
     alarm: 'alarm-list',
+    alarms: 'alarm-list',
     'alarm-widget': 'alarm-list',
+    // → progress-bar
     progress: 'progress-bar',
+    // → switch
     control: 'switch',
   };
 
@@ -998,25 +1077,18 @@ export class SolutionTemplatesService {
           }
         : {};
 
+      // Identity, geometry and config come from the shared helper — the same
+      // call preview() makes — so the two can never drift apart. Only the
+      // datasource is install-only: it binds to a device that does not exist
+      // until this transaction created it.
+      const shared = this.buildWidgetSpec(spec, widgetType);
+
       widgets.push({
-        id: crypto.randomUUID(),
+        ...shared,
         widgetTypeId: widgetType.id,
-        widgetTypeAlias: descriptor.alias ?? widgetType.name,
-        title: spec.title,
-        row: spec.row ?? 0,
-        col: spec.col ?? 0,
-        // Fall back to the widget type's natural size, as addWidget() does
-        width: spec.width ?? descriptor.sizeX ?? 4,
-        // Scaled the same way preview() reports it, so an installed dashboard
-        // matches the preview the user approved.
-        height:
-          (spec.height ??
-            descriptor.sizeY ??
-            SolutionTemplatesService.DEFAULT_WIDGET_HEIGHT) *
-          SolutionTemplatesService.WIDGET_HEIGHT_MULTIPLIER,
+        widgetTypeAlias: shared.widgetTypeAlias!,
+        id: crypto.randomUUID(),
         datasource,
-        // defaultConfig first so the template's overrides win, key by key
-        config: { ...(descriptor.defaultConfig ?? {}), ...(spec.config ?? {}) },
         createdAt: now,
         updatedAt: now,
       });
