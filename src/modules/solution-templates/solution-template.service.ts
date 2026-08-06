@@ -327,6 +327,22 @@ export class SolutionTemplatesService {
   private static readonly DASHBOARD_GRID_COLUMNS = 12;
 
   /**
+   * Every template widget is rendered at this multiple of its authored height.
+   *
+   * Applied in both places a height is produced — preview() and
+   * buildDashboardWidgets() — so what the preview draws is what install()
+   * creates. Change it here, not at either call site.
+   *
+   * NOTE: only heights scale, not `row`. Templates authored their rows against
+   * the original heights (row 0 h4, row 4 h4, row 8 h3), so at 2× the widgets
+   * overlap vertically — see the report accompanying this change.
+   */
+  private static readonly WIDGET_HEIGHT_MULTIPLIER = 2;
+
+  /** Fallback height for a widget spec that does not declare one. */
+  private static readonly DEFAULT_WIDGET_HEIGHT = 3;
+
+  /**
    * Operator symbols for rendering an AlarmSpec as a readable expression
    * ("soc < 20") instead of echoing the enum name ("soc LESS_THAN 20").
    */
@@ -421,30 +437,36 @@ export class SolutionTemplatesService {
           })) ?? [],
         dashboards:
           config.dashboards?.map((d) => {
-            const widgets = d.widgets ?? [];
+            // The full spec of every widget, so a preview can draw the grid
+            // rather than just state a count.
+            const widgets = (d.widgets ?? []).map((w) => {
+              const meta = this.getWidgetMeta(w.type);
+              return {
+                type: w.type,
+                title: w.title,
+                width: w.width,
+                // Scaled to match what install() will create.
+                height:
+                  (w.height ||
+                    SolutionTemplatesService.DEFAULT_WIDGET_HEIGHT) *
+                  SolutionTemplatesService.WIDGET_HEIGHT_MULTIPLIER,
+                row: w.row,
+                col: w.col,
+                icon: meta.icon,
+                description: meta.description,
+              };
+            });
+
             return {
               name: d.name,
               widgetCount: widgets.length,
-              // The full spec of every widget, so a preview can draw the grid
-              // rather than just state a count.
-              widgets: widgets.map((w) => {
-                const meta = this.getWidgetMeta(w.type);
-                return {
-                  type: w.type,
-                  title: w.title,
-                  width: w.width,
-                  height: w.height,
-                  row: w.row,
-                  col: w.col,
-                  icon: meta.icon,
-                  description: meta.description,
-                };
-              }),
+              widgets,
               layout: {
                 totalColumns:
                   SolutionTemplatesService.DASHBOARD_GRID_COLUMNS,
                 // Lowest edge any widget reaches — the grid height needed to
-                // show the whole dashboard, not the widget count.
+                // show the whole dashboard, not the widget count. Read off the
+                // scaled heights above, so it describes the grid actually drawn.
                 estimatedRows: widgets.reduce(
                   (rows, w) => Math.max(rows, (w.row ?? 0) + (w.height ?? 0)),
                   0,
@@ -985,7 +1007,13 @@ export class SolutionTemplatesService {
         col: spec.col ?? 0,
         // Fall back to the widget type's natural size, as addWidget() does
         width: spec.width ?? descriptor.sizeX ?? 4,
-        height: spec.height ?? descriptor.sizeY ?? 3,
+        // Scaled the same way preview() reports it, so an installed dashboard
+        // matches the preview the user approved.
+        height:
+          (spec.height ??
+            descriptor.sizeY ??
+            SolutionTemplatesService.DEFAULT_WIDGET_HEIGHT) *
+          SolutionTemplatesService.WIDGET_HEIGHT_MULTIPLIER,
         datasource,
         // defaultConfig first so the template's overrides win, key by key
         config: { ...(descriptor.defaultConfig ?? {}), ...(spec.config ?? {}) },
