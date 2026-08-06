@@ -48,7 +48,9 @@ import {
   type TemplateConfiguration,
   type InstallResult,
   type WidgetSpec,
+  type AlarmSpec,
 } from './interfaces/template-configuration.interface';
+import { AlarmCondition } from '@common/enums/index.enum';
 
 /** An entity's data properties, without its instance methods. */
 type PlainEntity<T> = {
@@ -277,6 +279,103 @@ export class SolutionTemplatesService {
   // and install can never disagree about whether an install is possible.
   // ══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * Presentation metadata for a WidgetSpec.type, so a preview screen can render
+   * each widget as a labelled tile before anything is provisioned.
+   *
+   * Keyed by the same loose type strings templates author (`WidgetSpec.type`),
+   * not by WidgetType.descriptor.alias — a template may say 'timeseries' where
+   * the widget library calls it 'timeseries-chart', so both spellings map to the
+   * same entry. This is display-only; what actually gets created is still
+   * decided by resolveWidgetType() at install time.
+   */
+  private static readonly WIDGET_META: Record<
+    string,
+    { icon: string; description: string }
+  > = {
+    gauge: { icon: '🕐', description: 'Circular gauge for current value' },
+    timeseries: { icon: '📈', description: 'Line chart for historical trend' },
+    'timeseries-chart': {
+      icon: '📈',
+      description: 'Line chart for historical trend',
+    },
+    'bar-chart': { icon: '📊', description: 'Bar chart for comparison' },
+    'value-card': { icon: '🔢', description: 'Card showing latest value' },
+    'pie-chart': { icon: '🥧', description: 'Pie chart for distribution' },
+    map: { icon: '🗺️', description: 'Map showing device location' },
+    status: { icon: '🔴', description: 'Device online/offline status' },
+    'status-widget': { icon: '🔴', description: 'Device online/offline status' },
+    'alarm-list': { icon: '🚨', description: 'Active alarm feed' },
+    'alarm-widget': { icon: '🚨', description: 'Active alarm feed' },
+    switch: { icon: '🔘', description: 'Toggle control for device' },
+    'progress-bar': {
+      icon: '▬',
+      description: 'Progress bar showing percentage',
+    },
+  };
+
+  /** Shown for a widget type with no entry in WIDGET_META. */
+  private static readonly DEFAULT_WIDGET_META = {
+    icon: '📱',
+    description: 'Widget',
+  };
+
+  private static readonly DEVICE_ICON = '📱';
+  private static readonly ALARM_ICON = '🚨';
+
+  /** Dashboard grid width the widget row/col/width/height values are laid out on. */
+  private static readonly DASHBOARD_GRID_COLUMNS = 12;
+
+  /**
+   * Operator symbols for rendering an AlarmSpec as a readable expression
+   * ("soc < 20") instead of echoing the enum name ("soc LESS_THAN 20").
+   */
+  private static readonly CONDITION_SYMBOLS: Partial<
+    Record<AlarmCondition, string>
+  > = {
+    [AlarmCondition.GREATER_THAN]: '>',
+    [AlarmCondition.LESS_THAN]: '<',
+    [AlarmCondition.EQUAL]: '==',
+    [AlarmCondition.NOT_EQUAL]: '!=',
+    [AlarmCondition.GREATER_THAN_OR_EQUAL]: '>=',
+    [AlarmCondition.LESS_THAN_OR_EQUAL]: '<=',
+    [AlarmCondition.CONTAINS]: 'contains',
+    [AlarmCondition.NOT_CONTAINS]: 'not contains',
+  };
+
+  private getWidgetMeta(type: string): { icon: string; description: string } {
+    // Templates spell types loosely — 'status_widget', 'Bar Chart', 'bar-chart'
+    // all reach the same entry. The raw key is tried too so an exactly-matching
+    // type still resolves if normalising ever mangles it.
+    const normalized = (type ?? '').toLowerCase().replace(/[-_\s]/g, '-');
+    return (
+      SolutionTemplatesService.WIDGET_META[normalized] ??
+      SolutionTemplatesService.WIDGET_META[type] ??
+      SolutionTemplatesService.DEFAULT_WIDGET_META
+    );
+  }
+
+  /** An AlarmSpec as a human-readable expression, e.g. "soc < 20". */
+  private formatAlarmCondition(spec: AlarmSpec): string {
+    const { telemetryKey, condition, value, value2 } = spec;
+
+    // BETWEEN/OUTSIDE read as a range, and EXISTS takes no operand at all —
+    // "soc BETWEEN 20" would be wrong on both counts.
+    if (condition === AlarmCondition.BETWEEN) {
+      return `${telemetryKey} between ${value} and ${value2}`;
+    }
+    if (condition === AlarmCondition.OUTSIDE) {
+      return `${telemetryKey} outside ${value} and ${value2}`;
+    }
+    if (condition === AlarmCondition.EXISTS) {
+      return `${telemetryKey} exists`;
+    }
+
+    const symbol =
+      SolutionTemplatesService.CONDITION_SYMBOLS[condition] ?? condition;
+    return `${telemetryKey} ${symbol} ${value}`;
+  }
+
   async preview(id: string, tenantId: string) {
     // findOne() applies tenant visibility — a template this tenant cannot see
     // is a 404 here just as it is everywhere else.
@@ -318,12 +417,41 @@ export class SolutionTemplatesService {
             count: d.count ?? 0,
             protocol: d.protocol ?? DeviceProtocol.GENERIC_MQTT,
             telemetryKeys: d.defaultTelemetryKeys ?? [],
+            icon: SolutionTemplatesService.DEVICE_ICON,
           })) ?? [],
         dashboards:
-          config.dashboards?.map((d) => ({
-            name: d.name,
-            widgetCount: d.widgets?.length ?? 0,
-          })) ?? [],
+          config.dashboards?.map((d) => {
+            const widgets = d.widgets ?? [];
+            return {
+              name: d.name,
+              widgetCount: widgets.length,
+              // The full spec of every widget, so a preview can draw the grid
+              // rather than just state a count.
+              widgets: widgets.map((w) => {
+                const meta = this.getWidgetMeta(w.type);
+                return {
+                  type: w.type,
+                  title: w.title,
+                  width: w.width,
+                  height: w.height,
+                  row: w.row,
+                  col: w.col,
+                  icon: meta.icon,
+                  description: meta.description,
+                };
+              }),
+              layout: {
+                totalColumns:
+                  SolutionTemplatesService.DASHBOARD_GRID_COLUMNS,
+                // Lowest edge any widget reaches — the grid height needed to
+                // show the whole dashboard, not the widget count.
+                estimatedRows: widgets.reduce(
+                  (rows, w) => Math.max(rows, (w.row ?? 0) + (w.height ?? 0)),
+                  0,
+                ),
+              },
+            };
+          }) ?? [],
         ruleChains:
           config.ruleChains?.map((r) => ({
             name: r.name,
@@ -334,7 +462,9 @@ export class SolutionTemplatesService {
           config.alarms?.map((a) => ({
             name: a.name,
             severity: a.severity,
-            condition: `${a.telemetryKey} ${a.condition} ${a.value}`,
+            condition: this.formatAlarmCondition(a),
+            deviceSelector: a.deviceSelector,
+            icon: SolutionTemplatesService.ALARM_ICON,
           })) ?? [],
         summary: {
           totalDevices,
