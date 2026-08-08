@@ -60,6 +60,7 @@ export { Integration } from './integrations/entities/integration.entity';
 export { Automation } from './automation/entities/automation.entity';
 // AutomationLog entity not yet created — see automation.service.ts TODOs
 export { Schedule } from './schedules/entities/schedule.entity';
+export { ScheduleExecution } from './schedules/entities/schedule-execution.entity';
 
 // Subscription & Sharing entities
 export { Subscription } from './subscriptions/entities/subscription.entity';

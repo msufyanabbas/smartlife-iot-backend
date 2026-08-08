@@ -6,118 +6,161 @@ import {
   IsObject,
   IsEnum,
   IsNotEmpty,
+  IsInt,
+  IsDate,
+  Min,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
-import { ScheduleType } from '@common/enums/index.enum';
-import { ValidateScheduleConfiguration } from '../validators/schedule-configuration.validator';
-
-// ─── Per-type configuration shapes (for Swagger documentation) ───────────────
-
-export interface ReportConfiguration {
-  reportType: string;
-  recipients: string[];
-  format?: 'pdf' | 'csv' | 'xlsx';
-  retention?: number;
-}
-
-export interface BackupConfiguration {
-  retention?: number;
-  destination?: string;
-  [key: string]: any;
-}
-
-export interface CleanupConfiguration {
-  olderThanDays?: number;
-  targets?: string[];
-  [key: string]: any;
-}
-
-export interface ExportConfiguration {
-  format: string;
-  destination?: string;
-  filters?: Record<string, any>;
-  [key: string]: any;
-}
-
-export interface DeviceCommandConfiguration {
-  deviceId: string;
-  command: string;
-  params?: Record<string, any>;
-  [key: string]: any;
-}
-
-export type ScheduleConfiguration =
-  | ReportConfiguration
-  | BackupConfiguration
-  | CleanupConfiguration
-  | ExportConfiguration
-  | DeviceCommandConfiguration;
-
-// ─── DTO ─────────────────────────────────────────────────────────────────────
+import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  ScheduleActionType,
+  ScheduleTriggerType,
+} from '@common/enums/index.enum';
+import {
+  ValidateScheduleActionConfig,
+  ValidateScheduleTiming,
+} from '../validators/schedule-configuration.validator';
+import type { ScheduleActionConfig } from '../interfaces/schedule-action.interface';
+import { DEFAULT_SCHEDULE_TIMEZONE } from '../entities/schedule.entity';
 
 export class CreateScheduleDto {
-  @ApiProperty({ example: 'Daily Device Report' })
+  @ApiProperty({ example: 'Nightly Lighting Shutdown' })
   @IsString()
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty({
-    example: 'Send daily device status report',
-    required: false,
-  })
+  @ApiPropertyOptional({ example: 'Turn off all lighting relays at 11 PM' })
   @IsOptional()
   @IsString()
   description?: string;
 
-  @ApiProperty({
-    type: String, enum: ScheduleType, enumName: 'ScheduleType',
-    example: ScheduleType.REPORT,
-    description: 'Determines which configuration fields are required',
-  })
-  @IsEnum(ScheduleType)
-  type: ScheduleType;
+  // ── Timing ────────────────────────────────────────────────────────────────
 
   @ApiProperty({
-    example: '0 9 * * *',
-    description: 'Standard 5-field cron expression',
+    type: String,
+    enum: ScheduleTriggerType,
+    enumName: 'ScheduleTriggerType',
+    example: ScheduleTriggerType.CRON,
+    description:
+      'CRON requires cronExpression · INTERVAL requires intervalMs · ONE_TIME requires startTime',
   })
+  @IsEnum(ScheduleTriggerType)
+  // Cross-field timing check hangs off `type` so the message surfaces even when
+  // the dependent field is absent entirely.
+  @ValidateScheduleTiming()
+  type: ScheduleTriggerType;
+
+  @ApiPropertyOptional({
+    example: '0 23 * * *',
+    description: 'Standard 5-field cron expression. Required when type=CRON.',
+  })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  schedule: string;
+  cronExpression?: string;
 
-  @ApiProperty({ example: true, default: true, required: false })
+  @ApiPropertyOptional({
+    example: 300000,
+    description:
+      'Fire every N milliseconds (min 1000). Required when type=INTERVAL.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1000)
+  intervalMs?: number;
+
+  @ApiPropertyOptional({
+    example: '2026-09-01T20:00:00.000Z',
+    description:
+      'ONE_TIME: the moment to fire. CRON/INTERVAL: schedule stays dormant until this instant.',
+  })
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  startTime?: Date;
+
+  @ApiPropertyOptional({
+    example: '2026-12-31T20:00:00.000Z',
+    description:
+      'After this instant the schedule stops firing and is auto-disabled.',
+  })
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  endTime?: Date;
+
+  @ApiPropertyOptional({
+    example: DEFAULT_SCHEDULE_TIMEZONE,
+    default: DEFAULT_SCHEDULE_TIMEZONE,
+    description:
+      'IANA timezone the cron expression is evaluated in. Offset strings such as "UTC+3" are rejected — use "Asia/Riyadh".',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  timezone?: string;
+
+  @ApiPropertyOptional({ example: true, default: true })
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
 
+  // ── Action ────────────────────────────────────────────────────────────────
+
+  @ApiProperty({
+    type: String,
+    enum: ScheduleActionType,
+    enumName: 'ScheduleActionType',
+    example: ScheduleActionType.DEVICE_COMMAND,
+    description: 'Determines which actionConfig sub-object is required',
+  })
+  @IsEnum(ScheduleActionType)
+  actionType: ScheduleActionType;
+
   @ApiProperty({
     description: [
-      'Configuration object — required fields depend on "type":',
-      '  REPORT        → reportType (string), recipients (string[])',
-      '  EXPORT        → format (string)',
-      '  DEVICE_COMMAND → deviceId (string), command (string)',
-      '  BACKUP / CLEANUP → no required fields',
+      'Action parameters. Exactly one sub-object, matching actionType:',
+      '  DEVICE_COMMAND     → deviceCommand   { targetType, command:{method,params}, … }',
+      '  ATTRIBUTE_UPDATE   → attributeUpdate { targetType, scope, attributes[] }',
+      '  RULE_CHAIN_TRIGGER → ruleChainTrigger{ ruleChainId, messageType?, payload? }',
+      '  SEND_NOTIFICATION  → notification    { targetType, title, message, channels[] }',
+      '  DATA_MAINTENANCE   → maintenance     { taskType, olderThanDays? }',
+      '  GENERATE_REPORT    → report          { reportType, timeRange, deliveryChannels[] }',
     ].join('\n'),
     examples: {
-      REPORT: {
-        value: {
-          reportType: 'device_status',
-          recipients: ['ops@example.com'],
-          format: 'pdf',
-        },
-      },
       DEVICE_COMMAND: {
         value: {
-          deviceId: 'dev-uuid-123',
-          command: 'reboot',
-          params: { force: true },
+          deviceCommand: {
+            targetType: 'DEVICE_TYPE',
+            deviceType: 'actuator',
+            command: { method: 'setState', params: { relay: 1, state: false } },
+            timeout: 30000,
+          },
+        },
+      },
+      ATTRIBUTE_UPDATE: {
+        value: {
+          attributeUpdate: {
+            targetType: 'DEVICE',
+            deviceId: 'device-uuid',
+            scope: 'SHARED_SCOPE',
+            attributes: [{ key: 'reportingInterval', value: 600 }],
+          },
+        },
+      },
+      GENERATE_REPORT: {
+        value: {
+          report: {
+            reportType: 'DEVICE_SUMMARY',
+            timeRange: '24h',
+            deliveryChannels: ['IN_APP'],
+          },
         },
       },
     },
   })
   @IsObject()
-  @ValidateScheduleConfiguration({
-    message: 'configuration does not satisfy the requirements for the chosen type',
-  })
-  configuration: ScheduleConfiguration;
+  @ValidateScheduleActionConfig()
+  actionConfig: ScheduleActionConfig;
 }

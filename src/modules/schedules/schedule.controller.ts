@@ -7,7 +7,6 @@ import {
   Patch,
   Param,
   Delete,
-  UseGuards,
   Query,
   HttpCode,
   HttpStatus,
@@ -17,17 +16,21 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
-  ApiQuery,
 } from '@nestjs/swagger';
 import { SchedulesService } from './schedule.service';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { PaginationDto } from '../../common/dto/pagination.dto';
-import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import { QueryScheduleExecutionDto } from './dto/query-execution.dto';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
+import { Roles } from '@common/decorators/roles.decorator';
+import { PaginationDto } from '@common/dto/pagination.dto';
+import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
+import { UserRole } from '@common/enums/index.enum';
 
-// Extend the User type to include tenantId from the JWT payload
+/**
+ * `@CurrentUser()` yields the full User; only these two fields are used, and
+ * both are already on the JWT payload — no DB round-trip to resolve the caller.
+ */
 interface AuthenticatedUser {
   id: string;
   tenantId: string;
@@ -35,14 +38,22 @@ interface AuthenticatedUser {
 
 @ApiTags('schedules')
 @Controller('schedules')
-@UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
+// JwtAuthGuard is registered globally in GuardsModule — a local @UseGuards
+// would run it a second time on every request in this controller.
+@Roles(
+  UserRole.SUPER_ADMIN,
+  UserRole.TENANT_ADMIN,
+  UserRole.CUSTOMER,
+  UserRole.CUSTOMER_USER,
+)
 export class SchedulesController {
   constructor(private readonly schedulesService: SchedulesService) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new schedule' })
-  @ApiResponse({ status: 201, description: 'Schedule created successfully' })
+  @ApiResponse({ status: 201, description: 'Schedule created' })
+  @ApiResponse({ status: 400, description: 'Invalid timing or actionConfig' })
   create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() createScheduleDto: CreateScheduleDto,
@@ -55,8 +66,7 @@ export class SchedulesController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all schedules for the current user' })
-  @ApiResponse({ status: 200, description: 'Paginated list of schedules' })
+  @ApiOperation({ summary: "List the current user's schedules" })
   findAll(
     @CurrentUser() user: AuthenticatedUser,
     @Query() paginationDto: PaginationDto,
@@ -65,7 +75,7 @@ export class SchedulesController {
   }
 
   @Get('statistics')
-  @ApiOperation({ summary: 'Get schedule statistics for the current user' })
+  @ApiOperation({ summary: 'Schedule counts, run totals and success rate' })
   getStatistics(@CurrentUser() user: AuthenticatedUser) {
     return this.schedulesService.getStatistics(user.id, user.tenantId);
   }
@@ -79,24 +89,62 @@ export class SchedulesController {
     return this.schedulesService.findOne(id, user.id, user.tenantId);
   }
 
+  // ── Execution history ─────────────────────────────────────────────────────
+
+  @Get(':id/executions')
+  @ApiOperation({ summary: 'Paginated execution history for a schedule' })
+  @ApiResponse({ status: 200, description: 'Executions plus lifetime summary' })
+  getExecutions(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseIdPipe) id: string,
+    @Query() query: QueryScheduleExecutionDto,
+  ) {
+    return this.schedulesService.getExecutions(
+      id,
+      user.id,
+      user.tenantId,
+      query,
+    );
+  }
+
+  @Get(':id/executions/latest')
+  @ApiOperation({
+    summary: 'Most recent execution — did the last run succeed?',
+  })
+  getLatestExecution(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.schedulesService.getLatestExecution(id, user.id, user.tenantId);
+  }
+
+  /**
+   * @deprecated Alias for `GET :id/executions`, kept so existing clients do
+   * not 404 after the `schedule_execution_logs` table was replaced.
+   */
   @Get(':id/history')
-  @ApiOperation({ summary: 'Get paginated execution history for a schedule' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiOperation({
+    summary: 'DEPRECATED — use GET /schedules/:id/executions',
+    deprecated: true,
+  })
   getHistory(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseIdPipe) id: string,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query() query: QueryScheduleExecutionDto,
   ) {
-    return this.schedulesService.getHistory(id, user.id, user.tenantId, {
-      page,
-      limit,
-    });
+    return this.schedulesService.getExecutions(
+      id,
+      user.id,
+      user.tenantId,
+      query,
+    );
   }
+
+  // ── Mutations ─────────────────────────────────────────────────────────────
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a schedule' })
+  @ApiResponse({ status: 400, description: 'Merged schedule is invalid' })
   update(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseIdPipe) id: string,
@@ -112,7 +160,7 @@ export class SchedulesController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Soft-delete a schedule' })
+  @ApiOperation({ summary: 'Soft-delete a schedule and stop its timer' })
   remove(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseIdPipe) id: string,
@@ -121,7 +169,7 @@ export class SchedulesController {
   }
 
   @Post(':id/toggle')
-  @ApiOperation({ summary: 'Toggle schedule enabled/disabled' })
+  @ApiOperation({ summary: 'Enable/disable a schedule' })
   toggle(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseIdPipe) id: string,
@@ -129,12 +177,31 @@ export class SchedulesController {
     return this.schedulesService.toggle(id, user.id, user.tenantId);
   }
 
+  @Post(':id/run')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Run a schedule immediately',
+    description:
+      'Works on disabled schedules too, so a schedule can be tested before it is armed. Does not shift the automatic cadence.',
+  })
+  run(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.schedulesService.run(id, user.id, user.tenantId);
+  }
+
+  /** @deprecated Alias for `POST :id/run`. */
   @Post(':id/execute')
-  @ApiOperation({ summary: 'Trigger a schedule to run immediately' })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'DEPRECATED — use POST /schedules/:id/run',
+    deprecated: true,
+  })
   execute(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseIdPipe) id: string,
   ) {
-    return this.schedulesService.execute(id, user.id, user.tenantId);
+    return this.schedulesService.run(id, user.id, user.tenantId);
   }
 }
