@@ -260,6 +260,32 @@ export class AlarmsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     if (alarm.deviceId)   this.server.to(`device:${alarm.deviceId}`).emit('alarm:acknowledged', eventData);
   }
 
+  /**
+   * Emitted by AlarmConsumer after a level is claimed and dispatched, so the
+   * operator UI can surface a rising alarm without polling.
+   */
+  @OnEvent('alarm.escalated')
+  handleAlarmEscalated(payload: { alarm: Alarm; level: number }) {
+    const { alarm, level } = payload;
+    this.logger.log(`Broadcasting alarm escalated: ${alarm.id} → L${level}`);
+
+    const eventData = {
+      id:              alarm.id,
+      name:            alarm.name,
+      severity:        alarm.severity,
+      status:          alarm.status,
+      tbStatus:        alarm.tbStatus,
+      escalationLevel: alarm.escalationLevel,
+      escalatedAt:     alarm.escalatedAt,
+      deviceId:        alarm.deviceId,
+    };
+
+    this.server.to(`tenant:${alarm.tenantId}`).emit('alarm:escalated', eventData);
+    if (alarm.customerId) this.server.to(`customer:${alarm.customerId}`).emit('alarm:escalated', eventData);
+    if (alarm.deviceId)   this.server.to(`device:${alarm.deviceId}`).emit('alarm:escalated', eventData);
+    if (alarm.assignedTo) this.server.to(`user:${alarm.assignedTo}`).emit('alarm:escalated', eventData);
+  }
+
   @OnEvent('alarm.cleared')
   handleAlarmCleared(payload: { alarm: Alarm }) {
     const { alarm } = payload;

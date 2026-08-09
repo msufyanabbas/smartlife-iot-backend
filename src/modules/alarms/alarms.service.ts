@@ -17,8 +17,16 @@ import {
   ResolveAlarmDto,
 } from './dto/alarm.dto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectQueue } from '@nestjs/bull';
+// See the note in alarms.consumer.ts — type-only import is required here for
+// the same isolatedModules/emitDecoratorMetadata reason.
+import type { Queue } from 'bull';
 import { User } from '@modules/users/entities/user.entity';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
+import {
+  resolveEscalationRules,
+  EscalationRule,
+} from './alarm-escalation.policy';
 
 @Injectable()
 export class AlarmsService {
@@ -32,7 +40,95 @@ export class AlarmsService {
     @InjectRepository(UserEntity)
     private userRepository: Repository<UserEntity>,
     private eventEmitter: EventEmitter2,
+    @InjectQueue('alarms')
+    private alarmQueue: Queue,
   ) {}
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ESCALATION SCHEDULING
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Deterministic job id, so a job can be cancelled by id instead of scanning
+   * the whole queue. Includes triggerCount because Bull treats a repeated
+   * jobId as a duplicate and silently drops it — without the counter, an alarm
+   * that cleared and re-fired would never get a second round of checks.
+   */
+  private escalationJobId(alarm: Alarm, level: number): string {
+    return `esc:${alarm.id}:${alarm.triggerCount}:${level}`;
+  }
+
+  /**
+   * Queue the immediate notification plus one delayed check per escalation
+   * rung. Called on the ACTIVE edge only — see triggerAlarm().
+   *
+   * Failures here are logged, never thrown: the alarm has already fired and a
+   * Redis hiccup must not turn a successful trigger into an error.
+   */
+  private async scheduleEscalation(alarm: Alarm): Promise<void> {
+    const rules: EscalationRule[] = resolveEscalationRules(alarm);
+
+    try {
+      await this.alarmQueue.add(
+        'new-alarm',
+        { alarmId: alarm.id, tenantId: alarm.tenantId },
+        {
+          delay: 0,
+          jobId: `new:${alarm.id}:${alarm.triggerCount}`,
+          removeOnComplete: true,
+        },
+      );
+
+      for (const rule of rules) {
+        await this.alarmQueue.add(
+          'check-escalation',
+          { alarmId: alarm.id, tenantId: alarm.tenantId },
+          {
+            delay: rule.afterMinutes * 60 * 1000,
+            jobId: this.escalationJobId(alarm, rule.level),
+            attempts: 2,
+            backoff: { type: 'fixed', delay: 30_000 },
+            removeOnComplete: true,
+          },
+        );
+      }
+
+      this.logger.log(
+        `Scheduled ${rules.length} escalation check(s) for alarm ${alarm.id} ` +
+          `at [${rules.map((r) => `${r.afterMinutes}m`).join(', ')}]`,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `Could not schedule escalation for alarm ${alarm.id}: ${(e as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Drop still-pending escalation checks once an alarm is handled.
+   *
+   * Removal is by deterministic id rather than by scanning
+   * getJobs(['delayed','waiting']) — that scan walks every pending job for
+   * every tenant on each acknowledge, which is O(queue) work on a hot path.
+   *
+   * The consumer re-checks status on wake anyway, so a job that slips through
+   * is harmless; this just keeps the queue clean.
+   */
+  private async cancelEscalation(alarm: Alarm): Promise<void> {
+    try {
+      const rules = resolveEscalationRules(alarm);
+      for (const rule of rules) {
+        const job = await this.alarmQueue.getJob(
+          this.escalationJobId(alarm, rule.level),
+        );
+        if (job) await job.remove();
+      }
+    } catch (e) {
+      this.logger.warn(
+        `Could not remove escalation jobs for alarm ${alarm.id}: ${(e as Error).message}`,
+      );
+    }
+  }
 
   /**
    * Create new alarm rule
@@ -238,6 +334,9 @@ export class AlarmsService {
 
     const saved = await this.alarmRepository.save(alarm);
 
+    // Acknowledged — the unacknowledged window is closed, drop pending checks.
+    await this.cancelEscalation(saved);
+
     // Emit event
     this.eventEmitter.emit('alarm.acknowledged', { alarm: saved, userId });
 
@@ -265,6 +364,9 @@ export class AlarmsService {
 
     alarm.clear(userId);
     const saved = await this.alarmRepository.save(alarm);
+
+    // Condition resolved — nothing left to escalate.
+    await this.cancelEscalation(saved);
 
     // Emit event
     this.eventEmitter.emit('alarm.cleared', { alarm: saved });
@@ -395,10 +497,40 @@ export class AlarmsService {
     alarm.resolve(userId, resolveDto.note);
     const saved = await this.alarmRepository.save(alarm);
 
+    await this.cancelEscalation(saved);
+
     // Emit event
     this.eventEmitter.emit('alarm.resolved', { alarm: saved, userId });
 
     return saved;
+  }
+
+  /**
+   * Escalation timeline for a single alarm.
+   *
+   * `escalationRules` reflects what will actually be applied — the alarm's own
+   * override when set, otherwise the severity default from the shared policy.
+   */
+  async getEscalationHistory(id: string, tenantId: string | undefined) {
+    const alarm = await this.findOne(id, tenantId);
+
+    return {
+      alarmId: alarm.id,
+      alarmName: alarm.name,
+      severity: alarm.severity,
+      status: alarm.status,
+      tbStatus: alarm.tbStatus,
+      triggeredAt: alarm.triggeredAt,
+      acknowledgedAt: alarm.acknowledgedAt,
+      escalationLevel: alarm.escalationLevel,
+      escalatedAt: alarm.escalatedAt,
+      escalationHistory: alarm.escalationHistory ?? [],
+      escalationRules: resolveEscalationRules(alarm),
+      // False once the alarm leaves ACTIVE or is acknowledged — the same two
+      // conditions the consumer checks before escalating.
+      escalationActive:
+        alarm.status === AlarmStatus.ACTIVE && !alarm.acknowledgedAt,
+    };
   }
 
   /**
@@ -473,6 +605,14 @@ public async triggerAlarm(alarm: Alarm, value: number): Promise<void> {
   if (!wasAlreadyActive) {
     this.logger.log(`Emitting alarm.triggered for alarm: ${saved.id}`);
     this.eventEmitter.emit('alarm.triggered', { alarm: saved });
+
+    // Escalation is scheduled HERE, not in create(). create() persists a
+    // dormant alarm *rule* with status INACTIVE and no triggeredAt — queueing
+    // there would start an escalation ladder for a rule that has never fired,
+    // and the consumer's elapsed-time maths would run against a null
+    // triggeredAt. This is the ACTIVE edge, so it is the real start of the
+    // unacknowledged window.
+    await this.scheduleEscalation(saved);
   } else {
     this.logger.log(`Skipping emit — alarm was already active`);
   }

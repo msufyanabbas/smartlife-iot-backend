@@ -184,6 +184,43 @@ export class Alarm extends BaseEntity {
   };
 
   // ══════════════════════════════════════════════════════════════════════════
+  // ESCALATION
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** 0 = not escalated, 1 = first escalation, 2 = second, … */
+  @Column({ type: 'int', default: 0 })
+  escalationLevel: number;
+
+  /**
+   * Typed `| null` for the same reason as acknowledgedAt: save() skips
+   * undefined properties, so a re-trigger must write null to actually clear it.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  escalatedAt: Date | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  escalationHistory: Array<{
+    level: number;
+    escalatedAt: string;
+    channel: string;
+    recipient: string;
+    message: string;
+  }> | null;
+
+  /**
+   * Per-alarm override. When null, AlarmEscalationPolicy resolves defaults by
+   * severity — see alarm-escalation.policy.ts.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  escalationRules: Array<{
+    level: number;
+    afterMinutes: number;
+    channels: string[];
+    notifyRoles: string[];
+    message?: string;
+  }> | null;
+
+  // ══════════════════════════════════════════════════════════════════════════
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
 
@@ -260,7 +297,34 @@ export class Alarm extends BaseEntity {
     this.acknowledgedBy = null;
     this.clearedAt = null;
     this.clearedBy = null;
+    // A fresh occurrence starts at escalation level 0. Without this reset a
+    // re-triggered alarm would inherit the previous cycle's level and every
+    // rule would be skipped by the `escalationLevel < rule.level` guard, so it
+    // would never escalate again. History is preserved deliberately — it is
+    // the audit trail across occurrences.
+    this.escalationLevel = 0;
+    this.escalatedAt = null;
     this.computeTbStatus();
+  }
+
+  /**
+   * Record an escalation to `level`. Notification dispatch is the consumer's
+   * job; this only moves the entity's state forward.
+   */
+  escalate(
+    level: number,
+    entry: {
+      channel: string;
+      recipient: string;
+      message: string;
+    },
+  ): void {
+    this.escalationLevel = level;
+    this.escalatedAt = new Date();
+    this.escalationHistory = [
+      ...(this.escalationHistory ?? []),
+      { level, escalatedAt: new Date().toISOString(), ...entry },
+    ];
   }
 
   /**

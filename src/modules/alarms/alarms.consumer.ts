@@ -1,500 +1,387 @@
 // src/modules/alarms/alarms.consumer.ts
-// FIXED - Alarm Consumer - Compatible with your KafkaService and RedisService
+//
+// Bull worker for the 'alarms' queue.
+//
+// Replaces the previous hand-rolled Kafka consumer, which was never registered
+// anywhere and could not have run: it had no @Injectable(), took a raw pg.Pool
+// (no DI token), queried tables that do not exist (`alarm`, `alarm_history`),
+// and gated escalation on a severity value ('MAJOR') that is not in the
+// AlarmSeverity enum. Escalation timing is now Redis-backed via Bull, so it
+// survives a restart — the old setTimeout() did not.
 
-import { Pool } from 'pg';
-import { KafkaService } from '@/lib/kafka/kafka.service';
-import { RedisService } from '@/lib/redis/redis.service';
-import { EachMessagePayload } from 'kafkajs';
+import { Processor, Process } from '@nestjs/bull';
+// `import type`: with isolatedModules + emitDecoratorMetadata, a value import
+// used in a decorated signature makes SWC emit a runtime reference for
+// design:paramtypes. The DI token comes from @Process/@InjectQueue anyway.
+import type { Job } from 'bull';
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Alarm, User } from '@modules/index.entities';
+import {
+  AlarmStatus,
+  AlarmSeverity,
+  NotificationChannel,
+  NotificationType,
+  NotificationPriority,
+} from '@common/enums/index.enum';
+import { NotificationsService } from '../notifications/notifications.service';
+import {
+  EscalationRule,
+  resolveEscalationRules,
+  resolveChannel,
+  matchesRole,
+} from './alarm-escalation.policy';
 
-export interface AlarmMessage {
-  id: string;
-  deviceId: string;
-  deviceKey: string;
-  deviceName: string;
+export interface AlarmJobData {
+  alarmId: string;
   tenantId: string;
-  userId: string;
-  // Deserialized from the Kafka payload; runtime values are the lowercase
-  // AlarmSeverity values (info/warning/error/critical).
-  severity: string;
-  type: string;
-  title: string;
-  message: string;
-  ruleName?: string;
-  condition?: string;
-  value?: number;
-  threshold?: number;
-  timestamp: number;
-  metadata?: any;
 }
 
+@Injectable()
+@Processor('alarms')
 export class AlarmConsumer {
-  private groupId = 'alarms-consumer-group';
-  private topics = [
-    'alarms.created',
-    'alarms.acknowledged',
-    'alarms.cleared',
-    'alarms.escalated',
-  ];
+  private readonly logger = new Logger(AlarmConsumer.name);
 
   constructor(
-    private kafkaService: KafkaService,
-    private redisService: RedisService,
-    private db: Pool,
-    // Mail service is optional - can be undefined
-    private mailService?: any,
-
+    @InjectRepository(Alarm)
+    private readonly alarmRepository: Repository<Alarm>,
+    // Read-only: resolves escalation recipients by role within the tenant.
+    // Registered as a repository rather than by importing UsersModule, which
+    // would pull DevicesModule back in through its forwardRef chain — the same
+    // reasoning as the existing User registration in AlarmsModule.
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    private readonly notificationsService: NotificationsService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  async start(): Promise<void> {
-    console.log('🚨 Starting Alarm Consumer...');
+  // ══════════════════════════════════════════════════════════════════════════
+  // JOB: new-alarm
+  // ══════════════════════════════════════════════════════════════════════════
 
-    // Use your kafkaService.createConsumer method
-    await this.kafkaService.createConsumer(
-      this.groupId,
-      this.topics,
-      async (payload: EachMessagePayload) => {
-        try {
-          const topic = payload.topic;
-          const alarm: AlarmMessage = JSON.parse(
-            payload.message.value?.toString() || '{}',
-          );
-
-          console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-          console.log(`🚨 ALARM EVENT: ${topic}`);
-          console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-          console.log(`📱 Device: ${alarm.deviceName} (${alarm.deviceKey})`);
-          console.log(`⚠️  Severity: ${alarm.severity}`);
-          console.log(`📝 Message: ${alarm.message}`);
-          console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-
-          // Route to appropriate handler
-          switch (topic) {
-            case 'alarms.created':
-              await this.handleAlarmCreated(alarm);
-              break;
-            case 'alarms.acknowledged':
-              await this.handleAlarmAcknowledged(alarm);
-              break;
-            case 'alarms.cleared':
-              await this.handleAlarmCleared(alarm);
-              break;
-            case 'alarms.escalated':
-              await this.handleAlarmEscalated(alarm);
-              break;
-          }
-
-          console.log(`✅ Alarm processed successfully\n`);
-        } catch (error) {
-          console.error('❌ Failed to process alarm:', error);
-          throw error; // Let Kafka handle retry
-        }
-      },
-    );
-
-    console.log('✅ Alarm Consumer started');
-    console.log(`📊 Subscribed to topics: ${this.topics.join(', ')}\n`);
-  }
-
-  /**
-   * Handle new alarm creation
-   */
-  private async handleAlarmCreated(alarm: AlarmMessage): Promise<void> {
-    console.log('📝 Processing new alarm...');
-
-    // 1. Save to alarm history
-    await this.saveAlarmHistory(alarm);
-
-    // 2. Update alarm statistics
-    await this.updateAlarmStats(alarm);
-
-    // 3. Cache active alarm
-    await this.cacheActiveAlarm(alarm);
-
-    // 4. Send notifications based on severity
-    await this.sendNotifications(alarm);
-
-    // 5. Check for escalation rules
-    await this.checkEscalation(alarm);
-
-    console.log('✅ New alarm processed');
-  }
-
-  /**
-   * Handle alarm acknowledgment
-   */
-  private async handleAlarmAcknowledged(alarm: AlarmMessage): Promise<void> {
-    console.log('✅ Processing alarm acknowledgment...');
-
-    // Update alarm status in database
-    await this.db.query(
-      `UPDATE alarm 
-       SET status = 'ACKNOWLEDGED',
-           acknowledged_at = NOW(),
-           acknowledged_by = $1
-       WHERE id = $2`,
-      [alarm.userId, alarm.id],
-    );
-
-    // Update cache - remove from active alarms
-    await this.redisService.hdel(`tenant:${alarm.tenantId}:active_alarms`, alarm.id);
-
-    // Notify relevant users
-    await this.notifyAcknowledgment(alarm);
-
-    console.log('✅ Alarm acknowledged');
-  }
-
-  /**
-   * Handle alarm clearance
-   */
-  private async handleAlarmCleared(alarm: AlarmMessage): Promise<void> {
-    console.log('🟢 Processing alarm clearance...');
-
-    // Update alarm status
-    await this.db.query(
-      `UPDATE alarm 
-       SET status = 'CLEARED',
-           cleared_at = NOW(),
-           duration = EXTRACT(EPOCH FROM (NOW() - created_at))
-       WHERE id = $1`,
-      [alarm.id],
-    );
-
-    // Remove from active alarms
-    await this.redisService.hdel(`tenant:${alarm.tenantId}:active_alarms`, alarm.id);
-
-    // Send clearance notification
-    await this.sendClearanceNotification(alarm);
-
-    console.log('✅ Alarm cleared');
-  }
-
-  /**
-   * Handle alarm escalation
-   */
-  private async handleAlarmEscalated(alarm: AlarmMessage): Promise<void> {
-    console.log('📢 Processing alarm escalation...');
-
-    // Update alarm severity
-    // Table is "alarms" (plural); enum value is lowercase 'critical' (alarms_severity_enum).
-    await this.db.query(
-      `UPDATE alarms
-       SET severity = 'critical',
-           escalated_at = NOW()
-       WHERE id = $1`,
-      [alarm.id],
-    );
-
-    // Send urgent notifications
-    await this.sendEscalationNotifications(alarm);
-
-    console.log('✅ Alarm escalated');
-  }
-
-  /**
-   * Save alarm to history table
-   */
-  private async saveAlarmHistory(alarm: AlarmMessage): Promise<void> {
-    try {
-      await this.db.query(
-        `INSERT INTO alarm_history (
-          alarm_id, device_id, tenant_id, severity, type, 
-          title, message, timestamp, metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8/1000), $9)`,
-        [
-          alarm.id,
-          alarm.deviceId,
-          alarm.tenantId,
-          alarm.severity,
-          alarm.type,
-          alarm.title,
-          alarm.message,
-          alarm.timestamp,
-          JSON.stringify(alarm.metadata || {}),
-        ],
-      );
-    } catch (error) {
-      console.error('Failed to save alarm history:', error);
-    }
-  }
-
-  /**
-   * Update alarm statistics in Redis
-   */
-  private async updateAlarmStats(alarm: AlarmMessage): Promise<void> {
-    const today = new Date().toISOString().split('T')[0];
+  @Process('new-alarm')
+  async handleNewAlarm(job: Job<AlarmJobData>): Promise<void> {
+    const { alarmId, tenantId } = job.data;
 
     try {
-      // Count by severity
-      const severityKey = `stats:alarms:${today}`;
-      await this.redisService.hset(severityKey, alarm.severity, '0'); // Initialize if not exists
-      const currentCount = await this.redisService.hget(severityKey, alarm.severity);
-      await this.redisService.hset(
-        severityKey,
-        alarm.severity,
-        String(parseInt(currentCount || '0') + 1),
-      );
-
-      // Count by device
-      const deviceKey = `stats:device:${alarm.deviceId}:alarms`;
-      await this.redisService.hset(deviceKey, alarm.severity, '0');
-      const deviceCount = await this.redisService.hget(deviceKey, alarm.severity);
-      await this.redisService.hset(
-        deviceKey,
-        alarm.severity,
-        String(parseInt(deviceCount || '0') + 1),
-      );
-    } catch (error) {
-      console.error('Failed to update alarm stats:', error);
-    }
-  }
-
-  /**
-   * Cache active alarm in Redis
-   */
-  private async cacheActiveAlarm(alarm: AlarmMessage): Promise<void> {
-    try {
-      await this.redisService.hset(
-        `tenant:${alarm.tenantId}:active_alarms`,
-        alarm.id,
-        JSON.stringify({
-          ...alarm,
-          createdAt: Date.now(),
-        }),
-      );
-
-      // Set expiry (7 days)
-      await this.redisService.expire(
-        `tenant:${alarm.tenantId}:active_alarms`,
-        7 * 24 * 60 * 60,
-      );
-    } catch (error) {
-      console.error('Failed to cache active alarm:', error);
-    }
-  }
-
-  /**
-   * Send notifications based on severity
-   */
-  private async sendNotifications(alarm: AlarmMessage): Promise<void> {
-    console.log(`📧 Sending notifications for ${alarm.severity} alarm...`);
-
-    try {
-      // Get notification preferences
-      const preferences = await this.getNotificationPreferences(
-        alarm.tenantId,
-        alarm.severity,
-      );
-
-      // Send email
-      if (preferences.email && this.mailService) {
-        await this.sendEmailNotification(alarm, preferences.recipients);
+      const alarm = await this.alarmRepository.findOne({
+        where: { id: alarmId, tenantId },
+      });
+      if (!alarm) {
+        this.logger.warn(`Alarm ${alarmId} not found for new-alarm job`);
+        return;
       }
 
-      // Send SMS (if configured)
-      if (preferences.sms && alarm.severity === 'critical') {
-        await this.sendSMSNotification(alarm, preferences.phoneNumbers);
+      // Only the two loud severities get an unsolicited notification; warning
+      // and info are visible in the UI and over the websocket already.
+      if (
+        alarm.severity !== AlarmSeverity.CRITICAL &&
+        alarm.severity !== AlarmSeverity.ERROR
+      ) {
+        return;
       }
 
-      // Send webhook
-      if (preferences.webhook) {
-        await this.sendWebhookNotification(alarm, preferences.webhookUrl);
-      }
+      const recipients = await this.resolveRecipients(tenantId, ['TENANT_ADMIN'], alarm);
 
-      console.log('✅ Notifications sent');
-    } catch (error) {
-      console.error('Failed to send notifications:', error);
-    }
-  }
-
-  /**
-   * Send email notification
-   */
-  private async sendEmailNotification(
-    alarm: AlarmMessage,
-    recipients: string[],
-  ): Promise<void> {
-    if (!this.mailService) return;
-
-    const severityEmoji = {
-      INFO: 'ℹ️',
-      WARNING: '⚠️',
-      MINOR: '🟡',
-      MAJOR: '🟠',
-      CRITICAL: '🔴',
-    };
-
-    for (const recipient of recipients) {
-      try {
-        await this.mailService.sendMail({
-          to: recipient,
-          subject: `${severityEmoji[alarm.severity]} ${alarm.severity} Alarm: ${alarm.title}`,
-          html: `
-            <h2>${severityEmoji[alarm.severity]} ${alarm.severity} Alarm</h2>
-            <p><strong>Device:</strong> ${alarm.deviceName}</p>
-            <p><strong>Message:</strong> ${alarm.message}</p>
-            ${alarm.ruleName ? `<p><strong>Rule:</strong> ${alarm.ruleName}</p>` : ''}
-            ${alarm.value !== undefined ? `<p><strong>Value:</strong> ${alarm.value}</p>` : ''}
-            ${alarm.threshold !== undefined ? `<p><strong>Threshold:</strong> ${alarm.threshold}</p>` : ''}
-            <p><strong>Time:</strong> ${new Date(alarm.timestamp).toLocaleString()}</p>
-            <br>
-            <a href="${process.env.FRONTEND_URL}/alarms/${alarm.id}" 
-               style="background-color: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
-              View Alarm
-            </a>
-          `,
-        });
-      } catch (error) {
-        console.error(`Failed to send email to ${recipient}:`, error);
-      }
-    }
-  }
-
-  /**
-   * Send SMS notification (placeholder - integrate with Twilio/etc)
-   */
-  private async sendSMSNotification(
-    alarm: AlarmMessage,
-    phoneNumbers: string[],
-  ): Promise<void> {
-    console.log(`📱 SMS notification to: ${phoneNumbers.join(', ')}`);
-
-    // TODO: Integrate with SMS service (Twilio, AWS SNS, etc.)
-  }
-
-  /**
-   * Send webhook notification
-   */
-  private async sendWebhookNotification(
-    alarm: AlarmMessage,
-    webhookUrl: string,
-  ): Promise<void> {
-    try {
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(alarm),
+      await this.dispatch(alarm, recipients, [NotificationChannel.IN_APP], {
+        title: `🚨 ${alarm.severity.toUpperCase()} Alarm: ${alarm.name}`,
+        message:
+          alarm.message ??
+          `A ${alarm.severity} alarm has been triggered${alarm.deviceId ? ' for a device' : ''}.`,
+        priority:
+          alarm.severity === AlarmSeverity.CRITICAL
+            ? NotificationPriority.URGENT
+            : NotificationPriority.HIGH,
+        metadata: {
+          alarmId: alarm.id,
+          alarmName: alarm.name,
+          severity: alarm.severity,
+          deviceId: alarm.deviceId,
+        },
       });
 
-      if (!response.ok) {
-        throw new Error(`Webhook failed: ${response.statusText}`);
+      this.logger.log(`Processed new alarm: ${alarm.name} (${alarm.severity})`);
+    } catch (err) {
+      this.logger.error(
+        `Failed to process new alarm ${alarmId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // JOB: check-escalation
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Process('check-escalation')
+  async handleEscalationCheck(job: Job<AlarmJobData>): Promise<void> {
+    const { alarmId, tenantId } = job.data;
+
+    try {
+      const alarm = await this.alarmRepository.findOne({
+        where: { id: alarmId, tenantId },
+      });
+      if (!alarm) {
+        this.logger.warn(`Alarm ${alarmId} not found for escalation check`);
+        return;
       }
 
-      console.log(`✅ Webhook sent to: ${webhookUrl}`);
-    } catch (error) {
-      console.error('Failed to send webhook:', error);
+      // ── Stop conditions ──────────────────────────────────────────────────
+      // Checked against the STORED AlarmStatus enum (active/inactive/
+      // acknowledged/cleared/resolved), NOT the derived tbStatus strings
+      // ('ACTIVE_ACK', 'CLEARED_UNACK', …). tbStatus is computed in @AfterLoad
+      // and is not a column; comparing alarm.status to it never matches, which
+      // would have escalated every acknowledged alarm.
+      if (alarm.status !== AlarmStatus.ACTIVE) {
+        this.logger.debug(
+          `Alarm ${alarmId} is ${alarm.status}, skipping escalation`,
+        );
+        return;
+      }
+
+      // Belt and braces: an alarm can carry acknowledgedAt while still ACTIVE
+      // in the CLEARED_UNACK → CLEARED_ACK style transitions the entity allows.
+      if (alarm.acknowledgedAt) {
+        this.logger.debug(`Alarm ${alarmId} already acknowledged, skipping`);
+        return;
+      }
+
+      if (!alarm.isEnabled) return;
+
+      // triggeredAt is nullable, and a rule that has never fired has none.
+      // new Date(null).getTime() is NaN, and every comparison against NaN is
+      // false, so this would silently never escalate rather than error.
+      if (!alarm.triggeredAt) {
+        this.logger.debug(`Alarm ${alarmId} has never triggered, skipping`);
+        return;
+      }
+
+      const rules = resolveEscalationRules(alarm);
+      if (rules.length === 0) return;
+
+      const minutesSinceTriggered =
+        (Date.now() - new Date(alarm.triggeredAt).getTime()) / 60_000;
+
+      // Highest rung whose time has come and that we have not already served.
+      // Iterating descending means a worker that was down through several rungs
+      // jumps straight to the current one instead of replaying the whole ladder.
+      const due = [...rules]
+        .sort((a, b) => b.level - a.level)
+        .find(
+          (r) =>
+            minutesSinceTriggered >= r.afterMinutes &&
+            alarm.escalationLevel < r.level,
+        );
+
+      if (!due) return;
+
+      await this.escalateAlarm(alarm, due);
+    } catch (err) {
+      this.logger.error(
+        `Escalation check failed for alarm ${alarmId}: ${(err as Error).message}`,
+      );
+      throw err; // let Bull apply the configured retry/backoff
     }
   }
 
-  /**
-   * Get notification preferences for tenant
-   */
-  private async getNotificationPreferences(
-    tenantId: string,
-    severity: string,
-  ): Promise<any> {
-    // Check cache first
-    const cached = await this.redisService.get(
-      `tenant:${tenantId}:notification_prefs`,
-    );
-    if (cached) {
-      return JSON.parse(cached);
+  // ══════════════════════════════════════════════════════════════════════════
+  // ESCALATION
+  // ══════════════════════════════════════════════════════════════════════════
+
+  private async escalateAlarm(alarm: Alarm, rule: EscalationRule): Promise<void> {
+    this.logger.log(`Escalating alarm ${alarm.name} to level ${rule.level}`);
+
+    const message =
+      rule.message ??
+      `⚠️ ESCALATION Level ${rule.level}: Alarm "${alarm.name}" has been ` +
+        `unacknowledged for ${rule.afterMinutes} minutes. ` +
+        `Severity: ${alarm.severity.toUpperCase()}`;
+
+    // ── Claim the level before dispatching ────────────────────────────────
+    // A conditional UPDATE on escalationLevel is the concurrency guard: with
+    // more than one worker (or a Bull retry racing the original) two jobs can
+    // read the same alarm and both decide level N is due. Only the one whose
+    // UPDATE matches a row proceeds, so recipients are never double-notified.
+    const claim = await this.alarmRepository
+      .createQueryBuilder()
+      .update(Alarm)
+      .set({ escalationLevel: rule.level, escalatedAt: () => 'NOW()' })
+      .where('id = :id', { id: alarm.id })
+      .andWhere('"escalationLevel" < :level', { level: rule.level })
+      .andWhere('status = :status', { status: AlarmStatus.ACTIVE })
+      .andWhere('"acknowledgedAt" IS NULL')
+      .execute();
+
+    if (!claim.affected) {
+      this.logger.debug(
+        `Alarm ${alarm.id} level ${rule.level} already claimed or no longer eligible`,
+      );
+      return;
     }
 
-    // Get from database (table is "tenants", plural)
-    const result = await this.db.query(
-      `SELECT notification_preferences
-       FROM tenants
-       WHERE id = $1`,
-      [tenantId],
+    const channels = rule.channels
+      .map((c) => {
+        const resolved = resolveChannel(c);
+        if (!resolved) {
+          this.logger.warn(`Unknown escalation channel "${c}" on alarm ${alarm.id}`);
+        }
+        return resolved;
+      })
+      .filter((c): c is NotificationChannel => c !== null);
+
+    const recipients = await this.resolveRecipients(
+      alarm.tenantId,
+      rule.notifyRoles,
+      alarm,
     );
 
-    const prefs = result.rows[0]?.notification_preferences || {
-      email: true,
-      recipients: ['admin@example.com'],
-      sms: severity === 'critical',
-      phoneNumbers: [],
-      webhook: false,
-      webhookUrl: '',
-    };
+    if (recipients.length === 0) {
+      this.logger.warn(
+        `No recipients matched roles [${rule.notifyRoles.join(',')}] for alarm ${alarm.id}`,
+      );
+    }
 
-    // Cache for 5 minutes
-    await this.redisService.set(
-      `tenant:${tenantId}:notification_prefs`,
-      JSON.stringify(prefs),
-      300,
-    );
+    const sent = await this.dispatch(alarm, recipients, channels, {
+      title: `Alarm Escalation L${rule.level}: ${alarm.name}`,
+      message,
+      priority: NotificationPriority.URGENT,
+      metadata: {
+        alarmId: alarm.id,
+        escalationLevel: rule.level,
+        severity: alarm.severity,
+        deviceId: alarm.deviceId,
+        minutesUnacknowledged: rule.afterMinutes,
+      },
+    });
 
-    return prefs;
-  }
-
-  /**
-   * Check if alarm needs escalation
-   */
-  private async checkEscalation(alarm: AlarmMessage): Promise<void> {
-    // Escalate MAJOR alarms if not acknowledged within 15 minutes
-    if (alarm.severity === 'MAJOR') {
-      setTimeout(
-        async () => {
-          const status = await this.getAlarmStatus(alarm.id);
-
-          if (status === 'ACTIVE') {
-            console.log('📢 Escalating alarm due to no acknowledgment...');
-
-            await this.kafkaService.sendMessage('alarms.escalated', {
-              ...alarm,
-              escalatedAt: Date.now(),
-            });
-          }
+    // History is appended after dispatch so it records what was actually sent
+    // rather than what was intended. Re-read to avoid clobbering the claim.
+    const fresh = await this.alarmRepository.findOne({ where: { id: alarm.id } });
+    if (fresh) {
+      fresh.escalationHistory = [
+        ...(fresh.escalationHistory ?? []),
+        {
+          level: rule.level,
+          escalatedAt: new Date().toISOString(),
+          channel: channels.join(','),
+          recipient: recipients.map((r) => r.email).join(',') || rule.notifyRoles.join(','),
+          message,
         },
-        15 * 60 * 1000,
-      ); // 15 minutes
+      ];
+      await this.alarmRepository.save(fresh);
+
+      // Drives the websocket broadcast — AlarmsGateway listens for this.
+      this.eventEmitter.emit('alarm.escalated', {
+        alarm: fresh,
+        level: rule.level,
+        rule,
+      });
     }
-  }
 
-  /**
-   * Get current alarm status
-   */
-  private async getAlarmStatus(alarmId: string): Promise<string> {
-    const result = await this.db.query(
-      'SELECT status FROM alarm WHERE id = $1',
-      [alarmId],
+    this.logger.log(
+      `Alarm ${alarm.name} escalated to level ${rule.level} — ` +
+        `${sent} notification(s) via ${channels.join(',') || 'no valid channel'}`,
     );
-    return result.rows[0]?.status || 'UNKNOWN';
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HELPERS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Users in the tenant whose role appears in notifyRoles.
+   *
+   * Falls back to the alarm's explicit recipients.userIds, then to its creator,
+   * so an escalation is never silently dropped because a tenant happens to have
+   * no user in the configured role.
+   */
+  private async resolveRecipients(
+    tenantId: string,
+    notifyRoles: string[],
+    alarm: Alarm,
+  ): Promise<User[]> {
+    const tenantUsers = await this.userRepository.find({ where: { tenantId } });
+
+    const byRole = tenantUsers.filter((u) => matchesRole(u.role, notifyRoles));
+    if (byRole.length > 0) return byRole;
+
+    const explicitIds = alarm.recipients?.userIds ?? [];
+    const explicit = tenantUsers.filter((u) => explicitIds.includes(u.id));
+    if (explicit.length > 0) return explicit;
+
+    const creator = tenantUsers.find((u) => u.id === alarm.createdBy);
+    return creator ? [creator] : [];
   }
 
   /**
-   * Notify about acknowledgment
+   * One notification per (recipient × channel).
+   *
+   * NotificationsService.create() takes (CreateNotificationDto, user?) and
+   * requires a concrete userId plus a SINGULAR `channel` — it has no
+   * `tenantId`/`channels[]` input and throws 'User context required' when it
+   * cannot resolve a user. tenantId/customerId are derived from the user
+   * argument, which is why the User row is passed through rather than an id.
+   *
+   * Returns the number of notifications successfully created.
    */
-  private async notifyAcknowledgment(alarm: AlarmMessage): Promise<void> {
-    console.log('📧 Sending acknowledgment notification...');
-    // Implementation similar to sendNotifications
-  }
+  private async dispatch(
+    alarm: Alarm,
+    recipients: User[],
+    channels: NotificationChannel[],
+    content: {
+      title: string;
+      message: string;
+      priority: NotificationPriority;
+      metadata: Record<string, any>;
+    },
+  ): Promise<number> {
+    let sent = 0;
 
-  /**
-   * Send clearance notification
-   */
-  private async sendClearanceNotification(alarm: AlarmMessage): Promise<void> {
-    console.log('📧 Sending clearance notification...');
-    // Implementation similar to sendNotifications
-  }
+    for (const recipient of recipients) {
+      for (const channel of channels) {
+        // Skip channels the recipient has no address for — EmailChannel throws
+        // 'Recipient email is required', which would mark the notification
+        // FAILED and burn a retry for a permanent condition.
+        if (channel === NotificationChannel.EMAIL && !recipient.email) continue;
+        if (channel === NotificationChannel.SMS && !recipient.phone) continue;
 
-  /**
-   * Send escalation notifications (urgent!)
-   */
-  private async sendEscalationNotifications(
-    alarm: AlarmMessage,
-  ): Promise<void> {
-    console.log('🚨 Sending URGENT escalation notifications...');
-    // Force email + SMS for escalated alarms
-  }
+        try {
+          await this.notificationsService.create(
+            {
+              userId: recipient.id,
+              // There is no ALARM_ESCALATION member on NotificationType; the
+              // escalation level is carried in metadata instead.
+              type: NotificationType.ALARM,
+              channel,
+              priority: content.priority,
+              title: content.title,
+              message: content.message,
+              relatedEntityType: 'alarm',
+              relatedEntityId: alarm.id,
+              recipientEmail:
+                channel === NotificationChannel.EMAIL ? recipient.email : undefined,
+              recipientPhone:
+                channel === NotificationChannel.SMS ? recipient.phone : undefined,
+              action: {
+                label: 'View Alarm',
+                url: `/alarms/${alarm.id}`,
+                type: 'button',
+              },
+              metadata: content.metadata,
+            },
+            recipient,
+          );
+          sent++;
+        } catch (e) {
+          this.logger.error(
+            `Failed to send ${channel} notification for alarm ${alarm.id} ` +
+              `to ${recipient.id}: ${(e as Error).message}`,
+          );
+        }
+      }
+    }
 
-  /**
-   * Stop consumer
-   */
-  async stop(): Promise<void> {
-    console.log('🛑 Stopping Alarm Consumer...');
-    // Kafka service handles consumer cleanup
-    console.log('✅ Alarm Consumer stopped');
+    return sent;
   }
 }

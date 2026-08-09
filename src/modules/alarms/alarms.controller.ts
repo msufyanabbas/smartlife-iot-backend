@@ -128,6 +128,25 @@ export class AlarmsController {
     return this.alarmsService.findOne(id, user.tenantId);
   }
 
+  // ':id/escalation-history' is a distinct path from ':id', so ordering
+  // relative to it does not matter — but it stays next to it for readability.
+  @Get(':id/escalation-history')
+  @ApiOperation({
+    summary: 'Get alarm escalation history',
+    description:
+      'Escalation timeline for an alarm: current level, per-level dispatch ' +
+      'history, and the rules in force (the alarm override when set, ' +
+      'otherwise the severity default).',
+  })
+  @ApiResponse({ status: 200, description: 'Escalation timeline' })
+  @ApiResponse({ status: 404, description: 'Alarm not found' })
+  getEscalationHistory(
+    @Param('id', ParseIdPipe) id: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.alarmsService.getEscalationHistory(id, user.tenantId);
+  }
+
   @Patch(':id')
   @ApiOperation({ summary: 'Update alarm rule' })
   @ApiResponse({ status: 200, description: 'Alarm updated' })
