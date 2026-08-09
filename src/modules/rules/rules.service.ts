@@ -15,6 +15,7 @@ import {
 } from './dto/rule-chain.dto';
 import { Node } from '../nodes/entities/node.entity';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 
 @Injectable()
 export class RulesService {
@@ -25,6 +26,8 @@ export class RulesService {
     private readonly ruleChainRepo: Repository<RuleChain>,
     @InjectRepository(Node)
     private readonly nodeRepo: Repository<Node>,
+    // SubscriptionsModule is @Global() — no module import needed, no cycle.
+    private readonly subscriptionsService: SubscriptionsService,
   ) {}
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -59,6 +62,16 @@ export class RulesService {
     });
 
     const saved = await this.ruleChainRepo.save(ruleChain);
+
+    try {
+      await this.subscriptionsService.incrementTenantUsage(
+        tenantId,
+        'ruleChains',
+      );
+    } catch (e) {
+      this.logger.warn(`Failed to update usage counter: ${(e as Error).message}`);
+    }
+
     this.logger.log(`Rule chain created: ${saved.id} by user ${userId}`);
     return saved;
   }
@@ -175,6 +188,16 @@ export class RulesService {
     ruleChain.deletedBy = userId;
     await this.ruleChainRepo.save(ruleChain);
     await this.ruleChainRepo.softRemove(ruleChain);
+
+    try {
+      await this.subscriptionsService.decrementTenantUsage(
+        tenantId,
+        'ruleChains',
+      );
+    } catch (e) {
+      this.logger.warn(`Failed to update usage counter: ${(e as Error).message}`);
+    }
+
     this.logger.log(`Rule chain deleted: ${id} by user ${userId}`);
   }
 

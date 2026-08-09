@@ -325,6 +325,24 @@ export class DevicesService {
     await this.credentialsService.deleteByDeviceId(device.id);
 
     await this.deviceRepository.softRemove(device);
+
+    // Give the quota back. Without this the counter only ever climbs, and a
+    // tenant that creates and deletes the same device repeatedly is eventually
+    // locked out by SubscriptionLimitGuard despite owning nothing.
+    // Non-fatal: the device IS deleted, so a failed counter update must not
+    // surface to the caller as a failed delete.
+    try {
+      await this.subscriptionsService.decrementTenantUsage(
+        device.tenantId,
+        'devices',
+        1,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to decrement devices usage for tenant ${device.tenantId}`,
+        err,
+      );
+    }
   }
 
   // ── Credentials passthrough ───────────────────────────────────────────────

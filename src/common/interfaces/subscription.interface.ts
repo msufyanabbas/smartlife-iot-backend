@@ -35,6 +35,8 @@ export interface SubscriptionLimits {
   assets?: number;
   floorPlans?: number;
   automations?: number;
+  /** Rule chains a tenant may own. -1 = unlimited. Counter key: usage.ruleChains */
+  ruleChains?: number;
 
   // Floor plans
   /**
@@ -167,6 +169,7 @@ export interface SubscriptionUsage {
   assets: number;
   floorPlans: number;
   automations: number;
+  ruleChains: number;
 
   // Org counts (incremented when created)
   users: number;
@@ -185,6 +188,7 @@ export const EMPTY_USAGE: SubscriptionUsage = {
   assets: 0,
   floorPlans: 0,
   automations: 0,
+  ruleChains: 0,
   users: 0,
   customers: 0,
   apiCalls: 0,
@@ -200,6 +204,7 @@ export const USAGE_TO_LIMIT_KEY: Record<keyof SubscriptionUsage, keyof Subscript
   assets: 'assets',
   floorPlans: 'floorPlans',
   automations: 'automations',
+  ruleChains: 'ruleChains',
   users: 'users',
   customers: 'customers',
   apiCalls: 'apiCallsPerMonth',

@@ -26,6 +26,11 @@ import {
   Customer,
   Device,
   Tenant,
+  Dashboard,
+  Asset,
+  RuleChain,
+  FloorPlan,
+  Automation,
   User,
   Payment,
 } from '@modules/index.entities';
@@ -82,6 +87,7 @@ const PLAN_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> = {
     assets: 10,
     floorPlans: 0,
     automations: 0,
+    ruleChains: 0,
     users: 2,
     customers: 1,
     apiCallsPerMonth: 10_000,
@@ -96,6 +102,7 @@ const PLAN_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> = {
     assets: 100,
     floorPlans: 5,
     automations: 10,
+    ruleChains: 5,
     users: 5,
     customers: 5,
     apiCallsPerMonth: 100_000,
@@ -110,6 +117,7 @@ const PLAN_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> = {
     assets: 500,
     floorPlans: 20,
     automations: -1, // unlimited
+    ruleChains: 25,
     users: 20,
     customers: 20,
     apiCallsPerMonth: 500_000,
@@ -124,6 +132,7 @@ const PLAN_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> = {
     assets: -1,
     floorPlans: -1,
     automations: -1,
+    ruleChains: -1,
     users: -1,
     customers: -1,
     apiCallsPerMonth: -1,
@@ -279,6 +288,23 @@ export class SubscriptionsService {
     private readonly tenantRepository: Repository<Tenant>,
     @InjectRepository(Payment)
     private readonly paymentRepository: Repository<Payment>,
+    // Read-only, for syncUsageFromDB(). Registered as bare repositories rather
+    // than by importing each owning module — SubscriptionsModule is @Global and
+    // half of these modules already depend on it, so module imports would cycle.
+    @InjectRepository(Device)
+    private readonly deviceRepository: Repository<Device>,
+    @InjectRepository(Dashboard)
+    private readonly dashboardRepository: Repository<Dashboard>,
+    @InjectRepository(Asset)
+    private readonly assetRepository: Repository<Asset>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    @InjectRepository(RuleChain)
+    private readonly ruleChainRepository: Repository<RuleChain>,
+    @InjectRepository(FloorPlan)
+    private readonly floorPlanRepository: Repository<FloorPlan>,
+    @InjectRepository(Automation)
+    private readonly automationRepository: Repository<Automation>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -860,31 +886,6 @@ export class SubscriptionsService {
   }
 
   /**
-   * @deprecated — use incrementTenantUsage() instead.
-   * Kept for backward compatibility with any existing callers.
-   */
-  async incrementUsage(
-    userId: string,
-    resource: keyof SubscriptionUsage,
-    amount = 1,
-  ): Promise<void> {
-    const subscription = await this.findCurrent(userId);
-    await this.incrementTenantUsage(subscription.tenantId, resource, amount);
-  }
-
-  /**
-   * @deprecated — use decrementTenantUsage() instead.
-   */
-  async decrementUsage(
-    userId: string,
-    resource: keyof SubscriptionUsage,
-    amount = 1,
-  ): Promise<void> {
-    const subscription = await this.findCurrent(userId);
-    await this.decrementTenantUsage(subscription.tenantId, resource, amount);
-  }
-
-  /**
    * Check if user can perform action
    */
   // async canPerformAction(
@@ -972,6 +973,113 @@ export class SubscriptionsService {
        )
        WHERE "tenantId" = $2`,
       [amount, tenantId],
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // USAGE RECONCILIATION
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Recomputes the denormalised usage counters from live row counts.
+   *
+   * The counters are maintained incrementally by each resource service, which
+   * is O(1) at read time but drifts whenever an increment is missed (a crash
+   * between the INSERT and the counter update, a resource created by a path
+   * that predates the counter, a direct DB edit). This is the repair.
+   *
+   * Only the six countable resources are recomputed. `apiCalls`,
+   * `smsNotifications`, `storageGB` and `customers` are deliberately PRESERVED:
+   *   - apiCalls / smsNotifications are monthly rate counters with no row to
+   *     count against (api_logs is pruned, and the monthly cron resets them),
+   *     so recomputing them from tables would silently reset a tenant's
+   *     metered usage to zero mid-period.
+   *   - storageGB has no authoritative source yet (no size column on
+   *     floor_plans — see the audit notes).
+   *   - customers is already maintained reliably by CustomerListener.
+   *
+   * This is why the write below MERGES over the existing jsonb rather than
+   * replacing it — a wholesale replace would zero the metered counters.
+   */
+  async syncUsageFromDB(tenantId: string): Promise<SubscriptionUsage> {
+    const [devices, dashboards, assets, users, ruleChains, floorPlans, automations] =
+      await Promise.all([
+        this.deviceRepository.count({ where: { tenantId } }),
+        this.dashboardRepository.count({ where: { tenantId } }),
+        this.assetRepository.count({ where: { tenantId } }),
+        this.userRepository.count({ where: { tenantId } }),
+        this.ruleChainRepository.count({ where: { tenantId } }),
+        this.floorPlanRepository.count({ where: { tenantId } }),
+        this.automationRepository.count({ where: { tenantId } }),
+      ]);
+    // TypeORM's count() already excludes soft-deleted rows (deleted_at IS NULL)
+    // for entities with a @DeleteDateColumn, so no explicit predicate is needed.
+
+    const recomputed = {
+      devices,
+      dashboards,
+      assets,
+      users,
+      ruleChains,
+      floorPlans,
+      automations,
+    };
+
+    const result = await this.subscriptionRepository
+      .createQueryBuilder()
+      .update(Subscription)
+      .set({
+        // `usage || :recomputed` — jsonb concat, right side wins per key.
+        // Merges rather than replaces, so metered counters survive.
+        usage: () => `COALESCE(usage, '{}'::jsonb) || :recomputed::jsonb`,
+      })
+      .where('"tenantId" = :tenantId', { tenantId })
+      .setParameter('recomputed', JSON.stringify(recomputed))
+      .returning('usage')
+      .execute();
+
+    const updated: SubscriptionUsage =
+      result.raw?.[0]?.usage ?? { ...EMPTY_USAGE, ...recomputed };
+
+    this.logger.log(
+      `Usage synced for tenant ${tenantId}: ` +
+        Object.entries(recomputed)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(' '),
+    );
+
+    return updated;
+  }
+
+  /**
+   * Nightly drift repair for every subscription.
+   *
+   * Sequential, not Promise.all: this touches every tenant and there is no
+   * deadline on a 2 AM job — a burst of parallel COUNTs across seven tables
+   * per tenant is a worse trade than taking a few extra seconds.
+   */
+  @Cron('0 2 * * *')
+  async syncAllTenantsUsage(): Promise<void> {
+    this.logger.log('Running daily usage sync for all tenants...');
+
+    const subscriptions = await this.subscriptionRepository.find({
+      select: ['id', 'tenantId'],
+    });
+
+    let synced = 0;
+    for (const sub of subscriptions) {
+      try {
+        await this.syncUsageFromDB(sub.tenantId);
+        synced++;
+      } catch (err) {
+        this.logger.error(
+          `Failed to sync usage for tenant ${sub.tenantId}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Daily usage sync completed: ${synced}/${subscriptions.length} subscriptions`,
     );
   }
 

@@ -4,6 +4,7 @@ import {
   ConflictException,
   BadRequestException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, IsNull } from 'typeorm';
@@ -32,9 +33,12 @@ import {
 } from './dto/assets.dto';
 import { UserRole } from '@common/enums/index.enum';
 import { PaginatedResponseDto, PaginationDto, SortOrder } from '@/common/dto/pagination.dto';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 
 @Injectable()
 export class AssetsService {
+  private readonly logger = new Logger(AssetsService.name);
+
   constructor(
     @InjectRepository(Asset)
     private assetRepository: Repository<Asset>,
@@ -59,6 +63,9 @@ export class AssetsService {
     @InjectRepository(Alarm)
     private alarmRepository: Repository<Alarm>,
     private eventEmitter: EventEmitter2,
+    // SubscriptionsModule is @Global(), so no module import is needed here —
+    // which also keeps this free of the cycles described above.
+    private subscriptionsService: SubscriptionsService,
   ) {}
 
   /**
@@ -109,6 +116,23 @@ export class AssetsService {
       }
     );
     const savedAsset = await this.assetRepository.save(asset);
+
+    // Keep subscription.usage.assets honest — it is what
+    // SubscriptionLimitGuard and GET /subscriptions/usage both read.
+    // Non-fatal: the asset exists, so a counter failure must not fail the
+    // request.
+    try {
+      await this.subscriptionsService.incrementTenantUsage(
+        savedAsset.tenantId,
+        'assets',
+        1,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to increment assets usage for tenant ${savedAsset.tenantId}`,
+        err,
+      );
+    }
 
     // Emit event
     this.eventEmitter.emit('asset.created', { asset: savedAsset });
@@ -556,6 +580,19 @@ async findAll(
     }
 
     await this.assetRepository.softRemove(asset);
+
+    try {
+      await this.subscriptionsService.decrementTenantUsage(
+        asset.tenantId,
+        'assets',
+        1,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to decrement assets usage for tenant ${asset.tenantId}`,
+        err,
+      );
+    }
 
     // Emit event
     this.eventEmitter.emit('asset.deleted', { assetId: id });

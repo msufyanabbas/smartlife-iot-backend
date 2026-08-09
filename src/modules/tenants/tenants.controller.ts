@@ -28,13 +28,18 @@ import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { UserRole } from '@/common/enums/user.enum';
 import { TenantListResponseDto, TenantMessageResponseDto } from './dto/tenant-response.dto';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
 @ApiTags('tenants')
 @Controller('tenants')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class TenantsController {
-  constructor(private readonly tenantsService: TenantsService) {}
+  constructor(
+    private readonly tenantsService: TenantsService,
+    // SubscriptionsModule is @Global(), so this needs no module import.
+    private readonly subscriptionsService: SubscriptionsService,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new tenant' })
@@ -55,6 +60,25 @@ export class TenantsController {
   @ApiOperation({ summary: 'Get tenant statistics' })
   getStatistics() {
     return this.tenantsService.getStatistics();
+  }
+
+  // Declared before the ':id' routes on purpose. Nest matches in declaration
+  // order, so a literal path registered after a parameterised one on the same
+  // method would be shadowed by it.
+  @Post('sync-usage')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Recalculate usage counters from real DB counts',
+    description:
+      'Repairs drift between the denormalised subscription.usage counters and ' +
+      'actual row counts. Metered counters (apiCalls, smsNotifications, ' +
+      'storageGB) are preserved, not recomputed.',
+  })
+  @ApiResponse({ status: 200, description: 'Usage counters synchronized' })
+  async syncUsage(@CurrentUser() user: User) {
+    const usage = await this.subscriptionsService.syncUsageFromDB(user.tenantId!);
+    return { message: 'Usage counters synchronized successfully', usage };
   }
 
   @Get(':id')

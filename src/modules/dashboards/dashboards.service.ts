@@ -31,6 +31,7 @@ import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 import { WidgetType } from '@modules/widgets/entities/widget-type.entity';
 import { Device } from '@modules/devices/entities/device.entity';
 import { WebsocketGateway } from '@modules/websocket/websocket.gateway';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 
 @Injectable()
 export class DashboardsService {
@@ -47,6 +48,10 @@ export class DashboardsService {
     @InjectRepository(Device)
     private readonly deviceRepository: Repository<Device>,
     private readonly websocketGateway: WebsocketGateway,
+    // SubscriptionsModule is @Global(), so the service is injectable without
+    // importing the module here — which also avoids a cycle, since
+    // SubscriptionsService is what keeps the dashboards quota counter honest.
+    private readonly subscriptionsService: SubscriptionsService,
   ) {}
 
   // ── Create ────────────────────────────────────────────────────────────────
@@ -66,7 +71,26 @@ export class DashboardsService {
       widgets: widgets as any,
     });
 
-    return this.dashboardRepository.save(dashboard);
+    const saved = await this.dashboardRepository.save(dashboard);
+
+    // Keep subscription.usage.dashboards honest — it is what
+    // SubscriptionLimitGuard and GET /subscriptions/usage both read.
+    // Non-fatal: the dashboard exists, so a counter failure must not fail the
+    // request.
+    try {
+      await this.subscriptionsService.incrementTenantUsage(
+        saved.tenantId,
+        'dashboards',
+        1,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to increment dashboards usage for tenant ${saved.tenantId}`,
+        err,
+      );
+    }
+
+    return saved;
   }
 
   // ── Find all ──────────────────────────────────────────────────────────────
@@ -215,6 +239,19 @@ export class DashboardsService {
     }
 
     await this.dashboardRepository.softRemove(dashboard);
+
+    try {
+      await this.subscriptionsService.decrementTenantUsage(
+        dashboard.tenantId,
+        'dashboards',
+        1,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to decrement dashboards usage for tenant ${dashboard.tenantId}`,
+        err,
+      );
+    }
   }
 
   // ── Widget management ─────────────────────────────────────────────────────

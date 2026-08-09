@@ -26,6 +26,7 @@ export enum ResourceType {
   ASSET        = 'assets',
   FLOOR_PLAN   = 'floorPlans',
   AUTOMATION   = 'automations',
+  RULE_CHAIN   = 'ruleChains',
   API_CALL     = 'apiCalls',
   STORAGE      = 'storageGB',          // matches SubscriptionUsage key exactly
   SMS          = 'smsNotifications',
@@ -43,6 +44,7 @@ const RESOURCE_DISPLAY_NAMES: Record<ResourceType, string> = {
   [ResourceType.ASSET]:     'Asset',
   [ResourceType.FLOOR_PLAN]:'Floor Plan',
   [ResourceType.AUTOMATION]:'Automation',
+  [ResourceType.RULE_CHAIN]:'Rule Chain',
   [ResourceType.API_CALL]:  'API Call',
   [ResourceType.STORAGE]:   'Storage',
   [ResourceType.SMS]:       'SMS Notification',

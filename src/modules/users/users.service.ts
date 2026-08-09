@@ -4,6 +4,9 @@ import {
   BadRequestException,
   ConflictException,
   UnauthorizedException,
+  Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
@@ -38,9 +41,12 @@ import { Permission } from '../permissions/entities/permissions.entity';
 import { Role } from '../roles/entities/roles.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     @InjectRepository(User)
     private userRepository: Repository<User>,
@@ -51,6 +57,11 @@ export class UsersService {
     @InjectRepository(Permission)
     private permissionRepository: Repository<Permission>,
     private notificationsService: NotificationsService,
+    // forwardRef, not a plain inject: SubscriptionsModule already imports
+    // UsersModule (also via forwardRef), so resolving this eagerly would close
+    // the loop at bootstrap.
+    @Inject(forwardRef(() => SubscriptionsService))
+    private subscriptionsService: SubscriptionsService,
   ) {}
 
   /**
@@ -76,6 +87,28 @@ export class UsersService {
     });
 
     const savedUser = await this.userRepository.save(user);
+
+    // Keep subscription.usage.users honest — POST /users is guarded by
+    // @RequireSubscriptionLimit({ resource: 'users' }), which reads this counter.
+    //
+    // Guarded on tenantId: a SUPER_ADMIN has no tenant and no subscription.
+    // No double-count risk with CustomerListener's 'users' increment —
+    // CustomersService and AuthService.register() both write the user row
+    // through their own repository rather than through this method.
+    if (savedUser.tenantId) {
+      try {
+        await this.subscriptionsService.incrementTenantUsage(
+          savedUser.tenantId,
+          'users',
+          1,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to increment users usage for tenant ${savedUser.tenantId}`,
+          err,
+        );
+      }
+    }
 
     // Send verification email
     await this.sendVerificationEmail(savedUser);
@@ -194,6 +227,21 @@ export class UsersService {
     const user = await this.findOne(id);
 
     await this.userRepository.softRemove(user);
+
+    if (user.tenantId) {
+      try {
+        await this.subscriptionsService.decrementTenantUsage(
+          user.tenantId,
+          'users',
+          1,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to decrement users usage for tenant ${user.tenantId}`,
+          err,
+        );
+      }
+    }
 
     // Emit event
     this.eventEmitter.emit('user.deleted', {
@@ -414,6 +462,30 @@ export class UsersService {
     if (users.length === 0) return { deleted: 0 };
 
     await this.userRepository.softRemove(users);
+
+    // Decrement per tenant in one call each rather than once per user — a bulk
+    // delete can span tenants, and ten single-step updates on the same row
+    // would be ten write conflicts.
+    const perTenant = new Map<string, number>();
+    for (const user of users) {
+      if (!user.tenantId) continue;
+      perTenant.set(user.tenantId, (perTenant.get(user.tenantId) ?? 0) + 1);
+    }
+
+    for (const [tenantId, count] of perTenant) {
+      try {
+        await this.subscriptionsService.decrementTenantUsage(
+          tenantId,
+          'users',
+          count,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to decrement users usage for tenant ${tenantId}`,
+          err,
+        );
+      }
+    }
 
     // Emit per-user so CustomerListener can cascade for CUSTOMER role users
     for (const user of users) {

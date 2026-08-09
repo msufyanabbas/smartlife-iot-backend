@@ -16,6 +16,7 @@ import { Device } from '../devices/entities/device.entity';
 import { Telemetry } from '../telemetry/entities/telemetry.entity';
 import { Alarm } from '../alarms/entities/alarm.entity';
 import { Subscription } from '../subscriptions/entities/subscription.entity';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import {
   FloorPlanStatus,
   DeviceAnimationType,
@@ -92,6 +93,10 @@ export class FloorPlansService {
     private readonly alarmRepository: Repository<Alarm>,
     @InjectRepository(Subscription)
     private readonly subscriptionRepository: Repository<Subscription>,
+    // The repository above answers "what is the maxFloorPlans ceiling"; the
+    // service below maintains usage.floorPlans. Both are needed: the ceiling
+    // check counts rows live, the counter feeds GET /tenants/:id/usage.
+    private readonly subscriptionsService: SubscriptionsService,
     private readonly dwgParserService: DWGParserService,
   ) {
     this.ensureUploadDirectories();
@@ -322,6 +327,15 @@ export class FloorPlansService {
 
     const saved = await this.floorPlanRepository.save(floorPlan);
 
+    try {
+      await this.subscriptionsService.incrementTenantUsage(
+        actor.tenantId,
+        'floorPlans',
+      );
+    } catch (e) {
+      this.logger.warn(`Failed to update usage counter: ${(e as Error).message}`);
+    }
+
     // One-shot create + upload: same effect as calling POST /floor-plans/:id/dwg-upload
     // straight after. Parsing still happens asynchronously.
     if (file) {
@@ -473,6 +487,15 @@ export class FloorPlansService {
     if (floorPlan.modelFileUrl) await this.deleteFile(floorPlan.modelFileUrl);
 
     await this.floorPlanRepository.softRemove(floorPlan);
+
+    try {
+      await this.subscriptionsService.decrementTenantUsage(
+        actor.tenantId,
+        'floorPlans',
+      );
+    } catch (e) {
+      this.logger.warn(`Failed to update usage counter: ${(e as Error).message}`);
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
