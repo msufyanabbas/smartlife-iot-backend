@@ -22,6 +22,7 @@ import { IntegrationsService } from './integrations.service';
 import { CreateIntegrationDto } from './dto/create-integration.dto';
 import { UpdateIntegrationDto } from './dto/update-integration.dto';
 import { IntegrationActivityDto } from './dto/integration-activity.dto';
+import { TuyaCommandDto } from './dto/tuya-command.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
@@ -43,7 +44,7 @@ export class IntegrationsController {
     @CurrentUser() user: User,
     @Body() createIntegrationDto: CreateIntegrationDto,
   ) {
-    return this.integrationsService.create(user.id, createIntegrationDto);
+    return this.integrationsService.create(user, createIntegrationDto);
   }
 
   @Get()
@@ -145,7 +146,14 @@ export class IntegrationsController {
   }
 
   @Post(':id/test')
-  @ApiOperation({ summary: 'Test integration connection' })
+  @ApiOperation({
+    summary: 'Test integration connection',
+    description:
+      'Probes the endpoint through the same adapter dispatch uses. NOTE this ' +
+      'sends a real test payload (webhook/HTTP POST, MQTT publish, AWS IoT ' +
+      'publish), so subscribers will see it. Returns ' +
+      '{ connected, message, latencyMs }.',
+  })
   @ApiResponse({ status: 200, description: 'Connection test result' })
   @ApiResponse({ status: 404, description: 'Integration not found' })
   testConnection(
@@ -153,5 +161,61 @@ export class IntegrationsController {
     @Param('id', ParseIdPipe) id: string,
   ) {
     return this.integrationsService.testConnection(id, user.id);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // TUYA
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Get(':id/tuya/devices')
+  @ApiOperation({
+    summary: 'List Tuya devices bound to this integration',
+    description:
+      'Requires a TUYA integration (or a legacy CLOUD one carrying Tuya credentials).',
+  })
+  @ApiResponse({ status: 200, description: 'Tuya devices' })
+  @ApiResponse({ status: 400, description: 'Not a Tuya integration' })
+  @ApiResponse({ status: 404, description: 'Integration not found' })
+  getTuyaDevices(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.integrationsService.getTuyaDevices(id, user.id);
+  }
+
+  @Post(':id/tuya/command')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Send a command to a Tuya device',
+    description:
+      'Body: { tuyaDeviceId, commands: [{ code, value }] }. Commands are passed ' +
+      'through to POST /v1.0/devices/{id}/commands on the Tuya OpenAPI.',
+  })
+  @ApiResponse({ status: 200, description: 'Command accepted by Tuya' })
+  @ApiResponse({ status: 400, description: 'Not a Tuya integration, or Tuya rejected the command' })
+  @ApiResponse({ status: 404, description: 'Integration not found' })
+  sendTuyaCommand(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+    @Body() body: TuyaCommandDto,
+  ) {
+    return this.integrationsService.sendTuyaCommand(id, user.id, body);
+  }
+
+  @Get(':id/tuya/device/:tuyaDeviceId/status')
+  @ApiOperation({ summary: 'Get the current datapoint status of a Tuya device' })
+  @ApiResponse({ status: 200, description: 'Tuya device status' })
+  @ApiResponse({ status: 400, description: 'Not a Tuya integration, or Tuya rejected the request' })
+  @ApiResponse({ status: 404, description: 'Integration not found' })
+  getTuyaDeviceStatus(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+    @Param('tuyaDeviceId') tuyaDeviceId: string,
+  ) {
+    return this.integrationsService.getTuyaDeviceStatus(
+      id,
+      user.id,
+      tuyaDeviceId,
+    );
   }
 }

@@ -12,6 +12,7 @@ import { AutomationModule } from '@modules/automation/automation.module';
 import { WebsocketModule } from '@modules/websocket/websocket.module';
 import { AlarmsModule } from '@modules/alarms/alarms.module';
 import { ProfilesModule } from '@modules/profiles/profiles.module';
+import { IntegrationsModule } from '@modules/integrations/integrations.module';
 import { Device } from '../index.entities';
 
 @Module({
@@ -23,6 +24,10 @@ import { Device } from '../index.entities';
     WebsocketModule,
     AlarmsModule, // exports AlarmsService → needed by TelemetryProcessor
     ProfilesModule, // exports ProfileAlarmService → device-profile alarm rules
+    // exports IntegrationDispatchService → outbound fan-out to external systems.
+    // No forwardRef needed: IntegrationsModule imports only TypeOrmModule and
+    // HttpModule, so there is no cycle back to TelemetryModule.
+    IntegrationsModule,
     BullModule.registerQueue({ name: 'telemetry' }),
   ],
   controllers: [TelemetryController],

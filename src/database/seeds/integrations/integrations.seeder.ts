@@ -22,17 +22,95 @@ export class IntegrationSeeder implements ISeeder {
     private readonly tenantRepository: Repository<Tenant>,
   ) { }
 
+  /**
+   * Three ready-to-edit examples, one per dispatch adapter, upserted by name.
+   *
+   * All INACTIVE and all carrying placeholder credentials: activating one is a
+   * deliberate act, and until then the dispatcher skips them (it only loads
+   * status = ACTIVE AND enabled = true).
+   */
+  private async seedRuntimeExamples(owner: User): Promise<void> {
+    const examples: Partial<Integration>[] = [
+      {
+        name: 'Webhook Forwarder (example)',
+        description: 'Forward all telemetry to an HTTP webhook',
+        type: IntegrationType.WEBHOOK,
+        protocol: 'HTTPS',
+        status: IntegrationStatus.INACTIVE,
+        enabled: false,
+        configuration: {
+          url: 'https://webhook.site/your-unique-id',
+          method: 'POST',
+          headers: { 'X-Source': 'SmartLife IoT' },
+          secret: 'your-webhook-secret',
+          timeout: 10000,
+        } as any,
+        deviceFilter: null, // all devices
+        dataFilter: null, // all keys
+        tags: ['example', 'webhook'],
+      },
+      {
+        name: 'Tuya Smart Home (example)',
+        description: 'Connect to Tuya cloud for smart home devices',
+        type: IntegrationType.TUYA,
+        protocol: 'HTTPS',
+        status: IntegrationStatus.INACTIVE,
+        enabled: false,
+        configuration: {
+          clientId: 'your-tuya-client-id',
+          clientSecret: 'your-tuya-client-secret',
+          region: 'eu',
+        } as any,
+        deviceFilter: { deviceType: 'actuator' },
+        tags: ['example', 'tuya'],
+      },
+      {
+        name: 'External MQTT Broker (example)',
+        description: 'Forward telemetry to an external MQTT broker',
+        type: IntegrationType.MQTT,
+        protocol: 'MQTT',
+        status: IntegrationStatus.INACTIVE,
+        enabled: false,
+        configuration: {
+          brokerUrl: 'mqtt://your-broker:1883',
+          username: 'smartlife',
+          password: 'your-password',
+          topic: 'smartlife/{{deviceId}}/telemetry',
+          qos: 0,
+        } as any,
+        dataFilter: { keys: ['temperature', 'humidity'] },
+        tags: ['example', 'mqtt'],
+      },
+    ];
+
+    let created = 0;
+    for (const example of examples) {
+      const exists = await this.integrationRepository.findOne({
+        where: { name: example.name, userId: owner.id },
+      });
+      if (exists) continue;
+
+      await this.integrationRepository.save(
+        this.integrationRepository.create({
+          ...example,
+          tenantId: owner.tenantId ?? undefined,
+          customerId: owner.customerId,
+          userId: owner.id,
+          createdBy: owner.id,
+        }),
+      );
+      created++;
+    }
+
+    this.logger.log(
+      `🔌 Runtime example integrations: ${created} created, ${examples.length - created} already present`,
+    );
+  }
+
   async seed(): Promise<void> {
     this.logger.log('🌱 Starting integration seeding...');
 
-    // Check if integrations already exist
     const existingIntegrations = await this.integrationRepository.count();
-    if (existingIntegrations > 0) {
-      this.logger.log(
-        `⏭️  Integrations already seeded (${existingIntegrations} records). Skipping...`,
-      );
-      return;
-    }
 
     // Fetch required entities
     const users = await this.userRepository.find({ take: 10 });
@@ -40,6 +118,20 @@ export class IntegrationSeeder implements ISeeder {
 
     if (users.length === 0 || tenants.length === 0) {
       this.logger.warn('⚠️  No users or tenants found. Please seed them first.');
+      return;
+    }
+
+    // The runtime examples are upserted by name on every run, so they still
+    // appear on a database that was seeded before the dispatch engine existed.
+    // They are all INACTIVE — they carry placeholder credentials and must not
+    // start forwarding real telemetry to a stranger's endpoint.
+    await this.seedRuntimeExamples(users[0]);
+
+    // The bulk demo dataset below is only for a fresh database.
+    if (existingIntegrations > 0) {
+      this.logger.log(
+        `⏭️  Integrations already seeded (${existingIntegrations} records). Skipping demo dataset...`,
+      );
       return;
     }
 

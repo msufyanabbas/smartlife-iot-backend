@@ -134,6 +134,35 @@ export class Integration extends BaseEntity {
   // }
 
   // ══════════════════════════════════════════════════════════════════════════
+  // DISPATCH FILTERS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Which devices this integration forwards. NULL (or an empty object) means
+   * every device in the tenant. Fields are ANDed.
+   *
+   * `deviceType` and `assetId` are properties of the Device, not of the
+   * telemetry envelope, so matching on either makes the dispatcher load the
+   * device — see IntegrationDispatchService.needsDeviceLookup().
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  deviceFilter?: {
+    deviceId?: string; // one specific device
+    deviceType?: string; // every device of this DeviceType
+    assetId?: string; // every device under this asset
+  } | null;
+
+  /**
+   * Which telemetry keys are forwarded. NULL means the whole payload.
+   * Applied in buildPayload() before the payload leaves the platform, so an
+   * integration never sees keys it was not granted.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  dataFilter?: {
+    keys?: string[];
+  } | null;
+
+  // ══════════════════════════════════════════════════════════════════════════
   // AUTHENTICATION (Separate from config for security)
   // ══════════════════════════════════════════════════════════════════════════
 
@@ -179,8 +208,13 @@ export class Integration extends BaseEntity {
   // ERROR TRACKING
   // ══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * Typed `| null` because clearing the column requires assigning null:
+   * TypeORM's update() omits undefined properties from the SET clause, so a
+   * successful dispatch would otherwise leave the previous error in place.
+   */
   @Column({ type: 'text', nullable: true })
-  lastError?: string;
+  lastError?: string | null;
 
   @Column({ type: 'int', default: 0 })
   consecutiveFailures: number;
@@ -253,7 +287,7 @@ export class Integration extends BaseEntity {
     this.lastActivity = new Date();
     this.lastSuccess = new Date();
     this.status = IntegrationStatus.ACTIVE;
-    this.lastError = undefined;
+    this.lastError = null;
   }
 
   /**

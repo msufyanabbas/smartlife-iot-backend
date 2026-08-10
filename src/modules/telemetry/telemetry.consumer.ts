@@ -9,6 +9,7 @@ import { CodecRegistryService } from '../devices/codecs/codec-registry.service';
 import { AlarmsService } from '../index.service';
 import { AlarmStatus } from '@/common/enums/alarm.enum';
 import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
+import { IntegrationDispatchService } from '@modules/integrations/integration-dispatch.service';
 
 @Injectable()
 export class TelemetryConsumer implements OnModuleInit {
@@ -23,6 +24,7 @@ export class TelemetryConsumer implements OnModuleInit {
     private readonly codecService: CodecRegistryService,
     private readonly alarmsService: AlarmsService, //
     private readonly profileAlarmService: ProfileAlarmService,
+    private readonly integrationDispatch: IntegrationDispatchService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -122,6 +124,25 @@ export class TelemetryConsumer implements OnModuleInit {
         payload.deviceId,
         telemetry,
       );
+
+      // ── Step 3b: Fan out to external integrations ─────────────────────────
+      // Fire-and-forget: an external endpoint can be slow or down, and neither
+      // may delay persistence or the Kafka hand-off below. The service already
+      // swallows its own errors; the .catch() is a backstop against an
+      // unhandled rejection taking down the process.
+      void this.integrationDispatch
+        .dispatchTelemetry({
+          deviceId: payload.deviceId,
+          deviceKey: payload.deviceKey,
+          tenantId: payload.tenantId,
+          deviceType: payload.deviceType,
+          assetId: payload.assetId,
+          data: payload.data ?? {},
+          timestamp: new Date(),
+        })
+        .catch((err) =>
+          this.logger.error(`Integration dispatch error: ${err.message}`),
+        );
 
       // ── Step 4: Forward to validated topic ────────────────────────────────
       await this.kafka.sendMessage(

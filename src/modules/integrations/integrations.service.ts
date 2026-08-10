@@ -2,26 +2,20 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
-import * as mqtt from 'mqtt';
-import * as crypto from 'crypto';
 import { Integration } from './entities/integration.entity';
+import { User } from '../users/entities/user.entity';
+import { IntegrationDispatchService } from './integration-dispatch.service';
+import { TuyaAdapter } from './adapters/tuya.adapter';
 import { IntegrationStatus, IntegrationType } from '@common/enums/index.enum';
 import { CreateIntegrationDto } from './dto/create-integration.dto';
 import { UpdateIntegrationDto } from './dto/update-integration.dto';
 import { PaginationDto, PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { IntegrationActivityDto } from './dto/integration-activity.dto';
-
-type ConnectionTestResult = {
-  success: boolean;
-  message: string;
-  responseTime?: number;
-};
 
 @Injectable()
 export class IntegrationsService {
@@ -30,16 +24,31 @@ export class IntegrationsService {
   constructor(
     @InjectRepository(Integration)
     private readonly integrationRepository: Repository<Integration>,
-    private readonly httpService: HttpService,
+    private readonly dispatchService: IntegrationDispatchService,
   ) {}
 
+  /** Shared by the Tuya endpoints — stateless, so one instance is enough. */
+  private readonly tuyaAdapter = new TuyaAdapter();
+
+  /**
+   * Takes the whole User rather than just the id because `integrations.tenantId`
+   * is NOT NULL and the dispatcher selects by tenant — creating a row without
+   * one previously failed at the DB with a not-null violation, so nothing but
+   * the seeder could ever create an integration.
+   */
   async create(
-    userId: string,
+    user: User,
     createIntegrationDto: CreateIntegrationDto,
   ): Promise<Integration> {
+    if (!user.tenantId) {
+      throw new BadRequestException(
+        'An integration must belong to a tenant; this user has none',
+      );
+    }
+
     // Check if integration with same name exists
     const existing = await this.integrationRepository.findOne({
-      where: { name: createIntegrationDto.name, userId },
+      where: { name: createIntegrationDto.name, userId: user.id },
     });
 
     if (existing) {
@@ -48,8 +57,10 @@ export class IntegrationsService {
 
     const integration = this.integrationRepository.create({
       ...createIntegrationDto,
-      userId,
-      createdBy: userId,
+      tenantId: user.tenantId,
+      customerId: user.customerId,
+      userId: user.id,
+      createdBy: user.id,
     });
 
     return await this.integrationRepository.save(integration);
@@ -128,170 +139,92 @@ export class IntegrationsService {
     return await this.integrationRepository.save(integration);
   }
 
-  async testConnection(
+  /**
+   * Probe the integration through the same adapter dispatch uses, so a passing
+   * test means real traffic will work — not merely that the host resolves.
+   *
+   * Delegated to IntegrationDispatchService. The previous in-service probes
+   * (HTTP GET / MQTT connect) are gone; the adapters now own that logic.
+   *
+   * BREAKING: the response shape changed from
+   *   `{ success, message, responseTime? }` to
+   *   `{ connected, message, latencyMs, ...adapterExtras }`.
+   */
+  async testConnection(id: string, userId: string) {
+    return this.dispatchService.testConnection(id, userId);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // TUYA
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Tuya endpoints accept either the explicit TUYA type or a legacy CLOUD row
+   * whose configuration carries Tuya credentials — the same routing rule
+   * IntegrationDispatchService.resolveAdapter() applies.
+   */
+  private async findTuyaIntegration(
     id: string,
     userId: string,
-  ): Promise<ConnectionTestResult> {
+  ): Promise<Integration> {
     const integration = await this.findOne(id, userId);
-    const config = integration.configuration ?? {};
+    const config: any = integration.configuration ?? {};
 
-    switch (integration.type) {
-      // HTTP-based integrations: verify the endpoint is reachable.
-      case IntegrationType.WEBHOOK:
-      case IntegrationType.API:
-        return this.testHttpConnection(config);
+    const isTuya =
+      integration.type === IntegrationType.TUYA ||
+      (integration.type === IntegrationType.CLOUD &&
+        config.clientId &&
+        config.clientSecret);
 
-      // MQTT: open a real connection to the configured broker.
-      case IntegrationType.MQTT:
-        return this.testMqttConnection(config);
-
-      // AWS IoT / Azure (CLOUD), NOTIFICATION, DATABASE, etc. — no real probe yet.
-      default:
-        return {
-          success: false,
-          message: 'Connection test not yet implemented for this type',
-        };
+    if (!isTuya) {
+      throw new BadRequestException(
+        `Integration '${integration.name}' is not a Tuya integration`,
+      );
     }
+
+    return integration;
   }
 
-  /**
-   * HTTP/Webhook probe — issues a real GET to the configured URL with a 5s
-   * timeout. Any HTTP response (even 4xx/5xx) means the endpoint is reachable;
-   * only transport-level errors (DNS, refused, timeout) count as a failure.
-   */
-  private async testHttpConnection(
-    config: Integration['configuration'],
-  ): Promise<ConnectionTestResult> {
-    if (!config?.url) {
-      return {
-        success: false,
-        message: 'No URL configured for this integration',
-      };
-    }
-
-    const startedAt = Date.now();
-    try {
-      const response = await firstValueFrom(
-        this.httpService.request({
-          url: config.url,
-          method: 'GET',
-          timeout: 5000,
-          headers: config.headers,
-          // Treat any status code as a received response (reachable endpoint).
-          validateStatus: () => true,
-        }),
-      );
-
-      return {
-        success: true,
-        message: `Connected to ${config.url} (HTTP ${response.status})`,
-        responseTime: Date.now() - startedAt,
-      };
-    } catch (error: any) {
-      const responseTime = Date.now() - startedAt;
-      const message =
-        error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message ?? '')
-          ? 'Connection timed out after 5000ms'
-          : `Connection failed: ${error?.message ?? 'unknown error'}`;
-
-      this.logger.warn(
-        `HTTP connection test failed for ${config.url}: ${message}`,
-      );
-      return { success: false, message, responseTime };
-    }
+  async getTuyaDevices(id: string, userId: string): Promise<any[]> {
+    const integration = await this.findTuyaIntegration(id, userId);
+    return this.tuyaAdapter.getDevices(integration.configuration);
   }
 
-  /**
-   * MQTT probe — connects to the configured broker with a 3s timeout, then
-   * disconnects immediately. Resolves (never rejects) with the outcome.
-   */
-  private testMqttConnection(
-    config: Integration['configuration'],
-  ): Promise<ConnectionTestResult> {
-    return new Promise<ConnectionTestResult>((resolve) => {
-      const brokerUrl = this.buildMqttBrokerUrl(config);
-      if (!brokerUrl) {
-        resolve({
-          success: false,
-          message: 'No MQTT broker configured for this integration',
-        });
-        return;
-      }
+  async sendTuyaCommand(
+    id: string,
+    userId: string,
+    body: { tuyaDeviceId: string; commands: any[] },
+  ) {
+    const integration = await this.findTuyaIntegration(id, userId);
 
-      const startedAt = Date.now();
-      let settled = false;
-
-      const client = mqtt.connect(brokerUrl, {
-        username: config?.username,
-        password: config?.password,
-        connectTimeout: 3000,
-        reconnectPeriod: 0, // one-shot: never auto-retry
-        clientId:
-          config?.clientId ||
-          `smartlife-conntest-${crypto.randomBytes(6).toString('hex')}`,
-      });
-
-      const finish = (result: ConnectionTestResult) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        // force-close the socket so the probe leaves nothing behind
-        try {
-          client.end(true);
-        } catch {
-          /* ignore close errors */
-        }
-        resolve(result);
-      };
-
-      const timer = setTimeout(() => {
-        finish({
-          success: false,
-          message: 'MQTT connection timed out after 3000ms',
-          responseTime: Date.now() - startedAt,
-        });
-      }, 3000);
-
-      client.on('connect', () => {
-        finish({
-          success: true,
-          message: `Successfully connected to MQTT broker ${brokerUrl}`,
-          responseTime: Date.now() - startedAt,
-        });
-      });
-
-      client.on('error', (error) => {
-        this.logger.warn(
-          `MQTT connection test failed for ${brokerUrl}: ${error.message}`,
-        );
-        finish({
-          success: false,
-          message: `MQTT connection failed: ${error.message}`,
-          responseTime: Date.now() - startedAt,
-        });
-      });
+    const result = await this.tuyaAdapter.dispatch(integration.configuration, {
+      tuyaDeviceId: body.tuyaDeviceId,
+      commands: body.commands,
     });
-  }
 
-  /**
-   * Normalise the MQTT broker address from config into a connectable URL.
-   * Accepts either a full URL (mqtt://host:port) or a bare host + optional port.
-   */
-  private buildMqttBrokerUrl(
-    config: Integration['configuration'],
-  ): string | null {
-    const broker = config?.broker?.trim();
-    if (!broker) return null;
-
-    if (/^mqtts?:\/\//i.test(broker) || /^wss?:\/\//i.test(broker)) {
-      return broker;
+    if (!result.success) {
+      throw new BadRequestException(result.error ?? 'Tuya command failed');
     }
-
-    const scheme = config?.useTls ? 'mqtts' : 'mqtt';
-    return config?.port
-      ? `${scheme}://${broker}:${config.port}`
-      : `${scheme}://${broker}`;
+    return result;
   }
+
+  async getTuyaDeviceStatus(
+    id: string,
+    userId: string,
+    tuyaDeviceId: string,
+  ): Promise<any> {
+    const integration = await this.findTuyaIntegration(id, userId);
+
+    try {
+      return await this.tuyaAdapter.getDeviceStatus(
+        integration.configuration,
+        tuyaDeviceId,
+      );
+    } catch (err: any) {
+      throw new BadRequestException(err.message);
+    }
+  }
+
 
   async getStatistics(userId: string) {
     const [total, active, errors] = await Promise.all([
