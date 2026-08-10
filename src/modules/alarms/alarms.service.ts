@@ -7,9 +7,16 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
-import { Alarm, Device, User as UserEntity } from '@modules/index.entities';
-import { AlarmCondition, AlarmStatus, AlarmSeverity } from '@common/enums/index.enum';
+import { Alarm, Asset, Device, User as UserEntity } from '@modules/index.entities';
 import {
+  AlarmCondition,
+  AlarmPredicateOperation,
+  AlarmStatus,
+  AlarmSeverity,
+} from '@common/enums/index.enum';
+import type { AlarmRule } from '@common/interfaces/index.interface';
+import {
+  AlarmRuleInput,
   CreateAlarmDto,
   UpdateAlarmDto,
   AlarmQueryDto,
@@ -36,6 +43,10 @@ export class AlarmsService {
     private alarmRepository: Repository<Alarm>,
     @InjectRepository(Device)
     private deviceRepository: Repository<Device>,
+    // Read-only: validates that an alarm's asset belongs to the caller's
+    // tenant, the same check create() already does for deviceId.
+    @InjectRepository(Asset)
+    private assetRepository: Repository<Asset>,
     // Read-only: validates that an assignee belongs to the alarm's tenant.
     @InjectRepository(UserEntity)
     private userRepository: Repository<UserEntity>,
@@ -130,31 +141,279 @@ export class AlarmsService {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // PAYLOAD → COLUMN MAPPING
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * `alarms.rule` is NOT NULL, so an alarm created without one still needs a
+   * value. An empty telemetryKey matches nothing — rules are looked up by
+   * `rule->>'telemetryKey'` in checkAlarmConditions() — so the row stays inert
+   * until a rule is PATCHed in. That is the wanted behaviour for an alarm
+   * created by hand rather than by a rule.
+   */
+  private static readonly NO_RULE: AlarmRule = {
+    telemetryKey: '',
+    condition: AlarmCondition.EXISTS,
+    value: 0,
+  };
+
+  /** Keys that the flat AlarmRule cannot carry — see ruleSpec(). */
+  private static readonly RULE_EXTRA_KEYS: Array<keyof AlarmRuleInput> = [
+    'id',
+    'alarmType',
+    'createCondition',
+    'clearCondition',
+    'propagateToParent',
+    'propagateToChildren',
+    'schedule',
+    'alarmDetails',
+    'dashboardId',
+  ];
+
+  /**
+   * Map the wire payload onto entity columns.
+   *
+   * The API accepts notification and recipient settings flat (`email`, `sms`,
+   * `userIds`, …) because that is the shape the clients send; the entity keeps
+   * them in the `notifications` and `recipients` jsonb columns, which is what
+   * AlarmConsumer reads. The nested objects are still accepted and are applied
+   * first, so a flat field always wins over its nested twin.
+   *
+   * `existing` is supplied on update so a PATCH touching one channel does not
+   * blank the others.
+   */
+  private toAlarmColumns(
+    dto: CreateAlarmDto | UpdateAlarmDto,
+    existing?: Alarm,
+  ): Partial<Alarm> {
+    const columns: Partial<Alarm> = {};
+
+    if (dto.name !== undefined) columns.name = dto.name;
+    if (dto.description !== undefined) columns.description = dto.description;
+    if (dto.status !== undefined) columns.status = dto.status;
+    if (dto.isEnabled !== undefined) columns.isEnabled = dto.isEnabled;
+    if (dto.autoClear !== undefined) columns.autoClear = dto.autoClear;
+    if (dto.tags !== undefined) columns.tags = dto.tags;
+    if (dto.details !== undefined) columns.details = dto.details;
+
+    // deviceId/assetId are omitted from UpdateAlarmDto — an alarm does not
+    // move between originators — so they are only read when present.
+    const originator = dto as CreateAlarmDto;
+    if (originator.deviceId !== undefined) columns.deviceId = originator.deviceId;
+    if (originator.assetId !== undefined) columns.assetId = originator.assetId;
+
+    const notifications = {
+      ...existing?.notifications,
+      ...dto.notifications,
+      ...(dto.email !== undefined && { email: dto.email }),
+      ...(dto.sms !== undefined && { sms: dto.sms }),
+      ...(dto.push !== undefined && { push: dto.push }),
+      ...(dto.webhook !== undefined && { webhook: dto.webhook }),
+    };
+    if (Object.keys(notifications).length > 0) {
+      columns.notifications = notifications;
+    }
+
+    const recipients = {
+      ...existing?.recipients,
+      ...dto.recipients,
+      ...(dto.userIds !== undefined && { userIds: dto.userIds }),
+      ...(dto.emails !== undefined && { emails: dto.emails }),
+      ...(dto.phones !== undefined && { phones: dto.phones }),
+    };
+    if (Object.keys(recipients).length > 0) {
+      columns.recipients = recipients;
+    }
+
+    if (dto.rule !== undefined) {
+      columns.rule = this.normaliseRule(dto.rule);
+
+      const spec = this.ruleSpec(dto.rule);
+      if (spec) {
+        columns.metadata = { ...existing?.metadata, ruleSpec: spec };
+      }
+    }
+
+    // An explicit top-level severity wins. Otherwise fall back to the one on
+    // the rule — ThingsBoard-shaped payloads carry it there.
+    if (dto.severity !== undefined) {
+      columns.severity = dto.severity;
+    } else {
+      const fromRule = dto.rule?.severity;
+      if (
+        fromRule &&
+        (Object.values(AlarmSeverity) as string[]).includes(fromRule)
+      ) {
+        columns.severity = fromRule as AlarmSeverity;
+      }
+    }
+
+    return columns;
+  }
+
+  /**
+   * Collapse either accepted rule shape into the flat AlarmRule the `rule`
+   * column and evaluateCondition() expect — the same collapse
+   * ProfileAlarmService.toAlarmRule() performs for device-profile rules.
+   */
+  private normaliseRule(input: AlarmRuleInput): AlarmRule {
+    if (input.telemetryKey) {
+      return {
+        telemetryKey: input.telemetryKey,
+        condition: this.toAlarmCondition(input.condition),
+        value: Number(input.value ?? 0),
+        ...(input.value2 !== undefined && { value2: Number(input.value2) }),
+        ...(input.duration !== undefined && { duration: Number(input.duration) }),
+      };
+    }
+
+    const filter = this.extractFilter(input.createCondition);
+    if (!filter) {
+      this.logger.warn(
+        'Alarm rule carries no telemetry key — storing an inert rule',
+      );
+      return AlarmsService.NO_RULE;
+    }
+
+    return {
+      telemetryKey: filter.key,
+      condition: this.toAlarmCondition(filter.operation),
+      value: Number(filter.value ?? 0),
+      ...(filter.value2 !== undefined && { value2: Number(filter.value2) }),
+    };
+  }
+
+  /**
+   * Pull `{key, operation, value}` out of a createCondition. Three nestings
+   * are in the wild: the flat one the clients send, ThingsBoard's
+   * `{key, predicate: {operation, value: {defaultValue}}}`, and that same
+   * filter wrapped in a `condition[]` array.
+   */
+  private extractFilter(
+    createCondition?: Record<string, any>,
+  ): { key: string; operation?: string; value?: any; value2?: any } | null {
+    if (!createCondition) return null;
+
+    const filter = Array.isArray(createCondition.condition)
+      ? createCondition.condition[0]
+      : createCondition;
+
+    if (!filter?.key) return null;
+
+    const predicate = filter.predicate;
+    if (predicate) {
+      return {
+        key: filter.key,
+        operation: predicate.operation,
+        value: predicate.value?.defaultValue ?? predicate.value,
+        value2: predicate.value2?.defaultValue ?? predicate.value2,
+      };
+    }
+
+    return {
+      key: filter.key,
+      operation: filter.operation ?? filter.condition,
+      value: filter.value,
+      value2: filter.value2,
+    };
+  }
+
+  /**
+   * Both comparison vocabularies are accepted: AlarmCondition
+   * (`GREATER_THAN`), used by the flat rule, and AlarmPredicateOperation
+   * (`GREATER`), used by device-profile and ThingsBoard payloads. BETWEEN,
+   * EQUAL and NOT_EQUAL spell the same in both and are caught by the
+   * membership test.
+   */
+  private toAlarmCondition(operation?: string): AlarmCondition {
+    if (!operation) return AlarmCondition.EQUAL;
+
+    const op = String(operation).toUpperCase();
+
+    if ((Object.values(AlarmCondition) as string[]).includes(op)) {
+      return op as AlarmCondition;
+    }
+
+    switch (op) {
+      case AlarmPredicateOperation.GREATER:
+        return AlarmCondition.GREATER_THAN;
+      case AlarmPredicateOperation.LESS:
+        return AlarmCondition.LESS_THAN;
+      case AlarmPredicateOperation.GREATER_OR_EQUAL:
+        return AlarmCondition.GREATER_THAN_OR_EQUAL;
+      case AlarmPredicateOperation.LESS_OR_EQUAL:
+        return AlarmCondition.LESS_THAN_OR_EQUAL;
+      default:
+        this.logger.warn(
+          `Unknown alarm condition '${operation}' — defaulting to EQUAL`,
+        );
+        return AlarmCondition.EQUAL;
+    }
+  }
+
+  /**
+   * Everything the flat AlarmRule cannot hold — clearCondition, propagation
+   * flags, schedule, the ThingsBoard alarmType. Kept verbatim under
+   * `metadata.ruleSpec` so nothing the caller sent is silently dropped, the
+   * same way ProfileAlarmService keeps the full rule under
+   * `metadata.profileRule`.
+   */
+  private ruleSpec(input: AlarmRuleInput): AlarmRuleInput | null {
+    const hasExtras = AlarmsService.RULE_EXTRA_KEYS.some(
+      (key) => input[key] !== undefined,
+    );
+    return hasExtras ? input : null;
+  }
+
   /**
    * Create new alarm rule
    */
   async create(user: User, createDto: CreateAlarmDto): Promise<Alarm> {
     // If deviceId is provided, get customerId from device
     let customerId = user.customerId;
-    
+
     if (createDto.deviceId) {
       const device = await this.deviceRepository.findOne({
         where: { id: createDto.deviceId, tenantId: user.tenantId },
       });
-      
+
       if (!device) {
         throw new NotFoundException(`Device with ID ${createDto.deviceId} not found`);
       }
-      
+
       customerId = device.customerId;
     }
 
+    if (createDto.assetId) {
+      const asset = await this.assetRepository.findOne({
+        where: { id: createDto.assetId, tenantId: user.tenantId },
+      });
+
+      if (!asset) {
+        throw new NotFoundException(
+          `Asset with ID ${createDto.assetId} not found`,
+        );
+      }
+
+      // A device, when given, is the narrower scope and already set the
+      // customer; only an asset-only alarm takes it from the asset.
+      if (!createDto.deviceId) {
+        customerId = asset.customerId ?? customerId;
+      }
+    }
+
+    const columns = this.toAlarmColumns(createDto);
+
     const alarm = this.alarmRepository.create({
-      ...createDto,
+      ...columns,
+      // NOT NULL column — an alarm created without a rule gets an inert one.
+      rule: columns.rule ?? AlarmsService.NO_RULE,
       tenantId: user.tenantId,
       customerId,
       createdBy: user.id,
-      status: AlarmStatus.INACTIVE,
+      // A rule that has never fired is dormant, not raised.
+      status: createDto.status ?? AlarmStatus.INACTIVE,
     });
 
     const saved = await this.alarmRepository.save(alarm);
@@ -274,8 +533,10 @@ export class AlarmsService {
   ): Promise<Alarm> {
     const alarm = await this.findOne(id, tenantId);
 
-    Object.assign(alarm, updateDto);
-    
+    // Routed through the same mapping as create() so a client can PATCH with
+    // the payload it posted — flat notification fields included.
+    Object.assign(alarm, this.toAlarmColumns(updateDto, alarm));
+
     const saved = await this.alarmRepository.save(alarm);
     
     // Emit event

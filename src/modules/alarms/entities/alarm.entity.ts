@@ -4,6 +4,7 @@ import type { Relation } from 'typeorm';
 import { BaseEntity } from '@common/entities/base.entity';
 import type { User } from '../../users/entities/user.entity';
 import type { Device } from '../../devices/entities/device.entity';
+import type { Asset } from '../../assets/entities/asset.entity';
 import type { Tenant } from '../../tenants/entities/tenant.entity';
 import type { Customer } from '../../customers/entities/customers.entity';
 import { AlarmSeverity, AlarmCondition, AlarmStatus } from '@/common/enums/index.enum';
@@ -64,6 +65,18 @@ export class Alarm extends BaseEntity {
   @ManyToOne('Device', { nullable: true })
   @JoinColumn({ name: 'deviceId' })
   device?: Relation<Device>;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ASSET REFERENCE (OPTIONAL - an alarm can be raised on an asset instead of,
+  // or alongside, a device — e.g. a building-level rule)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ type: 'uuid', nullable: true })
+  assetId?: string;
+
+  @ManyToOne('Asset', { nullable: true })
+  @JoinColumn({ name: 'assetId' })
+  asset?: Relation<Asset>;
 
   // ══════════════════════════════════════════════════════════════════════════
   // ALARM RULE (What triggers this alarm?)
@@ -226,6 +239,15 @@ export class Alarm extends BaseEntity {
 
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, any>;
+
+  /**
+   * Free-text operator notes carried on the alarm. Distinct from `message`,
+   * which is generated from the rule at trigger time and is overwritten on
+   * every re-trigger — `details` is authored by whoever configured the alarm
+   * and is never touched by the engine.
+   */
+  @Column({ type: 'text', nullable: true })
+  details?: string;
 
   @Column({ type: 'jsonb', nullable: true })
   tags?: string[];

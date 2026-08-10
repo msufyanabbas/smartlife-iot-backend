@@ -7,7 +7,7 @@ import { Alarm } from './entities/alarm.entity';
 import { AlarmsRepository } from './repositories/alarms.repository';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { Device, Tenant, User } from '../index.entities';
+import { Asset, Device, Tenant, User } from '../index.entities';
 import { BullModule } from '@nestjs/bull';
 import { AlarmConsumer } from './alarms.consumer';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -19,11 +19,12 @@ import { NotificationsModule } from '../notifications/notifications.module';
     // app.module.ts; this only registers the queue.
     BullModule.registerQueue({ name: 'alarms' }),
     NotificationsModule,
-    // User is read-only here — assign() validates the assignee shares the
-    // alarm's tenant. Registered as a repository rather than importing
-    // UsersModule, which would pull DevicesModule back in through its own
-    // forwardRef chain.
-    TypeOrmModule.forFeature([Alarm, Device, Tenant, User]),
+    // User and Asset are read-only here — assign() validates the assignee
+    // shares the alarm's tenant, create() does the same for an alarm's asset.
+    // Registered as repositories rather than importing UsersModule/AssetsModule,
+    // which would pull DevicesModule back in through their own forwardRef
+    // chains.
+    TypeOrmModule.forFeature([Alarm, Asset, Device, Tenant, User]),
     ConfigModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
