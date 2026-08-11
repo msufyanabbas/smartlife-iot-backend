@@ -209,7 +209,14 @@ export class IntegrationsService {
 
   async getTuyaDevices(id: string, userId: string): Promise<any[]> {
     const integration = await this.findTuyaIntegration(id, userId);
-    return this.tuyaAdapter.getDevices(integration.configuration);
+
+    // getDevices() throws on an API/auth/signing failure rather than returning
+    // an empty list, so the caller sees the reason instead of "0 devices".
+    try {
+      return await this.tuyaAdapter.getDevices(integration.configuration);
+    } catch (err: any) {
+      throw new BadRequestException(err.message);
+    }
   }
 
   async sendTuyaCommand(
