@@ -5,26 +5,86 @@ import {
   IsBoolean,
   IsObject,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IntegrationType } from '@common/enums/index.enum';
+import { IntegrationType, IntegrationStatus } from '@common/enums/index.enum';
+
+/**
+ * `integrations.type` and `integrations.status` are Postgres ENUM columns whose
+ * labels are lowercase ('webhook', 'aws_iot', 'active', …). Clients send the
+ * TypeScript enum KEY instead ('WEBHOOK', 'AWS_IOT', 'ACTIVE'), so the value is
+ * folded to lowercase BEFORE @IsEnum runs. Normalising upwards would pass
+ * validation and then fail at the DB with
+ * `invalid input value for enum integrations_type_enum: "WEBHOOK"` — a 500
+ * instead of a 400.
+ */
+const toEnumValue = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' ? value.trim().toLowerCase() : value;
+
+/**
+ * Names that are not enum labels but have an unambiguous home.
+ * 'http' → API, which is what HttpAdapter is registered under in
+ * IntegrationDispatchService.
+ */
+const TYPE_ALIASES: Record<string, IntegrationType> = {
+  http: IntegrationType.API,
+  https: IntegrationType.API,
+  rest: IntegrationType.API,
+};
+
+const toIntegrationType = ({ value }: { value: unknown }): unknown => {
+  const normalised = toEnumValue({ value });
+  if (typeof normalised !== 'string') return normalised;
+  return TYPE_ALIASES[normalised] ?? normalised;
+};
 
 export class CreateIntegrationDto {
   @ApiProperty({ example: 'AWS IoT Core', description: 'Integration name' })
   @IsString()
   name: string;
 
-  @ApiProperty({ type: String, enum: IntegrationType, enumName: 'IntegrationType', example: IntegrationType.CLOUD })
+  @ApiProperty({
+    type: String,
+    enum: IntegrationType,
+    enumName: 'IntegrationType',
+    example: IntegrationType.CLOUD,
+    description:
+      'Case-insensitive: "WEBHOOK" and "webhook" are both accepted. "http"/"https"/"rest" are aliases for "api".',
+  })
+  @Transform(toIntegrationType)
   @IsEnum(IntegrationType)
   type: IntegrationType;
 
-  @ApiProperty({ example: 'MQTT', description: 'Protocol used' })
+  /**
+   * Optional: the column is NOT NULL, so IntegrationsService.create() fills in a
+   * transport default derived from `type` when the client omits it.
+   */
+  @ApiPropertyOptional({
+    example: 'MQTT',
+    description:
+      'Transport protocol. Defaults to the usual transport for the chosen type when omitted.',
+  })
+  @IsOptional()
   @IsString()
-  protocol: string;
+  protocol?: string;
 
   @ApiProperty({ example: 'AWS IoT integration', required: false })
   @IsOptional()
   @IsString()
   description?: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    enum: IntegrationStatus,
+    enumName: 'IntegrationStatus',
+    example: IntegrationStatus.ACTIVE,
+    description:
+      'Case-insensitive. Defaults to "inactive" (the column default) when omitted.',
+  })
+  @IsOptional()
+  @Transform(toEnumValue)
+  @IsEnum(IntegrationStatus)
+  status?: IntegrationStatus;
 
   @ApiProperty({ example: true, required: false, default: true })
   @IsOptional()
@@ -67,7 +127,7 @@ export class CreateIntegrationDto {
     deviceId?: string;
     deviceType?: string;
     assetId?: string;
-  };
+  } | null;
 
   @ApiPropertyOptional({
     description:
@@ -78,5 +138,5 @@ export class CreateIntegrationDto {
   @IsObject()
   dataFilter?: {
     keys?: string[];
-  };
+  } | null;
 }

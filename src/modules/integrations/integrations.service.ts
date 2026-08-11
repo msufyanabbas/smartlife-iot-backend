@@ -57,6 +57,9 @@ export class IntegrationsService {
 
     const integration = this.integrationRepository.create({
       ...createIntegrationDto,
+      protocol:
+        createIntegrationDto.protocol ??
+        IntegrationsService.defaultProtocolFor(createIntegrationDto.type),
       tenantId: user.tenantId,
       customerId: user.customerId,
       userId: user.id,
@@ -64,6 +67,25 @@ export class IntegrationsService {
     });
 
     return await this.integrationRepository.save(integration);
+  }
+
+  /**
+   * `integrations.protocol` is NOT NULL and has no DB default, so a request that
+   * omits it would fail with a not-null violation. The transport is implied by
+   * the type in every case, so derive it rather than forcing clients to repeat it.
+   */
+  private static defaultProtocolFor(type: IntegrationType): string {
+    switch (type) {
+      case IntegrationType.MQTT:
+        return 'MQTT';
+      case IntegrationType.AWS_IOT:
+        return 'MQTTS';
+      case IntegrationType.DATABASE:
+        return 'SQL';
+      default:
+        // webhook, api, tuya, cloud, notification — all HTTP-based adapters.
+        return 'HTTPS';
+    }
   }
 
   async findAll(userId: string, paginationDto: PaginationDto) {
