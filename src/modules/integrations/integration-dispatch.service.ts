@@ -16,6 +16,14 @@ import type {
   IIntegrationAdapter,
 } from './adapters/adapter.interface';
 
+/**
+ * The shape Repository.update() / UpdateQueryBuilder.set() accept — derived
+ * from the repository rather than deep-imported from
+ * typeorm/query-builder/QueryPartialEntity, whose generic does not resolve
+ * cleanly under this tsconfig. Allows `() => 'SQL'` for raw column arithmetic.
+ */
+type IntegrationUpdate = Parameters<Repository<Integration>['update']>[1];
+
 export interface TelemetryPayload {
   deviceId: string;
   deviceKey?: string;
@@ -273,14 +281,22 @@ export class IntegrationDispatchService {
   }
 
   /**
-   * Persist the outcome through the entity's own bookkeeping methods
-   * (recordSuccess/recordFailure), which own the counter, error-history and
-   * auto-disable-after-10-failures rules.
+   * Persist the outcome of a dispatch, in two statements.
    *
-   * Only the stats columns are written, so a concurrent config edit is not
-   * clobbered by a dispatch. Counters are read-modify-write rather than atomic
-   * SQL increments, so under heavy concurrency a count can be lost — acceptable
-   * for statistics, and it keeps the auto-disable logic in one place.
+   * 1. Counters are incremented with SQL arithmetic (`"messagesProcessed" + 1`)
+   *    rather than read-modify-write, so two dispatches to the same integration
+   *    landing at once cannot lose a count. RETURNING hands back the
+   *    post-increment `consecutiveFailures`, which is what the auto-disable
+   *    rule must key on — a stale in-memory value would let a dead endpoint run
+   *    past the threshold.
+   *
+   * 2. Everything that is not a counter (status, enabled, errorHistory,
+   *    rateLimiting) is written separately, and only when it actually changes,
+   *    so a concurrent configuration edit is not clobbered by a dispatch.
+   *
+   * This replaces the entity's recordSuccess()/recordFailure() for the dispatch
+   * path; those methods remain on the entity but are no longer its only home
+   * for the rules — the 10-consecutive-failure quarantine is mirrored below.
    */
   private async recordOutcome(
     integration: Integration,
@@ -288,38 +304,83 @@ export class IntegrationDispatchService {
     duration: number,
   ): Promise<void> {
     try {
-      if (result.success) {
-        integration.recordSuccess();
-      } else {
-        integration.recordFailure(
-          result.error ?? 'unknown error',
-          result.statusCode,
-        );
-      }
+      const now = new Date();
+      const errorText = result.error ?? 'unknown error';
 
+      // ── 1. Atomic counter bump ────────────────────────────────────────────
+      const counters: IntegrationUpdate = result.success
+        ? {
+            messagesProcessed: () => '"messagesProcessed" + 1',
+            messagesSucceeded: () => '"messagesSucceeded" + 1',
+            consecutiveFailures: 0,
+            lastActivity: now,
+            lastSuccess: now,
+            lastError: null,
+          }
+        : {
+            messagesProcessed: () => '"messagesProcessed" + 1',
+            messagesFailed: () => '"messagesFailed" + 1',
+            consecutiveFailures: () => '"consecutiveFailures" + 1',
+            lastActivity: now,
+            lastFailure: now,
+            lastError: errorText,
+          };
+
+      const updated = await this.integrationRepository
+        .createQueryBuilder()
+        .update(Integration)
+        .set(counters)
+        .where('id = :id', { id: integration.id })
+        .returning([
+          'messagesProcessed',
+          'messagesSucceeded',
+          'messagesFailed',
+          'consecutiveFailures',
+        ])
+        .execute();
+
+      // Keep the in-memory entity in step with the row just written, so the
+      // threshold check below and any caller reading it see real values.
+      const row = updated.raw?.[0] ?? {};
+      integration.messagesProcessed =
+        row.messagesProcessed ?? integration.messagesProcessed;
+      integration.messagesSucceeded =
+        row.messagesSucceeded ?? integration.messagesSucceeded;
+      integration.messagesFailed =
+        row.messagesFailed ?? integration.messagesFailed;
+      integration.consecutiveFailures =
+        row.consecutiveFailures ?? integration.consecutiveFailures;
+
+      // ── 2. Non-counter state ──────────────────────────────────────────────
+      // Assigned onto the entity first: a fresh object literal here does not
+      // satisfy TypeORM's QueryDeepPartialEntity mapping of Record<string, any>.
       integration.additionalInfo = {
         ...(integration.additionalInfo ?? {}),
         lastLatencyMs: duration,
       };
 
-      await this.integrationRepository.update(
-        { id: integration.id },
-        {
-          messagesProcessed: integration.messagesProcessed,
-          messagesSucceeded: integration.messagesSucceeded,
-          messagesFailed: integration.messagesFailed,
-          consecutiveFailures: integration.consecutiveFailures,
-          lastActivity: integration.lastActivity,
-          lastSuccess: integration.lastSuccess,
-          lastFailure: integration.lastFailure,
-          lastError: integration.lastError ?? null,
-          errorHistory: integration.errorHistory,
-          status: integration.status,
-          enabled: integration.enabled,
-          rateLimiting: integration.rateLimiting,
-          additionalInfo: integration.additionalInfo,
-        },
-      );
+      const state: IntegrationUpdate = {
+        rateLimiting: integration.rateLimiting,
+        additionalInfo: integration.additionalInfo,
+      };
+
+      if (result.success) {
+        state.status = IntegrationStatus.ACTIVE;
+      } else {
+        state.errorHistory = [
+          { timestamp: now, error: errorText, statusCode: result.statusCode },
+          ...(integration.errorHistory ?? []),
+        ].slice(0, 10);
+
+        // Same quarantine rule as Integration.recordFailure(): after 10
+        // consecutive failures stop retrying a dead endpoint.
+        if (integration.consecutiveFailures >= 10) {
+          state.status = IntegrationStatus.ERROR;
+          state.enabled = false;
+        }
+      }
+
+      await this.integrationRepository.update({ id: integration.id }, state);
     } catch (err: any) {
       // Stats bookkeeping must never break dispatch.
       this.logger.warn(
