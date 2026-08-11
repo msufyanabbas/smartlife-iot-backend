@@ -8,6 +8,7 @@ import { QueryTelemetryDto } from './dto/telemetry-query.dto';
 import { RedisService } from '@/lib/redis/redis.service';
 import { DeviceStatus } from '@common/enums/index.enum';
 import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
+import { IntegrationDispatchService } from '@modules/integrations/integration-dispatch.service';
 
 // NOTE: TelemetryService does NOT inject KafkaService.
 // The HTTP ingestion path (POST /telemetry/devices/:deviceKey) stores the
@@ -18,10 +19,11 @@ import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
 // broadcasts, emit an EventEmitter2 event here instead of a Kafka message.
 //
 // Because this path skips Kafka it also skips TelemetryConsumer, which is
-// where device-profile alarm rules are evaluated. That evaluation is therefore
-// invoked directly below — without it, a device ingesting over HTTP would
-// never fire its profile's alarm rules. Automations, the WebSocket broadcast
-// and the rule-engine forward remain Kafka-only.
+// where device-profile alarm rules are evaluated and where outbound
+// integrations are dispatched. Both are therefore invoked directly below —
+// without them, a device ingesting over HTTP would never fire its profile's
+// alarm rules and never reach an external integration. Automations, the
+// WebSocket broadcast and the rule-engine forward remain Kafka-only.
 
 @Injectable()
 export class TelemetryService {
@@ -35,6 +37,10 @@ export class TelemetryService {
     private readonly redisService: RedisService,
     // Provided by ProfilesModule, already imported by TelemetryModule.
     private readonly profileAlarmService: ProfileAlarmService,
+    // Provided by IntegrationsModule, already imported by TelemetryModule.
+    // No forwardRef: IntegrationsModule imports only TypeOrmModule and
+    // HttpModule, so there is no cycle back to TelemetryModule.
+    private readonly integrationDispatchService: IntegrationDispatchService,
   ) {}
 
   /**
@@ -84,6 +90,37 @@ export class TelemetryService {
     }
   }
 
+  /**
+   * Fan the reading out to the tenant's external integrations.
+   *
+   * Mirrors step 3b of TelemetryConsumer.handleMessage(), which is the Kafka
+   * path's equivalent. Deferred with setImmediate() so the dispatcher's own
+   * device/integration lookups start after the ingestion response has been
+   * returned — a slow or unreachable third-party endpoint must never show up
+   * in the device's request latency.
+   */
+  private dispatchToIntegrations(
+    device: Device,
+    saved: Telemetry,
+    data: Record<string, any> | undefined,
+  ): void {
+    setImmediate(() => {
+      this.integrationDispatchService
+        .dispatchTelemetry({
+          deviceId: saved.deviceId,
+          deviceKey: device.deviceKey,
+          tenantId: saved.tenantId,
+          deviceType: device.type,
+          assetId: device.assetId,
+          data: data ?? {},
+          timestamp: saved.timestamp,
+        })
+        .catch((err) =>
+          this.logger.error(`Integration dispatch error: ${err.message}`),
+        );
+    });
+  }
+
   // ── Create (HTTP ingestion path) ──────────────────────────────────────────
 
   async create(deviceKey: string, dto: CreateTelemetryDto): Promise<Telemetry> {
@@ -122,6 +159,11 @@ export class TelemetryService {
     );
 
     await this.evaluateProfileAlarms(device.id, dto.data);
+
+    this.logger.log(
+      `🔥 Dispatching to integrations for device: ${saved.deviceId}`,
+    ); // TEMP: verification marker
+    this.dispatchToIntegrations(device, saved, dto.data);
 
     return saved;
   }
@@ -173,6 +215,14 @@ export class TelemetryService {
 
       await this.evaluateProfileAlarms(device.id, newest.data);
     }
+
+    // Unlike alarms, every record is dispatched: an integration forwarding to
+    // a warehouse wants the whole series, not just the newest reading. Note
+    // that Integration.rateLimiting (if enabled) throttles a large batch and
+    // drops the overflow with a warning.
+    saved.forEach((record, i) =>
+      this.dispatchToIntegrations(device, record, dtos[i]?.data),
+    );
 
     return saved;
   }
