@@ -429,16 +429,58 @@ Telemetry   (data = merged snapshot of the device's Tuya datapoints)
 WebSocket   device:telemetry + telemetry:update  →  room device:<deviceId>
 ```
 
-### Three ways state arrives, in increasing latency
+### Tuya has no webhook — how events actually reach us
+
+Tuya's message service is **Pulsar-only** (`pulsar+ssl://mqe.tuyaeu.com:7285`).
+There is no HTTP callback, and there is **no account-wide message-poll REST
+endpoint** either. `GET /v1.0/iot-03/messages` — which looks like the obvious
+answer — does not exist:
+
+```
+GET /v1.0/iot-03/messages          → {"code":1108,"msg":"uri path invalid"}
+GET /v1.0/iot-03/nonexistent-xyz   → {"code":1108,"msg":"uri path invalid"}   # a made-up path
+GET /v1.0/token                    → {"code":2009,"msg":"clientId is invalid"} # real route, auth rejected
+```
+
+A real-but-unauthenticated route answers **2009**; an unrouted path answers
+**1108**. Endpoints that do resolve: `/v1.0/devices/{id}/logs`,
+`/v1.0/iot-03/devices/{id}/logs`, `/v2.0/cloud/thing/{id}/report-logs`,
+`/v1.0/iot-03/devices/{id}/status`.
+
+So event delivery is **polled**, on a 10s cron:
 
 | Path | Trigger | Notes |
 |---|---|---|
-| **Webhook** | `POST /integrations/tuya/webhook` (`@Public`) | Real-time. Always answers `200 {success:true}`. |
-| **Poll** | `@Cron('*/30 * * * * *')` in `TuyaSyncService` | Safety net, and the only source of `offline` — Tuya does not reliably emit it. Disable with `TUYA_POLL_ENABLED=false`. |
+| **State poll** (primary) | `@Cron('*/10 * * * * *')` → `pollDeviceState()` | **One** API call returns every device in the project *with full datapoint status*. Diffed and turned into the same `devicePropertyMessage`/`deviceOnline`/`deviceOffline` handling a Pulsar subscriber would do. O(1) in device count — this is what makes 10s affordable. |
+| **Event-log poll** (opt-in) | same cron, when `configuration.pollDeviceLogs: true` | `GET /v1.0/devices/{id}/logs?type=1,2,7`, cursored per device. Gives exact event ordering/timestamps and catches datapoints that toggle *and revert* between two state polls. **One call per device per tick** — capped by `configuration.maxLogDevices` (default 25), and the number skipped is logged. |
+| **HTTP bridge** | `POST /integrations/tuya/webhook` (`@Public`) | Tuya never calls this. It is the ingress for a sidecar Pulsar consumer that forwards messages as HTTP, and the way to test the pipeline locally. Always answers `200 {success:true}`. |
 | **Full sync** | `POST /integrations/:id/tuya/sync`, and automatically on create/update/toggle while active | The only path that **creates** devices. |
+
+All four converge on **`TuyaSyncService.processTuyaMessage(msg, integration)`**,
+which takes a transport-neutral `TuyaMessage {bizCode, devId, bizData, ts}`.
+Handling for the three bizCodes lives there and nowhere else, so adding a real
+Pulsar consumer later means writing a transport and calling that method —
+nothing else changes.
+
+Worst-case latency for a datapoint change is one poll interval (10s).
 
 Auto-sync on activation is fire-and-forget (`setImmediate`): a slow or
 unreachable Tuya project must not make saving an integration hang or fail.
+
+### Messaging rules to enable in the Tuya console
+
+The rules decide what Tuya puts on the queue, and — because the state poll
+reads the same underlying device state — what is worth reacting to:
+
+1. <https://iot.tuya.com> → your cloud project → **Message Service**.
+2. Subscribe to: **`devicePropertyMessage`** (telemetry), **`deviceOnline`**,
+   **`deviceOffline`**.
+3. `bindUser` is also handled — it triggers a full import of the newly linked
+   device.
+
+These bizCodes are the canonical spellings `applyMessageToDevice()` switches
+on; the older HTTP-era names (`statusReport`, `online`, `offline`) are accepted
+as aliases.
 
 ### Details that matter
 
@@ -447,9 +489,14 @@ unreachable Tuya project must not make saving an integration hang or fail.
   the newest row as the device's complete current state — so incoming codes are
   merged over the previous reading. Otherwise a `switch_1` event would erase the
   device's temperature.
-- **Unchanged readings are not stored.** A 30s poll of an idle device would
-  otherwise write ~2,880 identical rows per device per day. Nothing is
-  broadcast either.
+- **Unchanged readings are not stored.** A 10s poll of an idle device would
+  otherwise write ~8,640 identical rows per device per day. Nothing is
+  broadcast either. This change-detection is what makes state-diffing
+  equivalent to consuming a message stream.
+- **Log values are coerced.** The log endpoint returns `"true"` / `"23"` as
+  strings where the device-list status returns real booleans and numbers.
+  `coerceLogValue()` normalises them, otherwise alternating between the two
+  sources would look like a change on every poll and store a row each time.
 - **`lastSeenAt` is refreshed on every poll while online**, not only on a
   transition — `DevicesService.checkOfflineDevices()` flips any ACTIVE device
   with a stale `lastSeenAt` to OFFLINE every 5 minutes, so a permanently-online
@@ -469,28 +516,28 @@ unreachable Tuya project must not make saving an integration hang or fail.
   token-error code. Without this the 30s poll would re-authenticate ~2,900
   times a day per integration and get throttled.
 
-### Registering the webhook in the Tuya developer console
+### The HTTP bridge endpoint
 
-The receiver is `POST https://api.smart-life.sa/integrations/tuya/webhook`.
+`POST https://api.smart-life.sa/integrations/tuya/webhook` is **not** called by
+Tuya (see above — Tuya has no HTTP callback). It exists so that a sidecar
+Pulsar consumer can forward messages into the platform over HTTP, and so the
+message pipeline can be exercised without a Tuya project at all:
 
-1. Go to <https://iot.tuya.com> → your cloud project.
-2. **Service API** → subscribe the project to *Message Service* (a.k.a. Message
-   Queue / Pulsar) if it is not already authorised.
-3. Open **Message Service** → **Configuration** → set the push type to HTTP
-   and the callback URL to the address above.
-4. Subscribe to at least: **device status report** (`statusReport`), **device
-   online** (`online`), **device offline** (`offline`). `bindUser` is also
-   handled and triggers a full import of the newly linked device.
-5. The `client_id` header (or `clientId` in the body) must match the
-   integration's `configuration.clientId` — that is how a delivery is mapped to
-   a tenant.
+```bash
+curl -X POST http://localhost:5000/integrations/tuya/webhook \
+  -H 'Content-Type: application/json' -H 'client_id: <configuration.clientId>' \
+  -d '{"devId":"<tuyaDeviceId>","bizCode":"devicePropertyMessage",
+       "bizData":{"properties":[{"code":"switch_1","value":true}]}}'
+```
 
-**Security caveat:** the endpoint is unauthenticated by necessity — Tuya's
-console lets you set a URL, not an `Authorization` header — so anyone who learns
-a `clientId` can post telemetry for that tenant's devices. Setting
+The `client_id` header (or `clientId` in the body) must match the integration's
+`configuration.clientId` — that is how a delivery is mapped to a tenant.
+
+**Security caveat:** the endpoint is unauthenticated, so anyone who learns a
+`clientId` can post telemetry for that tenant's devices. Setting
 `configuration.webhookSecret` additionally requires a matching
-`x-webhook-secret` header, which a reverse proxy in front of the endpoint can
-inject. Unset (the default) preserves the plain Tuya flow.
+`x-webhook-secret` header. If you are not running a Pulsar bridge, this route
+has no production purpose and is safe to delete.
 
 ### Not wired up
 

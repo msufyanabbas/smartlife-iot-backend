@@ -41,6 +41,23 @@ export interface TuyaCloudDevice {
   status?: Array<{ code: string; value: any }>;
 }
 
+/**
+ * A Tuya event, normalised away from the transport that carried it.
+ *
+ * The three bizCodes that matter are the ones you subscribe a Tuya messaging
+ * rule to: `devicePropertyMessage`, `deviceOnline`, `deviceOffline`. Whether
+ * an event reaches us from the event-log poller, the HTTP bridge, or (one day)
+ * a real Pulsar consumer, it is shaped into this and handed to
+ * `processTuyaMessage()` — so the handling lives in exactly one place.
+ */
+export interface TuyaMessage {
+  bizCode: string;
+  devId: string;
+  bizData: Record<string, any>;
+  /** Tuya event time in epoch ms, when the transport supplies one. */
+  ts?: number;
+}
+
 export interface TuyaSyncResult {
   created: number;
   updated: number;
@@ -96,6 +113,13 @@ export class TuyaSyncService {
    */
   private readonly lastAutoSync = new Map<string, number>();
   private static readonly AUTO_SYNC_COOLDOWN_MS = 60_000;
+
+  /**
+   * How far back the event-log poller looks when a device has no cursor yet.
+   * Bounded so switching `pollDeviceLogs` on replays the last few minutes
+   * rather than the project's entire history.
+   */
+  private static readonly LOG_BACKFILL_MS = 5 * 60_000;
 
   constructor(
     @InjectRepository(Integration)
@@ -458,7 +482,7 @@ export class TuyaSyncService {
   private async saveTuyaTelemetry(
     device: Device,
     statusArray: Array<{ code: string; value: any }>,
-    source: 'sync' | 'poll' | 'webhook',
+    source: 'sync' | 'poll' | 'message',
   ): Promise<boolean> {
     const incoming: Record<string, any> = {};
     for (const entry of statusArray ?? []) {
@@ -587,13 +611,23 @@ export class TuyaSyncService {
   // ══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Safety net for tenants that have not wired up Tuya's message service, and
-   * the only source of `offline` transitions — Tuya does not always emit one.
+   * The message-consumption loop.
    *
-   * Set TUYA_POLL_ENABLED=false to disable (e.g. on a second app instance, so
-   * two replicas do not both poll the same project).
+   * Tuya has no HTTP webhook and no account-wide message-poll REST endpoint —
+   * its message service is Pulsar-only — so this cron IS how events reach the
+   * platform. Every 10 seconds it pulls each active project's device state in
+   * one call, diffs it, and turns the differences into the same
+   * devicePropertyMessage / deviceOnline / deviceOffline handling a Pulsar
+   * subscriber would perform. Worst-case latency for a datapoint change is
+   * therefore one interval.
+   *
+   * 10s is affordable because the state pull is a single request per
+   * integration regardless of device count (and the access token is cached).
+   * Set TUYA_POLL_ENABLED=false to disable — do this on every replica but one,
+   * since two instances polling the same project double the API spend and
+   * race on the same rows.
    */
-  @Cron('*/30 * * * * *')
+  @Cron('*/10 * * * * *')
   async pollAllIntegrations(): Promise<void> {
     if (process.env.TUYA_POLL_ENABLED === 'false') return;
 
@@ -635,7 +669,38 @@ export class TuyaSyncService {
     }
   }
 
+  /**
+   * One tick for one integration: device state, then (optionally) the event
+   * log. Both are wrapped separately so a failing log poll does not cost us
+   * the state poll, which is the one that always works.
+   */
   private async pollIntegration(integration: Integration): Promise<void> {
+    await this.pollDeviceState(integration);
+
+    // Opt-in: costs one API call PER DEVICE per tick — see pollDeviceMessages.
+    if ((integration.configuration as any)?.pollDeviceLogs) {
+      await this.pollDeviceMessages(integration);
+    }
+
+    await this.touchIntegration(integration.id);
+  }
+
+  /**
+   * The primary message source: `GET /v1.0/iot-01/associated-users/devices`
+   * returns every device in the project *with its full datapoint status* in a
+   * single call.
+   *
+   * That one request is what makes a 10-second interval affordable — it is
+   * O(1) in the number of devices, where the per-device log endpoint is O(n).
+   * Combined with the change-detection in saveTuyaTelemetry(), state-diffing
+   * this response reproduces exactly the `devicePropertyMessage` /
+   * `deviceOnline` / `deviceOffline` stream a Pulsar subscriber would see.
+   *
+   * Its one blind spot: a datapoint that changes and changes back inside a
+   * single interval is invisible, because only the endpoints of the interval
+   * are observed. `pollDeviceLogs` closes that gap when it matters.
+   */
+  private async pollDeviceState(integration: Integration): Promise<void> {
     try {
       const tuyaDevices: TuyaCloudDevice[] = await this.tuyaAdapter.getDevices(
         integration.configuration ?? {},
@@ -649,7 +714,7 @@ export class TuyaSyncService {
         });
 
         // A device that appeared in Tuya since the last import is picked up by
-        // the next full sync (or a bindUser webhook), not by the poller —
+        // the next full sync (or a bindUser event), not by the poller —
         // creating devices from a cron would make an import failure invisible.
         if (!device) continue;
 
@@ -659,13 +724,203 @@ export class TuyaSyncService {
           await this.saveTuyaTelemetry(device, td.status, 'poll');
         }
       }
-
-      await this.touchIntegration(integration.id);
     } catch (err: any) {
       this.logger.error(
-        `Failed to poll Tuya integration ${integration.name} (${integration.id}): ${err.message}`,
+        `Failed to poll Tuya device state for ${integration.name} (${integration.id}): ${err.message}`,
       );
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // MESSAGE CONSUMPTION (event log)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Drain each imported device's Tuya event log since the last cursor and feed
+   * the entries through the same processTuyaMessage() path as every other
+   * transport.
+   *
+   * **Opt in with `configuration.pollDeviceLogs: true`.** This is one API call
+   * per device per tick — at a 10s interval a 100-device project spends 600
+   * calls a minute, which Tuya will throttle. Turn it on when you need exact
+   * event ordering/timestamps, or need to catch a datapoint that toggles and
+   * reverts between two state polls; otherwise pollDeviceState() already
+   * carries the same information for one call.
+   *
+   * Bound by `configuration.maxLogDevices` (default 25) so enabling it on a
+   * large project degrades rather than melting the rate limit silently — the
+   * number skipped is logged, never hidden.
+   */
+  private async pollDeviceMessages(integration: Integration): Promise<void> {
+    const config: any = integration.configuration ?? {};
+
+    try {
+      const devices = await this.deviceRepository.find({
+        where: {
+          tenantId: integration.tenantId,
+          protocol: DeviceProtocol.TUYA,
+        },
+        order: { lastSeenAt: 'DESC' },
+      });
+
+      if (devices.length === 0) return;
+
+      const cap = Number(config.maxLogDevices) || 25;
+      const targets = devices.slice(0, cap);
+
+      if (devices.length > targets.length) {
+        this.logger.warn(
+          `Tuya log poll for ${integration.name}: ${devices.length} devices, ` +
+            `polling the ${targets.length} most recently seen (configuration.maxLogDevices). ` +
+            `${devices.length - targets.length} skipped this tick.`,
+        );
+      }
+
+      for (const device of targets) {
+        await this.pollOneDeviceLog(integration, device);
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `Tuya message poll failed for ${integration.name}: ${err.message}`,
+      );
+    }
+  }
+
+  private async pollOneDeviceLog(
+    integration: Integration,
+    device: Device,
+  ): Promise<void> {
+    if (!device.externalId) return;
+
+    const cursor = (device.metadata as any)?.tuyaLogCursor ?? {};
+
+    // First run has no cursor: look back one window rather than all of
+    // history, so enabling the feature does not replay months of events.
+    const startTime =
+      Number(cursor.ts) || Date.now() - TuyaSyncService.LOG_BACKFILL_MS;
+
+    try {
+      const { logs, lastRowKey } = await this.tuyaAdapter.getDeviceLogs(
+        integration.configuration ?? {},
+        device.externalId,
+        { startTime, lastRowKey: cursor.rowKey, size: 50 },
+      );
+
+      if (!logs.length) return;
+
+      const messages = this.logsToMessages(device.externalId, logs);
+      for (const message of messages) {
+        await this.applyMessageToDevice(message, device, integration);
+      }
+
+      // Advance the cursor past what we just consumed.
+      const newestTs = logs.reduce(
+        (max, entry) => Math.max(max, Number(entry.event_time) || 0),
+        Number(cursor.ts) || 0,
+      );
+
+      // Assigned onto the entity first: a fresh object literal does not satisfy
+      // TypeORM's QueryDeepPartialEntity mapping of Record<string, any> (same
+      // reason as IntegrationDispatchService.recordOutcome).
+      device.metadata = {
+        ...(device.metadata ?? {}),
+        tuyaLogCursor: {
+          // +1ms so an event on the boundary is not re-delivered.
+          ts: newestTs ? newestTs + 1 : Date.now(),
+          rowKey: lastRowKey,
+          polledAt: new Date().toISOString(),
+        },
+      };
+
+      await this.deviceRepository.update(
+        { id: device.id },
+        { metadata: device.metadata },
+      );
+    } catch (err: any) {
+      // Device logs are an optional enrichment — a project without the log API
+      // enabled must not turn every tick into an error storm.
+      this.logger.debug(
+        `Tuya log poll skipped for ${device.deviceKey}: ${err.message}`,
+      );
+    }
+  }
+
+  /**
+   * Convert a device's raw log entries into normalised messages.
+   *
+   * Property reports are collapsed into ONE devicePropertyMessage per batch
+   * (last value per code wins) rather than one message per datapoint: telemetry
+   * rows are merged snapshots of current state, so emitting them individually
+   * would write one row per changed key for no added fidelity. Online/offline
+   * entries stay discrete and are ordered after the properties, so the device's
+   * final connectivity state is the newest one observed.
+   */
+  private logsToMessages(
+    devId: string,
+    logs: Array<Record<string, any>>,
+  ): TuyaMessage[] {
+    const ascending = [...logs].sort(
+      (a, b) => (Number(a.event_time) || 0) - (Number(b.event_time) || 0),
+    );
+
+    const properties = new Map<string, any>();
+    const events: TuyaMessage[] = [];
+
+    for (const entry of ascending) {
+      const eventId = Number(entry.event_id);
+      const ts = Number(entry.event_time) || undefined;
+
+      if (eventId === 1) {
+        events.push({ bizCode: 'deviceOnline', devId, bizData: {}, ts });
+      } else if (eventId === 2) {
+        events.push({ bizCode: 'deviceOffline', devId, bizData: {}, ts });
+      } else if (entry.code !== undefined && entry.code !== null) {
+        // Everything else carrying a datapoint is a report (event_id 7).
+        properties.set(entry.code, this.coerceLogValue(entry.value));
+      }
+    }
+
+    const messages: TuyaMessage[] = [];
+
+    if (properties.size > 0) {
+      messages.push({
+        bizCode: 'devicePropertyMessage',
+        devId,
+        bizData: {
+          properties: [...properties].map(([code, value]) => ({ code, value })),
+        },
+      });
+    }
+
+    return [...messages, ...events];
+  }
+
+  /**
+   * Log values arrive as strings — `"true"`, `"23"` — where the device-list
+   * status endpoint returns real booleans and numbers. Normalising here keeps
+   * a datapoint's type stable no matter which source produced it; without it,
+   * every alternating poll would look like a change and store a new row.
+   */
+  private coerceLogValue(value: any): any {
+    if (typeof value !== 'string') return value;
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+
+    const trimmed = value.trim();
+    if (trimmed !== '' && Number.isFinite(Number(trimmed))) {
+      return Number(trimmed);
+    }
+
+    // Tuya wraps complex datapoints as JSON strings.
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        /* leave it as the raw string */
+      }
+    }
+
+    return value;
   }
 
   /**
@@ -773,7 +1028,7 @@ export class TuyaSyncService {
       );
 
       for (const event of this.extractEvents(body)) {
-        await this.processWebhookEvent(event, integration);
+        await this.processTuyaMessage(this.toMessage(event), integration);
       }
 
       await this.touchIntegration(integration.id);
@@ -835,81 +1090,136 @@ export class TuyaSyncService {
     return body ? [body] : [];
   }
 
-  private async processWebhookEvent(
-    event: any,
+  /**
+   * Shape one raw event — whatever envelope it arrived in — into a TuyaMessage.
+   *
+   * Tuya has shipped several spellings of the same fields across its Pulsar,
+   * HTTP and OpenAPI surfaces, so every known alias is accepted here rather
+   * than in the handler.
+   */
+  private toMessage(event: any): TuyaMessage {
+    const devId =
+      event?.devId ??
+      event?.deviceId ??
+      event?.dev_id ??
+      event?.bizData?.devId ??
+      event?.bizData?.dev_id ??
+      event?.biz_data?.dev_id ??
+      event?.biz_data?.devId;
+
+    // A bare status report has no envelope; treat the event itself as data.
+    const bizData =
+      event?.bizData ??
+      event?.biz_data ??
+      (event?.properties || event?.status ? event : {});
+
+    return {
+      bizCode: String(
+        event?.bizCode ?? event?.biz_code ?? event?.type ?? event?.event ?? '',
+      ),
+      devId: devId ? String(devId) : '',
+      bizData: bizData ?? {},
+      ts: Number(event?.ts ?? event?.t ?? event?.event_time) || undefined,
+    };
+  }
+
+  /**
+   * The single entry point for a Tuya event, whatever delivered it.
+   *
+   * Resolves the device, then applies the message. Unknown devices trigger a
+   * (debounced) import rather than being dropped — a device bound in Tuya
+   * after our last sync would otherwise stay invisible forever.
+   */
+  async processTuyaMessage(
+    message: TuyaMessage,
     integration: Integration,
   ): Promise<void> {
-    const tuyaDeviceId =
-      event?.devId ?? event?.deviceId ?? event?.dev_id ?? event?.bizData?.devId;
-
-    if (!tuyaDeviceId) {
+    if (!message?.devId) {
       this.logger.debug(
-        `Tuya webhook event without a device id — skipped: ${JSON.stringify(event)}`,
+        `Tuya message without a device id — skipped: ${JSON.stringify(message)}`,
       );
       return;
     }
 
     const device = await this.deviceRepository.findOne({
-      where: { externalId: String(tuyaDeviceId), tenantId: integration.tenantId },
+      where: { externalId: message.devId, tenantId: integration.tenantId },
     });
 
     if (!device) {
       this.logger.warn(
-        `Tuya webhook for unknown device ${tuyaDeviceId} — scheduling an import`,
+        `Tuya message for unknown device ${message.devId} — scheduling an import`,
       );
       this.requestAutoSync(integration);
       return;
     }
 
-    const eventType = String(
-      event?.bizCode ?? event?.type ?? event?.event ?? '',
-    ).toLowerCase();
+    await this.applyMessageToDevice(message, device, integration);
+  }
 
-    switch (eventType) {
+  /**
+   * Apply a normalised message to a device we have already resolved.
+   *
+   * The canonical bizCodes are the ones a Tuya messaging rule emits —
+   * `devicePropertyMessage`, `deviceOnline`, `deviceOffline` — with the older
+   * HTTP-era spellings (`statusReport`, `online`, `offline`) accepted as
+   * aliases so both transports land in the same branch.
+   */
+  private async applyMessageToDevice(
+    message: TuyaMessage,
+    device: Device,
+    integration: Integration,
+  ): Promise<void> {
+    const bizCode = message.bizCode.toLowerCase().replace(/[_-]/g, '');
+
+    switch (bizCode) {
+      // ── devicePropertyMessage ────────────────────────────────────────────
+      case 'devicepropertymessage':
+      case 'deviceproperty':
       case 'statusreport':
-      case 'status_report':
       case 'devicestatus': {
-        const statusList =
-          event?.bizData?.properties ??
-          event?.bizData?.status ??
-          event?.properties ??
-          event?.status ??
+        const properties =
+          message.bizData?.properties ??
+          message.bizData?.status ??
+          message.bizData?.dps ??
           [];
 
-        if (Array.isArray(statusList) && statusList.length) {
-          const stored = await this.saveTuyaTelemetry(
-            device,
-            statusList,
-            'webhook',
-          );
-          // A report proves the device is reachable, whatever it reported.
-          await this.applyOnlineState(device, true);
+        if (!Array.isArray(properties) || properties.length === 0) break;
 
-          this.logger.log(
-            `Tuya status update for ${device.name}` +
-              (stored ? '' : ' (unchanged — not stored)'),
-          );
-        }
+        const stored = await this.saveTuyaTelemetry(
+          device,
+          properties,
+          'message',
+        );
+
+        // A report proves the device is reachable, whatever it reported.
+        await this.applyOnlineState(device, true);
+
+        this.logger.log(
+          `Tuya property message for ${device.name}` +
+            (stored ? '' : ' (unchanged — not stored)'),
+        );
         break;
       }
 
+      // ── deviceOnline ─────────────────────────────────────────────────────
+      case 'deviceonline':
       case 'online':
         await this.applyOnlineState(device, true);
         break;
 
+      // ── deviceOffline ────────────────────────────────────────────────────
+      case 'deviceoffline':
       case 'offline':
         await this.applyOnlineState(device, false);
         break;
 
       case 'binduser':
-      case 'bind_user':
         // A new device was linked to the account — import it.
         this.requestAutoSync(integration);
         break;
 
-      case 'nameupdate':
-      case 'name_update': {
-        const name = event?.bizData?.name;
+      case 'nameupdate': {
+        const name = message.bizData?.name;
         if (name) {
           await this.deviceRepository.update({ id: device.id }, { name });
         }
@@ -924,7 +1234,7 @@ export class TuyaSyncService {
         break;
 
       default:
-        this.logger.debug(`Unhandled Tuya event type: '${eventType}'`);
+        this.logger.debug(`Unhandled Tuya bizCode: '${message.bizCode}'`);
     }
   }
 

@@ -50,11 +50,19 @@ export class TuyaAdapter implements IIntegrationAdapter {
     in: 'https://openapi.tuyain.com',
   };
 
-  private getBaseUrl(region?: string): string {
+  /**
+   * Public so callers outside the adapter can build their own signed request
+   * against an endpoint this class does not wrap yet. Prefer adding a method
+   * here instead: `signedRequest()` already handles the token cache, the
+   * query-string signing rule and the token-expiry retry, and hand-rolled
+   * axios calls have historically got all three wrong.
+   */
+  getBaseUrl(region?: string): string {
     return this.REGION_URLS[region ?? 'eu'] ?? this.REGION_URLS.eu;
   }
 
-  private generateSign(
+  /** Public for the same reason as getBaseUrl() — see that note first. */
+  generateSign(
     clientId: string,
     clientSecret: string,
     accessToken: string,
@@ -90,7 +98,8 @@ export class TuyaAdapter implements IIntegrationAdapter {
     TuyaAdapter.tokenCache.delete(this.tokenCacheKey(config));
   }
 
-  private async getAccessToken(config: any): Promise<string> {
+  /** Public alongside generateSign()/getBaseUrl(); results are cached. */
+  async getAccessToken(config: any): Promise<string> {
     this.assertCredentials(config);
 
     const cacheKey = this.tokenCacheKey(config);
@@ -351,6 +360,81 @@ export class TuyaAdapter implements IIntegrationAdapter {
     // At least one endpoint answered successfully with an empty list: the
     // project genuinely has no devices bound.
     return [];
+  }
+
+  /**
+   * Device event log — the pollable stand-in for Tuya's Pulsar message queue.
+   *
+   * **Why not `GET /v1.0/iot-03/messages`:** that endpoint does not exist.
+   * Probed against openapi.tuyaeu.com it answers `code 1108 "uri path invalid"`,
+   * identical to a deliberately fabricated path, whereas a real-but-
+   * unauthenticated route answers `code 2009 "clientId is invalid"`. Tuya
+   * exposes no account-wide message-poll REST API; the message service is
+   * Pulsar-only. This per-device log endpoint carries the same three event
+   * kinds and IS pollable.
+   *
+   * `type` selects the event kinds, and maps 1:1 onto the bizCodes a Pulsar
+   * subscriber would receive:
+   *   1 → device online   (deviceOnline)
+   *   2 → device offline  (deviceOffline)
+   *   7 → data report     (devicePropertyMessage)
+   *
+   * Returns a normalised shape; Tuya has shipped `logs`/`list` and
+   * `last_row_key`/`current_row_key` variants across versions.
+   */
+  async getDeviceLogs(
+    config: any,
+    tuyaDeviceId: string,
+    opts: {
+      startTime: number;
+      endTime?: number;
+      size?: number;
+      lastRowKey?: string;
+      types?: string;
+    },
+  ): Promise<{
+    logs: Array<{
+      code?: string;
+      value?: any;
+      event_time?: number;
+      event_id?: number;
+      [key: string]: any;
+    }>;
+    lastRowKey?: string;
+    hasNext: boolean;
+  }> {
+    const params: Record<string, string | number> = {
+      start_time: opts.startTime,
+      end_time: opts.endTime ?? Date.now(),
+      // Tuya caps this at 100.
+      size: Math.min(opts.size ?? 50, 100),
+      type: opts.types ?? '1,2,7',
+    };
+
+    // Paging by row key is exact; the time window alone can re-deliver an
+    // event that shares its millisecond with the previous batch.
+    if (opts.lastRowKey) params.last_row_key = opts.lastRowKey;
+
+    const path = this.buildSignedPath(
+      `/v1.0/devices/${tuyaDeviceId}/logs`,
+      params,
+    );
+
+    const data = await this.signedRequest(config, 'GET', path);
+
+    if (!data?.success) {
+      throw new Error(
+        `Tuya device log lookup failed — code=${data?.code} msg=${data?.msg}`,
+      );
+    }
+
+    const result = data.result ?? {};
+
+    return {
+      logs: result.logs ?? result.list ?? [],
+      lastRowKey: result.last_row_key ?? result.current_row_key,
+      hasNext: !!(result.has_next ?? result.has_more),
+    };
   }
 
   /** Current datapoint status of one Tuya device. */
