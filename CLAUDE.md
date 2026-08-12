@@ -409,6 +409,98 @@ Note: the older `AssetProfilesService.validateAssetData()` validates the **legac
 `attributesSchema`/`Asset.attributes` pair and is only reachable via
 `POST /profiles/asset/:id/validate`. It is not the create-time path.
 
+## 4d. Tuya Auto-Provisioning
+
+A Tuya integration mirrors a Tuya cloud project into the platform: its devices
+become `Device` rows and their datapoints become `Telemetry`. Owned by
+`TuyaSyncService` (`src/modules/integrations/tuya-sync.service.ts`) — the
+runtime half of the module, alongside `IntegrationDispatchService`.
+`IntegrationsService` stays CRUD and delegates.
+
+```
+Integration (type=tuya | legacy cloud + clientId/clientSecret, status=active)
+     ↓ TuyaAdapter.getDevices()
+Device      (protocol=tuya, externalId=<tuyaDeviceId>, deviceKey=tuya_<tuyaDeviceId>)
+     ↓
+DeviceCredentials (credentialsType=TUYA, credentialsValue=<local_key>)
+     ↓
+Telemetry   (data = merged snapshot of the device's Tuya datapoints)
+     ↓
+WebSocket   device:telemetry + telemetry:update  →  room device:<deviceId>
+```
+
+### Three ways state arrives, in increasing latency
+
+| Path | Trigger | Notes |
+|---|---|---|
+| **Webhook** | `POST /integrations/tuya/webhook` (`@Public`) | Real-time. Always answers `200 {success:true}`. |
+| **Poll** | `@Cron('*/30 * * * * *')` in `TuyaSyncService` | Safety net, and the only source of `offline` — Tuya does not reliably emit it. Disable with `TUYA_POLL_ENABLED=false`. |
+| **Full sync** | `POST /integrations/:id/tuya/sync`, and automatically on create/update/toggle while active | The only path that **creates** devices. |
+
+Auto-sync on activation is fire-and-forget (`setImmediate`): a slow or
+unreachable Tuya project must not make saving an integration hang or fail.
+
+### Details that matter
+
+- **Telemetry rows are merged snapshots, not deltas.** A webhook status report
+  carries only the datapoints that changed, but the rest of the platform reads
+  the newest row as the device's complete current state — so incoming codes are
+  merged over the previous reading. Otherwise a `switch_1` event would erase the
+  device's temperature.
+- **Unchanged readings are not stored.** A 30s poll of an idle device would
+  otherwise write ~2,880 identical rows per device per day. Nothing is
+  broadcast either.
+- **`lastSeenAt` is refreshed on every poll while online**, not only on a
+  transition — `DevicesService.checkOfflineDevices()` flips any ACTIVE device
+  with a stale `lastSeenAt` to OFFLINE every 5 minutes, so a permanently-online
+  Tuya device would otherwise flap forever.
+- **Only `batteryLevel` is denormalised.** Tuya scales temperature/humidity per
+  product (`va_temperature` is usually ×10) and the factor lives in the device's
+  function spec, which the device-list endpoint does not return. Raw codes stay
+  in `telemetry.data`.
+- `local_key` is a secret: it lives in `device_credentials.credentialsValue`
+  (`select: false`), never in `device.metadata`.
+- `devices.externalId` is **not** unique — the same physical device can be bound
+  to two tenants' projects. Lookups are always `(tenantId, externalId)`.
+- Device names edited in this platform are not overwritten by Tuya on re-sync;
+  only an empty name is backfilled.
+- Access tokens are cached in `TuyaAdapter` (static, keyed by clientId+region,
+  Tuya's own `expire_time` minus 60s), and dropped + retried once on a
+  token-error code. Without this the 30s poll would re-authenticate ~2,900
+  times a day per integration and get throttled.
+
+### Registering the webhook in the Tuya developer console
+
+The receiver is `POST https://api.smart-life.sa/integrations/tuya/webhook`.
+
+1. Go to <https://iot.tuya.com> → your cloud project.
+2. **Service API** → subscribe the project to *Message Service* (a.k.a. Message
+   Queue / Pulsar) if it is not already authorised.
+3. Open **Message Service** → **Configuration** → set the push type to HTTP
+   and the callback URL to the address above.
+4. Subscribe to at least: **device status report** (`statusReport`), **device
+   online** (`online`), **device offline** (`offline`). `bindUser` is also
+   handled and triggers a full import of the newly linked device.
+5. The `client_id` header (or `clientId` in the body) must match the
+   integration's `configuration.clientId` — that is how a delivery is mapped to
+   a tenant.
+
+**Security caveat:** the endpoint is unauthenticated by necessity — Tuya's
+console lets you set a URL, not an `Authorization` header — so anyone who learns
+a `clientId` can post telemetry for that tenant's devices. Setting
+`configuration.webhookSecret` additionally requires a matching
+`x-webhook-secret` header, which a reverse proxy in front of the endpoint can
+inject. Unset (the default) preserves the plain Tuya flow.
+
+### Not wired up
+
+Tuya-sourced telemetry does **not** currently run device-profile alarm rules or
+fan out to other integrations — unlike the MQTT (`TelemetryConsumer`) and HTTP
+(`TelemetryService`) paths. Tuya imports are also not gated by the tenant's
+device quota (`canTenantPerformAction` returns false for tenants with no
+subscription row, which would block imports outright); usage counters are not
+incremented for imported devices.
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
@@ -813,7 +905,8 @@ import { DevicesService } from '@modules/index.service';
 
 | Location | Issue |
 |---|---|
-| `src/database/migrations/` | Contains 5 migrations. Run them against **`dist`** (`npx typeorm migration:run -d dist/database/data-source.js`) — `data-source.ts` globs `*.js` only, so `npm run migration:run` reports "No migrations are pending" from source. |
+| `src/database/migrations/` | Run migrations against **`dist`** (`npx typeorm migration:run -d dist/database/data-source.js`) — `data-source.ts` globs `*.js` only, so `npm run migration:run` reports "No migrations are pending" from source. |
+| **`migration:run` is currently blocked** | `PreExistingSchemaDrift1786345964232` and `SchemaDriftFix1786348092217` are in the source but have never been applied, and the first one *fails*: `ALTER TABLE solution_templates ALTER COLUMN category TYPE …` → `invalid input value for enum solution_templates_category_enum: "agriculture"`. Because they sort ahead of every later migration, the whole transaction aborts and nothing after them can run. Until they are fixed, a new migration has to be applied with those two temporarily moved out of `dist/database/migrations/`. |
 | Entity/DB drift | `migration:generate` currently also wants to create 8 assignment junction tables, narrow `solution_templates_category_enum` (**destructive** — removes 6 in-use values), rebuild the firmware indexes and rewrite several jsonb defaults. This is pre-existing drift left out of `DeviceAssetProfileEnhancements`; it needs its own reviewed migration. |
 | `src/modules/automation/automation.processor.ts` lines ~23, 193, 213 | `DeviceCommandService`, `MQTTService`, and `NotificationService` injections are TODOs — automation actions do not yet publish MQTT commands or send notifications |
 | `src/modules/automation/automation.service.ts` lines ~187, 269 | `AutomationLog` entity not created; direct automation execution is a stub |

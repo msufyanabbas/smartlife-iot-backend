@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   Query,
+  Headers,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -16,8 +17,11 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiHeader,
   ApiQuery,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import { Public } from '../../common/decorators/public.decorator';
 import { IntegrationsService } from './integrations.service';
 import { CreateIntegrationDto } from './dto/create-integration.dto';
 import { UpdateIntegrationDto } from './dto/update-integration.dto';
@@ -166,6 +170,80 @@ export class IntegrationsController {
   // ══════════════════════════════════════════════════════════════════════════
   // TUYA
   // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Declared before the `:id/...` Tuya routes purely for readability — Nest
+   * matches on the literal segments, and 'tuya/webhook' cannot be confused
+   * with any of them.
+   */
+  @Post('tuya/webhook')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  // Tuya pushes one delivery per device event; a busy account bursts well past
+  // the global 100/min, and a 429 would make Tuya retry and eventually disable
+  // the subscription.
+  @Throttle({ default: { limit: 1000, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Tuya webhook receiver (real-time device events)',
+    description:
+      'Unauthenticated — Tuya calls this directly. The integration is resolved ' +
+      "from the `client_id` header (or the body) matched against " +
+      "configuration.clientId. ALWAYS responds 200 {success:true}, even for " +
+      'unknown clients or malformed payloads, because Tuya disables a ' +
+      'subscription that keeps failing. Set configuration.webhookSecret to ' +
+      'additionally require a matching x-webhook-secret header.',
+  })
+  @ApiHeader({
+    name: 'client_id',
+    required: false,
+    description:
+      'Tuya project client id. Falls back to clientId/client_id in the body.',
+  })
+  @ApiHeader({
+    name: 'x-webhook-secret',
+    required: false,
+    description:
+      'Required only when the integration has configuration.webhookSecret set.',
+  })
+  @ApiResponse({ status: 200, description: 'Event accepted' })
+  tuyaWebhook(
+    @Body() body: any,
+    @Headers('client_id') clientId?: string,
+    @Headers('x-webhook-secret') webhookSecret?: string,
+  ) {
+    return this.integrationsService.handleTuyaWebhook(
+      body,
+      clientId,
+      webhookSecret,
+    );
+  }
+
+  @Post(':id/tuya/sync')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Import Tuya devices into the platform',
+    description:
+      'Creates a Device (plus TUYA credentials holding its local_key) for every ' +
+      'device bound to the Tuya project, updates the ones already imported, and ' +
+      'stores their current datapoints as telemetry. Idempotent — re-running ' +
+      'updates instead of duplicating. Runs automatically when a Tuya ' +
+      'integration is created, updated or enabled while active.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Sync result: { created, updated, failed, total, devices[] }',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Not a Tuya integration, or Tuya rejected the device lookup',
+  })
+  @ApiResponse({ status: 404, description: 'Integration not found' })
+  syncTuyaDevices(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.integrationsService.syncTuyaDevices(id, user.id);
+  }
 
   @Get(':id/tuya/devices')
   @ApiOperation({

@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { Integration } from './entities/integration.entity';
 import { User } from '../users/entities/user.entity';
 import { IntegrationDispatchService } from './integration-dispatch.service';
+import { TuyaSyncService, TuyaSyncResult } from './tuya-sync.service';
 import { TuyaAdapter } from './adapters/tuya.adapter';
 import { IntegrationStatus, IntegrationType } from '@common/enums/index.enum';
 import { CreateIntegrationDto } from './dto/create-integration.dto';
@@ -25,6 +26,7 @@ export class IntegrationsService {
     @InjectRepository(Integration)
     private readonly integrationRepository: Repository<Integration>,
     private readonly dispatchService: IntegrationDispatchService,
+    private readonly tuyaSyncService: TuyaSyncService,
   ) {}
 
   /** Shared by the Tuya endpoints — stateless, so one instance is enough. */
@@ -66,7 +68,34 @@ export class IntegrationsService {
       createdBy: user.id,
     });
 
-    return await this.integrationRepository.save(integration);
+    const saved = await this.integrationRepository.save(integration);
+
+    this.autoSyncIfTuya(saved);
+
+    return saved;
+  }
+
+  /**
+   * Import a Tuya project's devices as soon as the integration is live.
+   *
+   * Fire-and-forget on purpose: the device list is a round trip to Tuya's
+   * cloud, and a slow or unreachable project must not make creating or
+   * enabling an integration hang — or fail.
+   */
+  private autoSyncIfTuya(integration: Integration): void {
+    if (!TuyaSyncService.isTuyaIntegration(integration)) return;
+
+    // Deliberately not Integration.isActive(): `enabled` defaults to true in
+    // the DB, so on a freshly saved entity where the client omitted it the
+    // in-memory value is undefined and isActive() would answer false for a row
+    // that is, in fact, active.
+    const active =
+      integration.status === IntegrationStatus.ACTIVE &&
+      integration.enabled !== false;
+
+    if (!active) return;
+
+    this.tuyaSyncService.scheduleSync(integration);
   }
 
   /**
@@ -141,7 +170,11 @@ export class IntegrationsService {
     Object.assign(integration, updateIntegrationDto);
     integration.updatedBy = userId;
 
-    return await this.integrationRepository.save(integration);
+    const saved = await this.integrationRepository.save(integration);
+
+    this.autoSyncIfTuya(saved);
+
+    return saved;
   }
 
   async remove(id: string, userId: string): Promise<void> {
@@ -158,7 +191,13 @@ export class IntegrationsService {
       : IntegrationStatus.INACTIVE;
     integration.updatedBy = userId;
 
-    return await this.integrationRepository.save(integration);
+    const saved = await this.integrationRepository.save(integration);
+
+    // Enabling a Tuya integration is the other way it becomes live, so it
+    // imports devices just like create/update does.
+    this.autoSyncIfTuya(saved);
+
+    return saved;
   }
 
   /**
@@ -190,15 +229,8 @@ export class IntegrationsService {
     userId: string,
   ): Promise<Integration> {
     const integration = await this.findOne(id, userId);
-    const config: any = integration.configuration ?? {};
 
-    const isTuya =
-      integration.type === IntegrationType.TUYA ||
-      (integration.type === IntegrationType.CLOUD &&
-        config.clientId &&
-        config.clientSecret);
-
-    if (!isTuya) {
+    if (!TuyaSyncService.isTuyaIntegration(integration)) {
       throw new BadRequestException(
         `Integration '${integration.name}' is not a Tuya integration`,
       );
@@ -235,6 +267,39 @@ export class IntegrationsService {
       throw new BadRequestException(result.error ?? 'Tuya command failed');
     }
     return result;
+  }
+
+  /**
+   * Import every device bound to this Tuya project into the platform.
+   *
+   * Scoped by userId, not tenantId, to match the rest of this service: the
+   * integration CRUD surface is per-owner. The tenant the devices are created
+   * in comes from the integration row itself — never from the request — so a
+   * caller cannot import devices into a tenant they do not own an integration
+   * in.
+   */
+  async syncTuyaDevices(id: string, userId: string): Promise<TuyaSyncResult> {
+    const integration = await this.findTuyaIntegration(id, userId);
+
+    try {
+      return await this.tuyaSyncService.syncIntegration(integration);
+    } catch (err: any) {
+      // getDevices() throws on auth/signing/subscription failures — surface the
+      // reason as a 400 rather than a 500 with a stack trace.
+      throw new BadRequestException(err.message);
+    }
+  }
+
+  /**
+   * Tuya message-service receiver. Public route — see TuyaSyncService for the
+   * authentication trade-off and the always-200 contract.
+   */
+  async handleTuyaWebhook(
+    body: any,
+    clientId?: string,
+    webhookSecret?: string,
+  ): Promise<{ success: boolean }> {
+    return this.tuyaSyncService.handleWebhook(body, clientId, webhookSecret);
   }
 
   async getTuyaDeviceStatus(

@@ -15,6 +15,17 @@ export enum CredentialsType {
   ACCESS_TOKEN = 'ACCESS_TOKEN',
   MQTT_BASIC = 'MQTT_BASIC',
   X509_CERTIFICATE = 'X509_CERTIFICATE',
+  /**
+   * Tuya-imported device. credentialsId is `tuya_<tuyaDeviceId>` and
+   * credentialsValue holds the device's Tuya `local_key`.
+   *
+   * The local_key is a secret (it decrypts the device's LAN protocol), so it
+   * lives in credentialsValue — which is `select: false` — rather than in
+   * credentialsId, which is returned by the credential summary endpoints and
+   * carries a global UNIQUE constraint that duplicate/empty local_keys would
+   * collide on.
+   */
+  TUYA = 'TUYA',
 }
 
 @Entity('device_credentials')

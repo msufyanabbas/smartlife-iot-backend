@@ -435,6 +435,19 @@ export class WebsocketGateway
   }
 
   /**
+   * Emit an arbitrary event into a device room.
+   *
+   * Unlike the broadcast* helpers below, this is null-safe: `server` is only
+   * assigned once afterInit() has run, and background producers (the Tuya
+   * poller's @Cron, in particular) can fire before the gateway is up. A push
+   * that arrives too early is dropped rather than throwing into the caller.
+   */
+  emitToDevice(deviceId: string, event: string, payload: any): void {
+    if (!this.server) return;
+    this.server.to(`device:${deviceId}`).emit(event, payload);
+  }
+
+  /**
    * Broadcast device status change
    */
   broadcastDeviceStatus(deviceId: string, status: any) {

@@ -26,6 +26,23 @@ import type {
 export class TuyaAdapter implements IIntegrationAdapter {
   private readonly logger = new Logger(TuyaAdapter.name);
 
+  /**
+   * Access tokens, keyed by clientId+region.
+   *
+   * Tuya tokens are valid for two hours, and `GET /v1.0/token` is itself rate
+   * limited. Without this cache the 30-second device poll would spend one full
+   * round trip re-authenticating before every request — ~2,900 token calls per
+   * integration per day, which Tuya throttles. Static so it is shared by every
+   * TuyaAdapter instance, since callers construct them ad hoc.
+   */
+  private static readonly tokenCache = new Map<
+    string,
+    { token: string; expiresAt: number }
+  >();
+
+  /** Tuya error codes that mean "this token is no longer usable". */
+  private static readonly TOKEN_ERROR_CODES = new Set([1010, 1011, 1012, 1013]);
+
   private readonly REGION_URLS: Record<string, string> = {
     eu: 'https://openapi.tuyaeu.com',
     us: 'https://openapi.tuyaus.com',
@@ -64,8 +81,23 @@ export class TuyaAdapter implements IIntegrationAdapter {
     }
   }
 
+  private tokenCacheKey(config: any): string {
+    return `${config.clientId}@${config.region ?? 'eu'}`;
+  }
+
+  /** Drop the cached token so the next call re-authenticates. */
+  private invalidateToken(config: any): void {
+    TuyaAdapter.tokenCache.delete(this.tokenCacheKey(config));
+  }
+
   private async getAccessToken(config: any): Promise<string> {
     this.assertCredentials(config);
+
+    const cacheKey = this.tokenCacheKey(config);
+    const cached = TuyaAdapter.tokenCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.token;
+    }
 
     const baseUrl = this.getBaseUrl(config.region);
     const timestamp = Date.now().toString();
@@ -95,7 +127,18 @@ export class TuyaAdapter implements IIntegrationAdapter {
       );
     }
 
-    return response.data.result.access_token;
+    const token: string = response.data.result.access_token;
+
+    // `expire_time` is in seconds (7200 in practice). A 60s safety margin
+    // keeps a token from expiring mid-flight on a slow request; the fallback
+    // covers a response that omits the field.
+    const ttlSeconds = Number(response.data.result?.expire_time) || 7200;
+    TuyaAdapter.tokenCache.set(cacheKey, {
+      token,
+      expiresAt: Date.now() + Math.max(ttlSeconds - 60, 60) * 1000,
+    });
+
+    return token;
   }
 
   /**
@@ -131,6 +174,8 @@ export class TuyaAdapter implements IIntegrationAdapter {
     path: string,
     body = '',
     token?: string,
+    /** Internal: prevents the token-expiry retry from recursing. */
+    isRetry = false,
   ): Promise<any> {
     const accessToken = token ?? (await this.getAccessToken(config));
     const baseUrl = this.getBaseUrl(config.region);
@@ -162,7 +207,23 @@ export class TuyaAdapter implements IIntegrationAdapter {
             timeout: 10000,
           });
 
-    return response.data;
+    // Tuya reports a revoked/expired token as a business error with HTTP 200.
+    // Since tokens are now cached, a stale entry would otherwise fail every
+    // subsequent call until it aged out — so drop it and retry once.
+    const data = response.data;
+    if (
+      !isRetry &&
+      !data?.success &&
+      TuyaAdapter.TOKEN_ERROR_CODES.has(Number(data?.code))
+    ) {
+      this.logger.warn(
+        `Tuya token rejected (code=${data?.code}) — re-authenticating and retrying once`,
+      );
+      this.invalidateToken(config);
+      return this.signedRequest(config, method, path, body, undefined, true);
+    }
+
+    return data;
   }
 
   async dispatch(config: any, payload: any): Promise<DispatchResult> {

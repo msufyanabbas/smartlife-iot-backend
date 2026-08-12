@@ -31,6 +31,13 @@ export enum DeviceProtocol {
   LORAWAN_CHIRPSTACK = 'lorawan_chirpstack',
   HTTP = 'http',
   COAP = 'coap',
+  /**
+   * Device owned by a Tuya cloud project and mirrored into the platform by
+   * TuyaSyncService. It has no MQTT credentials of its own here — telemetry
+   * arrives by polling or webhook, and commands go out through the Tuya
+   * OpenAPI rather than the broker.
+   */
+  TUYA = 'tuya',
 }
 
 @Entity('devices')
@@ -40,6 +47,8 @@ export enum DeviceProtocol {
 @Index(['tenantId', 'deviceProfileId'])
  @Index(['manufacturer', 'model'])
 @Index(['deviceKey'], { unique: true })
+// Every Tuya sync/poll/webhook event resolves a device by (tenantId, externalId).
+@Index(['tenantId', 'externalId'])
 export class Device extends BaseEntity {
   // ── Tenant scoping ────────────────────────────────────────────────────────
 
@@ -63,6 +72,16 @@ export class Device extends BaseEntity {
 
   @Column({ unique: true })
   deviceKey: string;
+
+  /**
+   * Identifier this device carries in the third-party system it was imported
+   * from — currently the Tuya device id. Unique per tenant by convention, not
+   * by constraint: the same physical device can legitimately be bound to two
+   * tenants' cloud projects, and a UNIQUE index would make the second import
+   * fail. TuyaSyncService always looks it up as (tenantId, externalId).
+   */
+  @Column({ type: 'varchar', nullable: true })
+  externalId?: string | null;
 
   @Column()
   name: string;
