@@ -76,6 +76,7 @@ export { Attribute } from './attributes/entities/attribute.entity';
 export { Tenant } from './tenants/entities/tenant.entity';
 
 export { Node } from './nodes/entities/node.entity';
+export { Script } from './scripts/entities/script.entity';
 export { DeviceCredentials } from './devices/entities/device-credentials.entity';
 export { DeviceCommand } from './device-commands/entities/device-commands.entity';
 export { OAuthAccount } from './auth/entities/oauth-account.entity';

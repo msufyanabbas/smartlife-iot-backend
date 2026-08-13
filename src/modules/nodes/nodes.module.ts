@@ -18,12 +18,16 @@ import { Alarm } from '../alarms/entities/alarm.entity';
 import { Attribute } from '../attributes/entities/attribute.entity';
 import { MailModule } from '../mail/mail.module';
 import { AttributesModule } from '../attributes/attributes.module';
+import { ScriptsModule } from '../scripts/scripts.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Node, Telemetry, Alarm, Attribute]),
     MailModule,
     AttributesModule,
+    // SCRIPT node executes stored scripts through ScriptsService. ScriptsModule
+    // imports nothing but its own repository, so this introduces no cycle.
+    ScriptsModule,
     // EXTERNAL node uses HttpService for outbound calls.
     HttpModule,
     // NOTE: FlowNodeProcessor needs RuleEngineService (in RulesModule), but it is

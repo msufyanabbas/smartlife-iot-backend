@@ -21,6 +21,7 @@ import { ImageSeeder } from './image/images.seeder';
 import { FloorPlanSeeder } from './floor-plan/floor-plan.seeder';
 import { IntegrationSeeder } from './integrations/integrations.seeder';
 import { NodeSeeder } from './nodes/nodes.seeder';
+import { ScriptSeeder } from './script/script.seeder';
 import { NotificationSeeder } from './notifications/notifications.seeder';
 import { RefreshTokenSeeder } from './refresh-token/refresh-token.seeder';
 import { ScheduleSeeder } from './schedule/schedule.seeder';
@@ -68,7 +69,8 @@ import {
   Customer,
   Permission,
   Role,
-  RuleChain
+  RuleChain,
+  Script
 } from '@modules/index.entities';
 import { CustomerSeeder } from './customer/customers.seeder';
 import { RoleSeeder } from './roles/roles.seeder';
@@ -210,6 +212,12 @@ export const SEEDERS: SeederConfig[] = [
     seeder: NodeSeeder,
     emoji: '🧱',
     entity: Node,
+  },
+  {
+    name: 'Scripts',
+    seeder: ScriptSeeder,
+    emoji: '📜',
+    entity: Script,
   },
   {
     name: 'Notifications',

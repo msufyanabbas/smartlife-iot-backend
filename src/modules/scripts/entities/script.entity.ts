@@ -66,6 +66,20 @@ export class Script extends BaseEntity {
   @Column({ default: 0 })
   lines: number;
 
+  /**
+   * Per-script sandbox timeout in milliseconds.
+   *
+   * Clamped to MAX_SCRIPT_TIMEOUT_MS by ScriptsService at execution time, so a
+   * row edited directly in the database cannot buy itself a longer slice of the
+   * event loop than the platform allows.
+   */
+  @Column({ type: 'int', default: 3000 })
+  timeout: number;
+
+  /** Seeded/system-provided example. Not editable through the CRUD surface. */
+  @Column({ default: false })
+  isSystem: boolean;
+
   // ══════════════════════════════════════════════════════════════════════════
   // TRACKING
   // ══════════════════════════════════════════════════════════════════════════
@@ -76,8 +90,19 @@ export class Script extends BaseEntity {
   @Column({ default: 0 })
   executionCount: number;
 
+  @Column({ type: 'int', default: 0 })
+  errorCount: number;
+
   @Column({ type: 'timestamp', nullable: true })
   lastExecutedAt?: Date;
+
+  /** Wall-clock duration of the most recent execution, in milliseconds. */
+  @Column({ type: 'int', nullable: true })
+  lastExecutionTime?: number | null;
+
+  /** Message from the most recent failed execution; cleared on success. */
+  @Column({ type: 'text', nullable: true })
+  lastError?: string | null;
 
   // ══════════════════════════════════════════════════════════════════════════
   // HELPER METHODS

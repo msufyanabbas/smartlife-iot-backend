@@ -5,26 +5,173 @@ import {
   NodeMessage,
   NodeProcessorResult,
 } from '../nodes-processor.interface';
+import { ScriptsService } from '../../scripts/scripts.service';
+import { ScriptType } from '@common/enums/index.enum';
 
 /**
- * SCRIPT node — executes tenant-provided JavaScript in a sandboxed VM context.
+ * SCRIPT node — runs a script against the message and routes on the result.
  *
- * Uses Node's built-in `vm` module with a hard timeout (NOT `new Function()`,
- * which cannot be time-bounded and shares the caller's scope). The user script
- * runs with `msg` (input.data) and `metadata` (input.metadata) in scope and is
- * expected to `return { route: 'success' | 'failure', data: {...} }`.
+ * Two sources of code, in priority order:
+ *
+ * 1. `configuration.scriptId` — a row in the `scripts` table, executed by
+ *    ScriptsService inside a vm2 sandbox. This is the supported path: the
+ *    script is versioned, testable via POST /scripts/:id/test, reusable across
+ *    chains, and its execution statistics are recorded.
+ * 2. `configuration.script` — a raw inline string, executed with Node's `vm`.
+ *    Legacy, kept so existing node rows keep working. `vm` is a *containment*
+ *    boundary, not a security one, so inline scripts are only as trustworthy as
+ *    whoever can edit the node.
+ *
+ * Routing follows the script type:
+ *   FILTER        → 'true' / 'false'
+ *   VALIDATION    → 'true' when {valid:true}, else 'false'
+ *   TRANSFORMATION→ 'success', message replaced by {msg, metadata, msgType}
+ *   ENRICHMENT    → 'success', result merged into metadata
+ *   other         → 'success', object results replace msg
+ * A failed run always routes 'failure'.
  *
  * configuration:
  * {
- *   script: string,    // JS source
- *   timeout?: number   // ms, default 5000
+ *   scriptId?: string,   // preferred
+ *   script?: string,     // legacy inline JS
+ *   timeout?: number     // inline path only; stored scripts carry their own
  * }
  */
 @Injectable()
 export class ScriptNodeProcessor implements INodeProcessor {
   private readonly logger = new Logger(ScriptNodeProcessor.name);
 
+  constructor(private readonly scriptsService: ScriptsService) {}
+
   async process(input: NodeMessage, config: any): Promise<NodeProcessorResult> {
+    if (config?.scriptId) {
+      return this.runStoredScript(input, config.scriptId);
+    }
+    return this.runInlineScript(input, config);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // STORED SCRIPT (vm2, via ScriptsService)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  private async runStoredScript(
+    input: NodeMessage,
+    scriptId: string,
+  ): Promise<NodeProcessorResult> {
+    const tenantId = input.metadata?.tenantId;
+    if (!tenantId) {
+      return {
+        success: false,
+        route: 'failure',
+        error: 'script node requires tenantId in message metadata',
+      };
+    }
+
+    let script;
+    try {
+      script = await this.scriptsService.findOne(scriptId, tenantId);
+    } catch {
+      // NotFound — a chain pointing at a deleted or foreign script.
+      return {
+        success: false,
+        route: 'failure',
+        error: `script ${scriptId} not found for this tenant`,
+      };
+    }
+
+    const execution = await this.scriptsService.execute(scriptId, tenantId, {
+      msg: input.data ?? {},
+      metadata: input.metadata ?? {},
+      msgType: input.type,
+    });
+
+    if (!execution.success) {
+      this.logger.warn(
+        `[script] ${script.name} failed: ${execution.error ?? 'unknown error'}`,
+      );
+      return {
+        success: false,
+        route: 'failure',
+        error: execution.error,
+      };
+    }
+
+    return this.applyResult(input, script.type, execution.result);
+  }
+
+  /** Turn a typed script result into a routing decision plus an output message. */
+  private applyResult(
+    input: NodeMessage,
+    type: ScriptType,
+    result: any,
+  ): NodeProcessorResult {
+    switch (type) {
+      case ScriptType.FILTER: {
+        const passed = result === true;
+        return { success: passed, output: input, route: passed ? 'true' : 'false' };
+      }
+
+      case ScriptType.VALIDATION: {
+        const valid = result?.valid !== false;
+        return {
+          success: valid,
+          output: input,
+          route: valid ? 'true' : 'false',
+          error: valid ? undefined : (result?.error ?? 'validation failed'),
+        };
+      }
+
+      case ScriptType.TRANSFORMATION:
+        return {
+          success: true,
+          route: 'success',
+          output: {
+            ...input,
+            data: result?.msg ?? input.data,
+            metadata: result?.metadata ?? input.metadata,
+            type: result?.msgType ?? input.type,
+          },
+        };
+
+      case ScriptType.ENRICHMENT:
+        return {
+          success: true,
+          route: 'success',
+          output: {
+            ...input,
+            metadata: { ...input.metadata, ...(result ?? {}) },
+          },
+        };
+
+      default:
+        // PROCESSING / AGGREGATION — an object result becomes the new message
+        // body; anything else is carried alongside without destroying `data`.
+        return {
+          success: true,
+          route: 'success',
+          output: {
+            ...input,
+            data:
+              result !== null && typeof result === 'object' && !Array.isArray(result)
+                ? result
+                : input.data,
+            metadata:
+              result !== null && typeof result === 'object'
+                ? input.metadata
+                : { ...input.metadata, scriptResult: result },
+          },
+        };
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // LEGACY INLINE SCRIPT (node:vm)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  private async runInlineScript(
+    input: NodeMessage,
+    config: any,
+  ): Promise<NodeProcessorResult> {
     const timeout = config?.timeout ?? 5000;
     const source = config?.script;
 
@@ -32,7 +179,8 @@ export class ScriptNodeProcessor implements INodeProcessor {
       return {
         success: false,
         route: 'failure',
-        error: 'script node requires a string `script` in configuration',
+        error:
+          'script node requires `scriptId` (preferred) or a string `script` in configuration',
       };
     }
 
