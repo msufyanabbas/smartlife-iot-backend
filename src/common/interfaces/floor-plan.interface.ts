@@ -17,125 +17,37 @@ export interface FloorPlanSettings {
   };
 }
 
-export interface DWGGeometry {
-  walls: Array<{
-    id: string;
-    points: Array<{ x: number; y: number; z?: number }>;
-    thickness: number;
-    height: number;
-    material?: string;
-  }>;
-  doors: Array<{
-    id: string;
-    position: { x: number; y: number; z?: number };
-    width: number;
-    height: number;
-    rotation: number;
-    type: 'single' | 'double' | 'sliding';
-  }>;
-  windows: Array<{
-    id: string;
-    position: { x: number; y: number; z?: number };
-    width: number;
-    height: number;
-    rotation: number;
-  }>;
-  rooms: Array<{
-    id: string;
-    name: string;
-    boundaries: Array<{ x: number; y: number }>;
-    area: number;
-    floor: string;
-  }>;
-  stairs: Array<{
-    id: string;
-    points: Array<{ x: number; y: number; z?: number }>;
-    width: number;
-    steps: number;
-  }>;
-  furniture?: Array<{
-    id: string;
-    type: string;
-    position: { x: number; y: number; z?: number };
-    rotation: number;
-    dimensions: { width: number; height: number; depth: number };
-  }>;
-  /**
-   * Elevation metrics derived from the drawing's Z values.
-   * `hasElevationData` is false for the common case of a flat 2D plan drawn at
-   * z=0, in which case `floorHeight` is null and the frontend should fall back
-   * to Building3DMetadata.floorHeight.
-   */
-  building?: {
-    hasElevationData: boolean;
-    floorHeight: number | null;  // metres; null when it cannot be inferred
-    minElevation: number;
-    maxElevation: number;
-  };
+/**
+ * Geometry produced by DxfFloorPlanParser.
+ *
+ * The parser is the single source of truth for this shape, so the type is
+ * aliased from there rather than duplicated. The import is type-only, so it is
+ * erased at compile time and introduces no runtime dependency from `common/`
+ * onto `modules/`.
+ *
+ * Every coordinate, radius, thickness and area is in METRES.
+ *
+ * Backwards compatibility: walls still expose `points`, rooms still expose
+ * `boundaries`/`name`/`floor`, doors still expose `rotation`/`height`/`type`,
+ * and `bounds` is still present as an alias of `boundingBox` — so renderers
+ * written against the previous shape keep working while gaining `columns`,
+ * `swing`, per-layer colours, `units`, `scale` and block-expansion metrics.
+ */
+export type { Parsed3DGeometry } from '../../modules/floor-plans/parsers/dxf-floor-plan.parser';
+import type { Parsed3DGeometry } from '../../modules/floor-plans/parsers/dxf-floor-plan.parser';
 
-  // ── Raw entity capture ─────────────────────────────────────────────────────
-  // A DXF that is not an architectural floor plan (a bridge, a site plan, a
-  // mechanical part) still carries usable geometry. These fields keep every
-  // entity the parser saw, whatever its layer was named, so nothing is thrown
-  // away just because it could not be classified as a wall or a room.
-
-  /**
-   * Every LINE entity exactly as it was read, before wall merging. walls[] is
-   * the post-processed view (collinear segments merged); this is the raw one.
-   */
-  lines?: Array<{
-    id: string;
-    start: { x: number; y: number; z?: number };
-    end: { x: number; y: number; z?: number };
-    layer?: string;
-  }>;
-
-  /** All ARC entities, sampled to points. */
-  arcs?: Array<{
-    id: string;
-    center: { x: number; y: number; z?: number };
-    radius: number;
-    startAngle: number; // radians
-    endAngle: number;   // radians
-    points: Array<{ x: number; y: number }>;
-    layer?: string;
-  }>;
-
-  /** All CIRCLE entities. */
-  circles?: Array<{
-    id: string;
-    center: { x: number; y: number; z?: number };
-    radius: number;
-    layer?: string;
-  }>;
-
-  /** All TEXT / MTEXT entities. */
-  texts?: Array<{
-    id: string;
-    text: string;
-    position: { x: number; y: number; z?: number };
-    layer?: string;
-  }>;
-
-  /** Every distinct layer name encountered, in first-seen order. */
-  layers?: string[];
-
-  /** Drawing extents in metres, origin-normalised like every other coordinate. */
-  bounds?: {
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
-    width: number;
-    height: number;
-  };
-
-  /** Raw DXF entity-type histogram, e.g. { LINE: 412, LWPOLYLINE: 33 }. */
-  entityCounts?: Record<string, number>;
-
-  /** Total entities seen in the file, including types we do not model. */
-  totalEntities?: number;
-}
+/**
+ * The *stored* shape, which is deliberately looser than the parser's output.
+ *
+ * `floor_plans.parsedGeometry` is a jsonb column that also holds rows written
+ * before this parser existed (seeded demo plans, and plans parsed by the
+ * previous implementation) — those carry the four core collections and little
+ * else. Requiring the full Parsed3DGeometry here would make every such row a
+ * type error without making the data any more complete. Freshly parsed rows are
+ * always the full shape.
+ */
+export type DWGGeometry = Partial<Parsed3DGeometry> &
+  Pick<Parsed3DGeometry, 'walls' | 'rooms' | 'doors' | 'windows'>;
 
 export interface Device3DData {
   deviceId: string;

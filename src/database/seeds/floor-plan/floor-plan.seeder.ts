@@ -251,92 +251,119 @@ export class FloorPlanSeeder implements ISeeder {
       });
     };
 
-    const generateSampleGeometry = (width: number, height: number) => ({
-      walls: [
-        {
-          id: 'wall-1',
-          points: [
-            { x: 0, y: 0, z: 0 },
-            { x: width, y: 0, z: 0 },
-          ],
+    // Demo geometry in the shape DxfFloorPlanParser now produces: walls carry
+    // start/end (and `points` as the legacy alias), rooms carry vertices/center,
+    // and the drawing-level metadata is filled in so seeded plans render through
+    // exactly the same path as parsed ones.
+    const generateSampleGeometry = (width: number, height: number) => {
+      const corners = [
+        { x: 0, y: 0, z: 0 },
+        { x: width, y: 0, z: 0 },
+        { x: width, y: height, z: 0 },
+        { x: 0, y: height, z: 0 },
+      ];
+
+      const walls = corners.map((start, i) => {
+        const end = corners[(i + 1) % corners.length];
+        return {
+          id: `wall-${i + 1}`,
+          start,
+          end,
+          points: [start, end],
           thickness: 0.2,
           height: 3.0,
+          layer: 'A-WALL',
           material: 'concrete',
+        };
+      });
+
+      const boundary = corners.map((c) => ({ x: c.x, y: c.y }));
+
+      return {
+        walls,
+        doors: [
+          {
+            id: 'door-1',
+            position: { x: width / 2, y: 0, z: 0 },
+            width: 0.9,
+            height: 2.1,
+            angle: 0,
+            rotation: 0,
+            layer: 'A-DOOR',
+            type: 'single' as const,
+          },
+        ],
+        windows: [
+          {
+            id: 'window-1',
+            start: { x: width * 0.25 - 0.75, y: height },
+            end: { x: width * 0.25 + 0.75, y: height },
+            position: { x: width * 0.25, y: height, z: 1.2 },
+            width: 1.5,
+            height: 1.2,
+            rotation: 90,
+            layer: 'A-GLAZ',
+          },
+          {
+            id: 'window-2',
+            start: { x: width * 0.75 - 0.75, y: height },
+            end: { x: width * 0.75 + 0.75, y: height },
+            position: { x: width * 0.75, y: height, z: 1.2 },
+            width: 1.5,
+            height: 1.2,
+            rotation: 90,
+            layer: 'A-GLAZ',
+          },
+        ],
+        rooms: [
+          {
+            id: 'room-1',
+            vertices: boundary,
+            boundaries: boundary,
+            area: width * height,
+            center: { x: width / 2, y: height / 2 },
+            layer: 'A-AREA',
+            label: 'Main Area',
+            name: 'Main Area',
+            floor: 'ground',
+          },
+        ],
+        columns: [],
+        stairs: [],
+        furniture: [],
+        layers: [
+          { name: 'A-WALL', color: 7, entityCount: 4 },
+          { name: 'A-DOOR', color: 3, entityCount: 1 },
+          { name: 'A-GLAZ', color: 4, entityCount: 2 },
+          { name: 'A-AREA', color: 8, entityCount: 1 },
+        ],
+        layerNames: ['A-WALL', 'A-DOOR', 'A-GLAZ', 'A-AREA'],
+        boundingBox: { minX: 0, minY: 0, maxX: width, maxY: height, width, height },
+        bounds: { minX: 0, minY: 0, maxX: width, maxY: height, width, height },
+        building: {
+          floorHeight: 3.0,
+          hasElevationData: false,
+          elevationRange: { min: 0, max: 0 },
+          minElevation: 0,
+          maxElevation: 0,
+          totalArea: width * height,
         },
-        {
-          id: 'wall-2',
-          points: [
-            { x: width, y: 0, z: 0 },
-            { x: width, y: height, z: 0 },
-          ],
-          thickness: 0.2,
-          height: 3.0,
-          material: 'concrete',
+        units: 'meters',
+        scale: 1,
+        metrics: {
+          entityCount: {
+            lines: 4, polylines: 0, arcs: 0, circles: 0, inserts: 0,
+            texts: 0, hatches: 0, solids: 0, expanded: 0, total: 7,
+          },
         },
-        {
-          id: 'wall-3',
-          points: [
-            { x: width, y: height, z: 0 },
-            { x: 0, y: height, z: 0 },
-          ],
-          thickness: 0.2,
-          height: 3.0,
-          material: 'concrete',
-        },
-        {
-          id: 'wall-4',
-          points: [
-            { x: 0, y: height, z: 0 },
-            { x: 0, y: 0, z: 0 },
-          ],
-          thickness: 0.2,
-          height: 3.0,
-          material: 'concrete',
-        },
-      ],
-      doors: [
-        {
-          id: 'door-1',
-          position: { x: width / 2, y: 0, z: 0 },
-          width: 0.9,
-          height: 2.1,
-          rotation: 0,
-          type: 'single' as const,
-        },
-      ],
-      windows: [
-        {
-          id: 'window-1',
-          position: { x: width * 0.25, y: height, z: 1.2 },
-          width: 1.5,
-          height: 1.2,
-          rotation: 90,
-        },
-        {
-          id: 'window-2',
-          position: { x: width * 0.75, y: height, z: 1.2 },
-          width: 1.5,
-          height: 1.2,
-          rotation: 90,
-        },
-      ],
-      rooms: [
-        {
-          id: 'room-1',
-          name: 'Main Area',
-          boundaries: [
-            { x: 0, y: 0 },
-            { x: width, y: 0 },
-            { x: width, y: height },
-            { x: 0, y: height },
-          ],
-          area: width * height,
-          floor: 'ground',
-        },
-      ],
-      stairs: [],
-      furniture: [],
-    });
+        lines: [],
+        arcs: [],
+        circles: [],
+        texts: [],
+        entityCounts: { LINE: 4 },
+        totalEntities: 7,
+      };
+    };
 
     // ════════════════════════════════════════════════════════════════
     // FLOOR PLAN DATA
