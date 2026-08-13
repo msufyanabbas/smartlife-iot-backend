@@ -22,7 +22,8 @@ export { Device } from './devices/entities/device.entity';
 export { Telemetry } from './telemetry/entities/telemetry.entity';
 export { Firmware } from './firmware/entities/firmware.entity';
 export { Asset } from './assets/entities/asset.entity';
-export { EdgeInstance } from './edge/entities/edge-instance.entity';
+export { Edge } from './edge/entities/edge.entity';
+export { EdgeEvent } from './edge/entities/edge-event.entity';
 export { EdgeCommand } from './edge/entities/edge-command.entity';
 export { EdgeMetricsSnapshot } from './edge/entities/edge-metrics-snapshot.entity';
 

@@ -15,7 +15,7 @@ import { AuditLogSeeder } from './audit-log/audit-log.seeder';
 import { AutomationSeeder } from './automation/automation.seeder';
 import { DashboardSeeder } from './dashboard/dashboard.seeder';
 import { DeviceProfileSeeder } from './device-profile/device-profile.seeder';
-import { EdgeInstanceSeeder } from './edge/edge-instance.seeder';
+import { EdgeSeeder } from './edge/edge.seeder';
 import { EmailTemplateSeeder } from './email-template/email-template.seeder';
 import { ImageSeeder } from './image/images.seeder';
 import { FloorPlanSeeder } from './floor-plan/floor-plan.seeder';
@@ -49,7 +49,7 @@ import {
   Automation,
   Dashboard,
   DeviceProfile,
-  EdgeInstance,
+  Edge,
   EmailTemplate,
   FloorPlan,
   Image,
@@ -172,10 +172,10 @@ export const SEEDERS: SeederConfig[] = [
     entity: DeviceProfile,
   },
   {
-    name: 'Edge Instances',
-    seeder: EdgeInstanceSeeder,
+    name: 'Edges',
+    seeder: EdgeSeeder,
     emoji: '🌐',
-    entity: EdgeInstance,
+    entity: Edge,
   },
   {
     name: 'Email Templates',
@@ -323,7 +323,7 @@ export {
   AutomationSeeder,
   DashboardSeeder,
   DeviceProfileSeeder,
-  EdgeInstanceSeeder,
+  EdgeSeeder,
   EmailTemplateSeeder,
   FloorPlanSeeder,
   DeviceCredentialsSeeder,

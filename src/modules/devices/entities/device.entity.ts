@@ -15,7 +15,7 @@ import type { Customer } from '../../customers/entities/customers.entity';
 import type { Asset } from '../../assets/entities/asset.entity';
 import type { DeviceProfile } from '../../profiles/entities/device-profile.entity';
 import type { DeviceCredentials } from './device-credentials.entity';
-import type { EdgeInstance } from '../../edge/entities/edge-instance.entity';
+import type { Edge } from '../../edge/entities/edge.entity';
 import {
   DeviceType,
   DeviceStatus,
@@ -229,9 +229,9 @@ export class Device extends BaseEntity {
   @Column({ nullable: true })
   edgeId?: string;
 
-  @ManyToOne('EdgeInstance', { nullable: true, onDelete: 'SET NULL' })
+  @ManyToOne('Edge', { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'edgeId' })
-  edge?: Relation<EdgeInstance>;
+  edge?: Relation<Edge>;
 
 
   // ── Tags ──────────────────────────────────────────────────────────────────

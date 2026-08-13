@@ -1,89 +1,71 @@
 // src/modules/edge/entities/edge-command.entity.ts
-import {
-  Entity,
-  Column,
-  Index,
-  ManyToOne,
-  JoinColumn,
-  PrimaryGeneratedColumn,
-  CreateDateColumn,
-} from 'typeorm';
+import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
 import type { Relation } from 'typeorm';
-import type { EdgeInstance } from './edge-instance.entity';
-
-export enum EdgeCommandStatus {
-  PENDING   = 'pending',
-  DELIVERED = 'delivered',
-  EXECUTED  = 'executed',
-  FAILED    = 'failed',
-}
+import { BaseEntity } from '@common/entities/base.entity';
+import type { Edge } from './edge.entity';
 
 export type EdgeCommandType =
-  | 'restart'
-  | 'sync'
-  | 'update_config'
-  | 'reboot';
+  | 'SYNC_CONFIG'
+  | 'REBOOT'
+  | 'UPDATE_FIRMWARE'
+  | 'CLEAR_BUFFER'
+  | 'RESTART_AGENT'
+  | 'CUSTOM';
 
+export type EdgeCommandStatus =
+  | 'PENDING'
+  | 'SENT'
+  | 'DELIVERED'
+  | 'EXECUTED'
+  | 'FAILED';
+
+/**
+ * A instruction queued for an edge agent to collect on its next poll.
+ *
+ * Lifecycle: PENDING → SENT (handed to the agent) → EXECUTED | FAILED (agent
+ * acknowledged). DELIVERED sits between SENT and EXECUTED for agents that
+ * confirm receipt separately from completion.
+ *
+ * Replaces the previous EdgeCommand, which used a lowercase status enum, a
+ * `command` column and a different verb set. Rewritten rather than migrated —
+ * the table was empty.
+ */
 @Entity('edge_commands')
 @Index(['edgeId', 'status'])
-@Index(['tenantId', 'issuedAt'])
-export class EdgeCommand {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // RELATIONS
-  // ══════════════════════════════════════════════════════════════════════════
-
-  @Column()
+@Index(['tenantId', 'createdAt'])
+export class EdgeCommand extends BaseEntity {
+  @Column({ type: 'uuid' })
   @Index()
   edgeId: string;
 
-  @ManyToOne('EdgeInstance', 'commands', {
-    onDelete: 'CASCADE',
-  })
+  @ManyToOne('Edge', 'commands', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'edgeId' })
-  edge: Relation<EdgeInstance>;
+  edge: Relation<Edge>;
 
-  @Column()
+  @Column({ type: 'uuid' })
   tenantId: string;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // COMMAND
-  // ══════════════════════════════════════════════════════════════════════════
-
-  // explicit type — EdgeCommandType is a string-literal union that erases at
-  // runtime, so design:type emits Object and TypeORM cannot infer a column type
   @Column({ type: 'varchar' })
-  command: EdgeCommandType;
+  type: EdgeCommandType;
 
   @Column({ type: 'jsonb', nullable: true })
-  payload?: Record<string, any>;
+  payload: Record<string, any> | null;
 
-  @Column({
-    type: 'enum',
-    enum: EdgeCommandStatus,
-    default: EdgeCommandStatus.PENDING,
-  })
+  @Column({ type: 'varchar', default: 'PENDING' })
   status: EdgeCommandStatus;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // TIMING
-  // ══════════════════════════════════════════════════════════════════════════
-
-  @CreateDateColumn()
-  issuedAt: Date;
+  @Column({ type: 'timestamp', nullable: true })
+  sentAt: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
-  deliveredAt?: Date;
+  deliveredAt: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
-  executedAt?: Date;
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // RESULT
-  // ══════════════════════════════════════════════════════════════════════════
+  executedAt: Date | null;
 
   @Column({ type: 'text', nullable: true })
-  resultMessage?: string;
+  error: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  createdByUserId: string | null;
 }
