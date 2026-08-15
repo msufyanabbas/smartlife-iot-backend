@@ -5,7 +5,7 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { APILog } from '@modules/index.entities'; // + whatever else is needed
 
 import {
-    LoggingInterceptor,
+    ApiLoggingInterceptor,
     MetricsInterceptor,
     AuditInterceptor,
     UsageTrackingInterceptor,
@@ -27,7 +27,10 @@ import { AuditModule, MetricsModule, NotificationsModule } from '@/modules/index
 
     ],
     providers: [
-        { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },
+        // Writes one api_logs row per request that reaches a handler.
+        // Requests rejected by a guard are covered by ApiLoggingMiddleware
+        // (registered in AppModule) — interceptors never see those.
+        { provide: APP_INTERCEPTOR, useClass: ApiLoggingInterceptor },
         { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
         { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
         { provide: APP_INTERCEPTOR, useClass: NotificationInterceptor },

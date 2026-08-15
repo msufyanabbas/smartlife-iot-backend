@@ -9,7 +9,6 @@ import { join } from 'path';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from '@common/filters/index.filter';
 import {
-  LoggingInterceptor,
   TimeoutInterceptor,
   TransformInterceptor,
 } from '@common/interceptors/index.interceptor';

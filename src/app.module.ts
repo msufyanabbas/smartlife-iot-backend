@@ -8,6 +8,8 @@ import { GuardsModule } from '@common/guards/guards.module';
 import { InterceptorsModule } from './common/interceptors/interceptor.module';
 import { MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { RequestIdMiddleware } from '@common/middleware/request-id.middleware';
+import { ApiLoggingMiddleware } from '@common/middleware/api-logging.middleware';
+import { APILog } from '@modules/api-monitoring/entities/api-log.entity';
 
 @Module({
   imports: [
@@ -20,6 +22,10 @@ import { RequestIdMiddleware } from '@common/middleware/request-id.middleware';
       cache: true,
     }),
     TypeOrmModule.forRoot(AppDataSource.options),
+    // ApiLoggingMiddleware injects this repository. Middleware is resolved from
+    // the module that declares it, so forFeature must live here — not only in
+    // ApiMonitoringModule.
+    TypeOrmModule.forFeature([APILog]),
     CacheModule.registerAsync({
       isGlobal: true,
       imports: [ConfigModule],
@@ -55,10 +61,14 @@ import { RequestIdMiddleware } from '@common/middleware/request-id.middleware';
     ...featureModules,
   ],
   controllers: [AppController],
-  providers: [],          // ✅ empty — guards and interceptors are owned by their modules
+  providers: [ApiLoggingMiddleware], // guards/interceptors stay owned by their
+                                     // modules; middleware must be a provider
+                                     // of the module that applies it
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(RequestIdMiddleware).forRoutes('*');
+    // Order matters: RequestIdMiddleware first so req.id exists by the time
+    // ApiLoggingMiddleware stamps a row with it.
+    consumer.apply(RequestIdMiddleware, ApiLoggingMiddleware).forRoutes('*');
   }
 }

@@ -62,7 +62,13 @@ export class APILog extends BaseEntity {
 
   @Column()
 
-  endpoint: string;  // /api/devices/:id
+  endpoint: string;  // Route TEMPLATE — /devices/:id — never the raw URL.
+                     // Grouping keys (top endpoints, slowest) depend on this
+                     // being low-cardinality, so query strings and inlined ids
+                     // must stay out of it. The raw URL goes in `url`.
+
+  @Column({ type: 'varchar', nullable: true })
+  url?: string;  // Full request URL incl. query string — /devices?limit=1
 
   @Column()
 
@@ -71,15 +77,31 @@ export class APILog extends BaseEntity {
   @Column({ type: 'integer' })
   responseTime: number;  // Milliseconds
 
+  @Column({ type: 'boolean', default: false })
+  isError: boolean;  // Denormalised statusCode >= 400 (kept for cheap filtering)
+
   // ══════════════════════════════════════════════════════════════════════════
   // CLIENT INFO
   // ══════════════════════════════════════════════════════════════════════════
 
-  @Column()
-  ip: string;
+  @Column({ nullable: true })
+  ip?: string;  // Nullable: a socket can be gone by the time we log
 
   @Column({ name: 'user_agent', nullable: true })
   userAgent?: string;
+
+  @Column({ type: 'varchar', nullable: true })
+  userRole?: string;  // Denormalised from user.role — survives user deletion
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PAYLOAD SIZE (bytes)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Column({ type: 'int', default: 0 })
+  requestSize: number;  // From Content-Length; 0 when not sent
+
+  @Column({ type: 'int', default: 0 })
+  responseSize: number;  // Bytes written by the handler (pre-compression)
 
   // ══════════════════════════════════════════════════════════════════════════
   // REQUEST DATA (SANITIZED - NO SENSITIVE INFO)
