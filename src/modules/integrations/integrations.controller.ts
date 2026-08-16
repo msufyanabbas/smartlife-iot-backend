@@ -23,6 +23,7 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator';
 import { IntegrationsService } from './integrations.service';
+import { LorawanService } from './lorawan.service';
 import { CreateIntegrationDto } from './dto/create-integration.dto';
 import { UpdateIntegrationDto } from './dto/update-integration.dto';
 import { IntegrationActivityDto } from './dto/integration-activity.dto';
@@ -38,7 +39,10 @@ import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class IntegrationsController {
-  constructor(private readonly integrationsService: IntegrationsService) {}
+  constructor(
+    private readonly integrationsService: IntegrationsService,
+    private readonly lorawanService: LorawanService,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new integration' })
@@ -176,6 +180,108 @@ export class IntegrationsController {
    * matches on the literal segments, and 'tuya/webhook' cannot be confused
    * with any of them.
    */
+  // ── LoRaWAN uplink webhooks ───────────────────────────────────────────────
+  // Declared before the `:id/...` routes for readability; Nest matches on the
+  // literal segments, so 'lorawan/*' cannot be confused with them.
+
+  @Post('lorawan/chirpstack')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  // A gateway serving many devices bursts well past the global 100/min, and a
+  // 429 would make ChirpStack retry and eventually disable the integration.
+  @Throttle({ default: { limit: 1000, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'ChirpStack uplink webhook',
+    description:
+      'Unauthenticated — ChirpStack calls this directly (Application → ' +
+      'Integrations → HTTP). Auto-creates the device by DevEUI on first sight ' +
+      'and ingests the uplink through the normal pipeline (codec decode → ' +
+      'Kafka → persist + alarms + WebSocket).\n\n' +
+      'Tenant resolution, first match wins: (1) X-Tenant-Id header — still ' +
+      'validated against an active chirpstack integration, never trusted on ' +
+      'its own; (2) applicationId query param matched against ' +
+      'configuration.applicationId; (3) the application id in the body; ' +
+      '(4) the single active chirpstack integration, if there is exactly one. ' +
+      'Ambiguity is rejected rather than guessed.\n\n' +
+      'ALWAYS responds 200 — check the `success` field — because ChirpStack ' +
+      'disables an integration that keeps failing. Set ' +
+      'configuration.webhookSecret to require a matching x-webhook-secret header.',
+  })
+  @ApiQuery({
+    name: 'applicationId',
+    required: false,
+    description: 'Matched against the integration configuration.applicationId.',
+  })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: false,
+    description: 'Target tenant. Must own an active chirpstack integration.',
+  })
+  @ApiHeader({
+    name: 'x-webhook-secret',
+    required: false,
+    description:
+      'Required only when the integration has configuration.webhookSecret set.',
+  })
+  @ApiResponse({ status: 200, description: 'Uplink accepted' })
+  chirpstackWebhook(
+    @Body() body: any,
+    @Query('applicationId') applicationId?: string,
+    @Headers('x-tenant-id') tenantId?: string,
+    @Headers('x-webhook-secret') webhookSecret?: string,
+  ) {
+    return this.lorawanService.handleChirpStackWebhook(
+      body,
+      applicationId,
+      tenantId,
+      webhookSecret,
+    );
+  }
+
+  @Post('lorawan/ttn')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 1000, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'TTN (The Things Stack v3) uplink webhook',
+    description:
+      'Unauthenticated — The Things Stack calls this directly (Application → ' +
+      'Integrations → Webhooks). Same behaviour as the ChirpStack route; the ' +
+      'envelope differs (snake_case, end_device_ids.dev_eui, ' +
+      'uplink_message.decoded_payload), which is why it is a separate route.\n\n' +
+      'ALWAYS responds 200 — check the `success` field.',
+  })
+  @ApiQuery({
+    name: 'applicationId',
+    required: false,
+    description: 'Matched against the integration configuration.applicationId.',
+  })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: false,
+    description: 'Target tenant. Must own an active ttn integration.',
+  })
+  @ApiHeader({
+    name: 'x-webhook-secret',
+    required: false,
+    description:
+      'Required only when the integration has configuration.webhookSecret set.',
+  })
+  @ApiResponse({ status: 200, description: 'Uplink accepted' })
+  ttnWebhook(
+    @Body() body: any,
+    @Query('applicationId') applicationId?: string,
+    @Headers('x-tenant-id') tenantId?: string,
+    @Headers('x-webhook-secret') webhookSecret?: string,
+  ) {
+    return this.lorawanService.handleTtnWebhook(
+      body,
+      applicationId,
+      tenantId,
+      webhookSecret,
+    );
+  }
+
   @Post('tuya/webhook')
   @Public()
   @HttpCode(HttpStatus.OK)

@@ -29,6 +29,8 @@ export enum DeviceProtocol {
   GENERIC_MQTT = 'generic_mqtt',
   LORAWAN_MILESIGHT = 'lorawan_milesight',
   LORAWAN_CHIRPSTACK = 'lorawan_chirpstack',
+  /** Device provisioned from a The Things Stack (TTN v3) uplink webhook. */
+  LORAWAN_TTN = 'lorawan_ttn',
   HTTP = 'http',
   COAP = 'coap',
   /**

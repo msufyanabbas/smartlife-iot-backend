@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { HttpModule } from '@nestjs/axios';
 import { IntegrationsService } from './integrations.service';
@@ -10,7 +10,9 @@ import { DeviceCredentials } from '../devices/entities/device-credentials.entity
 import { Telemetry } from '../telemetry/entities/telemetry.entity';
 import { IntegrationDispatchService } from './integration-dispatch.service';
 import { TuyaSyncService } from './tuya-sync.service';
+import { LorawanService } from './lorawan.service';
 import { WebsocketModule } from '../websocket/websocket.module';
+import { ProtocolsModule } from '../protocols/protocols.module';
 
 @Module({
   imports: [
@@ -32,9 +34,24 @@ import { WebsocketModule } from '../websocket/websocket.module';
     // TuyaSyncService's @Cron needs nothing here.
     WebsocketModule,
     HttpModule,
+    // LorawanService hands uplinks to DeviceListenerService, the platform's
+    // unified ingestion entry point (same path MQTT and CoAP use), rather than
+    // reimplementing decode + Kafka publish. forwardRef because TelemetryModule
+    // imports this module and ProtocolsModule reaches it transitively.
+    forwardRef(() => ProtocolsModule),
   ],
   controllers: [IntegrationsController],
-  providers: [IntegrationsService, IntegrationDispatchService, TuyaSyncService],
-  exports: [IntegrationsService, IntegrationDispatchService, TuyaSyncService],
+  providers: [
+    IntegrationsService,
+    IntegrationDispatchService,
+    TuyaSyncService,
+    LorawanService,
+  ],
+  exports: [
+    IntegrationsService,
+    IntegrationDispatchService,
+    TuyaSyncService,
+    LorawanService,
+  ],
 })
 export class IntegrationsModule {}

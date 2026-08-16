@@ -108,6 +108,7 @@ export class IntegrationsService {
       case IntegrationType.MQTT:
         return 'MQTT';
       case IntegrationType.AWS_IOT:
+      case IntegrationType.AZURE_IOT:
         return 'MQTTS';
       case IntegrationType.DATABASE:
         return 'SQL';
