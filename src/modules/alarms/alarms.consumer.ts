@@ -345,6 +345,8 @@ export class AlarmConsumer {
         // FAILED and burn a retry for a permanent condition.
         if (channel === NotificationChannel.EMAIL && !recipient.email) continue;
         if (channel === NotificationChannel.SMS && !recipient.phone) continue;
+        if (channel === NotificationChannel.WHATSAPP && !recipient.phone)
+          continue;
 
         try {
           await this.notificationsService.create(
@@ -362,7 +364,10 @@ export class AlarmConsumer {
               recipientEmail:
                 channel === NotificationChannel.EMAIL ? recipient.email : undefined,
               recipientPhone:
-                channel === NotificationChannel.SMS ? recipient.phone : undefined,
+                channel === NotificationChannel.SMS ||
+                channel === NotificationChannel.WHATSAPP
+                  ? recipient.phone
+                  : undefined,
               action: {
                 label: 'View Alarm',
                 url: `/alarms/${alarm.id}`,

@@ -7,6 +7,7 @@ import { NotificationsRepository } from './repositories/notifications.repository
 import { EmailChannel } from './channels/email.channel';
 import { SmsChannel } from './channels/sms.channel';
 import { PushChannel } from './channels/push.channel';
+import { WhatsappChannel } from './channels/whatsapp.channel';
 import { MailModule } from '../../modules/mail/mail.module';
 import { UsersModule } from '../users/users.module';
 
@@ -24,6 +25,7 @@ import { UsersModule } from '../users/users.module';
     EmailChannel,
     SmsChannel,
     PushChannel,
+    WhatsappChannel,
   ],
   exports: [NotificationsService],  // ← UsersService removed from exports
 })

@@ -25,6 +25,7 @@ import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { EmailChannel } from './channels/email.channel';
 import { SmsChannel } from './channels/sms.channel';
 import { PushChannel } from './channels/push.channel';
+import { WhatsappChannel } from './channels/whatsapp.channel';
 import { NotificationsRepository } from './repositories/notifications.repository';
 import { UserRole } from '@common/enums/index.enum';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -49,6 +50,7 @@ export class NotificationsService {
     private userService: InstanceType<typeof UsersService>,
     private smsChannel: SmsChannel,
     private pushChannel: PushChannel,
+    private whatsappChannel: WhatsappChannel,
   ) { }
 
   /**
@@ -111,6 +113,10 @@ export class NotificationsService {
           await this.sendPush(notification);
           break;
 
+        case NotificationChannel.WHATSAPP:
+          await this.sendWhatsApp(notification);
+          break;
+
         case NotificationChannel.WEBHOOK:
           await this.sendWebhook(notification);
           break;
@@ -164,6 +170,16 @@ export class NotificationsService {
    */
   private async sendPush(notification: Notification): Promise<void> {
     await this.pushChannel.send(notification);
+    notification.markAsSent();
+    notification.markAsDelivered();
+    await this.notificationRepository.save(notification);
+  }
+
+  /**
+   * Send WhatsApp notification (Unifonic)
+   */
+  private async sendWhatsApp(notification: Notification): Promise<void> {
+    await this.whatsappChannel.send(notification);
     notification.markAsSent();
     notification.markAsDelivered();
     await this.notificationRepository.save(notification);

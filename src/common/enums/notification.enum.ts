@@ -6,12 +6,16 @@ export enum NotificationType {
   REPORT = 'report',
 }
 
+// Values are persisted in the PG enum `notifications_channel_enum`. Adding a
+// member here needs a migration (`ALTER TYPE ... ADD VALUE`) — see
+// NotificationWhatsappChannel.
 export enum NotificationChannel {
   EMAIL = 'email',
   SMS = 'sms',
   PUSH = 'push',
   WEBHOOK = 'webhook',
   IN_APP = 'in_app',
+  WHATSAPP = 'whatsapp',
 }
 
 export enum NotificationPriority {
