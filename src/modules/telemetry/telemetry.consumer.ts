@@ -3,7 +3,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Alarm, Device, Telemetry } from '@modules/index.entities';
 import { KafkaService } from '@/lib/kafka/kafka.service';
-import { AutomationProcessor } from '@modules/automation/automation.processor';
 import { WebsocketGateway } from '@modules/websocket/websocket.gateway';
 import { CodecRegistryService } from '../devices/codecs/codec-registry.service';
 import { AlarmsService } from '../index.service';
@@ -19,7 +18,6 @@ export class TelemetryConsumer implements OnModuleInit {
     private readonly kafka: KafkaService,
     @InjectRepository(Telemetry)
     private readonly telemetryRepo: Repository<Telemetry>,
-    private readonly automationProcessor: AutomationProcessor,
     private readonly websocketGateway: WebsocketGateway,
     private readonly codecService: CodecRegistryService,
     private readonly alarmsService: AlarmsService, //
@@ -145,6 +143,9 @@ export class TelemetryConsumer implements OnModuleInit {
         );
 
       // ── Step 4: Forward to validated topic ────────────────────────────────
+      // AutomationConsumer subscribes to this topic and runs TELEMETRY-trigger
+      // automations. It is NOT called inline here so a slow action (a webhook,
+      // a delayed action) cannot stall the telemetry consumer group.
       await this.kafka.sendMessage(
         'telemetry.device.validated',
         {

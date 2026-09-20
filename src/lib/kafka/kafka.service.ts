@@ -1,4 +1,6 @@
 import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { KafkaConfig as KafkaSettings } from '@/config/kafka.config';
 import {
   Kafka,
   Producer,
@@ -18,18 +20,26 @@ export class KafkaService implements OnApplicationShutdown {
   private readonly consumers = new Map<string, Consumer>();
   private admin: Admin;
   private isProducerConnected = false;
+  private readonly settings: KafkaSettings;
 
-  constructor() {
+  constructor(private readonly configService: ConfigService) {
+    // The whole 'kafka' namespace is read once. `brokers` arrives already split
+    // on commas — the previous `[process.env.KAFKA_BROKERS]` passed a multi-broker
+    // string to kafkajs as a single hostname, so only single-broker setups worked.
+    this.settings = this.configService.get<KafkaSettings>('kafka')!;
+
     this.kafka = new Kafka({
-      clientId: 'smartlife-iot-platform',
-      brokers: [process.env.KAFKA_BROKERS || 'localhost:9093'],
+      clientId: this.settings.clientId,
+      brokers: this.settings.brokers,
+      ssl: this.settings.ssl,
+      sasl: this.settings.sasl,
       logLevel: logLevel.ERROR,
       retry: {
-        initialRetryTime: 100,
-        retries: 8,
+        initialRetryTime: this.settings.initialRetryTime,
+        retries: this.settings.retries,
       },
-      connectionTimeout: 10000,
-      requestTimeout: 30000,
+      connectionTimeout: this.settings.connectionTimeout,
+      requestTimeout: this.settings.requestTimeout,
     });
 
     this.admin = this.kafka.admin();
@@ -43,7 +53,10 @@ export class KafkaService implements OnApplicationShutdown {
     this.producer = this.kafka.producer({
       idempotent: true,
       maxInFlightRequests: 5,
-      retry: { initialRetryTime: 100, retries: 8 },
+      retry: {
+        initialRetryTime: this.settings.initialRetryTime,
+        retries: this.settings.retries,
+      },
     });
 
     await this.producer.connect();
@@ -67,34 +80,69 @@ export class KafkaService implements OnApplicationShutdown {
   async createTopics(): Promise<void> {
     await this.admin.connect();
 
+    // Partition counts are a topology decision and stay in code — they encode
+    // how much parallelism each stream needs. Replication factor is a *cluster*
+    // property: it was pinned at 1, which silently means "no replicas, lose the
+    // partition if that broker dies". It has to track the real broker count, so
+    // it comes from KAFKA_TOPIC_REPLICATION_FACTOR.
+    const replicationFactor = this.settings.topicReplicationFactor;
+
     const topics = [
       // Telemetry
-      { topic: 'telemetry.device.raw',       numPartitions: 10, replicationFactor: 1 },
-      { topic: 'telemetry.device.validated', numPartitions: 10, replicationFactor: 1 },
-      { topic: 'telemetry.device.processed', numPartitions: 10, replicationFactor: 1 },
+      { topic: 'telemetry.device.raw', numPartitions: 10, replicationFactor },
+      {
+        topic: 'telemetry.device.validated',
+        numPartitions: 10,
+        replicationFactor,
+      },
+      {
+        topic: 'telemetry.device.processed',
+        numPartitions: 10,
+        replicationFactor,
+      },
       // Device lifecycle
-      { topic: 'device.lifecycle.created',      numPartitions: 3, replicationFactor: 1 },
-      { topic: 'device.lifecycle.updated',      numPartitions: 3, replicationFactor: 1 },
-      { topic: 'device.lifecycle.deleted',      numPartitions: 3, replicationFactor: 1 },
-      { topic: 'device.connectivity.online',    numPartitions: 5, replicationFactor: 1 },
-      { topic: 'device.connectivity.offline',   numPartitions: 5, replicationFactor: 1 },
+      {
+        topic: 'device.lifecycle.created',
+        numPartitions: 3,
+        replicationFactor,
+      },
+      {
+        topic: 'device.lifecycle.updated',
+        numPartitions: 3,
+        replicationFactor,
+      },
+      {
+        topic: 'device.lifecycle.deleted',
+        numPartitions: 3,
+        replicationFactor,
+      },
+      {
+        topic: 'device.connectivity.online',
+        numPartitions: 5,
+        replicationFactor,
+      },
+      {
+        topic: 'device.connectivity.offline',
+        numPartitions: 5,
+        replicationFactor,
+      },
       // Alarms
-      { topic: 'alarms.created',      numPartitions: 5, replicationFactor: 1 },
-      { topic: 'alarms.updated',      numPartitions: 3, replicationFactor: 1 },
-      { topic: 'alarms.acknowledged', numPartitions: 3, replicationFactor: 1 },
-      { topic: 'alarms.cleared',      numPartitions: 3, replicationFactor: 1 },
+      { topic: 'alarms.created', numPartitions: 5, replicationFactor },
+      { topic: 'alarms.updated', numPartitions: 3, replicationFactor },
+      { topic: 'alarms.acknowledged', numPartitions: 3, replicationFactor },
+      { topic: 'alarms.cleared', numPartitions: 3, replicationFactor },
       // Rules
-      { topic: 'rules.input',  numPartitions: 10, replicationFactor: 1 },
-      { topic: 'rules.output', numPartitions: 5,  replicationFactor: 1 },
+      { topic: 'rules.input', numPartitions: 10, replicationFactor },
+      { topic: 'rules.output', numPartitions: 5, replicationFactor },
       // Notifications
-      { topic: 'notifications.email', numPartitions: 3, replicationFactor: 1 },
-      { topic: 'notifications.push',  numPartitions: 3, replicationFactor: 1 },
+      { topic: 'notifications.email', numPartitions: 3, replicationFactor },
+      { topic: 'notifications.push', numPartitions: 3, replicationFactor },
       // Audit
-      { topic: 'audit.user.actions', numPartitions: 5, replicationFactor: 1 },
-      { topic: 'audit.api.requests', numPartitions: 5, replicationFactor: 1 },
+      { topic: 'audit.user.actions', numPartitions: 5, replicationFactor },
+      { topic: 'audit.api.requests', numPartitions: 5, replicationFactor },
       // Commands
-      { topic: 'device.commands',       numPartitions: 5, replicationFactor: 1 },
-      { topic: 'device.commands.retry', numPartitions: 3, replicationFactor: 1 },
+      { topic: 'device.commands', numPartitions: 5, replicationFactor },
+      { topic: 'device.commands.retry', numPartitions: 3, replicationFactor },
     ];
 
     const existing = await this.admin.listTopics();
@@ -203,7 +251,9 @@ export class KafkaService implements OnApplicationShutdown {
     });
 
     this.consumers.set(groupId, consumer);
-    this.logger.log(`Consumer [${groupId}] subscribed to: ${topics.join(', ')}`);
+    this.logger.log(
+      `Consumer [${groupId}] subscribed to: ${topics.join(', ')}`,
+    );
   }
 
   // ── Shutdown ──────────────────────────────────────────────────────────────

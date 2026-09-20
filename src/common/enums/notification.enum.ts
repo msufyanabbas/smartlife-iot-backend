@@ -1,9 +1,13 @@
+// Values are persisted in the PG enum `notifications_type_enum`. Adding a
+// member here needs a migration (`ALTER TYPE ... ADD VALUE`) — see
+// AutomationEngine, which added `automation`.
 export enum NotificationType {
   ALARM = 'alarm',
   DEVICE = 'device',
   SYSTEM = 'system',
   USER = 'user',
   REPORT = 'report',
+  AUTOMATION = 'automation',
 }
 
 // Values are persisted in the PG enum `notifications_channel_enum`. Adding a

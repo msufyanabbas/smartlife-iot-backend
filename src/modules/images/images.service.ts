@@ -42,7 +42,8 @@ export class ImagesService implements OnModuleInit {
 
   /** Disk location. Public URLs are always rooted at `/uploads/images`. */
   private readonly imageDir =
-    process.env.UPLOAD_PATH_IMAGES || './uploads/images';
+    process.env.UPLOAD_PATH_IMAGES ||
+    path.join(process.env.UPLOAD_PATH || './uploads', 'images');
   private readonly publicPrefix = '/uploads/images';
 
   constructor(

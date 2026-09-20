@@ -497,7 +497,16 @@ private async handleOAuthCallback(
   loginFn: () => Promise<AuthResponseDto | TwoFactorChallengeDto>,
   providerName: string,
 ) {
+  // This builds the URL the OAuth provider redirects the browser to after a
+  // successful login. If it is unset the handler previously redirected to the
+  // string "undefined/...", stranding the user mid-login with no server-side
+  // error to show for it.
   const frontendUrl = process.env.FRONTEND_URL;
+  if (!frontendUrl) {
+    throw new Error(
+      'FRONTEND_URL must be configured — OAuth callbacks redirect to it',
+    );
+  }
   try {
     const authResponse = await loginFn();
     const sessionCode = randomBytes(32).toString('hex');

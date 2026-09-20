@@ -5,6 +5,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
@@ -73,6 +74,7 @@ export class EdgeService {
     private readonly nodeRepository: Repository<Node>,
     private readonly notificationsService: NotificationsService,
     private readonly websocketGateway: WebsocketGateway,
+    private readonly configService: ConfigService,
   ) {}
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -232,11 +234,29 @@ export class EdgeService {
       'info',
     );
 
+    // These two URLs are handed to the edge agent as its provisioning payload —
+    // they tell a remote gateway where to phone home. The old fallbacks pointed
+    // every unconfigured deployment at Smart Life's own production cloud, so a
+    // customer's on-prem edge would attempt to register against the wrong
+    // tenant's platform. Both are required, and the error names the variable.
+    const cloudUrl =
+      this.configService.get<string>('EDGE_CLOUD_URL') ??
+      this.configService.get<string>('BACKEND_URL');
+    const mqttUrl =
+      this.configService.get<string>('EDGE_MQTT_URL') ??
+      this.configService.get<string>('MQTT_BROKER_URL');
+
+    if (!cloudUrl || !mqttUrl) {
+      throw new Error(
+        'Edge provisioning requires EDGE_CLOUD_URL (or BACKEND_URL) and EDGE_MQTT_URL (or MQTT_BROKER_URL) to be configured',
+      );
+    }
+
     return {
       edgeKey,
       edgeSecret: rawSecret,
-      cloudUrl: process.env.API_URL || 'https://api.smart-life.sa',
-      mqttUrl: process.env.MQTT_URL || 'mqtt://api.smart-life.sa:1883',
+      cloudUrl: cloudUrl.replace(/\/+$/, ''),
+      mqttUrl,
     };
   }
 

@@ -232,7 +232,7 @@ iot-platform-backend/
 ### Automation & Integration
 | Module | Responsibility |
 |---|---|
-| `AutomationModule` | Trigger-condition-action automations; Kafka consumer processes telemetry, Bull queue for action execution |
+| `AutomationModule` | Trigger → conditions → actions automations. Six trigger types (TELEMETRY, ATTRIBUTE, ALARM, DEVICE_STATUS, SCHEDULE, MANUAL) and eight action types; `AutomationConsumer` (Kafka `telemetry.device.validated`), `AutomationListener` (`alarm.*` / `device.*` / `attributes.updated` events) and `AutomationScheduler` (per-minute cron) feed it. Every run writes an `automation_logs` row |
 | `SchedulesModule` | Cron-expression-based schedules for automations |
 | `ScriptsModule` | User-defined JavaScript scripts with execution context |
 | `IntegrationsModule` | Third-party integration configs (webhooks, Slack, HTTP push) |
@@ -955,8 +955,6 @@ import { DevicesService } from '@modules/index.service';
 | `src/database/migrations/` | Run migrations against **`dist`** (`npx typeorm migration:run -d dist/database/data-source.js`) — `data-source.ts` globs `*.js` only, so `npm run migration:run` reports "No migrations are pending" from source. |
 | **`migration:run` is currently blocked** | `PreExistingSchemaDrift1786345964232` and `SchemaDriftFix1786348092217` are in the source but have never been applied, and the first one *fails*: `ALTER TABLE solution_templates ALTER COLUMN category TYPE …` → `invalid input value for enum solution_templates_category_enum: "agriculture"`. Because they sort ahead of every later migration, the whole transaction aborts and nothing after them can run. Until they are fixed, a new migration has to be applied with those two temporarily moved out of `dist/database/migrations/`. |
 | Entity/DB drift | `migration:generate` currently also wants to create 8 assignment junction tables, narrow `solution_templates_category_enum` (**destructive** — removes 6 in-use values), rebuild the firmware indexes and rewrite several jsonb defaults. This is pre-existing drift left out of `DeviceAssetProfileEnhancements`; it needs its own reviewed migration. |
-| `src/modules/automation/automation.processor.ts` lines ~23, 193, 213 | `DeviceCommandService`, `MQTTService`, and `NotificationService` injections are TODOs — automation actions do not yet publish MQTT commands or send notifications |
-| `src/modules/automation/automation.service.ts` lines ~187, 269 | `AutomationLog` entity not created; direct automation execution is a stub |
 | `src/modules/attributes/attributes.service.ts` line 253 | `getTimeseries()` is a stub — needs to query telemetry table |
 | `src/modules/api-monitoring/api-monitoring.service.ts` line 465 | Health check details not fully implemented |
 | `src/modules/images/images.service.ts` line 77 | File storage delete is TODO — files not actually deleted from disk/S3 |

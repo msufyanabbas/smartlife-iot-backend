@@ -9,19 +9,64 @@ import {
   Param,
   Headers,
   HttpCode,
+  Logger,
 } from '@nestjs/common';
 import {
   StandardTelemetry,
   IProtocolAdapter,
 } from '@/common/interfaces/standard-telemetry.interface';
+import { ConfigService } from '@nestjs/config';
+import { timingSafeEqual } from 'crypto';
 import { DeviceListenerService } from '@/modules/protocols/device-listener.service';
 
 @Injectable()
 @Controller('v1/ingestion')
 export class HTTPAdapter implements IProtocolAdapter {
   protocol = 'http';
+  private readonly logger = new Logger(HTTPAdapter.name);
 
-  constructor(private readonly deviceListener: DeviceListenerService) {}
+  constructor(
+    private readonly deviceListener: DeviceListenerService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  /**
+   * Device API-key check for the public ingestion endpoints.
+   *
+   * Two things were wrong with the inline version this replaces:
+   *
+   *   1. It read process.env on every request, bypassing config validation.
+   *   2. `apiKey !== process.env.DEVICE_API_KEY` compares with early exit, so
+   *      response time leaks how many leading characters matched. That is a
+   *      practical attack against an unauthenticated ingestion endpoint.
+   *      timingSafeEqual takes constant time.
+   *
+   * Also closes a fail-open case: if REQUIRE_API_KEY was true but
+   * DEVICE_API_KEY was unset, both sides were undefined and every request with
+   * no key passed. Missing configuration now denies.
+   */
+  private isApiKeyValid(apiKey?: string): boolean {
+    const required =
+      this.configService.get<string>('REQUIRE_API_KEY') === 'true';
+    if (!required) return true;
+
+    const expected = this.configService.get<string>('DEVICE_API_KEY');
+    if (!expected) {
+      this.logger.error(
+        'REQUIRE_API_KEY is enabled but DEVICE_API_KEY is not set — rejecting all device ingestion',
+      );
+      return false;
+    }
+    if (!apiKey) return false;
+
+    const provided = Buffer.from(apiKey);
+    const secret = Buffer.from(expected);
+    // Length must match before timingSafeEqual, which throws on unequal
+    // buffers. Length alone is not a useful oracle here.
+    if (provided.length !== secret.length) return false;
+
+    return timingSafeEqual(provided, secret);
+  }
 
   async start(): Promise<void> {
     console.log('✅ HTTP Adapter ready (runs with NestJS server)');
@@ -53,11 +98,9 @@ export class HTTPAdapter implements IProtocolAdapter {
       console.log(`🌐 User Agent: ${userAgent}`);
       console.log(`📦 Payload:`, JSON.stringify(payload, null, 2));
 
-      // Validate API key (optional)
-      if (process.env.REQUIRE_API_KEY === 'true') {
-        if (!apiKey || apiKey !== process.env.DEVICE_API_KEY) {
-          return { success: false, error: 'Invalid API key' };
-        }
+      // Validate API key (optional — controlled by REQUIRE_API_KEY)
+      if (!this.isApiKeyValid(apiKey)) {
+        return { success: false, error: 'Invalid API key' };
       }
 
       // Parse to standard format

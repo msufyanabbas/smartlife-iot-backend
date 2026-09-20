@@ -1,30 +1,34 @@
 import { RedisConfig } from '@/common/interfaces/common.interface';
 import { registerAs } from '@nestjs/config';
+import { envBoolean, envNumber, envRequired, envString } from './env.utils';
 
 export default registerAs(
   'redis',
   (): RedisConfig => ({
-    // Connection
-    host: process.env.REDIS_HOST,
-    port: parseInt(process.env.REDIS_PORT || '6379', 10),
-    password: process.env.REDIS_PASSWORD,
-    db: parseInt(process.env.REDIS_DB || '0', 10),
+    // Connection.
+    // REDIS_HOST is required: defaulting to localhost meant a deploy with a
+    // missing variable would start, fail every cache read against a Redis that
+    // is not there, and look like a Redis outage rather than a config mistake.
+    host: envRequired('REDIS_HOST', process.env.REDIS_HOST),
+    port: envNumber(process.env.REDIS_PORT, 6379),
+    password: envString(process.env.REDIS_PASSWORD),
+    db: envNumber(process.env.REDIS_DB, 0),
 
     // Connection Options
-    keyPrefix: process.env.REDIS_KEY_PREFIX,
-    retryAttempts: parseInt(process.env.REDIS_RETRY_ATTEMPTS || '3', 10),
-    retryDelay: parseInt(process.env.REDIS_RETRY_DELAY || '1000', 10),
+    keyPrefix: envString(process.env.REDIS_KEY_PREFIX, 'smartlife:'),
+    retryAttempts: envNumber(process.env.REDIS_RETRY_ATTEMPTS, 3),
+    retryDelay: envNumber(process.env.REDIS_RETRY_DELAY, 1000),
 
     // Timeouts
-    connectTimeout: parseInt(process.env.REDIS_CONNECT_TIMEOUT || '10000', 10),
-    commandTimeout: parseInt(process.env.REDIS_COMMAND_TIMEOUT || '5000', 10),
+    connectTimeout: envNumber(process.env.REDIS_CONNECT_TIMEOUT, 10000),
+    commandTimeout: envNumber(process.env.REDIS_COMMAND_TIMEOUT, 5000),
 
-    // Cache TTL (in seconds)
-    ttl: parseInt(process.env.REDIS_TTL || '3600', 10), // 1 hour
+    // Cache TTL (seconds)
+    ttl: envNumber(process.env.REDIS_TTL, 3600),
 
     // Connection Pool
-    maxRetriesPerRequest: parseInt(process.env.REDIS_MAX_RETRIES || '3', 10),
-    enableReadyCheck: process.env.REDIS_READY_CHECK !== 'false',
-    enableOfflineQueue: process.env.REDIS_OFFLINE_QUEUE !== 'false',
+    maxRetriesPerRequest: envNumber(process.env.REDIS_MAX_RETRIES, 3),
+    enableReadyCheck: envBoolean(process.env.REDIS_READY_CHECK, true),
+    enableOfflineQueue: envBoolean(process.env.REDIS_OFFLINE_QUEUE, true),
   }),
 );

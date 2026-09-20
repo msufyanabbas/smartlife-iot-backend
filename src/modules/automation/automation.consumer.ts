@@ -1,19 +1,23 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Telemetry } from '@modules/index.entities';
-import { AutomationProcessor } from './automation.processor';
 import { KafkaService } from '@/lib/kafka/kafka.service';
+import { AutomationService } from './automation.service';
 
+/**
+ * Drives TELEMETRY-trigger automations for the Kafka ingestion path
+ * (MQTT / CoAP / DeviceListenerService -> telemetry.device.raw ->
+ * TelemetryConsumer -> telemetry.device.validated).
+ *
+ * The HTTP ingestion path does NOT pass through Kafka; TelemetryService calls
+ * AutomationService.evaluateTelemetryTriggers() directly instead. The two are
+ * mutually exclusive, so an automation never fires twice for one frame.
+ */
 @Injectable()
 export class AutomationConsumer implements OnModuleInit {
   private readonly logger = new Logger(AutomationConsumer.name);
 
   constructor(
     private readonly kafka: KafkaService,
-    @InjectRepository(Telemetry)
-    private readonly telemetryRepo: Repository<Telemetry>,
-    private readonly automationProcessor: AutomationProcessor,
+    private readonly automationService: AutomationService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -37,25 +41,20 @@ export class AutomationConsumer implements OnModuleInit {
     try {
       const payload = JSON.parse(message.value.toString());
 
-      if (!payload.telemetryId) {
+      if (!payload.deviceId || !payload.tenantId) {
         this.logger.warn(
-          `No telemetryId in payload for device ${payload.deviceId} — skipping`,
+          `Skipping message without deviceId/tenantId (telemetryId: ${payload.telemetryId ?? 'none'})`,
         );
         return;
       }
 
-      const telemetry = await this.telemetryRepo.findOne({
-        where: { id: payload.telemetryId },
-      });
-
-      if (!telemetry) {
-        this.logger.error(
-          `Telemetry ${payload.telemetryId} not found for device ${payload.deviceId}`,
-        );
-        return;
-      }
-
-      await this.automationProcessor.processTelemetry(telemetry);
+      // The payload already carries the decoded frame, so there is no need to
+      // re-SELECT the Telemetry row that TelemetryConsumer just wrote.
+      await this.automationService.evaluateTelemetryTriggers(
+        payload.deviceId,
+        payload.tenantId,
+        payload.data ?? {},
+      );
     } catch (error) {
       this.logger.error(
         `Error processing automation message: ${(error as Error).message}`,

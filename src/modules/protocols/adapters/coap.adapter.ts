@@ -7,6 +7,7 @@ import {
   OnModuleDestroy,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -57,7 +58,9 @@ export class CoAPAdapter
 {
   protocol = 'coap';
   private readonly logger = new Logger(CoAPAdapter.name);
-  private readonly port = parseInt(process.env.COAP_PORT || '5683', 10);
+  private readonly port: number;
+  private readonly enabled: boolean;
+  private readonly defaultDeviceHost: string;
   private server: coap.CoapServer | null = null;
   private isStarted = false;
 
@@ -67,13 +70,21 @@ export class CoAPAdapter
     private readonly firmwareService: FirmwareService,
     @InjectRepository(Device)
     private readonly deviceRepository: Repository<Device>,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.port = Number(this.configService.get<string>('COAP_PORT') ?? 5683);
+    this.enabled = this.configService.get<string>('COAP_ENABLED') !== 'false';
+    // Used only when a device row has no ipAddress recorded. 'localhost' was
+    // the old fallback, which silently pointed downlinks at the server itself.
+    this.defaultDeviceHost =
+      this.configService.get<string>('COAP_DEFAULT_DEVICE_HOST') ?? '';
+  }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   async onModuleInit(): Promise<void> {
     // CoAP starts automatically with the app; opt out with COAP_ENABLED=false.
-    if (process.env.COAP_ENABLED === 'false') {
+    if (!this.enabled) {
       this.logger.warn('CoAP adapter disabled (COAP_ENABLED=false)');
       return;
     }
@@ -397,11 +408,20 @@ export class CoAPAdapter
       where: { deviceKey },
       select: ['ipAddress'],
     });
-    return (
+    // Per-device override, then the configured default. Dynamic env keys like
+    // COAP_DEVICE_<key>_IP are kept for compatibility but are not a scalable
+    // mechanism — the device row's ipAddress is the intended source.
+    const resolved =
       device?.ipAddress ||
-      process.env[`COAP_DEVICE_${deviceKey}_IP`] ||
-      'localhost'
-    );
+      this.configService.get<string>(`COAP_DEVICE_${deviceKey}_IP`) ||
+      this.defaultDeviceHost;
+
+    if (!resolved) {
+      throw new Error(
+        `No IP address known for device ${deviceKey}. Set the device's ipAddress or configure COAP_DEFAULT_DEVICE_HOST.`,
+      );
+    }
+    return resolved;
   }
 
   /** Returns the parsed object, or `undefined` when the body is not valid JSON. */

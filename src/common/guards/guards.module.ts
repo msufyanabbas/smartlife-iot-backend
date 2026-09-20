@@ -37,7 +37,16 @@ import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module
       useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
         signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRES_IN', '15m') as any,
+          // Was reading JWT_EXPIRES_IN — a name used nowhere else in the repo
+          // and absent from the env file, so this module always fell back to
+          // 15m while AlarmsModule and WebsocketModule read JWT_EXPIRATION and
+          // used 7d. Token lifetime therefore depended on which module happened
+          // to sign, and changing JWT_EXPIRATION had no effect here.
+          // JWT_EXPIRES_IN is still honoured as a fallback so an environment
+          // that happens to set it does not change behaviour on this upgrade.
+          expiresIn: (configService.get<string>('JWT_EXPIRATION') ??
+            configService.get<string>('JWT_EXPIRES_IN') ??
+            '15m') as any,
         },
       }),
       inject: [ConfigService],

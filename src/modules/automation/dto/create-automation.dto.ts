@@ -1,4 +1,3 @@
-// src/modules/automations/dto/create-automation.dto.ts
 import {
   IsString,
   IsBoolean,
@@ -8,292 +7,382 @@ import {
   IsEnum,
   IsNumber,
   IsArray,
-  IsUUID
+  IsUUID,
+  MinLength,
+  Min,
+  ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TriggerType, ActionType } from '@common/enums/index.enum';
+import {
+  AutomationTriggerType,
+  AutomationConditionOperator,
+  AutomationConditionSource,
+  AutomationActionType,
+} from '@common/enums/index.enum';
 
+// ============================================================================
+// TRIGGER
+// ============================================================================
 
-// ══════════════════════════════════════════════════════════════════════════
-// TRIGGER DTO
-// ══════════════════════════════════════════════════════════════════════════
-class TriggerDto {
+export class AutomationTriggerDto {
   @ApiProperty({
-    type: String, enum: TriggerType, enumName: 'TriggerType',
-    example: TriggerType.THRESHOLD,
-    description: 'Type of trigger',
+    type: String,
+    enum: AutomationTriggerType,
+    enumName: 'AutomationTriggerType',
+    example: AutomationTriggerType.TELEMETRY,
+    description: 'What makes this automation run',
   })
-  @IsEnum(TriggerType)
-  type: TriggerType;
+  @IsEnum(AutomationTriggerType)
+  type: AutomationTriggerType;
 
   @ApiPropertyOptional({
-    example: 'device-uuid-123',
-    description: 'Device ID to monitor (required for threshold/state triggers)',
+    example: 'device-uuid',
+    description: 'Watch one device. Omit to watch every device in the tenant.',
   })
   @IsOptional()
   @IsUUID()
   deviceId?: string;
 
+  @ApiPropertyOptional({ example: 'sensor', description: 'Filter by device type' })
+  @IsOptional()
+  @IsString()
+  deviceType?: string;
+
+  @ApiPropertyOptional({ example: 'asset-uuid', description: 'Filter by asset' })
+  @IsOptional()
+  @IsUUID()
+  assetId?: string;
+
   @ApiPropertyOptional({
     example: 'temperature',
-    description: 'Telemetry key to monitor (e.g., temperature, humidity)',
+    description: 'Only run when this telemetry key is present in the frame',
   })
   @IsOptional()
   @IsString()
   telemetryKey?: string;
 
-  @ApiPropertyOptional({
-    example: 'doorOpen',
-    description: 'Attribute key to monitor (for state-based triggers)',
-  })
+  @ApiPropertyOptional({ example: 'doorOpen', description: 'Attribute key (ATTRIBUTE trigger)' })
   @IsOptional()
   @IsString()
   attributeKey?: string;
 
+  @ApiPropertyOptional({ example: 'critical', description: 'ALARM trigger: severity filter' })
+  @IsOptional()
+  @IsString()
+  alarmSeverity?: string;
+
+  @ApiPropertyOptional({ example: 'active', description: 'ALARM trigger: status filter' })
+  @IsOptional()
+  @IsString()
+  alarmStatus?: string;
+
   @ApiPropertyOptional({
-    enum: ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'between'],
-    example: 'gte',
-    description: 'Comparison operator',
+    example: 'offline',
+    description: 'DEVICE_STATUS trigger: which transition to react to',
   })
   @IsOptional()
   @IsString()
-  operator?: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'between';
+  targetStatus?: string;
 
   @ApiPropertyOptional({
-    example: 30,
-    description: 'Value to compare against',
+    example: '0 8 * * *',
+    description: 'SCHEDULE trigger: 5-field cron (minute hour dom month dow)',
   })
+  @IsOptional()
+  @IsString()
+  cronExpression?: string;
+}
+
+// ============================================================================
+// CONDITION
+// ============================================================================
+
+export class AutomationConditionDto {
+  @ApiProperty({ example: 'temperature', description: 'Telemetry / attribute / device field key' })
+  @IsString()
+  key: string;
+
+  @ApiProperty({
+    type: String,
+    enum: AutomationConditionOperator,
+    enumName: 'AutomationConditionOperator',
+    example: AutomationConditionOperator.GT,
+  })
+  @IsEnum(AutomationConditionOperator)
+  operator: AutomationConditionOperator;
+
+  @ApiPropertyOptional({ example: 40, description: 'Value to compare against' })
   @IsOptional()
   value?: any;
 
-  @ApiPropertyOptional({
-    example: 35,
-    description: 'Second value (for "between" operator)',
-  })
+  @ApiPropertyOptional({ example: 60, description: 'Upper bound for BETWEEN' })
   @IsOptional()
   value2?: any;
 
   @ApiPropertyOptional({
-    example: '0 8 * * *',
-    description: 'Cron expression for scheduled triggers (e.g., "0 8 * * *" = 8 AM daily)',
+    type: String,
+    enum: AutomationConditionSource,
+    enumName: 'AutomationConditionSource',
+    default: AutomationConditionSource.TELEMETRY,
   })
   @IsOptional()
-  @IsString()
-  schedule?: string;
+  @IsEnum(AutomationConditionSource)
+  type?: AutomationConditionSource;
 
   @ApiPropertyOptional({
-    example: 60,
-    description: 'Debounce time in seconds (wait before triggering)',
+    enum: ['AND', 'OR'],
+    default: 'AND',
+    description: 'How this condition combines with the NEXT one',
   })
   @IsOptional()
-  @IsNumber()
-  debounce?: number;
+  @IsEnum(['AND', 'OR'])
+  logic?: 'AND' | 'OR';
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// ACTION DTO
-// ══════════════════════════════════════════════════════════════════════════
+// ============================================================================
+// ACTION
+// ============================================================================
 
-class ActionDto {
-  @ApiProperty({
-    type: String, enum: ActionType, enumName: 'ActionType',
-    example: ActionType.CONTROL,
-    description: 'Type of action to perform',
-  })
-  @IsEnum(ActionType)
-  type: ActionType;
-
-  @ApiPropertyOptional({
-    example: 'motor-uuid-456',
-    description: 'Target device ID (for control/setValue actions)',
-  })
-  @IsOptional()
-  @IsUUID()
-  deviceId?: string;
-
-  @ApiPropertyOptional({
-    example: 'setPower',
-    description: 'Command to send to device',
-  })
-  @IsOptional()
+/** One key/value pair for the UPDATE_ATTRIBUTE action. */
+export class AutomationAttributeDto {
+  @ApiProperty({ example: 'mode' })
   @IsString()
-  command?: string;
+  key: string;
 
-  @ApiPropertyOptional({
-    example: true,
-    description: 'Value to send with command',
-  })
+  @ApiPropertyOptional({ example: 'cooling', description: 'Any JSON-serialisable value' })
   @IsOptional()
   value?: any;
+}
+
+export class AutomationActionConfigDto {
+  @ApiPropertyOptional({ example: 'High Temperature Alert' })
+  @IsOptional()
+  @IsString()
+  title?: string;
 
   @ApiPropertyOptional({
-    example: 'Temperature is too high! Current: 31°C',
-    description: 'Notification message (supports {{variable}} placeholders)',
+    example: 'Reading {{telemetry.temperature}} exceeded 40',
+    description: 'Supports {{path.to.value}} interpolation against the trigger context',
   })
   @IsOptional()
   @IsString()
   message?: string;
 
-  @ApiPropertyOptional({
-    example: ['user-uuid-1', 'user-uuid-2'],
-    description: 'User IDs to notify',
-  })
+  @ApiPropertyOptional({ example: ['in_app', 'email'], description: 'NotificationChannel values' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  channels?: string[];
+
+  @ApiPropertyOptional({ description: 'User ids. Defaults to the automation owner.' })
   @IsOptional()
   @IsArray()
   @IsUUID('4', { each: true })
   recipients?: string[];
 
-  @ApiPropertyOptional({
-    example: 'https://api.example.com/webhook',
-    description: 'Webhook URL to call',
-  })
-  @IsOptional()
-  @IsString()
-  webhookUrl?: string;
-
-  @ApiPropertyOptional({
-    enum: ['GET', 'POST', 'PUT'],
-    example: 'POST',
-    description: 'HTTP method for webhook',
-  })
-  @IsOptional()
-  @IsString()
-  webhookMethod?: 'GET' | 'POST' | 'PUT';
-
-  @ApiPropertyOptional({
-    example: { 'Content-Type': 'application/json' },
-    description: 'Headers for webhook request',
-  })
+  @ApiPropertyOptional({ example: { method: 'turnOn', params: { level: 100 } } })
   @IsOptional()
   @IsObject()
-  webhookHeaders?: Record<string, string>;
+  command?: Record<string, any>;
 
-  @ApiPropertyOptional({
-    example: { alert: 'high_temperature', value: '{{temperature}}' },
-    description: 'Body for webhook request (supports {{variable}} placeholders)',
-  })
+  @ApiPropertyOptional({ example: 'turnOn' })
+  @IsOptional()
+  @IsString()
+  commandType?: string;
+
+  @ApiPropertyOptional({ description: 'Overrides the triggering device as the action target' })
+  @IsOptional()
+  @IsUUID()
+  targetDeviceId?: string;
+
+  @ApiPropertyOptional({ enum: ['server', 'shared', 'client'], default: 'shared' })
+  @IsOptional()
+  @IsString()
+  scope?: string;
+
+  @ApiPropertyOptional({ type: [AutomationAttributeDto], example: [{ key: 'mode', value: 'cooling' }] })
+  @IsOptional()
+  @IsArray()
+  // @ValidateNested + @Type are REQUIRED here, not decoration: the global
+  // ValidationPipe runs with whitelist:true, and without a declared element
+  // type it strips every property off each element, turning
+  // [{key,value}] into [[]] and silently writing nothing.
+  @ValidateNested({ each: true })
+  @Type(() => AutomationAttributeDto)
+  attributes?: AutomationAttributeDto[];
+
+  @ApiPropertyOptional({ example: 'High Temperature' })
+  @IsOptional()
+  @IsString()
+  alarmName?: string;
+
+  @ApiPropertyOptional({ enum: ['info', 'warning', 'error', 'critical'] })
+  @IsOptional()
+  @IsString()
+  severity?: string;
+
+  @ApiPropertyOptional({ description: 'Rule chain to execute' })
+  @IsOptional()
+  @IsUUID()
+  ruleChainId?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/hook' })
+  @IsOptional()
+  @IsString()
+  url?: string;
+
+  @ApiPropertyOptional({ enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], default: 'POST' })
+  @IsOptional()
+  @IsString()
+  method?: string;
+
+  @ApiPropertyOptional({ example: { Authorization: 'Bearer x' } })
   @IsOptional()
   @IsObject()
-  webhookBody?: Record<string, any>;
+  headers?: Record<string, any>;
+
+  @ApiPropertyOptional({ example: { deviceId: '{{deviceId}}' } })
+  @IsOptional()
+  @IsObject()
+  body?: Record<string, any>;
+
+  @ApiPropertyOptional({ enum: ['active', 'inactive', 'offline', 'maintenance', 'error'] })
+  @IsOptional()
+  @IsString()
+  status?: string;
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// SETTINGS DTO
-// ══════════════════════════════════════════════════════════════════════════
-
-class SettingsDto {
-  @ApiPropertyOptional({
-    example: 300,
-    description: 'Cooldown in seconds between executions',
+export class AutomationActionDto {
+  @ApiProperty({
+    type: String,
+    enum: AutomationActionType,
+    enumName: 'AutomationActionType',
+    example: AutomationActionType.SEND_NOTIFICATION,
   })
+  @IsEnum(AutomationActionType)
+  type: AutomationActionType;
+
+  @ApiProperty({ example: 1, description: 'Ascending execution order' })
+  @IsNumber()
+  @Min(0)
+  order: number;
+
+  @ApiPropertyOptional({ example: 30, description: 'Seconds to wait before running' })
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  delay?: number;
+
+  @ApiProperty({ type: AutomationActionConfigDto })
+  @ValidateNested()
+  @Type(() => AutomationActionConfigDto)
+  config: AutomationActionConfigDto;
+}
+
+// ============================================================================
+// SETTINGS
+// ============================================================================
+
+export class AutomationActiveHoursDto {
+  @ApiProperty({ example: '08:00' })
+  @IsString()
+  start: string;
+
+  @ApiProperty({ example: '18:00' })
+  @IsString()
+  end: string;
+}
+
+export class AutomationSettingsDto {
+  @ApiPropertyOptional({ example: 300, description: 'Seconds to suppress re-execution' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   cooldown?: number;
 
-  @ApiPropertyOptional({
-    example: 10,
-    description: 'Maximum executions per day',
-  })
+  @ApiPropertyOptional({ example: 10, description: 'Hard cap on runs per calendar day' })
   @IsOptional()
   @IsNumber()
+  @Min(1)
   maxExecutionsPerDay?: number;
 
   @ApiPropertyOptional({
-    example: { start: '08:00', end: '18:00' },
-    description: 'Active hours (only run during this time)',
+    type: AutomationActiveHoursDto,
+    description: 'Local-time window. start > end wraps midnight.',
   })
   @IsOptional()
-  @IsObject()
-  activeHours?: {
-    start: string;
-    end: string;
-  };
+  @ValidateNested()
+  @Type(() => AutomationActiveHoursDto)
+  activeHours?: AutomationActiveHoursDto;
 
-  @ApiPropertyOptional({
-    example: [1, 2, 3, 4, 5],
-    description: 'Active days (0=Sunday, 6=Saturday)',
-  })
+  @ApiPropertyOptional({ example: [1, 2, 3, 4, 5], description: '0 = Sunday ... 6 = Saturday' })
   @IsOptional()
   @IsArray()
   @IsNumber({}, { each: true })
   activeDays?: number[];
 
-  @ApiPropertyOptional({
-    example: true,
-    description: 'Retry on failure',
-  })
+  @ApiPropertyOptional({ example: true })
   @IsOptional()
   @IsBoolean()
   retryOnFailure?: boolean;
 
-  @ApiPropertyOptional({
-    example: 3,
-    description: 'Maximum retry attempts',
-  })
+  @ApiPropertyOptional({ example: 3 })
   @IsOptional()
   @IsNumber()
+  @Min(0)
   maxRetries?: number;
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// CREATE AUTOMATION DTO
-// ══════════════════════════════════════════════════════════════════════════
+// ============================================================================
+// CREATE AUTOMATION
+// ============================================================================
 
 export class CreateAutomationDto {
-  @ApiProperty({
-    example: 'Auto Motor Control',
-    description: 'Automation name',
-  })
+  @ApiProperty({ example: 'High Temperature Alert' })
   @IsString()
+  @MinLength(1)
   name: string;
 
-  @ApiPropertyOptional({
-    example: 'Turn ON motor when temperature >= 30°C',
-    description: 'Automation description',
-  })
+  @ApiPropertyOptional({ example: 'Notify and raise an alarm above 40 C' })
   @IsOptional()
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({
-    example: true,
-    default: true,
-    description: 'Enable automation on creation',
-  })
+  @ApiPropertyOptional({ example: true, default: true })
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
 
-  @ApiProperty({
-    description: 'Trigger configuration',
-    type: TriggerDto,
-  })
+  @ApiProperty({ type: AutomationTriggerDto })
   @ValidateNested()
-  @Type(() => TriggerDto)
-  trigger: TriggerDto;
-
-  @ApiProperty({
-    description: 'Action configuration',
-    type: ActionDto,
-  })
-  @ValidateNested()
-  @Type(() => ActionDto)
-  action: ActionDto;
+  @Type(() => AutomationTriggerDto)
+  trigger: AutomationTriggerDto;
 
   @ApiPropertyOptional({
-    description: 'Advanced settings',
-    type: SettingsDto,
+    type: [AutomationConditionDto],
+    description: 'Evaluated left to right; an empty list always passes',
   })
   @IsOptional()
-  @ValidateNested()
-  @Type(() => SettingsDto)
-  settings?: SettingsDto;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AutomationConditionDto)
+  conditions?: AutomationConditionDto[];
 
-  @ApiPropertyOptional({
-    example: ['hvac', 'cooling', 'critical'],
-    description: 'Tags for categorization',
-  })
+  @ApiProperty({ type: [AutomationActionDto] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => AutomationActionDto)
+  actions: AutomationActionDto[];
+
+  @ApiPropertyOptional({ type: AutomationSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AutomationSettingsDto)
+  settings?: AutomationSettingsDto;
+
+  @ApiPropertyOptional({ example: ['hvac', 'critical'] })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })

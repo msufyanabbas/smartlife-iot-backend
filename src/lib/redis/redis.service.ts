@@ -1,5 +1,7 @@
 import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import Redis, { ChainableCommander } from 'ioredis';
+import type { RedisConfig } from '@common/interfaces/common.interface';
 
 @Injectable()
 export class RedisService implements OnApplicationShutdown {
@@ -14,14 +16,31 @@ export class RedisService implements OnApplicationShutdown {
   // We keep references here to close them properly.
   private readonly subscribers: Redis[] = [];
 
-  constructor() {
+  /** Kept so duplicate() connections for pub/sub inherit the same settings. */
+  private readonly settings: RedisConfig;
+
+  constructor(private readonly configService: ConfigService) {
+    // redis.config.ts already declared keyPrefix, the two timeouts, retryDelay,
+    // enableReadyCheck and enableOfflineQueue — but nothing consumed the
+    // namespace, so every one of those variables was inert. Reading the whole
+    // namespace here makes them take effect.
+    this.settings = this.configService.get<RedisConfig>('redis')!;
+
     this.client = new Redis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379', 10),
-      password: process.env.REDIS_PASSWORD,
-      db: parseInt(process.env.REDIS_DB || '0', 10),
-      retryStrategy: (times) => Math.min(times * 50, 2000),
-      maxRetriesPerRequest: parseInt(process.env.REDIS_MAX_RETRIES || '3', 10),
+      host: this.settings.host,
+      port: this.settings.port,
+      password: this.settings.password,
+      db: this.settings.db,
+      keyPrefix: this.settings.keyPrefix,
+      connectTimeout: this.settings.connectTimeout,
+      commandTimeout: this.settings.commandTimeout,
+      // Backoff is capped so a long outage does not turn into an unbounded
+      // wait; REDIS_RETRY_DELAY sets the ceiling.
+      retryStrategy: (times) =>
+        Math.min(times * 50, this.settings.retryDelay ?? 2000),
+      maxRetriesPerRequest: this.settings.maxRetriesPerRequest,
+      enableReadyCheck: this.settings.enableReadyCheck,
+      enableOfflineQueue: this.settings.enableOfflineQueue,
       lazyConnect: true,
     });
 
@@ -38,7 +57,9 @@ export class RedisService implements OnApplicationShutdown {
       this.logger.warn('Redis connection closed');
       this.isConnected = false;
     });
-    this.client.on('reconnecting', () => this.logger.log('Redis reconnecting...'));
+    this.client.on('reconnecting', () =>
+      this.logger.log('Redis reconnecting...'),
+    );
   }
 
   async connect(): Promise<void> {
@@ -140,11 +161,19 @@ export class RedisService implements OnApplicationShutdown {
     return this.client.hvals(key);
   }
 
-  async hincrby(key: string, field: string, increment: number): Promise<number> {
+  async hincrby(
+    key: string,
+    field: string,
+    increment: number,
+  ): Promise<number> {
     return this.client.hincrby(key, field, increment);
   }
 
-  async hincrbyfloat(key: string, field: string, increment: number): Promise<string> {
+  async hincrbyfloat(
+    key: string,
+    field: string,
+    increment: number,
+  ): Promise<string> {
     return this.client.hincrbyfloat(key, field, increment);
   }
 
@@ -174,7 +203,10 @@ export class RedisService implements OnApplicationShutdown {
     return count ? this.client.spop(key, count) : this.client.spop(key);
   }
 
-  async srandmember(key: string, count?: number): Promise<string | string[] | null> {
+  async srandmember(
+    key: string,
+    count?: number,
+  ): Promise<string | string[] | null> {
     return count
       ? this.client.srandmember(key, count)
       : this.client.srandmember(key);
@@ -190,19 +222,33 @@ export class RedisService implements OnApplicationShutdown {
     if (members.length > 0) await this.client.zrem(key, ...members);
   }
 
-  async zrange(key: string, start: number, stop: number, withScores?: boolean): Promise<string[]> {
+  async zrange(
+    key: string,
+    start: number,
+    stop: number,
+    withScores?: boolean,
+  ): Promise<string[]> {
     return withScores
       ? this.client.zrange(key, start, stop, 'WITHSCORES')
       : this.client.zrange(key, start, stop);
   }
 
-  async zrevrange(key: string, start: number, stop: number, withScores?: boolean): Promise<string[]> {
+  async zrevrange(
+    key: string,
+    start: number,
+    stop: number,
+    withScores?: boolean,
+  ): Promise<string[]> {
     return withScores
       ? this.client.zrevrange(key, start, stop, 'WITHSCORES')
       : this.client.zrevrange(key, start, stop);
   }
 
-  async zrangebyscore(key: string, min: number | string, max: number | string): Promise<string[]> {
+  async zrangebyscore(
+    key: string,
+    min: number | string,
+    max: number | string,
+  ): Promise<string[]> {
     return this.client.zrangebyscore(key, min, max);
   }
 
@@ -214,7 +260,11 @@ export class RedisService implements OnApplicationShutdown {
     return this.client.zscore(key, member);
   }
 
-  async zincrby(key: string, increment: number, member: string): Promise<string> {
+  async zincrby(
+    key: string,
+    increment: number,
+    member: string,
+  ): Promise<string> {
     return this.client.zincrby(key, increment, member);
   }
 
@@ -290,8 +340,13 @@ export class RedisService implements OnApplicationShutdown {
     return this.client.keys(pattern);
   }
 
-  async scan(cursor: number, pattern?: string, count?: number): Promise<[string, string[]]> {
-    if (pattern && count) return this.client.scan(cursor, 'MATCH', pattern, 'COUNT', count);
+  async scan(
+    cursor: number,
+    pattern?: string,
+    count?: number,
+  ): Promise<[string, string[]]> {
+    if (pattern && count)
+      return this.client.scan(cursor, 'MATCH', pattern, 'COUNT', count);
     if (pattern) return this.client.scan(cursor, 'MATCH', pattern);
     if (count) return this.client.scan(cursor, 'COUNT', count);
     return this.client.scan(cursor);
@@ -319,7 +374,10 @@ export class RedisService implements OnApplicationShutdown {
 
   // Each call creates one tracked duplicate connection.
   // All are closed cleanly in onApplicationShutdown().
-  async subscribe(channel: string, callback: (message: string) => void): Promise<void> {
+  async subscribe(
+    channel: string,
+    callback: (message: string) => void,
+  ): Promise<void> {
     const sub = this.client.duplicate();
     this.subscribers.push(sub);
 
@@ -331,7 +389,11 @@ export class RedisService implements OnApplicationShutdown {
 
   // ── Cache helpers ─────────────────────────────────────────────────────────
 
-  async cache<T>(key: string, fetchFn: () => Promise<T>, ttl = 300): Promise<T> {
+  async cache<T>(
+    key: string,
+    fetchFn: () => Promise<T>,
+    ttl = 300,
+  ): Promise<T> {
     const cached = await this.get(key);
     if (cached) {
       try {

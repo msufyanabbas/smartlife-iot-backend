@@ -1,3 +1,4 @@
+import { getBcryptRounds } from '@common/utils/password.util';
 import {
   Injectable,
   BadRequestException,
@@ -156,7 +157,7 @@ export class TwoFactorAuthService {
 
     // Hash backup codes for storage
     const hashedBackupCodes = await Promise.all(
-      backupCodes.map((code) => bcrypt.hash(code, 10)),
+      backupCodes.map((code) => bcrypt.hash(code, getBcryptRounds())),
     );
 
     // Enable 2FA
@@ -215,7 +216,7 @@ export class TwoFactorAuthService {
 
     // Generate 6-digit code
     const code = this.generateNumericCode(6);
-    const hashedCode = await bcrypt.hash(code, 10);
+    const hashedCode = await bcrypt.hash(code, getBcryptRounds());
 
     // Save code with 10-minute expiry
     twoFactor.tempCode = hashedCode;
@@ -274,7 +275,7 @@ export class TwoFactorAuthService {
     // Generate backup codes
     const backupCodes = this.generateBackupCodes();
     const hashedBackupCodes = await Promise.all(
-      backupCodes.map((code) => bcrypt.hash(code, 10)),
+      backupCodes.map((code) => bcrypt.hash(code, getBcryptRounds())),
     );
 
     // Enable 2FA
@@ -314,7 +315,7 @@ export class TwoFactorAuthService {
 
     // Generate 6-digit code
     const code = this.generateNumericCode(6);
-    const hashedCode = await bcrypt.hash(code, 10);
+    const hashedCode = await bcrypt.hash(code, getBcryptRounds());
 
     // Save code with 10-minute expiry
     twoFactor.tempCode = hashedCode;
@@ -367,7 +368,7 @@ export class TwoFactorAuthService {
     // Generate backup codes
     const backupCodes = this.generateBackupCodes();
     const hashedBackupCodes = await Promise.all(
-      backupCodes.map((code) => bcrypt.hash(code, 10)),
+      backupCodes.map((code) => bcrypt.hash(code, getBcryptRounds())),
     );
 
     // Enable 2FA
@@ -582,7 +583,7 @@ export class TwoFactorAuthService {
     // Generate new backup codes
     const backupCodes = this.generateBackupCodes();
     const hashedBackupCodes = await Promise.all(
-      backupCodes.map((code) => bcrypt.hash(code, 10)),
+      backupCodes.map((code) => bcrypt.hash(code, getBcryptRounds())),
     );
 
     twoFactor.backupCodes = JSON.stringify(hashedBackupCodes);

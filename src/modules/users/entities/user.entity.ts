@@ -1,4 +1,5 @@
 // src/modules/users/entities/user.entity.ts
+import { getBcryptRounds } from '@common/utils/password.util';
 import {
   Entity,
   Column,
@@ -144,8 +145,12 @@ export class User extends BaseEntity {
   @BeforeInsert()
   @BeforeUpdate()
   async hashPassword() {
-    if (this.password && !this.password.startsWith('$2b$')) {
-      const salt = await bcrypt.genSalt(10);
+    // The `$2b$` guard also has to cover `$2a$` and `$2y$`: hashes produced by
+    // other bcrypt implementations use those prefixes, and an imported user
+    // whose hash starts with `$2a$` would have been re-hashed here — hashing the
+    // hash, and permanently locking that account out.
+    if (this.password && !/^\$2[aby]\$/.test(this.password)) {
+      const salt = await bcrypt.genSalt(getBcryptRounds());
       this.password = await bcrypt.hash(this.password, salt);
     }
   }

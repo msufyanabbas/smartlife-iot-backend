@@ -19,6 +19,33 @@ export class MailService {
     this.createTransporter();
   }
 
+  /**
+   * FRONTEND_URL underpins every actionable link this service sends —
+   * password resets, email verification, invitations. The previous
+   * `'http://localhost:3000'` default meant a deploy missing the variable still
+   * sent mail, and the mail contained links to the recipient's own machine.
+   * That failure is invisible server-side: the send succeeds, the logs are
+   * clean, and the customer is simply locked out.
+   *
+   * Throwing is the right call here — the caller catches it, marks the
+   * notification failed, and the problem shows up where it can be fixed.
+   */
+  private resolveFrontendUrl(): string {
+    const url = this.configService.get<string>('FRONTEND_URL');
+    if (!url) {
+      throw new Error(
+        'FRONTEND_URL is not configured — outbound email would contain unusable links',
+      );
+    }
+    return url.replace(/\/+$/, '');
+  }
+
+  private resolveAppName(): string {
+    return (
+      this.configService.get<string>('APP_NAME') ?? 'Smart Life IoT Platform'
+    );
+  }
+
   private createTransporter() {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpPort = this.configService.get<number>('SMTP_PORT');
@@ -51,14 +78,28 @@ export class MailService {
       this.transporter = nodemailer.createTransport({
         host: smtpHost,
         port: smtpPort,
-        secure: smtpPort === 465, // true for 465, false for other ports
+        // Implicit TLS on 465, STARTTLS elsewhere. SMTP_SECURE overrides for
+        // relays that use implicit TLS on a non-standard port.
+        secure:
+          this.configService.get<string>('SMTP_SECURE') !== undefined
+            ? this.configService.get<string>('SMTP_SECURE') === 'true'
+            : Number(smtpPort) === 465,
         auth: {
           user: smtpUser,
           pass: smtpPass,
         },
-        // Add connection timeout
-        connectionTimeout: 5000,
-        greetingTimeout: 5000,
+        // Relays behind a VPN or a slow region routinely need more than 5s.
+        // These were fixed literals, so a slow relay was indistinguishable from
+        // a misconfigured one.
+        connectionTimeout: Number(
+          this.configService.get<string>('SMTP_CONNECTION_TIMEOUT') ?? 5000,
+        ),
+        greetingTimeout: Number(
+          this.configService.get<string>('SMTP_GREETING_TIMEOUT') ?? 5000,
+        ),
+        socketTimeout: Number(
+          this.configService.get<string>('SMTP_SOCKET_TIMEOUT') ?? 10000,
+        ),
       });
 
       // Verify connection (non-blocking)
@@ -150,14 +191,8 @@ export class MailService {
     token: string,
     role: string,
   ): Promise<boolean> {
-    const frontendUrl = this.configService.get<string>(
-      'FRONTEND_URL',
-      'http://localhost:3000',
-    );
-    const appName = this.configService.get<string>(
-      'APP_NAME',
-      'Smart Life IoT Platform',
-    );
+    const frontendUrl = this.resolveFrontendUrl();
+    const appName = this.resolveAppName();
 
     // ✅ Build the invitation URL
     const invitationLink = `${frontendUrl}/auth/accept-invitation?token=${token}`;
@@ -223,14 +258,8 @@ export class MailService {
     name: string,
     token: string,
   ): Promise<boolean> {
-    const frontendUrl = this.configService.get<string>(
-      'FRONTEND_URL',
-      'http://localhost:3000',
-    );
-    const appName = this.configService.get<string>(
-      'APP_NAME',
-      'Smart Life IoT Platform',
-    );
+    const frontendUrl = this.resolveFrontendUrl();
+    const appName = this.resolveAppName();
 
     // ✅ Build the verification URL
     const verificationLink = `${frontendUrl}/verify-email?token=${token}`;
@@ -278,14 +307,8 @@ export class MailService {
    * ✅ FIXED: Uses correct variable names matching the template
    */
   async sendWelcomeEmail(email: string, name: string): Promise<boolean> {
-    const frontendUrl = this.configService.get<string>(
-      'FRONTEND_URL',
-      'http://localhost:3000',
-    );
-    const appName = this.configService.get<string>(
-      'APP_NAME',
-      'Smart Life IoT Platform',
-    );
+    const frontendUrl = this.resolveFrontendUrl();
+    const appName = this.resolveAppName();
 
     try {
       // ✅ Template expects: userName, appName, dashboardLink, docsLink, year
@@ -334,14 +357,8 @@ export class MailService {
     name: string,
     token: string,
   ): Promise<boolean> {
-    const frontendUrl = this.configService.get<string>(
-      'FRONTEND_URL',
-      'http://localhost:3000',
-    );
-    const appName = this.configService.get<string>(
-      'APP_NAME',
-      'Smart Life IoT Platform',
-    );
+    const frontendUrl = this.resolveFrontendUrl();
+    const appName = this.resolveAppName();
 
     // ✅ Build the reset URL
     const resetLink = `${frontendUrl}/reset-password?token=${token}`;
@@ -393,10 +410,7 @@ export class MailService {
     name: string,
     code: string,
   ): Promise<boolean> {
-    const appName = this.configService.get<string>(
-      'APP_NAME',
-      'Smart Life IoT Platform',
-    );
+    const appName = this.resolveAppName();
 
     try {
       // ✅ Template expects: userName, code, appName, year
@@ -444,10 +458,7 @@ export class MailService {
     role: string,
     invitationLink: string,
   ): string {
-    const appName = this.configService.get<string>(
-      'APP_NAME',
-      'Smart Life IoT Platform',
-    );
+    const appName = this.resolveAppName();
 
     return `
 <!DOCTYPE html>
@@ -514,10 +525,7 @@ export class MailService {
     name: string,
     verificationLink: string,
   ): string {
-    const appName = this.configService.get<string>(
-      'APP_NAME',
-      'Smart Life IoT Platform',
-    );
+    const appName = this.resolveAppName();
 
     return `
 <!DOCTYPE html>
@@ -576,14 +584,8 @@ export class MailService {
    * Welcome email template (fallback)
    */
   private getWelcomeEmailTemplate(name: string): string {
-    const frontendUrl = this.configService.get<string>(
-      'FRONTEND_URL',
-      'http://localhost:3000',
-    );
-    const appName = this.configService.get<string>(
-      'APP_NAME',
-      'Smart Life IoT Platform',
-    );
+    const frontendUrl = this.resolveFrontendUrl();
+    const appName = this.resolveAppName();
 
     return `
 <!DOCTYPE html>
@@ -653,10 +655,7 @@ export class MailService {
     name: string,
     resetLink: string,
   ): string {
-    const appName = this.configService.get<string>(
-      'APP_NAME',
-      'Smart Life IoT Platform',
-    );
+    const appName = this.resolveAppName();
 
     return `
 <!DOCTYPE html>
@@ -710,10 +709,7 @@ export class MailService {
    * Two-factor authentication code email template (fallback)
    */
   private getTwoFactorCodeEmailTemplate(name: string, code: string): string {
-    const appName = this.configService.get<string>(
-      'APP_NAME',
-      'Smart Life IoT Platform',
-    );
+    const appName = this.resolveAppName();
 
     return `
 <!DOCTYPE html>

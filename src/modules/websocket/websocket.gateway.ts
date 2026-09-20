@@ -1,4 +1,5 @@
 // src/modules/websocket/websocket.gateway.ts
+import { websocketCorsOrigin } from '@common/utils/websocket-cors';
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -30,7 +31,7 @@ interface AuthenticatedSocket extends Socket {
 
 @WebSocketGateway({
   cors: {
-    origin: process.env.FRONTEND_URL || '*',
+    origin: websocketCorsOrigin(),
     credentials: true,
   },
   namespace: '/ws',

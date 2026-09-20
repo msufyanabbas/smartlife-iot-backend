@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { File as MulterFile } from 'multer';
@@ -28,9 +29,8 @@ export const FIRMWARE_STATUS_TOPIC = 'firmware.status';
 @Injectable()
 export class FirmwareService {
   private readonly logger = new Logger(FirmwareService.name);
-  private readonly storageDir =
-    process.env.FIRMWARE_STORAGE_DIR ||
-    path.join(process.cwd(), 'uploads', 'firmware');
+  private readonly storageDir: string;
+  private readonly otaBaseUrl: string;
 
   constructor(
     @InjectRepository(Firmware)
@@ -38,7 +38,32 @@ export class FirmwareService {
     @InjectRepository(Device)
     private readonly deviceRepo: Repository<Device>,
     private readonly kafka: KafkaService,
+    private readonly configService: ConfigService,
   ) {
+    // Derived from UPLOAD_PATH so firmware lands on the same mounted volume as
+    // every other upload. Previously it hardcoded ./uploads/firmware while
+    // UPLOAD_PATH could point elsewhere — on a deploy with a volume mounted at
+    // a different path, firmware binaries were written to ephemeral container
+    // storage and vanished on restart.
+    const uploadRoot =
+      this.configService.get<string>('UPLOAD_PATH') ?? './uploads';
+    this.storageDir =
+      this.configService.get<string>('FIRMWARE_STORAGE_DIR') ??
+      path.resolve(process.cwd(), uploadRoot, 'firmware');
+
+    // The download URL is embedded in the OTA command sent to devices. A
+    // localhost fallback produces a URL no device can reach, and the failure
+    // only shows up as OTA jobs stuck in progress.
+    const otaBase =
+      this.configService.get<string>('OTA_PUBLIC_URL') ??
+      this.configService.get<string>('BACKEND_URL');
+    if (!otaBase) {
+      throw new Error(
+        'OTA_PUBLIC_URL (or BACKEND_URL) must be configured — it builds the firmware download URL sent to devices',
+      );
+    }
+    this.otaBaseUrl = otaBase.replace(/\/+$/, '');
+
     fs.mkdirSync(this.storageDir, { recursive: true });
   }
 
@@ -341,10 +366,6 @@ export class FirmwareService {
   }
 
   private buildDownloadUrl(deviceKey: string): string {
-    const base =
-      process.env.OTA_PUBLIC_URL ||
-      process.env.BACKEND_URL ||
-      'http://localhost:5000';
-    return `${base.replace(/\/$/, '')}/ota/${deviceKey}/download`;
+    return `${this.otaBaseUrl}/ota/${deviceKey}/download`;
   }
 }

@@ -73,8 +73,17 @@ const MODEL_CONTENT_TYPES: Record<string, string> = {
 @Injectable()
 export class FloorPlansService {
   private readonly logger = new Logger(FloorPlansService.name);
-  private readonly uploadDir =
-    process.env.UPLOAD_PATH || './uploads/floor-plans';
+  // Bug: this was `process.env.UPLOAD_PATH || './uploads/floor-plans'`, so the
+  // fallback included the /floor-plans segment but the configured value did
+  // not. With UPLOAD_PATH=./uploads (as the env example sets), floor plans were
+  // written straight into ./uploads and their dwg/ and models/ subdirectories
+  // landed next to every other module's uploads instead of underneath
+  // floor-plans/ — which matches the stray uploads/dwg and uploads/models
+  // directories in this repo. The segment is now always appended.
+  private readonly uploadDir = path.join(
+    process.env.UPLOAD_PATH || './uploads',
+    'floor-plans',
+  );
   private readonly dwgDir = path.join(this.uploadDir, 'dwg');
   private readonly modelDir = path.join(this.uploadDir, 'models');
 

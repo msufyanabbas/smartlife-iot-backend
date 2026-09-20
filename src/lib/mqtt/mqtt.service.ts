@@ -6,24 +6,37 @@
 // publishes to devices/:deviceKey/telemetry instead of application/1/device/:devEUI/rx.
 
 import * as mqtt from 'mqtt';
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { MqttConfig } from '@common/interfaces/common.interface';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Device, DeviceProtocol } from '@modules/devices/entities/device.entity';
+import {
+  Device,
+  DeviceProtocol,
+} from '@modules/devices/entities/device.entity';
 import { DeviceStatus } from '@common/enums/index.enum';
 import { DeviceListenerService } from '@modules/protocols/device-listener.service';
 import { StandardTelemetry } from '@common/interfaces/standard-telemetry.interface';
 
-const UPLINK_TOPICS = [
-  'devices/+/telemetry',
-  'devices/+/attributes',
-  'devices/+/status',
-  'devices/+/alerts',
+// LoRaWAN network-server topics (ChirpStack). These are protocol-defined
+// patterns rather than deployment settings, so they stay in code; the
+// device-facing topics below come from MQTT_TOPIC_* because they depend on how
+// each deployment namespaces its devices.
+const LORAWAN_UPLINK_TOPICS = [
   'application/1/device/+/rx',
   'application/1/device/+/event/+',
   'application/+/device/+/event/up',
   'application/+/device/+/event/+',
 ];
+
+/** Extra topics a deployment wants subscribed, as a comma-separated list. */
+const EXTRA_TOPICS_VAR = 'MQTT_EXTRA_UPLINK_TOPICS';
 
 @Injectable()
 export class MQTTService implements OnModuleInit, OnModuleDestroy {
@@ -31,24 +44,67 @@ export class MQTTService implements OnModuleInit, OnModuleDestroy {
   private client: mqtt.MqttClient | null = null;
   private isConnected = false;
 
+  private readonly settings: MqttConfig;
+  private readonly uplinkTopics: string[];
+
   constructor(
     private readonly deviceListener: DeviceListenerService,
     @InjectRepository(Device)
     private readonly deviceRepository: Repository<Device>,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.settings = this.configService.get<MqttConfig>('mqtt')!;
 
-  async onModuleInit(): Promise<void> { await this.connect(); }
-  async onModuleDestroy(): Promise<void> { await this.disconnect(); }
+    // MQTT_TOPIC_TELEMETRY/COMMANDS/STATUS/ALERTS were declared in the example
+    // env and parsed by mqtt.config.ts, but the service subscribed to a frozen
+    // array instead — so changing them had no effect. They are used now.
+    const configured = [
+      this.settings.topics?.telemetry,
+      this.settings.topics?.status,
+      this.settings.topics?.alerts,
+      'devices/+/attributes',
+    ].filter((topic): topic is string => Boolean(topic));
+
+    const extra = (this.configService.get<string>(EXTRA_TOPICS_VAR) ?? '')
+      .split(',')
+      .map((topic) => topic.trim())
+      .filter((topic) => topic.length > 0);
+
+    // Duplicates would cause the broker to deliver the same uplink twice.
+    this.uplinkTopics = [
+      ...new Set([...configured, ...LORAWAN_UPLINK_TOPICS, ...extra]),
+    ];
+  }
+
+  async onModuleInit(): Promise<void> {
+    await this.connect();
+  }
+  async onModuleDestroy(): Promise<void> {
+    await this.disconnect();
+  }
 
   // ── Connection ────────────────────────────────────────────────────────────
 
   async connect(): Promise<void> {
-    this.client = mqtt.connect(process.env.MQTT_BROKER_URL!, {
-      clientId: process.env.MQTT_CLIENT_ID || `smartlife-platform-${Date.now()}`,
-      username: process.env.MQTT_USERNAME,
-      password: process.env.MQTT_PASSWORD,
-      clean: true,
-      reconnectPeriod: 5000,
+    // A fixed MQTT_CLIENT_ID across replicas is a footgun: MQTT requires client
+    // ids to be unique, and a broker will disconnect the existing session when a
+    // second client claims the same id — two replicas would kick each other off
+    // in a loop. The configured id is therefore used as a *prefix* and made
+    // unique per process.
+    const clientIdPrefix = this.settings.clientId || 'smartlife-platform';
+    const clientId = `${clientIdPrefix}-${process.pid}-${Date.now()}`;
+
+    this.client = mqtt.connect(this.settings.brokerUrl!, {
+      clientId,
+      username: this.settings.username,
+      password: this.settings.password,
+      clean: this.settings.cleanSession ?? true,
+      keepalive: this.settings.keepAlive,
+      connectTimeout: this.settings.connectTimeout,
+      reconnectPeriod: this.settings.reconnectPeriod,
+      // Only meaningful for mqtts:// / wss:// broker URLs, and left strict by
+      // default so TLS is actually verified.
+      rejectUnauthorized: this.settings.rejectUnauthorized ?? true,
     });
 
     this.client.on('connect', () => {
@@ -73,17 +129,23 @@ export class MQTTService implements OnModuleInit, OnModuleDestroy {
   }
 
   private subscribeToTopics(): void {
-    for (const topic of UPLINK_TOPICS) {
-      this.client?.subscribe(topic, { qos: 1 }, (err) => {
-        if (err) this.logger.error(`Failed to subscribe to ${topic}: ${err.message}`);
-        else      this.logger.log(`Subscribed → ${topic}`);
+    const qos = this.settings.qos ?? 1;
+
+    for (const topic of this.uplinkTopics) {
+      this.client?.subscribe(topic, { qos }, (err) => {
+        if (err)
+          this.logger.error(`Failed to subscribe to ${topic}: ${err.message}`);
+        else this.logger.log(`Subscribed → ${topic}`);
       });
     }
   }
 
   // ── Message handling ──────────────────────────────────────────────────────
 
-  private async handleMessage(topic: string, rawMessage: Buffer): Promise<void> {
+  private async handleMessage(
+    topic: string,
+    rawMessage: Buffer,
+  ): Promise<void> {
     try {
       const deviceKey = this.extractDeviceKey(topic);
       if (!deviceKey) {
@@ -105,7 +167,9 @@ export class MQTTService implements OnModuleInit, OnModuleDestroy {
       const telemetry = this.buildStandardTelemetry(topic, rawMessage, device);
       await this.deviceListener.handleTelemetry(telemetry);
     } catch (error) {
-      this.logger.error(`Error handling message on ${topic}: ${(error as Error).message}`);
+      this.logger.error(
+        `Error handling message on ${topic}: ${(error as Error).message}`,
+      );
     }
   }
 
@@ -146,7 +210,9 @@ export class MQTTService implements OnModuleInit, OnModuleDestroy {
       } else {
         // Decode base64 → hex string for the Milesight IPSO codecs
         try {
-          rawPayloadForCodec = Buffer.from(payload.data, 'base64').toString('hex');
+          rawPayloadForCodec = Buffer.from(payload.data, 'base64').toString(
+            'hex',
+          );
           this.logger.debug(
             `LoRaWAN envelope detected — base64 '${payload.data}' → hex '${rawPayloadForCodec}'`,
           );
@@ -200,25 +266,25 @@ export class MQTTService implements OnModuleInit, OnModuleDestroy {
       rawPayload?.time ?? rawPayload?.timestamp ?? new Date().toISOString();
 
     return {
-      deviceId:   device.id,
-      deviceKey:  device.deviceKey,
-      tenantId:   device.tenantId,
+      deviceId: device.id,
+      deviceKey: device.deviceKey,
+      tenantId: device.tenantId,
       customerId: device.customerId,
-      data:       rawPayloadForCodec,
+      data: rawPayloadForCodec,
       timestamp,
       receivedAt: Date.now(),
-      protocol:   'mqtt',
+      protocol: 'mqtt',
       metadata: {
         topic,
-        protocol:     device.protocol,
+        protocol: device.protocol,
         // Codec resolution priority: device.metadata > device columns
-        codecId:      device.metadata?.codecId      as string | undefined,
-        manufacturer: device.metadata?.manufacturer as string | undefined
-                      ?? device.manufacturer,
-        model:        device.metadata?.model        as string | undefined
-                      ?? device.model,
-        devEUI:       device.metadata?.devEUI       as string | undefined
-                      ?? rawPayload?.devEUI,
+        codecId: device.metadata?.codecId as string | undefined,
+        manufacturer:
+          (device.metadata?.manufacturer as string | undefined) ??
+          device.manufacturer,
+        model: (device.metadata?.model as string | undefined) ?? device.model,
+        devEUI:
+          (device.metadata?.devEUI as string | undefined) ?? rawPayload?.devEUI,
         fPort,
       },
       rawPayload,
@@ -230,11 +296,19 @@ export class MQTTService implements OnModuleInit, OnModuleDestroy {
   private extractDeviceKey(topic: string): string | null {
     const parts = topic.split('/');
     if (parts[0] === 'devices' && parts.length >= 3) return parts[1];
-    if (parts[0] === 'application' && parts[2] === 'device' && parts.length >= 4) return parts[3];
+    if (
+      parts[0] === 'application' &&
+      parts[2] === 'device' &&
+      parts.length >= 4
+    )
+      return parts[3];
     return null;
   }
 
-  private async findDevice(topic: string, keyFromTopic: string): Promise<Device | null> {
+  private async findDevice(
+    topic: string,
+    keyFromTopic: string,
+  ): Promise<Device | null> {
     const parts = topic.split('/');
     if (parts[0] === 'application') {
       // LoRaWAN topic — keyFromTopic is the devEUI
@@ -245,55 +319,65 @@ export class MQTTService implements OnModuleInit, OnModuleDestroy {
         .getOne();
     }
     // Generic MQTT topic — keyFromTopic is the deviceKey
-    return this.deviceRepository.findOne({ where: { deviceKey: keyFromTopic } });
+    return this.deviceRepository.findOne({
+      where: { deviceKey: keyFromTopic },
+    });
   }
 
   // ── Publish ───────────────────────────────────────────────────────────────
-// ── Publish ───────────────────────────────────────────────────────────────
-async publish(topic: string, message: any): Promise<void> {
-  this.logger.debug('--- MQTT PUBLISH START ---');
+  // ── Publish ───────────────────────────────────────────────────────────────
+  async publish(topic: string, message: any): Promise<void> {
+    this.logger.debug('--- MQTT PUBLISH START ---');
 
-  // Check client existence
-  if (!this.client) {
-    this.logger.error('MQTT client is NULL');
-    throw new Error('MQTT client is not initialized');
-  }
+    // Check client existence
+    if (!this.client) {
+      this.logger.error('MQTT client is NULL');
+      throw new Error('MQTT client is not initialized');
+    }
 
-  // Check connection state
-  this.logger.debug(`MQTT connected state: ${this.isConnected}`);
+    // Check connection state
+    this.logger.debug(`MQTT connected state: ${this.isConnected}`);
 
-  if (!this.isConnected) {
-    this.logger.error('MQTT client is NOT connected');
-    throw new Error('MQTT client is not connected');
-  }
+    if (!this.isConnected) {
+      this.logger.error('MQTT client is NOT connected');
+      throw new Error('MQTT client is not connected');
+    }
 
-  // Log topic + payload BEFORE publishing
-  let payload: string;
-  try {
-    payload = JSON.stringify(message);
-  } catch (err) {
-    this.logger.error('Failed to stringify message', err);
-    throw err;
-  }
+    // Log topic + payload BEFORE publishing
+    let payload: string;
+    try {
+      payload = JSON.stringify(message);
+    } catch (err) {
+      this.logger.error('Failed to stringify message', err);
+      throw err;
+    }
 
-  this.logger.debug(`Publishing to topic: ${topic}`);
-  this.logger.debug(`Payload: ${payload}`);
+    this.logger.debug(`Publishing to topic: ${topic}`);
+    this.logger.debug(`Payload: ${payload}`);
 
-  return new Promise((resolve, reject) => {
-    this.logger.debug('Calling MQTT publish...');
+    return new Promise((resolve, reject) => {
+      this.logger.debug('Calling MQTT publish...');
 
-    this.client!.publish(topic, payload, { qos: 1 }, (err) => {
-      if (err) {
-        this.logger.error(`❌ Publish FAILED → ${topic}`);
-        this.logger.error(`Error: ${err.message}`, err);
-        reject(err);
-      } else {
-        this.logger.debug(`✅ Publish SUCCESS → ${topic}`);
-        resolve();
-      }
+      this.client!.publish(
+        topic,
+        payload,
+        {
+          qos: this.settings.qos ?? 1,
+          retain: this.settings.retainMessages ?? false,
+        },
+        (err) => {
+          if (err) {
+            this.logger.error(`❌ Publish FAILED → ${topic}`);
+            this.logger.error(`Error: ${err.message}`, err);
+            reject(err);
+          } else {
+            this.logger.debug(`✅ Publish SUCCESS → ${topic}`);
+            resolve();
+          }
+        },
+      );
     });
-  });
-}
+  }
 
   async disconnect(): Promise<void> {
     if (this.client) {
@@ -303,5 +387,7 @@ async publish(topic: string, message: any): Promise<void> {
     }
   }
 
-  isClientConnected(): boolean { return this.isConnected; }
+  isClientConnected(): boolean {
+    return this.isConnected;
+  }
 }

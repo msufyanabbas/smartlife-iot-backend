@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  Logger,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Telemetry } from './entities/telemetry.entity';
@@ -9,6 +15,7 @@ import { RedisService } from '@/lib/redis/redis.service';
 import { DeviceStatus } from '@common/enums/index.enum';
 import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
 import { IntegrationDispatchService } from '@modules/integrations/integration-dispatch.service';
+import { AutomationService } from '@modules/automation/automation.service';
 
 // NOTE: TelemetryService does NOT inject KafkaService.
 // The HTTP ingestion path (POST /telemetry/devices/:deviceKey) stores the
@@ -22,8 +29,11 @@ import { IntegrationDispatchService } from '@modules/integrations/integration-di
 // where device-profile alarm rules are evaluated and where outbound
 // integrations are dispatched. Both are therefore invoked directly below —
 // without them, a device ingesting over HTTP would never fire its profile's
-// alarm rules and never reach an external integration. Automations, the
-// WebSocket broadcast and the rule-engine forward remain Kafka-only.
+// alarm rules and never reach an external integration. Automations are
+// likewise invoked directly (evaluateTelemetryTriggers) - the Kafka path
+// reaches them through AutomationConsumer instead, so the two never both
+// fire for the same frame. The WebSocket broadcast and the rule-engine
+// forward remain Kafka-only.
 
 @Injectable()
 export class TelemetryService {
@@ -41,6 +51,11 @@ export class TelemetryService {
     // No forwardRef: IntegrationsModule imports only TypeOrmModule and
     // HttpModule, so there is no cycle back to TelemetryModule.
     private readonly integrationDispatchService: IntegrationDispatchService,
+    // forwardRef: AutomationModule imports nothing from TelemetryModule today,
+    // but TelemetryModule -> AutomationModule -> AttributesModule -> Telemetry
+    // repository is close enough to a cycle to be worth guarding.
+    @Inject(forwardRef(() => AutomationService))
+    private readonly automationService: InstanceType<typeof AutomationService>,
   ) {}
 
   /**
@@ -121,6 +136,25 @@ export class TelemetryService {
     });
   }
 
+  /**
+   * Fire-and-forget so a slow action (a webhook, a delayed action) never
+   * lengthens the ingestion response. The service swallows its own errors;
+   * the catch is a backstop against an unhandled rejection.
+   */
+  private dispatchToAutomations(
+    deviceId: string,
+    tenantId: string,
+    data: Record<string, any>,
+  ): void {
+    setImmediate(() => {
+      this.automationService
+        .evaluateTelemetryTriggers(deviceId, tenantId, data ?? {})
+        .catch((err) =>
+          this.logger.error(`Automation trigger eval failed: ${err.message}`),
+        );
+    });
+  }
+
   // ── Create (HTTP ingestion path) ──────────────────────────────────────────
 
   async create(deviceKey: string, dto: CreateTelemetryDto): Promise<Telemetry> {
@@ -164,6 +198,8 @@ export class TelemetryService {
       `🔥 Dispatching to integrations for device: ${saved.deviceId}`,
     ); // TEMP: verification marker
     this.dispatchToIntegrations(device, saved, dto.data);
+
+    this.dispatchToAutomations(device.id, device.tenantId, dto.data);
 
     return saved;
   }
@@ -214,6 +250,10 @@ export class TelemetryService {
       );
 
       await this.evaluateProfileAlarms(device.id, newest.data);
+
+      // Same reasoning as the alarm check above: replaying a whole backfill
+      // through the automation engine would re-fire every action per record.
+      this.dispatchToAutomations(device.id, device.tenantId, newest.data);
     }
 
     // Unlike alarms, every record is dispatched: an integration forwarding to

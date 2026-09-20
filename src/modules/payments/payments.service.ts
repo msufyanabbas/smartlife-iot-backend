@@ -26,9 +26,12 @@ import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class PaymentsService {
-  private readonly moyasarApiUrl = 'https://api.moyasar.com/v1';
+  private readonly moyasarApiUrl: string;
   private readonly moyasarApiKey: string;
   private readonly moyasarWebhookSecret: string;
+  private readonly currency: string;
+  private readonly logoUrl?: string;
+  private readonly frontendUrl: string;
   private readonly logger = new Logger(PaymentsService.name);
 
   constructor(
@@ -47,6 +50,33 @@ export class PaymentsService {
 
     this.moyasarApiKey = apiKey;
     this.moyasarWebhookSecret = webhookSecret || '';
+
+    // The API base was hardcoded to the live endpoint, which meant there was no
+    // way to point the service at a sandbox — testing the payment flow required
+    // editing source. It keeps the live default so nothing changes unless set.
+    this.moyasarApiUrl = (
+      this.configService.get<string>('MOYASAR_API_URL') ??
+      'https://api.moyasar.com/v1'
+    ).replace(/\/+$/, '');
+
+    // Was 'SAR' in four separate places. One source, so adding a second market
+    // is a config change rather than a search-and-replace.
+    this.currency = this.configService.get<string>('PAYMENT_CURRENCY') ?? 'SAR';
+
+    // Was pinned to a dev-environment asset URL, so production invoices and
+    // hosted payment pages rendered the dev logo.
+    this.logoUrl = this.configService.get<string>('PAYMENT_LOGO_URL');
+
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+    if (!frontendUrl) {
+      // Not optional: this builds the URL the customer is returned to after
+      // paying. Undefined here produces "undefined/payment-status" and strands
+      // them on a broken page after their card has been charged.
+      throw new Error(
+        'FRONTEND_URL must be configured — it builds the post-payment redirect URLs',
+      );
+    }
+    this.frontendUrl = frontendUrl.replace(/\/+$/, '');
 
     if (!this.moyasarWebhookSecret) {
       this.logger.warn('⚠️ MOYASAR_WEBHOOK_SECRET not set - webhook signature verification disabled');
@@ -158,22 +188,22 @@ export class PaymentsService {
         `Creating invoice for user ${userId}: ${amountInHalalas / 100} SAR (${plan} - ${billingPeriod})`
       );
 
-      // Callback URL
-      const frontendUrl = this.configService.get('FRONTEND_URL');
-      const callbackUrl = `${frontendUrl}`;
-      const backUrl = `${frontendUrl}/subscription-plans`;
-      const successUrl = `${frontendUrl}/payment-status`;
+      // Callback URLs — resolved from FRONTEND_URL, validated in the constructor.
+      const backUrl = `${this.frontendUrl}${this.configService.get<string>('PAYMENT_CANCEL_PATH') ?? '/subscription-plans'}`;
+      const successUrl = `${this.frontendUrl}${this.configService.get<string>('PAYMENT_SUCCESS_PATH') ?? '/payment-status'}`;
 
 
       // Create invoice payload
       const invoicePayload = {
         amount: amountInHalalas,
-        currency: 'SAR',
-        description: `Smart Life ${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan - ${billingPeriod}`,
+        currency: this.currency,
+        description: `${this.configService.get<string>('APP_BRAND_NAME') ?? 'Smart Life'} ${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan - ${billingPeriod}`,
         callback_url: null,
         back_url: backUrl,
         success_url: successUrl,
-        logo_url: 'https://dev.smart-life.sa/assets/smartlife-text-black-THaafVXq.png',
+        // Omitted rather than sent empty when unset — Moyasar renders its own
+        // default, which is better than a broken image on the payment page.
+        ...(this.logoUrl ? { logo_url: this.logoUrl } : {}),
 
 
         metadata: {
@@ -213,7 +243,7 @@ export class PaymentsService {
         paymentIntentId: invoice.id,
         provider: PaymentProvider.MOYASAR,
         amount: amountInHalalas / 100,
-        currency: 'SAR',
+        currency: this.currency,
         status: PaymentStatus.PENDING,
         description: invoicePayload.description,
         metadata: {

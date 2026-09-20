@@ -304,8 +304,15 @@ export class DeviceCredentialsService {
     device: Device,
     credentials: DeviceCredentials,
   ): DeviceCredentialsDto {
-    const mqttBrokerUrl =
-      this.configService.get<string>('MQTT_BROKER_URL') || 'mqtt://localhost:1883';
+    const mqttBrokerUrl = this.configService.get<string>('MQTT_BROKER_URL');
+    if (!mqttBrokerUrl) {
+      // This URL is printed into the connection snippet handed to whoever is
+      // provisioning a device. A localhost default produced instructions that
+      // could not work anywhere except on the server itself.
+      throw new Error(
+        'MQTT_BROKER_URL must be configured — it is embedded in device connection instructions',
+      );
+    }
     const brokerUrl = new URL(mqttBrokerUrl);
     const mqttHost = brokerUrl.hostname;
     const mqttPort = parseInt(brokerUrl.port, 10) || 1883;
@@ -492,7 +499,7 @@ export class DeviceCredentialsService {
           `5. Set Password: ${password}`,
           '6. Enable MQTT Integration and save',
         ],
-        documentation: 'https://docs.smartlife.sa/gateways/milesight-ug65',
+        documentation: (this.configService.get<string>('DOCS_BASE_URL') ?? 'https://docs.smartlife.sa') + '/gateways/milesight-ug65',
         notes: [
           'Each sensor application in the gateway UI gets the same broker credentials',
           'The devEUI embedded in the topic must match the sensor registered on the platform',
@@ -510,7 +517,7 @@ export class DeviceCredentialsService {
         `6. Subscribe to commands at: ${topics.commandsTopic}`,
         `7. Subscribe to shared attributes at: ${topics.sharedAttributesTopic}`,
       ],
-      documentation: 'https://docs.smartlife.sa/device-setup',
+      documentation: (this.configService.get<string>('DOCS_BASE_URL') ?? 'https://docs.smartlife.sa') + '/device-setup',
       notes: [
         'Keep credentials secure — do not commit them to source control',
         'Device must be in ACTIVE status before telemetry is processed',

@@ -4,286 +4,309 @@ import type { Relation } from 'typeorm';
 import type { Tenant } from '../../tenants/entities/tenant.entity';
 import type { Customer } from '../../customers/entities/customers.entity';
 import type { User } from '../../users/entities/user.entity';
-import { TriggerType, ActionType, AutomationStatus } from '@common/enums/index.enum'
+import {
+  TriggerType,
+  ActionType,
+  AutomationStatus,
+  AutomationTriggerType,
+  AutomationConditionOperator,
+  AutomationConditionSource,
+  AutomationActionType,
+  AutomationExecutionStatus,
+} from '@common/enums/index.enum';
+
+// -----------------------------------------------------------------------------
+// jsonb shapes
+// -----------------------------------------------------------------------------
+
+export interface AutomationTrigger {
+  type: AutomationTriggerType | TriggerType;
+
+  // TELEMETRY / ATTRIBUTE / DEVICE_STATUS - narrow which devices are watched.
+  // Every filter is optional; omitting all of them watches the whole tenant.
+  deviceId?: string;
+  deviceType?: string;
+  assetId?: string;
+  telemetryKey?: string;
+  attributeKey?: string;
+
+  // ALARM
+  alarmSeverity?: string;
+  alarmStatus?: string;
+
+  // DEVICE_STATUS
+  targetStatus?: string;
+
+  // SCHEDULE
+  cronExpression?: string;
+
+  // -- legacy v1 fields (read-only; normalised into conditions on load) -------
+  operator?: string;
+  value?: any;
+  value2?: any;
+  schedule?: string;
+  debounce?: number;
+}
+
+export interface AutomationCondition {
+  key: string;
+  operator: AutomationConditionOperator | string;
+  value: any;
+  /** Upper bound for BETWEEN. */
+  value2?: any;
+  type?: AutomationConditionSource | string;
+  /** How this row combines with the NEXT one. Defaults to AND. */
+  logic?: 'AND' | 'OR';
+}
+
+export interface AutomationAction {
+  type: AutomationActionType | ActionType;
+  /** Ascending execution order. Actions without one run last, in input order. */
+  order: number;
+  /** Seconds to wait before this action runs. */
+  delay?: number;
+  config: {
+    // SEND_NOTIFICATION
+    title?: string;
+    message?: string;
+    /** NotificationChannel values, e.g. ['in_app', 'email']. */
+    channels?: string[];
+    /** User ids. Defaults to the automation owner when omitted. */
+    recipients?: string[];
+
+    // SEND_COMMAND
+    command?: Record<string, any>;
+    commandType?: string;
+    targetDeviceId?: string;
+
+    // UPDATE_ATTRIBUTE
+    scope?: string;
+    attributes?: Array<{ key: string; value: any }>;
+
+    // CREATE_ALARM / CLEAR_ALARM
+    alarmName?: string;
+    severity?: string;
+
+    // TRIGGER_RULE_CHAIN
+    ruleChainId?: string;
+
+    // WEBHOOK
+    url?: string;
+    method?: string;
+    headers?: Record<string, any>;
+    body?: Record<string, any>;
+
+    // UPDATE_DEVICE_STATUS
+    status?: string;
+
+    [key: string]: any;
+  };
+}
+
+/** v1 single-action shape. Retained so pre-engine rows still deserialise. */
+export interface LegacyAutomationAction {
+  type: ActionType;
+  deviceId?: string;
+  command?: string;
+  value?: any;
+  message?: string;
+  recipients?: string[];
+  webhookUrl?: string;
+  webhookMethod?: 'GET' | 'POST' | 'PUT';
+  webhookHeaders?: Record<string, string>;
+  webhookBody?: Record<string, any>;
+}
+
+// -----------------------------------------------------------------------------
+
 @Entity('automations')
 @Index(['tenantId', 'enabled'])
 @Index(['tenantId', 'status'])
 @Index(['tenantId', 'userId'])
 export class Automation extends BaseEntity {
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
   // TENANT SCOPING (REQUIRED)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
 
-  @Column()
-
+  @Column({ type: 'uuid' })
   tenantId: string;
 
   @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
   tenant: Relation<Tenant>;
 
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
   // CUSTOMER SCOPING (OPTIONAL)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
 
-  @Column({ nullable: true })
-
+  @Column({ type: 'uuid', nullable: true })
   customerId?: string;
 
   @ManyToOne('Customer', { nullable: true })
   @JoinColumn({ name: 'customerId' })
   customer?: Relation<Customer>;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // OWNERSHIP (Who created this automation?)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
+  // OWNERSHIP - also the default notification recipient and the acting user
+  // for actions that need one (device commands, attribute writes).
+  // ==========================================================================
 
-  @Column()
-
+  @Column({ type: 'uuid' })
   userId: string;
 
   @ManyToOne('User')
   @JoinColumn({ name: 'userId' })
   user: Relation<User>;
 
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
   // BASIC INFO
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
 
-  @Column()
-  name: string;  // "Turn on motor when hot"
+  @Column({ type: 'varchar' })
+  name: string;
 
   @Column({ type: 'text', nullable: true })
-  description?: string;  // "Activates cooling motor when temp exceeds 30°C"
+  description?: string | null;
 
-  @Column({ default: true })
-
-  enabled: boolean;  // Can user turn automation on/off
+  @Column({ type: 'boolean', default: true })
+  enabled: boolean;
 
   @Column({ type: 'enum', enum: AutomationStatus, default: AutomationStatus.INACTIVE })
-
   status: AutomationStatus;
-  // ACTIVE = Currently running
-  // INACTIVE = Disabled by user
-  // ERROR = Something went wrong (e.g., device offline)
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // TRIGGER (WHEN to run automation?)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
+  // TRIGGER - WHEN does this run?
+  // ==========================================================================
 
   @Column({ type: 'jsonb' })
-  trigger: {
-    type: TriggerType;                 // What kind of trigger?
-    deviceId?: string;                 // Which device to watch?
-    telemetryKey?: string;             // Which telemetry key? (temperature, humidity)
-    attributeKey?: string;             // Or attribute key?
-    operator?: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'between';
-    value?: any;                       // Compare against what value?
-    value2?: any;                      // For 'between' operator
-    schedule?: string;                 // Cron expression for scheduled triggers
-    debounce?: number;                 // Wait N seconds before triggering
-  };
-  // Example 1 - THRESHOLD Trigger (temperature-based):
-  // trigger: {
-  //   type: 'threshold',
-  //   deviceId: 'temp-sensor-001',
-  //   telemetryKey: 'temperature',
-  //   operator: 'gte',                // Greater than or equal
-  //   value: 30,
-  //   debounce: 60                    // Wait 60 seconds before triggering
-  // }
-  // → Triggers when temperature >= 30°C for at least 60 seconds
-  //
-  // Example 2 - STATE Trigger (device status change):
-  // trigger: {
-  //   type: 'state',
-  //   deviceId: 'door-sensor-001',
-  //   attributeKey: 'doorOpen',
-  //   operator: 'eq',
-  //   value: true
-  // }
-  // → Triggers when door opens
-  //
-  // Example 3 - SCHEDULE Trigger (time-based):
-  // trigger: {
-  //   type: 'schedule',
-  //   schedule: '0 8 * * *'            // Every day at 8 AM (cron format)
-  // }
-  //
-  // Example 4 - BETWEEN Trigger:
-  // trigger: {
-  //   type: 'threshold',
-  //   deviceId: 'temp-sensor-001',
-  //   telemetryKey: 'temperature',
-  //   operator: 'between',
-  //   value: 20,                       // Min
-  //   value2: 30                       // Max
-  // }
-  // → Triggers when temperature is between 20-30°C
+  trigger: AutomationTrigger;
+  // TELEMETRY:     { type: 'TELEMETRY', deviceId?, deviceType?, assetId?, telemetryKey? }
+  // ATTRIBUTE:     { type: 'ATTRIBUTE', deviceId?, attributeKey? }
+  // ALARM:         { type: 'ALARM', alarmSeverity?: 'critical', alarmStatus?: 'active' }
+  // DEVICE_STATUS: { type: 'DEVICE_STATUS', deviceId?, targetStatus: 'offline' }
+  // SCHEDULE:      { type: 'SCHEDULE', cronExpression: '0 8 * * *' }
+  // MANUAL:        { type: 'MANUAL' }  - only runs via POST /automations/:id/execute
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // ACTION (WHAT to do when triggered?)
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
+  // CONDITIONS - evaluated left to right; each row's logic joins it to the
+  // next. An empty/absent list always passes.
+  // ==========================================================================
 
-  @Column({ type: 'jsonb' })
-  action: {
-    type: ActionType;                  // What kind of action?
-    deviceId?: string;                 // Which device to control?
-    command?: string;                  // What command to send?
-    value?: any;                       // What value to set?
-    message?: string;                  // For notifications
-    recipients?: string[];             // Who to notify?
-    webhookUrl?: string;               // For webhook actions
-    webhookMethod?: 'GET' | 'POST' | 'PUT';
-    webhookHeaders?: Record<string, string>;
-    webhookBody?: Record<string, any>;
-  };
-  // Example 1 - CONTROL Action (turn on motor):
-  // action: {
-  //   type: 'control',
-  //   deviceId: 'motor-001',
-  //   command: 'setPower',
-  //   value: true                      // Turn ON
-  // }
-  //
-  // Example 2 - SET_VALUE Action (adjust thermostat):
-  // action: {
-  //   type: 'setValue',
-  //   deviceId: 'thermostat-001',
-  //   command: 'setTemperature',
-  //   value: 22                        // Set to 22°C
-  // }
-  //
-  // Example 3 - NOTIFICATION Action:
-  // action: {
-  //   type: 'notification',
-  //   message: 'Temperature is too high! Current: {{temperature}}°C',
-  //   recipients: ['user-123', 'user-456']
-  // }
-  //
-  // Example 4 - WEBHOOK Action (call external API):
-  // action: {
-  //   type: 'webhook',
-  //   webhookUrl: 'https://api.example.com/alert',
-  //   webhookMethod: 'POST',
-  //   webhookHeaders: { 'Content-Type': 'application/json' },
-  //   webhookBody: {
-  //     alert: 'high_temperature',
-  //     deviceId: '{{deviceId}}',
-  //     value: '{{temperature}}'
-  //   }
-  // }  
+  @Column({ type: 'jsonb', nullable: true })
+  conditions?: AutomationCondition[] | null;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // EXECUTION TRACKING
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
+  // ACTIONS - executed in ascending order, sequentially. One failing action
+  // does not abort the rest; the run is then reported as partial.
+  // ==========================================================================
+
+  @Column({ type: 'jsonb', default: () => "'[]'::jsonb" })
+  actions: AutomationAction[];
+
+  /**
+   * v1 single-action column. Nullable since the engine landed; kept only so
+   * pre-engine rows survive a round-trip. The AutomationEngine migration
+   * backfilled every existing row's actions from it.
+   *
+   * @deprecated write actions instead.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  action?: LegacyAutomationAction | null;
+
+  // ==========================================================================
+  // EXECUTION STATS (denormalised counters; full history is automation_logs)
+  // ==========================================================================
 
   @Column({ type: 'int', default: 0 })
-  executionCount: number;  // How many times has this automation run?
+  executionCount: number;
+
+  @Column({ type: 'int', default: 0 })
+  successCount: number;
+
+  @Column({ type: 'int', default: 0 })
+  failureCount: number;
 
   @Column({ type: 'timestamp', nullable: true })
-  lastTriggered?: Date;  // When was it last triggered?
+  lastExecutedAt?: Date | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  lastExecutionStatus?: AutomationExecutionStatus | null;
 
   @Column({ type: 'timestamp', nullable: true })
-  lastExecuted?: Date;  // When was action last executed?
+  lastTriggered?: Date | null;
 
   @Column({ type: 'text', nullable: true })
-  lastError?: string;  // Last error message (if status = ERROR)
+  lastError?: string | null;
 
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
   // ADVANCED SETTINGS
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
 
   @Column({ type: 'jsonb', nullable: true })
   settings?: {
-    cooldown?: number;                 // Wait N seconds between executions
-    maxExecutionsPerDay?: number;      // Limit executions per day
-    activeHours?: {                    // Only run during these hours
-      start: string;                   // "08:00"
-      end: string;                     // "18:00"
-    };
-    activeDays?: number[];             // [1,2,3,4,5] = Mon-Fri
+    /** Seconds to suppress re-execution after a run. */
+    cooldown?: number;
+    /** Hard cap on runs per calendar day, counted from automation_logs. */
+    maxExecutionsPerDay?: number;
+    /** Local-time window, inclusive. start > end means an overnight window. */
+    activeHours?: { start: string; end: string };
+    /** 0 = Sunday ... 6 = Saturday. */
+    activeDays?: number[];
     retryOnFailure?: boolean;
     maxRetries?: number;
-  };
-  // Example:
-  // settings: {
-  //   cooldown: 300,                   // Don't trigger again for 5 minutes
-  //   maxExecutionsPerDay: 10,         // Max 10 times per day
-  //   activeHours: {
-  //     start: '08:00',
-  //     end: '18:00'                   // Only run 8 AM - 6 PM
-  //   },
-  //   activeDays: [1, 2, 3, 4, 5],     // Only Mon-Fri (0=Sunday, 6=Saturday)
-  //   retryOnFailure: true,
-  //   maxRetries: 3
-  // }
+  } | null;
 
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
   // METADATA
-  // ══════════════════════════════════════════════════════════════════════════
-
-  @Column({ type: 'simple-array', nullable: true })
-  tags?: string[];  // ['hvac', 'cooling', 'critical']
+  // ==========================================================================
 
   @Column({ type: 'jsonb', nullable: true })
-  additionalInfo?: Record<string, any>;
+  tags?: string[] | null;
 
-  // ══════════════════════════════════════════════════════════════════════════
+  @Column({ type: 'jsonb', nullable: true })
+  additionalInfo?: Record<string, any> | null;
+
+  // ==========================================================================
   // HELPER METHODS
-  // ══════════════════════════════════════════════════════════════════════════
+  // ==========================================================================
 
   /**
-   * Check if automation can execute right now
+   * Time/cooldown gate. Deliberately does NOT consider status === ERROR:
+   * a transient webhook failure must not disable an automation forever
+   * (the v1 engine did exactly that and left rows permanently wedged).
+   * maxExecutionsPerDay is enforced in the service, which can count logs.
    */
-  canExecute(): boolean {
+  canExecute(now: Date = new Date()): boolean {
     if (!this.enabled) return false;
-    if (this.status === AutomationStatus.ERROR) return false;
 
-    // Check cooldown
-    if (this.settings?.cooldown && this.lastExecuted) {
-      const cooldownMs = this.settings.cooldown * 1000;
-      const elapsed = Date.now() - this.lastExecuted.getTime();
-      if (elapsed < cooldownMs) return false;
+    if (this.settings?.cooldown && this.lastExecutedAt) {
+      const elapsed = now.getTime() - new Date(this.lastExecutedAt).getTime();
+      if (elapsed < this.settings.cooldown * 1000) return false;
     }
 
-    // Check active hours
     if (this.settings?.activeHours) {
-      const now = new Date();
-      const hour = now.getHours();
-      const minute = now.getMinutes();
-      const currentTime = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+      const { start, end } = this.settings.activeHours;
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const current = hh + ':' + mm;
 
-      if (currentTime < this.settings.activeHours.start || currentTime > this.settings.activeHours.end) {
-        return false;
-      }
+      // start > end means the window wraps midnight (e.g. 22:00 -> 06:00).
+      const inWindow =
+        start <= end
+          ? current >= start && current <= end
+          : current >= start || current <= end;
+
+      if (!inWindow) return false;
     }
 
-    // Check active days
-    if (this.settings?.activeDays) {
-      const today = new Date().getDay();
-      if (!this.settings.activeDays.includes(today)) return false;
+    if (this.settings?.activeDays?.length) {
+      if (!this.settings.activeDays.includes(now.getDay())) return false;
     }
 
     return true;
   }
 
-  /**
-   * Record successful execution
-   */
-  recordExecution(): void {
-    this.executionCount++;
-    this.lastTriggered = new Date();
-    this.lastExecuted = new Date();
-    this.status = AutomationStatus.ACTIVE;
-    this.lastError = undefined;
-  }
-
-  /**
-   * Record failed execution
-   */
-  recordError(error: string): void {
-    this.status = AutomationStatus.ERROR;
-    this.lastError = error;
+  isActive(): boolean {
+    return this.enabled && !this.deletedAt;
   }
 }

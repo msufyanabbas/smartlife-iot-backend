@@ -11,7 +11,29 @@ import {
 } from '@modules/index.entities';
 import { ISeeder } from '../seeder.interface';
 
+// Seed passwords come from the environment.
+//
+// Previously every seeded account had a literal password in this file:
+// Admin@123 for the SUPER_ADMIN, TenantAdmin@123, User@123. Those are in git
+// history, in the repo, and in any copy of it — and `npm run seed` is run
+// against production in this project (see the prod:seed script in package.json).
+// Anyone with read access to the repo had the platform admin credentials.
+//
+// There is no default. If the variables are absent the seeder refuses to run
+// rather than falling back to something guessable.
+const seedPassword = (variable: string): string => {
+  const value = process.env[variable];
+  if (!value || value.trim().length < 12) {
+    throw new Error(
+      `${variable} must be set to at least 12 characters before seeding. ` +
+        'Generate one with: openssl rand -base64 24',
+    );
+  }
+  return value.trim();
+};
+
 @Injectable()
+
 export class UserSeeder implements ISeeder {
   private readonly logger = new Logger(UserSeeder.name);
 
@@ -71,7 +93,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Admin User',
         email: 'admin@iotplatform.com',
-        password: 'Admin@123',
+        password: seedPassword('SEED_ADMIN_PASSWORD'),
         role: UserRole.SUPER_ADMIN,
         status: UserStatus.ACTIVE,
         emailVerified: true,
@@ -86,7 +108,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Tenant Admin - Acme Corp',
         email: 'admin@acmecorp.com',
-        password: 'TenantAdmin@123',
+        password: seedPassword('SEED_TENANT_ADMIN_PASSWORD'),
         role: UserRole.TENANT_ADMIN,
         status: UserStatus.ACTIVE,
         emailVerified: true,
@@ -96,7 +118,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Tenant Admin - TechCo',
         email: 'admin@techco.com',
-        password: 'TenantAdmin@123',
+        password: seedPassword('SEED_TENANT_ADMIN_PASSWORD'),
         role: UserRole.TENANT_ADMIN,
         status: UserStatus.ACTIVE,
         emailVerified: true,
@@ -110,7 +132,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'John Doe',
         email: 'john.doe@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.CUSTOMER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
@@ -121,7 +143,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Jane Smith',
         email: 'jane.smith@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.CUSTOMER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
@@ -132,7 +154,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Michael Johnson',
         email: 'michael.johnson@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.CUSTOMER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
@@ -143,7 +165,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Sarah Williams',
         email: 'sarah.williams@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.CUSTOMER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
@@ -158,7 +180,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'David Brown',
         email: 'david.brown@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.CUSTOMER_USER,
         status: UserStatus.ACTIVE,
         emailVerified: false,
@@ -169,7 +191,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Emily Davis',
         email: 'emily.davis@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.CUSTOMER_USER,
         status: UserStatus.INACTIVE,
         emailVerified: true,
@@ -180,7 +202,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Robert Miller',
         email: 'robert.miller@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.CUSTOMER_USER,
         status: UserStatus.SUSPENDED,
         emailVerified: true,
@@ -191,7 +213,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Lisa Anderson',
         email: 'lisa.anderson@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.CUSTOMER_USER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
@@ -202,7 +224,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'James Wilson',
         email: 'james.wilson@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.CUSTOMER_USER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
@@ -213,7 +235,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Jennifer Martinez',
         email: 'jennifer.martinez@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.CUSTOMER_USER,
         status: UserStatus.ACTIVE,
         emailVerified: false,
@@ -224,7 +246,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Carlos Rodriguez',
         email: 'carlos.rodriguez@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.CUSTOMER_USER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
@@ -241,7 +263,7 @@ export class UserSeeder implements ISeeder {
       {
         name: 'Patricia Garcia',
         email: 'patricia.garcia@example.com',
-        password: 'User@123',
+        password: seedPassword('SEED_USER_PASSWORD'),
         role: UserRole.USER,
         status: UserStatus.ACTIVE,
         emailVerified: true,
@@ -258,7 +280,7 @@ export class UserSeeder implements ISeeder {
         {
           name: 'Tenant Admin - Additional 1',
           email: 'admin@tenant4.com',
-          password: 'TenantAdmin@123',
+          password: seedPassword('SEED_TENANT_ADMIN_PASSWORD'),
           role: UserRole.TENANT_ADMIN,
           status: UserStatus.ACTIVE,
           emailVerified: true,
@@ -268,7 +290,7 @@ export class UserSeeder implements ISeeder {
         {
           name: 'Tenant Admin - Additional 2',
           email: 'admin@tenant5.com',
-          password: 'TenantAdmin@123',
+          password: seedPassword('SEED_TENANT_ADMIN_PASSWORD'),
           role: UserRole.TENANT_ADMIN,
           status: UserStatus.ACTIVE,
           emailVerified: true,
@@ -284,7 +306,7 @@ export class UserSeeder implements ISeeder {
         {
           name: 'Additional Customer Admin 1',
           email: 'admin@customer8.com',
-          password: 'User@123',
+          password: seedPassword('SEED_USER_PASSWORD'),
           role: UserRole.CUSTOMER,
           status: UserStatus.ACTIVE,
           emailVerified: true,
@@ -295,7 +317,7 @@ export class UserSeeder implements ISeeder {
         {
           name: 'Additional Customer User 1',
           email: 'user1@customer8.com',
-          password: 'User@123',
+          password: seedPassword('SEED_USER_PASSWORD'),
           role: UserRole.CUSTOMER_USER,
           status: UserStatus.ACTIVE,
           emailVerified: true,
@@ -306,7 +328,7 @@ export class UserSeeder implements ISeeder {
         {
           name: 'Additional Customer User 2',
           email: 'user2@customer9.com',
-          password: 'User@123',
+          password: seedPassword('SEED_USER_PASSWORD'),
           role: UserRole.CUSTOMER_USER,
           status: UserStatus.ACTIVE,
           emailVerified: true,
@@ -317,7 +339,7 @@ export class UserSeeder implements ISeeder {
         {
           name: 'Additional Customer User 3',
           email: 'user3@customer10.com',
-          password: 'User@123',
+          password: seedPassword('SEED_USER_PASSWORD'),
           role: UserRole.CUSTOMER_USER,
           status: UserStatus.ACTIVE,
           emailVerified: false,
@@ -464,10 +486,14 @@ export class UserSeeder implements ISeeder {
       `   - Legacy Users: ${users.filter((u) => u.role === UserRole.USER).length}`,
     );
     this.logger.log('');
-    this.logger.log('🔑 Default Credentials:');
-    this.logger.log('   - Super Admin: Admin@123');
-    this.logger.log('   - Tenant Admin: TenantAdmin@123');
-    this.logger.log('   - Customer Admin/User: User@123');
+    // Passwords are deliberately NOT logged. They used to be printed here in
+    // full, which put the platform super-admin credential into stdout — and
+    // from there into the container log driver, and into whatever aggregator
+    // ships those logs. The env variable names are enough of a pointer.
+    this.logger.log('🔑 Credentials were taken from the environment:');
+    this.logger.log('   - Super Admin:          $SEED_ADMIN_PASSWORD');
+    this.logger.log('   - Tenant Admin:         $SEED_TENANT_ADMIN_PASSWORD');
+    this.logger.log('   - Customer Admin/User:  $SEED_USER_PASSWORD');
   }
 
   /**

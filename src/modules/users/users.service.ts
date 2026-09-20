@@ -8,6 +8,7 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -62,6 +63,7 @@ export class UsersService {
     // the loop at bootstrap.
     @Inject(forwardRef(() => SubscriptionsService))
     private subscriptionsService: SubscriptionsService,
+    private configService: ConfigService,
   ) {}
 
   /**
@@ -694,7 +696,7 @@ export class UsersService {
           <p>You have been invited to join our IoT Platform.</p>
           <p>Your temporary password: <strong>${tempPassword}</strong></p>
           <p><strong>Important:</strong> Please login and change your password immediately.</p>
-          <p>Login at: <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}">${process.env.FRONTEND_URL || 'http://localhost:3000'}</a></p>
+          <p>Login at: <a href="${this.configService.get<string>('FRONTEND_URL')}">${this.configService.get<string>('FRONTEND_URL')}</a></p>
         </div>
       `,
     });

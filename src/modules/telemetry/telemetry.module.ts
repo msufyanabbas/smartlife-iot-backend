@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
 import { TelemetryController } from './telemetry.controller';
@@ -20,7 +20,10 @@ import { Device } from '../index.entities';
     TypeOrmModule.forFeature([Telemetry, Device]),
     KafkaModule,
     RedisModule,
-    AutomationModule, // must export AutomationProcessor
+    // exports AutomationService -> TelemetryService calls
+    // evaluateTelemetryTriggers() on the HTTP ingestion path, which skips Kafka
+    // and therefore never reaches AutomationConsumer.
+    forwardRef(() => AutomationModule),
     WebsocketModule,
     AlarmsModule, // exports AlarmsService → needed by TelemetryProcessor
     ProfilesModule, // exports ProfileAlarmService → device-profile alarm rules

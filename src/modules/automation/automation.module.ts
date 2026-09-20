@@ -1,26 +1,42 @@
-// src/modules/automations/automation.module.ts
 import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AutomationController } from './automation.controller';
 import { AutomationService } from './automation.service';
-import { AutomationProcessor } from './automation.processor';
 import { AutomationConsumer } from './automation.consumer';
-import { Automation, Device, Telemetry } from '@modules/index.entities';
+import { AutomationListener } from './automation.listener';
+import { AutomationScheduler } from './automation.scheduler';
+import {
+  Automation,
+  AutomationLog,
+  Device,
+  Alarm,
+  User,
+} from '@modules/index.entities';
 import { KafkaModule } from '@/lib/kafka/kafka.module';
-import { GatewayModule } from '../gateway/gateway.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { DeviceCommandsModule } from '../device-commands/device-commands.module';
+import { AttributesModule } from '../attributes/attributes.module';
+import { RulesModule } from '../rules/rules.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Automation, Device, Telemetry]),
-    KafkaModule,  // ← Import Kafka
-    forwardRef(() => GatewayModule), // ✅ FIX
+    TypeOrmModule.forFeature([Automation, AutomationLog, Device, Alarm, User]),
+    // Kafka consumer for the telemetry.device.validated topic.
+    KafkaModule,
+    // Action targets. Each of these exports the service the engine calls.
+    forwardRef(() => NotificationsModule),
+    forwardRef(() => DeviceCommandsModule),
+    forwardRef(() => AttributesModule),
+    // RuleEngineService, for the TRIGGER_RULE_CHAIN action.
+    forwardRef(() => RulesModule),
   ],
   controllers: [AutomationController],
   providers: [
     AutomationService,
-    AutomationProcessor,   // ← Add Processor
-    AutomationConsumer,    // ← Add Consumer
+    AutomationConsumer,
+    AutomationListener,
+    AutomationScheduler,
   ],
-  exports: [AutomationService, AutomationProcessor],
+  exports: [AutomationService],
 })
 export class AutomationModule {}

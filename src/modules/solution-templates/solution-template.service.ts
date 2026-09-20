@@ -634,7 +634,8 @@ export class SolutionTemplatesService {
   // ══════════════════════════════════════════════════════════════════════════
 
   private readonly imageDir =
-    process.env.UPLOAD_PATH_TEMPLATES || './uploads/solution-templates';
+    process.env.UPLOAD_PATH_TEMPLATES ||
+    path.join(process.env.UPLOAD_PATH || './uploads', 'solution-templates');
 
   async uploadImage(
     id: string,

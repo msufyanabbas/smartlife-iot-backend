@@ -1,4 +1,5 @@
 // src/modules/alarms/gateways/alarms.gateway.ts
+import { websocketCorsOrigin } from '@common/utils/websocket-cors';
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -18,7 +19,7 @@ import { Alarm } from '@modules/index.entities';
 @WebSocketGateway({
   namespace: '/alarms',
   cors: {
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: websocketCorsOrigin(),
     credentials: true,
   },
 })

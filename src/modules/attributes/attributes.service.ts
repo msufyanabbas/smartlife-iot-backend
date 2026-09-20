@@ -5,6 +5,7 @@ import { Repository, In } from 'typeorm';
 import { Attribute, Device, Asset, Telemetry, User as UserEntity } from '@modules/index.entities';
 import { DataType, AttributeScope } from '@common/enums/index.enum';
 import { DeviceProtocol } from '@modules/devices/entities/device.entity';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { MQTTService } from '@/lib/mqtt/mqtt.service';
 import { CreateAttributeDto } from './dto/create-attribute.dto';
 import {
@@ -32,6 +33,8 @@ export class AttributesService {
     private readonly telemetryRepository: Repository<Telemetry>,
     // MQTTModule is @Global, so MQTTService needs no module import.
     private readonly mqttService: MQTTService,
+    // EventEmitterModule is registered globally in AppModule.
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -124,6 +127,18 @@ export class AttributesService {
     if (scope === AttributeScope.SHARED && entityType.toLowerCase() === 'device') {
       void this.pushSharedAttributesToDevice(entityId, savedAttributes);
     }
+
+    // Consumed by AutomationListener to drive ATTRIBUTE-trigger automations.
+    // An event rather than a direct AutomationService call: AutomationModule
+    // already imports AttributesModule for the UPDATE_ATTRIBUTE action, and a
+    // direct call back would close that cycle.
+    this.eventEmitter.emit('attributes.updated', {
+      tenantId: user.tenantId,
+      entityType: entityType.toUpperCase(),
+      entityId,
+      scope,
+      attributes,
+    });
 
     return savedAttributes;
   }

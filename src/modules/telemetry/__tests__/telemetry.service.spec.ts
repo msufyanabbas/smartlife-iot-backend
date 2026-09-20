@@ -10,6 +10,8 @@ import { Device } from '../../devices/entities/device.entity';
 import { NotFoundException } from '@nestjs/common';
 import { RedisService } from '@/lib/redis/redis.service';
 import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
+import { IntegrationDispatchService } from '@modules/integrations/integration-dispatch.service';
+import { AutomationService } from '@modules/automation/automation.service';
 
 // NOTE: do NOT jest.mock('@lib/redis/redis.service') with a factory that only
 // exports a `redisService` instance — TelemetryService injects the RedisService
@@ -19,6 +21,11 @@ import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
 //
 // TelemetryService does not inject KafkaService (see the note in the service),
 // so no Kafka mock is needed.
+//
+// IntegrationDispatchService and AutomationService are both fire-and-forget
+// side effects of create()/createBatch(); they are stubbed so the HTTP
+// ingestion path can be asserted without an outbound HTTP call or an
+// automation run.
 
 describe('TelemetryService', () => {
   let service: TelemetryService;
@@ -53,6 +60,14 @@ describe('TelemetryService', () => {
     evaluateProfileAlarmRules: jest.fn().mockResolvedValue(undefined),
   };
 
+  const mockIntegrationDispatchService = {
+    dispatchTelemetry: jest.fn().mockResolvedValue(undefined),
+  };
+
+  const mockAutomationService = {
+    evaluateTelemetryTriggers: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     // Create testing module
     const module: TestingModule = await Test.createTestingModule({
@@ -73,6 +88,14 @@ describe('TelemetryService', () => {
         {
           provide: ProfileAlarmService,
           useValue: mockProfileAlarmService,
+        },
+        {
+          provide: IntegrationDispatchService,
+          useValue: mockIntegrationDispatchService,
+        },
+        {
+          provide: AutomationService,
+          useValue: mockAutomationService,
         },
       ],
     }).compile();

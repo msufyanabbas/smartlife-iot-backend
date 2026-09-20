@@ -1,4 +1,5 @@
 // src/common/guards/ws-jwt.guard.ts
+import { ConfigService } from '@nestjs/config';
 import {
   CanActivate,
   ExecutionContext,
@@ -13,7 +14,10 @@ import { Socket } from 'socket.io';
 export class WsJwtGuard implements CanActivate {
   private readonly logger = new Logger(WsJwtGuard.name);
 
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     try {
@@ -24,9 +28,17 @@ export class WsJwtGuard implements CanActivate {
         throw new WsException('Unauthorized: no token provided');
       }
 
-      const payload = await this.jwtService.verifyAsync(token, {
-        secret: process.env.JWT_SECRET,
-      });
+      // Read through ConfigService, not process.env: the JWT namespace is
+      // where the secret's presence and minimum length are enforced. A raw
+      // process.env read here would accept `undefined`, and jsonwebtoken
+      // treats an undefined secret as a reason to skip verification — an
+      // unauthenticated socket would have been accepted as authenticated.
+      const secret = this.configService.get<string>('JWT_SECRET');
+      if (!secret) {
+        throw new WsException('Server misconfigured: JWT_SECRET is not set');
+      }
+
+      const payload = await this.jwtService.verifyAsync(token, { secret });
 
       // Store the same fields that HTTP guards read from req.user
       // so WebSocket handlers can use the same guards/decorators

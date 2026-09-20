@@ -59,7 +59,7 @@ export { APILog } from './api-monitoring/entities/api-log.entity';
 // Integration & Automation entities
 export { Integration } from './integrations/entities/integration.entity';
 export { Automation } from './automation/entities/automation.entity';
-// AutomationLog entity not yet created — see automation.service.ts TODOs
+export { AutomationLog } from './automation/entities/automation-log.entity';
 export { Schedule } from './schedules/entities/schedule.entity';
 export { ScheduleExecution } from './schedules/entities/schedule-execution.entity';
 
