@@ -61,7 +61,7 @@ const SCHEMA: Record<string, Rule> = {
   DB_HOST: { required: true },
   DB_PORT: { kind: 'number' },
   DB_USERNAME: { required: true },
-  DB_PASSWORD: { required: true, minLength: 8 },
+  DB_PASSWORD: { required: true },
   DB_DATABASE: { required: true },
   DB_SYNCHRONIZE: { kind: 'boolean' },
   DB_LOGGING: { kind: 'boolean' },
