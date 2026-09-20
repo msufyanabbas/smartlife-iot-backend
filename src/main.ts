@@ -147,19 +147,46 @@ async function bootstrap() {
   const allowedOrigins = envList(process.env.CORS_ORIGIN, ['*']);
   const allowCredentials = envBoolean(process.env.CORS_CREDENTIALS, true);
 
-  // A wildcard origin and credentials are mutually exclusive per the CORS spec:
-  // browsers reject `Access-Control-Allow-Origin: *` on a credentialed request.
-  // Sending both looks configured but silently breaks cookie auth.
-  const wildcard = allowedOrigins.includes('*');
-  if (wildcard && allowCredentials) {
+  // Deliberate "allow any origin" mode, opt-in via CORS_ALLOW_ANY_ORIGIN.
+  //
+  // This REFLECTS the caller's Origin header rather than sending a literal "*".
+  // The distinction matters: the CORS spec forbids `Access-Control-Allow-Origin: *`
+  // on credentialed requests, so a literal wildcard silently breaks cookie auth
+  // and any fetch sent with credentials:'include'. Reflecting the origin is
+  // equally permissive and does not have that failure mode.
+  //
+  // Understand what this gives up: every website on the internet can make
+  // browser requests to this API and read the responses. The JWT guard is then
+  // the ONLY thing standing between a hostile page and your data. Turn it on
+  // knowingly, and prefer listing origins once you know them.
+  const allowAnyOrigin = envBoolean(process.env.CORS_ALLOW_ANY_ORIGIN, false);
+  const wildcardInList = allowedOrigins.includes('*');
+
+  if (allowAnyOrigin) {
     logger.warn(
-      'CORS_ORIGIN is "*" while CORS_CREDENTIALS is enabled — credentials are being disabled for this run. List explicit origins to use cookie-based auth.',
+      'CORS_ALLOW_ANY_ORIGIN is enabled — every origin is accepted. ' +
+        'Replace it with an explicit CORS_ORIGIN list before this reaches real users.',
+    );
+  } else if (wildcardInList && allowCredentials) {
+    // A literal "*" and credentials are mutually exclusive per spec; sending
+    // both looks configured but silently breaks credentialed requests.
+    logger.warn(
+      'CORS_ORIGIN is "*" while CORS_CREDENTIALS is enabled — credentials are being ' +
+        'disabled for this run. Set CORS_ALLOW_ANY_ORIGIN=true to accept any origin ' +
+        'with credentials intact, or list explicit origins.',
     );
   }
 
+  // When CORS_ALLOWED_HEADERS is unset, the header list is left undefined so the
+  // cors package reflects Access-Control-Request-Headers — i.e. it allows whatever
+  // the browser asks for. An explicit list here is STRICTER than no configuration
+  // at all, which is a trap: a frontend that adds one custom header starts failing
+  // preflight with no obvious cause.
+  const configuredHeaders = envList(process.env.CORS_ALLOWED_HEADERS, []);
+
   app.enableCors({
-    origin: wildcard ? true : allowedOrigins,
-    credentials: wildcard ? false : allowCredentials,
+    origin: allowAnyOrigin || wildcardInList ? true : allowedOrigins,
+    credentials: !wildcardInList || allowAnyOrigin ? allowCredentials : false,
     methods: envList(process.env.CORS_METHODS, [
       'GET',
       'POST',
@@ -168,12 +195,8 @@ async function bootstrap() {
       'DELETE',
       'OPTIONS',
     ]),
-    allowedHeaders: envList(process.env.CORS_ALLOWED_HEADERS, [
-      'Content-Type',
-      'Authorization',
-      'X-Requested-With',
-      'X-API-Key',
-    ]),
+    allowedHeaders:
+      configuredHeaders.length > 0 ? configuredHeaders : undefined,
     maxAge: envNumber(process.env.CORS_MAX_AGE, 86400),
   });
 

@@ -55,12 +55,13 @@ const SCHEMA: Record<string, Rule> = {
   BACKEND_URL: { requiredInProduction: true, kind: 'url' },
   FRONTEND_URL: { requiredInProduction: true, kind: 'url' },
   CORS_ORIGIN: { requiredInProduction: true, kind: 'list' },
+  CORS_ALLOW_ANY_ORIGIN: { kind: 'boolean' },
 
   // ── Database ──────────────────────────────────────────────────────────────
   DB_HOST: { required: true },
   DB_PORT: { kind: 'number' },
   DB_USERNAME: { required: true },
-  DB_PASSWORD: { required: true, minLength: 6 },
+  DB_PASSWORD: { required: true, minLength: 8 },
   DB_DATABASE: { required: true },
   DB_SYNCHRONIZE: { kind: 'boolean' },
   DB_LOGGING: { kind: 'boolean' },
@@ -247,9 +248,18 @@ export function validateEnv(
       );
     }
 
-    if (String(config.CORS_ORIGIN).trim() === '*') {
+    // A bare "*" is still rejected, because it is nearly always an accident and
+    // it silently breaks credentialed requests. Accepting any origin on purpose
+    // is a different thing and has its own explicit switch, so the intent is
+    // visible in the env file rather than hidden in a wildcard.
+    const allowAny = ['true', '1', 'yes', 'on'].includes(
+      String(config.CORS_ALLOW_ANY_ORIGIN ?? '').trim().toLowerCase(),
+    );
+
+    if (!allowAny && String(config.CORS_ORIGIN).trim() === '*') {
       errors.push(
-        'CORS_ORIGIN must not be "*" in production — list the frontend origins explicitly, since credentialed requests cannot use a wildcard',
+        'CORS_ORIGIN must not be "*" in production — list the frontend origins explicitly, ' +
+          'or set CORS_ALLOW_ANY_ORIGIN=true if accepting any origin is genuinely intended',
       );
     }
   }
