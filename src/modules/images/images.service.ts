@@ -181,6 +181,106 @@ export class ImagesService implements OnModuleInit {
    * Resolves an image row to a readable file on disk. Also bumps the download
    * counter the entity already tracks.
    */
+  /**
+   * Resolves a PUBLIC image for unauthenticated serving.
+   *
+   * This exists so dashboards, widget descriptors and exported bundles can embed
+   * an image by reference and have it render for anyone viewing the dashboard —
+   * the ThingsBoard `tb-image;` model. Every other read path is tenant-scoped;
+   * this one deliberately is not, which is exactly why it checks `isPublic`
+   * rather than accepting any id. An image is only reachable here after someone
+   * has explicitly marked it public.
+   *
+   * No tenant id is taken as an argument at all. Passing one in would invite a
+   * caller to supply the tenant from the request and turn this into a
+   * cross-tenant read.
+   */
+  async getPublicImageFile(
+    id: string,
+  ): Promise<{ path: string; contentType: string; fileName: string }> {
+    const image = await this.imageRepository.findOne({ where: { id } });
+
+    // Same 404 for "does not exist" and "not public": distinguishing them would
+    // let an anonymous caller probe which image ids are real.
+    if (!image || !image.isPublic) {
+      throw new NotFoundException('Image not found');
+    }
+
+    const absolutePath = this.resolveStoredPath(image.path);
+    if (!absolutePath) {
+      throw new NotFoundException('Image file not found');
+    }
+
+    try {
+      await fs.access(absolutePath);
+    } catch {
+      throw new NotFoundException('Image file is missing from disk');
+    }
+
+    await this.imageRepository.increment({ id: image.id }, 'downloadCount', 1);
+
+    return {
+      path: absolutePath,
+      contentType: image.mimeType || 'application/octet-stream',
+      fileName: this.sanitiseFileName(
+        image.originalName || path.basename(absolutePath),
+      ),
+    };
+  }
+
+  /**
+   * Toggles public visibility. Separate from the generic update so the change is
+   * auditable as its own action — "who made this image public" is a question
+   * worth being able to answer.
+   */
+  async setPublic(
+    id: string,
+    tenantId: string,
+    isPublic: boolean,
+  ): Promise<Image> {
+    const image = await this.findOne(id, tenantId);
+    image.isPublic = isPublic;
+    return this.imageRepository.save(image);
+  }
+
+  /**
+   * Resolves a batch of image references to their public URLs.
+   *
+   * Dashboard and widget configs store references, not URLs. Rendering a
+   * dashboard with twenty image references should not cost twenty round trips,
+   * so they resolve in one call. Unknown or non-public ids come back as null
+   * instead of throwing — one stale reference should not blank an entire
+   * dashboard.
+   */
+  async resolveReferences(
+    ids: string[],
+    tenantId: string,
+  ): Promise<Record<string, { url: string; publicUrl: string | null; name: string } | null>> {
+    const unique = [...new Set(ids.filter((id) => typeof id === 'string' && id))];
+    const result: Record<string, { url: string; publicUrl: string | null; name: string } | null> = {};
+
+    if (unique.length === 0) return result;
+
+    const images = await this.imageRepository.find({
+      where: unique.map((id) => ({ id, tenantId })),
+    });
+
+    const byId = new Map(images.map((image) => [image.id, image]));
+
+    for (const id of unique) {
+      const image = byId.get(id);
+      result[id] = image
+        ? {
+            url: `/images/${image.id}/download`,
+            publicUrl: image.isPublic ? `/images/public/${image.id}` : null,
+            name: image.name,
+          }
+        : null;
+    }
+
+    return result;
+  }
+
   async getImageFile(
     id: string,
     tenantId: string,

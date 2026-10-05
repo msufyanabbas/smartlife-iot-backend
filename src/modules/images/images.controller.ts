@@ -14,8 +14,9 @@ import {
   BadRequestException,
   Res,
 } from '@nestjs/common';
+import { Public } from '@common/decorators/public.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiResponse, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiResponse, ApiConsumes, ApiBody, ApiOperation } from '@nestjs/swagger';
 import type { File as MulterFile } from 'multer';
 import type { Response } from 'express';
 import { createReadStream } from 'fs';
@@ -130,6 +131,60 @@ export class ImagesController {
   @SwaggerAuth('Get image statistics')
   getStatistics(@CurrentUser('tenantId') tenantId: string) {
     return this.imagesService.getStatistics(tenantId);
+  }
+
+  // Public, unauthenticated. Declared BEFORE the ':id' routes below, or Nest
+  // matches 'public' as an id and this never runs.
+  @Get('public/:id')
+  @Public()
+  @ApiOperation({
+    summary: 'Serve a public image without authentication',
+    description:
+      'Only images explicitly marked public are reachable here. Used for embedding ' +
+      'images in dashboards and widget descriptors by reference, so they render for ' +
+      'any dashboard viewer. Returns 404 for both missing and non-public images, so ' +
+      'ids cannot be probed.',
+  })
+  @ApiResponse({ status: 404, description: 'Image not found or not public' })
+  async servePublic(@Param('id', ParseIdPipe) id: string, @Res() res: Response) {
+    const { path: filePath, contentType, fileName } =
+      await this.imagesService.getPublicImageFile(id);
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    // Public images are content-addressed by id and never mutate in place, so a
+    // long cache is safe and keeps dashboards off the origin on every render.
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    createReadStream(filePath).pipe(res);
+  }
+
+  @Post('resolve')
+  @TenantOrCustomerAdmin()
+  @ApiOperation({
+    summary: 'Resolve image references to URLs in one call',
+    description:
+      'Dashboards store image references rather than URLs. Resolving twenty of them ' +
+      'one at a time is twenty round trips; this does it in one. Unknown ids resolve ' +
+      'to null rather than erroring, so one stale reference cannot blank a dashboard.',
+  })
+  resolveReferences(
+    @CurrentUser('tenantId') tenantId: string,
+    @Body() body: { ids: string[] },
+  ) {
+    return this.imagesService.resolveReferences(body?.ids ?? [], tenantId);
+  }
+
+  @Patch(':id/public')
+  @TenantOrCustomerAdmin()
+  @ApiOperation({ summary: 'Mark an image public or private' })
+  setPublic(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+    @Body() body: { isPublic: boolean },
+  ) {
+    return this.imagesService.setPublic(id, tenantId, body?.isPublic === true);
   }
 
   @Get(':id/download')

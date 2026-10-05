@@ -734,7 +734,7 @@ Supports three methods (`TwoFactorMethod` enum): `authenticator` (TOTP via speak
 NODE_ENV=development|production
 PORT=5000
 API_PREFIX=api
-APP_NAME="Smart Life IoT Platform API"
+APP_NAME="Smart Life IoT Platform"
 FRONTEND_URL=http://localhost:3000
 CORS_ORIGIN=http://localhost:3000
 

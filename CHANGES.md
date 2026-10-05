@@ -241,3 +241,117 @@ Left for a follow-up, all lower risk and none of it blocking:
 - `assignment-safety-triggers.sql`, `__pycache__/`, `backup/`, `backups/` and
   `logs/` are committed to the repo. `__pycache__` and `logs` in particular
   should be in `.gitignore`.
+
+---
+
+# Part 3 — Resources section (Widget Bundles, Widgets, Image Library, JS Library)
+
+## What was actually missing
+
+The brief was "the APIs are in the backend, build the frontend and integrate."
+The backend half was right. The frontend was further along than expected:
+routes, sidebar entries, i18n keys (English *and* Arabic) and fully typed API
+clients (`widgets.api.ts`, `images.api.ts`, `scripts.api.ts`) all existed
+already.
+
+What was missing was the last step. Three pages held hardcoded arrays and never
+called the API clients sitting beside them:
+
+```ts
+const bundles: WidgetBundle[] = [
+  { id: '1', name: 'System Widgets', widgets: 24, ... },  // mock
+];
+```
+
+`ImageLibraryPage` had an "Upload Image" button wired to `onClick: () => {}`.
+
+## Backend additions
+
+| Endpoint | Why |
+|---|---|
+| `GET /widgets/bundles/:id/export` | Widget *types* had export; bundles did not, so a bundle could only be rebuilt by hand |
+| `POST /widgets/bundles/import` | Imports bundle + widgets in one call |
+| `GET /images/public/:id` | Unauthenticated serving of images explicitly marked public — required for dashboard embedding |
+| `POST /images/resolve` | Batch-resolves image references to URLs; a dashboard with 20 images was 20 round trips |
+| `PATCH /images/:id/public` | Toggles public visibility as its own auditable action |
+
+Three decisions in there worth knowing about:
+
+**Bundle membership is keyed on title** (`widgetType.bundleFqn === bundle.title`),
+so an import colliding with an existing title would silently absorb that
+bundle's widgets. Import rejects a duplicate title unless
+`allowDuplicateTitle=true`, which suffixes instead. Overwriting is never
+offered — replacing a bundle other dashboards reference is not recoverable.
+
+**`GET /images/public/:id` takes no tenant id at all.** Every other read path is
+tenant-scoped; this one deliberately isn't, which is why it checks `isPublic`
+rather than accepting any id. Taking a tenant id as an argument would invite a
+caller to pass one from the request and turn it into a cross-tenant read. It
+returns the same 404 for "missing" and "not public" so ids cannot be probed.
+
+**Imported bundles are never system bundles**, whatever the payload claims —
+otherwise an import could create something the UI refuses to delete.
+
+## Frontend
+
+New feature folder `src/features/resources/` — hooks, four pages, five
+components. Routes repointed; the old mock pages are left in place rather than
+deleted, so nothing else that imports them breaks.
+
+**No new dependencies.** The code editor is hand-built (see below) rather than
+pulling in Monaco.
+
+Design follows `DashboardsPage` exactly: `bg-secondary hover:bg-secondary/90
+text-white dark:bg-gray-800` for primary actions, bordered ghost icon buttons,
+`PageHeader` → controls → stats → content, `dark:` variants throughout, tokens
+from `globals.css` (`--color-secondary: #c36ba9`, `--color-primary-main: #1d174c`).
+
+Every page has loading skeletons, an empty state, an error state with retry,
+pagination, search and filters. All strings are translated in both languages.
+
+### ThingsBoard parity
+
+- Bundle import/export as JSON, with file download and upload
+- Widget import/export/clone
+- Widget editor with HTML/CSS/JS tabs and **live preview**
+- Image embedding by reference (`tb-image;<id>`, matching ThingsBoard's
+  convention so exported configs stay portable between the two)
+- Image picker that can publish an image inline
+- Script editor with a server-side test runner against `POST /scripts/:id/test`
+
+### Two things worth flagging
+
+**The widget preview iframe uses `sandbox="allow-scripts"` and deliberately NOT
+`allow-same-origin`.** Granting both together is equivalent to no sandbox at
+all — the frame could reach into the parent page, read the auth token out of
+storage and act as the user. Without same-origin the widget script runs in an
+opaque origin: it can draw, and nothing else.
+
+**The code editor is hand-built** (`components/common/CodeEditor`). Monaco is
+~2 MB and would roughly double the bundle for editing short rule-engine scripts.
+This is a transparent `<textarea>` over a syntax-highlighted `<pre>`, scroll-
+synced, so selection, undo, IME and mobile keyboards all behave natively.
+Highlighting is one combined regex rather than sequential replaces — sequential
+passes re-process their own output and a keyword inside an already-highlighted
+string gets wrapped twice. No autocomplete or error squiggles; swapping in
+CodeMirror 6 behind the same props interface is a contained change if those
+become necessary.
+
+## Verified
+
+- Backend: `npm run build` (662 files), `tsc --noEmit` clean
+- Frontend: `npm run build` ✓, `tsc -b --noEmit` clean, `eslint` 0 errors
+
+## Not done
+
+- **Image uploads report batch progress, not per-file bytes.** Real byte-level
+  progress needs an `onUploadProgress` hook threaded through `apiClient`, which
+  touches shared code every feature uses. Files upload sequentially and the bar
+  advances per completed file.
+- **Script versioning.** `scriptsApi.getVersions` exists in the client but no
+  backend endpoint backs it; the editor saves in place.
+- **Widget preview uses fixed sample telemetry.** Binding it to a live device
+  would need the telemetry subscription machinery from the dashboard runtime.
+- **Nothing is runtime-tested against a live backend.** It typechecks, builds
+  and lints, and the response shapes are normalised defensively, but I could not
+  exercise the endpoints.

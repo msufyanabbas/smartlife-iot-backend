@@ -31,6 +31,7 @@ import {
   CloneWidgetTypeDto,
   ImportWidgetTypeDto,
 } from './dto/widgets.dto';
+import { ImportWidgetBundleDto } from './dto/bundle-io.dto';
 import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
 import { RolesGuard } from '@common/guards/roles.guard';
 import { Roles } from '@common/decorators/roles.decorator';
@@ -191,6 +192,38 @@ export class WidgetsController {
   async removeWidgetFromBundle(@Param('id') id: string, @Param('widgetId') widgetId: string) {
     await this.widgetBundlesService.removeWidgetFromBundle(id, widgetId);
     return { message: 'Widget removed from bundle successfully' };
+  }
+
+  @Get('bundles/:id/export')
+  @ApiOperation({
+    summary: 'Export a widget bundle with all of its widgets as JSON',
+    description:
+      'Returns a portable payload (no ids, tenant ids or timestamps) that can be ' +
+      're-imported here or on another deployment via POST /widgets/bundles/import.',
+  })
+  async exportWidgetBundle(@Param('id') id: string) {
+    const data = await this.widgetBundlesService.exportBundle(id);
+    return { message: 'Widget bundle exported successfully', data };
+  }
+
+  @Post('bundles/import')
+  @ApiOperation({
+    summary: 'Import a widget bundle and its widgets from JSON',
+    description:
+      'Rejects a duplicate bundle title unless allowDuplicateTitle=true, because ' +
+      'bundle membership is keyed on title — a colliding import would absorb the ' +
+      'existing bundle\'s widgets. Widgets whose names are already taken are ' +
+      'skipped and listed in the response rather than failing the whole import.',
+  })
+  async importWidgetBundle(@Body() importDto: ImportWidgetBundleDto) {
+    const result = await this.widgetBundlesService.importBundle(importDto);
+    return {
+      message:
+        result.widgetsSkipped.length > 0
+          ? `Bundle imported with ${result.widgetsCreated} widget(s); ${result.widgetsSkipped.length} skipped (name already in use)`
+          : `Bundle imported with ${result.widgetsCreated} widget(s)`,
+      data: result,
+    };
   }
 
   @Get('bundles/:id')

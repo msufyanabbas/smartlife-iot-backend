@@ -9,6 +9,7 @@ import { IsNull, Not, Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WidgetBundle } from './entities/widget-bundle.entity';
 import { WidgetType } from './entities/widget-type.entity';
+import { ImportWidgetBundleDto } from './dto/bundle-io.dto';
 import {
   CreateWidgetBundleDto,
   UpdateWidgetBundleDto,
@@ -157,6 +158,136 @@ export class WidgetBundlesService {
     widgetType.bundleFqn = undefined;
     await this.widgetTypeRepository.save(widgetType);
     this.eventEmitter.emit('widget.bundle.widget.removed', { bundleId, widgetTypeId });
+  }
+
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // IMPORT / EXPORT
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Exports a bundle together with every widget assigned to it.
+   *
+   * Widget types already had per-widget export, but a bundle is the unit people
+   * actually share — exporting 15 widgets one at a time and reassembling them by
+   * hand is not a workflow. Database ids, tenant ids and timestamps are stripped:
+   * they are meaningless on the importing side and, left in, invite someone to
+   * try restoring a bundle onto a tenant it does not belong to.
+   */
+  async exportBundle(id: string): Promise<Record<string, any>> {
+    const bundle = await this.findOne(id);
+    const widgets = await this.getWidgetsInBundle(id);
+
+    return {
+      // Versioned so a future format change can be detected rather than guessed.
+      formatVersion: 1,
+      exportedAt: new Date().toISOString(),
+      bundle: {
+        title: bundle.title,
+        description: bundle.description,
+        image: bundle.image,
+        order: bundle.order,
+        additionalInfo: bundle.additionalInfo,
+      },
+      widgets: widgets.map((widget) => ({
+        name: widget.name,
+        description: widget.description,
+        category: widget.category,
+        image: widget.image,
+        iconUrl: widget.iconUrl,
+        descriptor: widget.descriptor,
+        settingsTemplate: widget.settingsTemplate,
+        tags: widget.tags,
+      })),
+    };
+  }
+
+  /**
+   * Creates a bundle and its widgets from an exported payload.
+   *
+   * Bundle membership here is by title (widgetType.bundleFqn === bundle.title),
+   * so an imported bundle whose title collides with an existing one would silently
+   * absorb that bundle's widgets. That is why a duplicate title is rejected unless
+   * the caller explicitly opts into suffixing.
+   */
+  async importBundle(dto: ImportWidgetBundleDto): Promise<{
+    bundle: WidgetBundle;
+    widgetsCreated: number;
+    widgetsSkipped: string[];
+  }> {
+    let title = dto.title?.trim();
+    if (!title) {
+      throw new BadRequestException('Imported bundle must have a title');
+    }
+
+    const existing = await this.widgetBundleRepository.findOne({
+      where: { title },
+    });
+
+    if (existing) {
+      if (!dto.allowDuplicateTitle) {
+        throw new ConflictException(
+          `A widget bundle titled "${title}" already exists. Re-send with allowDuplicateTitle=true to import it under a new title.`,
+        );
+      }
+
+      // Find a free suffix rather than blindly appending "(1)" — repeated
+      // imports would otherwise collide again on the second attempt.
+      let suffix = 1;
+      let candidate = `${title} (${suffix})`;
+      while (
+        await this.widgetBundleRepository.findOne({ where: { title: candidate } })
+      ) {
+        suffix += 1;
+        candidate = `${title} (${suffix})`;
+      }
+      title = candidate;
+    }
+
+    const bundle = this.widgetBundleRepository.create({
+      title,
+      description: dto.description,
+      image: dto.image,
+      order: dto.order ?? 0,
+      additionalInfo: dto.additionalInfo,
+      // Imported bundles are never system bundles, whatever the payload claims —
+      // otherwise an import could create something the UI refuses to delete.
+      system: false,
+    });
+
+    const saved = await this.widgetBundleRepository.save(bundle);
+
+    let widgetsCreated = 0;
+    const widgetsSkipped: string[] = [];
+
+    for (const widget of dto.widgets ?? []) {
+      // Widget type names are globally unique in this schema. A clash is skipped
+      // and reported rather than failing the whole import, so one stale widget
+      // does not cost the user the other fourteen.
+      const nameTaken = await this.widgetTypeRepository.findOne({
+        where: { name: widget.name },
+      });
+
+      if (nameTaken) {
+        widgetsSkipped.push(widget.name);
+        continue;
+      }
+
+      const created = this.widgetTypeRepository.create({
+        ...widget,
+        category: widget.category as any,
+        bundleFqn: saved.title,
+      });
+      await this.widgetTypeRepository.save(created);
+      widgetsCreated++;
+    }
+
+    this.eventEmitter.emit('widget.bundle.imported', {
+      bundleId: saved.id,
+      widgetsCreated,
+    });
+
+    return { bundle: saved, widgetsCreated, widgetsSkipped };
   }
 
 async getStatistics() {
