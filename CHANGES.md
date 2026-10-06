@@ -355,3 +355,414 @@ become necessary.
 - **Nothing is runtime-tested against a live backend.** It typechecks, builds
   and lints, and the response shapes are normalised defensively, but I could not
   exercise the endpoints.
+
+---
+
+# Part 4 — Bug fixes from first review, plus Schedule Management
+
+## The root cause behind most of the visual complaints
+
+`src/styles/globals.css` declared 14 colour tokens as **bare HSL triplets**:
+
+```css
+--color-destructive: 0 84.2% 60.2%;   /* broken */
+```
+
+That works under Tailwind v3 (`hsl(var(--destructive))` in the config). This
+project is on **Tailwind v4 with `@theme`**, where the token value is used
+verbatim — so `bg-destructive` emitted `background-color: 0 84.2% 60.2%`, which
+is invalid CSS and silently ignored.
+
+Affected: `destructive`, `accent`, `background`, `foreground`, `popover`,
+`muted-foreground`, `border`, `input`, `ring` and more. That is why the Delete
+button rendered with no fill and invisible text, and why dropdowns and popovers
+looked unstyled. All 14 are now wrapped in `hsl()`.
+
+This was pre-existing and affects the whole app, not just the Resources pages.
+
+## Bugs fixed
+
+| Bug | Cause |
+|---|---|
+| Image previews blank | `imagesApi.download()` returns a **Promise**, and it was being used as `<img src>`. Private images also need the auth header, which the browser never sends on an image request |
+| Download button did nothing | Same — `window.open(Promise)` |
+| `http://localhost:3000https://api.smart-life.sa/...` | `VITE_API_BASE_URL` is already absolute; `copyPublicUrl` prefixed `window.location.origin` on top |
+| Delete dialog had no visible button | `bg-destructive` (above) |
+| Script test failed with "property data should not exist" | The client wrapped the body as `{ data: testData }`; the DTO expects `{ msg, metadata?, msgType? }` at the top level |
+| "All types" dropdown wrapped to two lines | `SelectTrigger` had no truncation and the chevron was not `shrink-0` |
+| Editor dialogs overflowed the viewport | Fixed heights with no scroll container — the Save button was pushed off-screen |
+| Card titles pushed badges off the card | Missing `min-w-0` on the flex child, so the title could not truncate |
+
+New: `ImageThumb` fetches private images through `apiClient` as blob URLs and
+revokes them on unmount. Without revocation, scrolling a few hundred images pins
+every one in memory for the page's lifetime.
+
+`tb-image;` → **`sl-image;`**. Both prefixes are accepted on read, so widgets
+saved before the rename and anything imported from a ThingsBoard export still
+resolve.
+
+## Dead feature flags — the real cause of the 403s
+
+`FeatureRoute` denies when a flag is not exactly `true`, and four route guards
+named flags the **backend never sends**. Those pages were 403 for every user on
+every plan — not a subscription problem:
+
+| Route | Was | Now |
+|---|---|---|
+| `/images` | `imageLibrary` | `resources` |
+| `/javascript-library` | `scriptLibrary` | `resources` |
+| `/dashboards/:id` | `widgetEditor` | `solutionDashboards` |
+| `/customer-management` | `createCustomer` | `customerManagement` |
+
+An audit script now confirms every guard maps to a real backend flag. Note the
+two sides still disagree on defaults: the backend treats a missing flag as
+*available*, the frontend as *denied*. Worth aligning.
+
+## Schedule Management
+
+`pages/ScheduleManagementPage.tsx` rendered `DUMMY_SCHEDULES` and never called
+`features/schedules/hooks`, which were already complete. Same pattern as the
+Resources pages.
+
+Replaced with a fully wired feature: list with search plus type and status
+filters, stats, create/edit with cron presets and server-side cron validation,
+interval and one-time modes, enable/disable toggle, run-now, execution history,
+and delete. Translated in English and Arabic.
+
+Two details worth noting: only the timing field for the selected type is sent
+(sending all three leaves a stale `cronExpression` on a schedule switched to
+interval, and the server could act on either), and a disabled schedule shows no
+next-run time regardless of what `nextExecution` holds.
+
+## Verified
+
+Backend `npm run build` ✓ · Frontend `npm run build` ✓ · `tsc -b --noEmit` clean
+· `eslint --quiet` 0 errors across `features/resources`, `features/schedules`,
+`components/common/CodeEditor`.
+
+---
+
+# Part 5 — Dialog/header styling, Edge Management, menu restructure
+
+## Dialog padding — a pre-existing defect in the shared component
+
+`DialogContent` was `grid gap-4` with **no padding**, while `DialogHeader` and
+`DialogFooter` each carried `p-4`. So the coloured bar and the button row were
+padded and everything between them ran edge to edge — which is the margin problem
+in the Create Widget Bundle screenshot, and it affected every dialog in the app.
+
+`DialogDescription` was also `text-muted-foreground` — grey — while sitting on
+the primary-coloured header bar. That is the "colour is grey" complaint.
+
+Fixed in `components/ui/dialog.tsx`:
+- `DialogContent` now carries `p-6`, so body content is padded by default
+- `DialogHeader` / `DialogFooter` use `-mx-6 -mt-6` / `-mx-6 -mb-6` to cancel it,
+  so the bars still run edge to edge
+- `DialogDescription` uses `text-current/80`, inheriting white on the header and
+  falling back to muted grey in a plain body
+
+The five custom dialogs added earlier were simplified accordingly — they no
+longer need `p-0` plus manual `px-6` on every section.
+
+## Table headers
+
+`ScriptLibraryPage`, `ScheduleManagementPage` and `ScheduleHistoryDialog` used
+bare `<TableHeader>`, so their headings were plain grey text while `DataTable`
+(used by Solution Dashboards) renders `bg-primary` with white bold headings.
+They now match, via `bg-primary [&_th]:text-white [&_th]:font-medium` on the
+header so every cell inherits without repeating it.
+
+## Edge Management
+
+`EdgeManagementPage` imported `edgeInstances` and `edgeActivities` from a static
+`data.ts` fixture. The hooks (`useEdges`, `useCreateEdge`, …) and the backend
+(20+ endpoints) were both already complete — the same disconnect as Resources
+and Schedules.
+
+Now wired to `useEdges`, with search, loading skeletons, empty and error states.
+
+Two things worth knowing:
+
+**An adapter was needed** (`utils/adapt-edge.ts`). The components were written
+against the fixture, which disagrees with the API: flat `cpu`/`memory`/`storage`
+vs nested metrics, `Date` objects vs ISO strings (`.toLocaleString()` on a raw
+string throws), and `devices` as a count vs a relation array. Adapting is
+contained; rewriting EdgeTable and EdgeStats would not have been.
+
+**`EdgeCreateDialog` required a `customerId` prop that nothing could supply** —
+the `User` type carries no customer id, so the dialog could not be mounted at
+all (it was commented out in the page). It is now optional: the backend scopes
+the new edge to the tenant on the JWT, and the prop is only needed when an admin
+creates an edge for a specific customer.
+
+The activity feed is derived from the edge rows rather than fetched. Events live
+at `GET /edge/:id/events` — per edge — so a combined feed would be one request
+per edge on page load. Worth a global events endpoint later.
+
+## Menu restructure
+
+Rule chain templates and converter templates were under Edge Management, where
+neither belongs:
+
+| Item | From | To |
+|---|---|---|
+| Rule chain templates | Edge Management | **Automation** — rule chains are the automation engine; an edge only executes them |
+| Converter templates | Edge Management | **Integrations** — converters decode payloads on the way in, which is the integration pipeline |
+
+The old `/edge-management/rule-chain-templates` and
+`/edge-management/converter-templates` paths are **kept as route aliases**, so
+saved links and bookmarks still resolve. Only the menu changed.
+
+## Automation and Integrations — already integrated
+
+Both were checked rather than assumed. `features/automation/hooks/useAutomation.ts`
+has 11 query/mutation hooks against `automation.api`, and
+`features/integrations/Hooks/index.ts` has 18 against `integrations.api`. Both
+backends exist. These are **not** mock-data pages like Edge/Schedules/Resources
+were, so nothing was rewritten.
+
+A sidebar feature-flag audit also found no dead flags there, so the menus are not
+being hidden. If specific screens still misbehave, the cause is per-screen and
+needs the actual symptom to diagnose.
+
+## Verified
+
+Frontend `npm run build` ✓ · `tsc -b --noEmit` clean · `eslint --quiet` clean
+across `features/resources` and `features/schedules`. Thirteen pre-existing
+`any`/unused warnings remain in `EdgeTable.tsx`'s column definitions; typing
+those properly is a separate refactor with real rendering risk.
+
+---
+
+# Part 6 — Edge creation, floor plans end to end
+
+## Edge creation — three stacked bugs
+
+**The form validated against a field it never shows.** The zod schema had
+`customerId: z.string().trim().min(1, 'Customer is required')`, but nothing in
+the app can supply a customer id — the `User` type has no such field, so the
+dialog defaulted it to `''`. Validation therefore failed on every submit,
+against a field that is not rendered anywhere in the form. Pressing Create did
+nothing, with no visible reason. This is the bug you hit.
+
+**The type dropdown offered values the server rejects.** The form listed
+`GATEWAY`, `PROCESSOR`, `RELAY`. The backend's `EDGE_TYPES` is `GATEWAY`,
+`INDUSTRIAL`, `RETAIL`, `AGRICULTURE`, `SMART_HOME`, `CUSTOM` — two of the three
+options were guaranteed 400s from `@IsIn`.
+
+**Empty strings are not optional.** Even past zod, `customerId: ''` reaches
+`@IsUUID()` server-side. `@IsOptional()` skips `undefined` and `null`, not `''`.
+The payload now strips blank optional fields before sending.
+
+All three fixed; `EdgeType` and the dropdown now mirror `EDGE_TYPES` exactly.
+
+## Floor plans — the creation wizard discarded most of the user's work
+
+| Step | What it actually did |
+|---|---|
+| 1 Asset selection | Creates the floor plan ✅ |
+| 2 DWG import | Uploads the file ✅ |
+| 3 Zone setup | Zustand store only — **never saved** |
+| 4 Device link | Zustand store only — **never saved** |
+| 5 Review → Save | `// TODO` stub: `console.log`, reset store, navigate away |
+
+So a user could lay out zones, place devices, press Save, and lose all of it —
+while the plan row and its DWG survived, which is exactly why it looked
+half-working rather than broken.
+
+`handleSave` is now implemented: it writes each zone (converting the canvas rect
+to the polygon the API expects) and each device placement, counting failures per
+item so one bad zone does not cost the other nine. The button is disabled while
+in flight — the handler issues one request per item, so a double click would
+duplicate every one of them.
+
+## Floor plan API — six client methods pointed at nothing
+
+| Client called | Server has | Effect |
+|---|---|---|
+| `POST /:id/markers` | `POST /:id/devices` | **404** |
+| `PATCH /:id/markers/:deviceId` | `PATCH /:id/devices/:deviceId` | **404** |
+| `DELETE /:id/markers/:deviceId` | `DELETE /:id/devices/:deviceId` | **404** |
+| `POST /:id/clone` | — | **404** |
+| `GET /:id/zones` | — | **404** |
+| `POST /:id/upload-image` | — | **404** |
+
+The first three are the entire device-placement workflow — the core of the
+feature. Paths corrected.
+
+Added to the backend:
+- `GET /:id/zones` — zones live on the floor plan row, so this is a projection;
+  it exists because reading zones back otherwise meant fetching the whole plan
+  including parsed geometry, which can be megabytes
+- `POST /:id/clone` — copies geometry, zones, settings and 3D metadata.
+  Device placements are deliberately **not** copied: a device is in one physical
+  place, and duplicating placements would claim the same hardware is on two
+  floors. If the source floor is taken, the copy is created with no floor, since
+  a floor holds one plan.
+
+## Endpoints that had no client at all
+
+Added clients and hooks for ~12 live backend endpoints the frontend never
+called: `available-devices`, `settings` (get/patch/reset), device
+`position`/`animation`, `building-3d-metadata`, `asset/:assetId`,
+`asset/:assetId/3d-simulation`, and model upload/download.
+
+**Including the 3D model generation added in Part 2, which was unreachable.**
+`/model/generate` and `/model/preview` existed server-side and nothing in the UI
+called them. There is now a `GenerateModelDialog` (format, up-axis, wall height,
+per-category toggles) on the detail page, and the Review step's "Export 3D model"
+button — previously a `console.log` — generates and downloads a GLB.
+
+Preview-before-generate is the point of that dialog, not a nicety: the build
+reports how many door and window openings could not be matched to a wall, which
+is the clearest signal a drawing's layers are non-standard. Better seen before
+writing a file than discovered in a viewer.
+
+## Settings page
+
+`FloorMapSettingsPage` had a TODO submit handler that only showed a success
+toast — it saved nothing. The cause was structural: settings are stored **per
+floor plan** server-side, but the page is routed at `/floor-plans/settings` with
+no id, so there was nothing to save against.
+
+Rather than move the route and break the existing link, the page now selects
+which plan it is editing, loads that plan's stored settings, and maps the flat
+form onto the server's nested `gridSettings` / `defaultColors` shape. Reset now
+resets server-side too — previously it reset only the form, leaving stored
+settings untouched while showing defaults.
+
+## Version history — no backend exists
+
+`FloorMapHistoryPage` rendered `mockVersions`, a hardcoded array, and offered
+Restore, Compare and Export against it. There is **no version, revision or
+snapshot endpoint** in the floor-plans module — nothing records history, so
+there was nothing those buttons could ever do.
+
+The fabricated rows are gone and the actions now say the feature is not
+available. Implementing it is a backend change — a versions table, snapshots on
+write, a restore path — not a frontend one. The sample shape is kept in the file,
+commented, for whoever builds it.
+
+## Verified
+
+Backend `npm run build` (662 files) ✓ · `tsc --noEmit` clean.
+Frontend `npm run build` ✓ · `tsc -b --noEmit` clean · the files added here lint
+clean. ~180 pre-existing `any` and unused-import warnings remain across the older
+floor-plan components (`FloorPlan3DViewer`, `FloorPlanCanvas`, `EnhancedCADParser`);
+typing those is a separate refactor with real rendering risk.
+
+---
+
+# Part 7 — Mesh module restored, schedules fixed, UI pass
+
+## First: the 3D model 404s were my regression
+
+`/model/generate` and `/model/preview` returned 404 because **the endpoints did
+not exist**. The entire mesh module from Part 2 — `triangulate.ts`,
+`mesh.builder.ts`, `floor-plan-mesh.factory.ts`, `gltf.exporter.ts`,
+`obj.exporter.ts`, the DTO, the service methods, the controller routes — was
+lost when a later session built on a re-uploaded copy of the repo instead of the
+previous output. I then wired frontend buttons against the missing API.
+
+All of it is restored and re-verified. Nine checks pass, including the two real
+bugs the original pass found:
+
+- **Hole triangulation** returns 84 units for a 10×10 room with a 4×4 core, not
+  140. Bridging a hole creates duplicate vertices; an ear test comparing by index
+  rejected every ear and fell through to a fan, which fills holes in.
+- **Winding is not reversed for Y-up.** The map `(x,y,z) → (x,z,−y)` has
+  determinant +1 — a rotation, not a mirror. Reversing it desynchronises
+  triangles from normals and renders the model inside-out. Verified by signed
+  volume (positive) and zero normal mismatches across every triangle.
+
+Plus: door cut → 3 boxes, window cut → 4 (pier/sill/lintel/pier), a distant
+collinear door is reported unmatched rather than cut, GLB header length and
+4-byte alignment, POSITION min/max present, STL size matches its triangle count.
+
+## Schedules — could not be created at all
+
+The form was wrong in four ways simultaneously:
+
+| Sent | Server wants |
+|---|---|
+| `type: 'cron'` | `type: 'CRON'` — uppercase enum |
+| `action: {...}` | **No such field** — `forbidNonWhitelisted` rejects it |
+| — | `actionType`: one of six enums |
+| — | `actionConfig`: discriminated object keyed by `actionType` |
+
+`actionConfig` has six distinct shapes (`deviceCommand`, `attributeUpdate`,
+`ruleChainTrigger`, `notification`, `maintenance`, `report`), which is why a
+single free-text "Target" box could never work. The form now switches its inputs
+per action type.
+
+**`POST /schedules/validate-cron` did not exist** — I had invented it. Added, and
+it returns the **next five fire times** rather than a bare boolean: `0 0 * * 0`
+parses fine and runs weekly, not daily, and only the preview makes that obvious.
+
+### Target and command, from the codecs
+
+Target is now a device dropdown. Command is driven by the device's codec via the
+existing `GET /devices/:id/capabilities`, so the picker only offers RPC methods
+that hardware actually implements — and each command's parameters render as
+**typed inputs with real ranges and defaults** taken from the codec definition,
+not a raw JSON box:
+
+```ts
+{ key: 'target_temperature', type: 'number', default: 20, min: 5, max: 35 }
+```
+
+A device whose codec declares no commands says so, rather than looking broken.
+
+## Edge actions — the actions column was mis-called
+
+`createActionsColumn(onEdit, onDelete)` takes **two callbacks**. EdgeTable passed
+a function returning an array of action objects, so that function was read as
+`onEdit`: the menu rendered its built-in Edit item whose handler returned an
+array and did nothing, and Delete never rendered at all. That is both "Edit does
+nothing" and "Delete is missing", from one mistake.
+
+The dropdown was also wrapped in `<div className="relative">`, which makes the
+absolutely-positioned panel resolve against that div instead of the viewport —
+the overflow and stray-margin behaviour. Wrapper removed.
+
+Edit, Delete and Sync now work; the edit form reuses the create dialog seeded
+with the row rather than a second near-identical component that would drift.
+
+## Dropdowns, platform-wide
+
+Two defects in the shared `Select`:
+
+- `SelectContent` was `w-full`, pinning the panel to the trigger's width so long
+  options were clipped. Now `min-w-full max-w-[22rem]`, growing to its content.
+- `SelectItem` used `pl-8` plus an absolutely-positioned tick, reserving the
+  indent on *every* row — so unselected options looked pushed in and the list
+  read as misaligned. The tick now sits in a fixed-width slot.
+
+## Lists as rows
+
+Widget Bundles and Widgets were card grids; both are now tables with actions on
+the right, matching the convention used elsewhere (primary header bar, white
+bold headings, icon buttons in the last column).
+
+## Image thumbnails
+
+`ImageThumb` now falls back to the authenticated blob fetch when a public URL
+fails — which happens when `VITE_API_BASE_URL` does not match where the API is
+served, and previously left a permanently blank tile with no indication why. A
+failed load is labelled "Preview unavailable" rather than showing the same
+placeholder as "still loading".
+
+If tiles are still blank after this, the files are missing from disk on the
+server (the DB row exists, the file does not) — check `uploads/images/`.
+
+## Users
+
+`UsersPage.handleDeleteConfirm` showed "deleted successfully" and **called
+nothing**. The user stayed, and the list only revealed it on the next refresh. A
+success toast for an action that did not happen is worse than an error. Now uses
+the `useDeleteUser` hook that already existed.
+
+## Verified
+
+Backend `npm run build` (668 files) ✓ · `tsc --noEmit` clean · 9/9 mesh checks.
+Frontend `npm run build` ✓ · `tsc -b --noEmit` clean.

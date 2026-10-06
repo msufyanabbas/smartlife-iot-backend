@@ -31,6 +31,14 @@ import {
   Building3DMetadataDto,
 } from './dto/create-floor-plan.dto';
 import { PlaceDeviceDto, UpdatePlacementDto } from './dto/place-device.dto';
+import {
+  GenerateModelDto,
+  ModelFormat,
+  ModelUpAxis,
+} from './dto/generate-model.dto';
+import { FloorPlanMeshFactory } from './mesh/floor-plan-mesh.factory';
+import { GltfExporter } from './mesh/gltf.exporter';
+import { ObjExporter } from './mesh/obj.exporter';
 import { UpdateFloorPlanDto } from './dto/update-floor-plan.dto';
 import { UpdateFloorPlanSettingsDto } from './dto/floor-plan-settings.dto';
 import {
@@ -1107,6 +1115,178 @@ export class FloorPlansService {
   }
 
   /** Returns the absolute path + content type for streaming the model file. */
+  // ══════════════════════════════════════════════════════════════════════════
+  // 3D MODEL GENERATION
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Builds a 3D model from the floor plan's parsed geometry and stores it.
+   *
+   * The counterpart to uploadModel(): rather than accepting a model made
+   * elsewhere, this extrudes the DWG/DXF geometry already parsed. Walls become
+   * solids with door and window openings cut out, rooms become floor slabs,
+   * columns and stairs become massing.
+   *
+   * Runs synchronously: a floor plan's mesh is thousands of triangles, not
+   * millions, and building it takes single-digit milliseconds. A queue would add
+   * latency and failure modes for no benefit.
+   */
+  async generateModel(id: string, actor: Actor, dto: GenerateModelDto = {}) {
+    const floorPlan = await this.findOne(id, actor.tenantId);
+
+    if (!floorPlan.parsedGeometry) {
+      throw new BadRequestException(
+        'This floor plan has no parsed geometry. Upload a DWG or DXF file first ' +
+          '(POST /floor-plans/:id/dwg-upload) and wait for its status to become ACTIVE.',
+      );
+    }
+
+    const format = dto.format ?? ModelFormat.GLB;
+    const upAxis = dto.upAxis === ModelUpAxis.Z_UP ? 'z-up' : 'y-up';
+
+    const built = FloorPlanMeshFactory.build(floorPlan.parsedGeometry as any, {
+      wallHeight: dto.wallHeight ?? 3,
+      defaultWallThickness: dto.defaultWallThickness ?? 0.2,
+      slabThickness: dto.slabThickness ?? 0.15,
+      windowSillHeight: dto.windowSillHeight ?? 0.9,
+      windowHeadHeight: dto.windowHeadHeight ?? 2.2,
+      doorHeight: dto.doorHeight ?? 2.1,
+      includeWalls: dto.includeWalls ?? true,
+      includeFloors: dto.includeFloors ?? true,
+      includeColumns: dto.includeColumns ?? true,
+      includeDoors: dto.includeDoors ?? true,
+      includeWindows: dto.includeWindows ?? true,
+      includeStairs: dto.includeStairs ?? true,
+      includeFurniture: dto.includeFurniture ?? false,
+      cutOpenings: dto.cutOpenings ?? true,
+      centerOnOrigin: dto.centerOnOrigin ?? true,
+    });
+
+    const groups = built.builder.getGroups();
+
+    if (built.builder.isEmpty()) {
+      // A valid-but-empty model would be worse than refusing: it looks like
+      // success, and the user only finds out when the viewer shows nothing.
+      throw new BadRequestException(
+        'The parsed geometry produced no 3D solids. ' +
+          built.warnings.join(' ') +
+          ' Check that the drawing has walls or rooms on recognisable layers.',
+      );
+    }
+
+    const companionFiles: string[] = [];
+    let payload: Buffer;
+
+    switch (format) {
+      case ModelFormat.GLTF:
+        payload = GltfExporter.toGLTF(groups, { upAxis, sceneName: floorPlan.name });
+        break;
+
+      case ModelFormat.OBJ: {
+        const { obj, mtl } = ObjExporter.toOBJ(groups, {
+          upAxis,
+          baseName: floorPlan.id,
+        });
+        // The OBJ references the MTL by name, so both must land on disk or the
+        // model loads untextured.
+        const mtlName = `${floorPlan.id}.mtl`;
+        await fs.writeFile(path.join(this.modelDir, mtlName), mtl);
+        companionFiles.push(`/uploads/floor-plans/models/${mtlName}`);
+        payload = obj;
+        break;
+      }
+
+      case ModelFormat.STL:
+        payload = ObjExporter.toSTL(groups);
+        break;
+
+      case ModelFormat.GLB:
+      default:
+        payload = GltfExporter.toGLB(groups, { upAxis, sceneName: floorPlan.name });
+        break;
+    }
+
+    // Remove the previous model when the extension changes, or it lingers as an
+    // orphan getModelFile can no longer reach.
+    if (floorPlan.modelFileUrl && floorPlan.modelFileType !== format) {
+      await this.deleteFile(floorPlan.modelFileUrl);
+    }
+
+    const fileName = `${floorPlan.id}.${format}`;
+    await fs.writeFile(path.join(this.modelDir, fileName), payload);
+
+    floorPlan.modelFileUrl = `/uploads/floor-plans/models/${fileName}`;
+    floorPlan.modelFileType = format;
+    floorPlan.modelFileSize = payload.length;
+    floorPlan.updatedBy = actor.userId;
+
+    await this.floorPlanRepository.save(floorPlan);
+
+    this.logger.log(
+      `Generated ${format.toUpperCase()} model for floor plan ${id}: ` +
+        `${built.stats.triangles} triangles, ${payload.length} bytes`,
+    );
+
+    return {
+      format,
+      fileName,
+      url: floorPlan.modelFileUrl,
+      sizeBytes: payload.length,
+      stats: built.stats,
+      warnings: built.warnings,
+      boundingBox: built.boundingBox,
+      companionFiles,
+    };
+  }
+
+  /**
+   * Reports what a generated model WOULD contain, without writing anything.
+   *
+   * Surfaces unmatched openings and untriangulatable rooms so the drawing can be
+   * fixed first, rather than discovering the problem in a viewer.
+   */
+  async previewModel(id: string, tenantId: string, dto: GenerateModelDto = {}) {
+    const floorPlan = await this.findOne(id, tenantId);
+
+    if (!floorPlan.parsedGeometry) {
+      throw new BadRequestException(
+        'This floor plan has no parsed geometry. Upload a DWG or DXF file first.',
+      );
+    }
+
+    const built = FloorPlanMeshFactory.build(floorPlan.parsedGeometry as any, {
+      wallHeight: dto.wallHeight ?? 3,
+      defaultWallThickness: dto.defaultWallThickness ?? 0.2,
+      slabThickness: dto.slabThickness ?? 0.15,
+      windowSillHeight: dto.windowSillHeight ?? 0.9,
+      windowHeadHeight: dto.windowHeadHeight ?? 2.2,
+      doorHeight: dto.doorHeight ?? 2.1,
+      includeWalls: dto.includeWalls ?? true,
+      includeFloors: dto.includeFloors ?? true,
+      includeColumns: dto.includeColumns ?? true,
+      includeDoors: dto.includeDoors ?? true,
+      includeWindows: dto.includeWindows ?? true,
+      includeStairs: dto.includeStairs ?? true,
+      includeFurniture: dto.includeFurniture ?? false,
+      cutOpenings: dto.cutOpenings ?? true,
+      centerOnOrigin: dto.centerOnOrigin ?? true,
+    });
+
+    return {
+      floorPlanId: floorPlan.id,
+      name: floorPlan.name,
+      wouldProduceGeometry: !built.builder.isEmpty(),
+      stats: built.stats,
+      warnings: built.warnings,
+      boundingBox: built.boundingBox,
+      materials: built.builder.getGroups().map((group) => ({
+        name: group.material.name,
+        triangles: group.indices.length / 3,
+      })),
+      availableFormats: ['glb', 'gltf', 'obj', 'stl'],
+    };
+  }
+
   async getModelFile(id: string, tenantId: string) {
     const floorPlan = await this.findOne(id, tenantId);
 
@@ -1249,6 +1429,69 @@ export class FloorPlansService {
     floorPlan.building3DMetadata = metadata;
     floorPlan.updatedBy = actor.userId;
     return await this.floorPlanRepository.save(floorPlan);
+  }
+
+  /**
+   * Lists the zones of a floor plan.
+   *
+   * Zones are stored on the floor plan row rather than in their own table, so
+   * this is a projection rather than a query. It exists because the frontend was
+   * calling GET /:id/zones and getting a 404 — it had no way to read zones back
+   * without fetching the whole floor plan, including its parsed geometry, which
+   * can be megabytes.
+   */
+  async getZones(id: string, tenantId: string) {
+    const floorPlan = await this.findOne(id, tenantId);
+    return Array.isArray(floorPlan.zones) ? floorPlan.zones : [];
+  }
+
+  /**
+   * Duplicates a floor plan under a new name.
+   *
+   * Everything describing the layout is copied — geometry, zones, settings,
+   * 3D metadata. Device placements are deliberately NOT copied: a device exists
+   * in one physical place, and duplicating its placement would claim the same
+   * hardware is on two floors at once. The copy starts empty and the user places
+   * devices on it.
+   *
+   * The source file on disk is shared rather than duplicated. Both rows point at
+   * the same uploaded DWG, which is correct for a copy made moments after the
+   * original, and avoids doubling storage for every clone.
+   */
+  async clone(
+    id: string,
+    actor: Actor,
+    newName: string,
+  ): Promise<FloorPlan> {
+    const { tenantId, userId } = actor;
+    const source = await this.findOne(id, tenantId);
+
+    const name = (newName || '').trim() || `${source.name} (copy)`;
+
+    // A floor plan occupies a floor of an asset exclusively, so the copy cannot
+    // sit on the same floor as its source.
+    const existing = await this.floorPlanRepository.findOne({
+      where: { tenantId, assetId: source.assetId, floor: source.floor },
+    });
+
+    await this.assertFloorPlanQuota(actor);
+
+    const copy = this.floorPlanRepository.create({
+      ...source,
+      id: undefined,
+      name,
+      // Floor is cleared when it would collide; the user assigns one. Silently
+      // reusing it would violate the one-plan-per-floor rule the rest of the
+      // service enforces.
+      floor: existing ? null : source.floor,
+      devicePlacements: [],
+      createdAt: undefined,
+      updatedAt: undefined,
+      createdBy: userId,
+      updatedBy: userId,
+    } as unknown as Partial<FloorPlan>);
+
+    return this.floorPlanRepository.save(copy);
   }
 
   async getSettings(id: string, tenantId: string) {

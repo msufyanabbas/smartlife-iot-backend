@@ -1,4 +1,5 @@
 // src/modules/schedules/schedule.service.ts
+import * as cronParser from 'cron-parser';
 import {
   BadRequestException,
   Injectable,
@@ -355,6 +356,58 @@ export class SchedulesService {
   // ══════════════════════════════════════════════════════════════════════════
   // STATISTICS
   // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Validates a cron expression for the UI, without saving anything.
+   *
+   * Returns the next few fire times rather than a bare true/false, because the
+   * question a user actually has is "does this mean what I think it means?" —
+   * `0 0 * * 0` parses fine and runs weekly, not daily, and only the preview
+   * makes that obvious before the schedule is live.
+   */
+  validateCronExpression(
+    expression: string,
+    timezone?: string,
+  ): {
+    valid: boolean;
+    expression: string;
+    timezone: string;
+    nextRuns: string[];
+    error?: string;
+  } {
+    const tz = timezone || DEFAULT_SCHEDULE_TIMEZONE;
+    const trimmed = (expression || '').trim();
+
+    if (!trimmed) {
+      return {
+        valid: false,
+        expression: trimmed,
+        timezone: tz,
+        nextRuns: [],
+        error: 'A cron expression is required',
+      };
+    }
+
+    try {
+      this.cronService.validateCron(trimmed, tz);
+
+      const iterator = cronParser.parseExpression(trimmed, { tz });
+      const nextRuns: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        nextRuns.push(iterator.next().toDate().toISOString());
+      }
+
+      return { valid: true, expression: trimmed, timezone: tz, nextRuns };
+    } catch (error) {
+      return {
+        valid: false,
+        expression: trimmed,
+        timezone: tz,
+        nextRuns: [],
+        error: (error as Error)?.message ?? 'Invalid cron expression',
+      };
+    }
+  }
 
   async getStatistics(userId: string, tenantId: string) {
     const [total, enabled, disabled] = await Promise.all([

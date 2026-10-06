@@ -74,6 +74,23 @@ export class SchedulesController {
     return this.schedulesService.findAll(user.id, user.tenantId, paginationDto);
   }
 
+  @Post('validate-cron')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Validate a cron expression',
+    description:
+      'Checks a 5-field cron expression and returns the next few fire times, so the ' +
+      'UI can confirm an expression means what the user thinks before the schedule is ' +
+      'saved. "0 0 * * 0" parses fine and runs weekly, not daily — only the preview ' +
+      'makes that obvious.',
+  })
+  validateCron(@Body() body: { expression?: string; timezone?: string }) {
+    return this.schedulesService.validateCronExpression(
+      body?.expression ?? '',
+      body?.timezone,
+    );
+  }
+
   @Get('statistics')
   @ApiOperation({ summary: 'Schedule counts, run totals and success rate' })
   getStatistics(@CurrentUser() user: AuthenticatedUser) {

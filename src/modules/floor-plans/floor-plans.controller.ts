@@ -38,6 +38,7 @@ import {
   Building3DMetadataDto,
 } from './dto/create-floor-plan.dto';
 import { PlaceDeviceDto, UpdatePlacementDto } from './dto/place-device.dto';
+import { GenerateModelDto } from './dto/generate-model.dto';
 import { UpdateFloorPlanDto } from './dto/update-floor-plan.dto';
 import { UpdateFloorPlanSettingsDto } from './dto/floor-plan-settings.dto';
 import { FloorPlanQueryDto } from './dto/floor-plan-query.dto';
@@ -262,6 +263,45 @@ export class FloorPlansController {
     );
   }
 
+  @Post(':id/model/generate')
+  @ApiOperation({
+    summary: 'Generate a 3D model from the parsed DWG/DXF geometry',
+    description:
+      'Extrudes the already-parsed floor plan geometry into a real 3D model: walls become ' +
+      'solids with door and window openings cut out of them, rooms become floor slabs, ' +
+      'columns and stairs become massing. Requires the plan to have been parsed already.',
+  })
+  @ApiParam({ name: 'id', type: 'string' })
+  generateModel(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+    @Body() dto: GenerateModelDto,
+  ) {
+    return this.floorPlansService.generateModel(
+      id,
+      this.actor(userId, tenantId),
+      dto,
+    );
+  }
+
+  @Post(':id/model/preview')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Preview what a generated model would contain',
+    description:
+      'Runs the same build as /model/generate but writes nothing. Use it to check triangle ' +
+      'counts and warnings — particularly openings that matched no wall — before committing.',
+  })
+  @ApiParam({ name: 'id', type: 'string' })
+  previewModel(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+    @Body() dto: GenerateModelDto,
+  ) {
+    return this.floorPlansService.previewModel(id, tenantId, dto);
+  }
+
   @Get(':id/model')
   @ApiOperation({ summary: 'Download the floor plan 3D model file' })
   async getModel(
@@ -409,6 +449,46 @@ export class FloorPlansController {
   }
 
   // ============ ZONE MANAGEMENT ============
+
+  @Post(':id/clone')
+  @ApiOperation({
+    summary: 'Duplicate a floor plan',
+    description:
+      'Copies geometry, zones, settings and 3D metadata under a new name. Device ' +
+      'placements are deliberately NOT copied — a device is in one physical place, ' +
+      'and duplicating placements would claim the same hardware sits on two floors. ' +
+      'If the source floor is already taken the copy is created without a floor ' +
+      'assigned, since a floor holds one plan.',
+  })
+  @ApiParam({ name: 'id', type: 'string' })
+  clone(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+    @Body() body: { name?: string; newName?: string },
+  ) {
+    return this.floorPlansService.clone(
+      id,
+      this.actor(userId, tenantId),
+      body?.newName ?? body?.name ?? '',
+    );
+  }
+
+  @Get(':id/zones')
+  @ApiOperation({
+    summary: 'List the zones of a floor plan',
+    description:
+      'Zones are stored on the floor plan row, so this is a lightweight projection — ' +
+      'it avoids pulling the whole plan (including parsed geometry, which can be ' +
+      'megabytes) just to read the zone list back.',
+  })
+  @ApiParam({ name: 'id', type: 'string' })
+  getZones(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.floorPlansService.getZones(id, tenantId);
+  }
 
   @Post(':id/zones')
   @ApiOperation({ summary: 'Add zone to floor plan' })
