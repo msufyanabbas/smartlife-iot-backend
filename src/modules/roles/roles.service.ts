@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike, IsNull } from 'typeorm';
 import { Role } from './entities/roles.entity';
@@ -10,6 +16,7 @@ import { QueryRoleDto } from './dto/query-role.dto';
 import { AssignPermissionsDto } from './dto/assign-permissions.dto';
 import { User } from '../index.entities';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
+import { UserRole } from '@common/enums/index.enum';
 
 @Injectable()
 export class RolesService {
@@ -47,9 +54,26 @@ export class RolesService {
       }
     }
 
-    // Create role
+    // Create role.
+    //
+    // `isSystem` is forced, never taken from the body. CreateRoleDto exposes it
+    // and the `...roleData` spread used to carry it straight through, so a tenant
+    // admin could post `{"isSystem": true}` and create a role that:
+    //   · every OTHER tenant then sees — findAll's predicate is
+    //     `(role.isSystem = true OR role.tenantId = :tenantId)`, and it joins
+    //     permissions, so the role's name and full permission set leaked
+    //     cross-tenant;
+    //   · GET /roles/system hands to everyone;
+    //   · its own creator can then neither edit (assertCallerMayModify → 403) nor
+    //     delete ("Cannot delete system roles") — permanently stuck.
+    //
+    // Only a SUPER_ADMIN may mint a platform-wide role.
+    const isSystem =
+      user.role === UserRole.SUPER_ADMIN ? Boolean(roleData.isSystem) : false;
+
     const role = this.roleRepository.create({
       ...roleData,
+      isSystem,
       tenantId: user.tenantId,
     });
 
@@ -134,7 +158,25 @@ async findAll(queryDto: QueryRoleDto, user: User) {
   );
 }
 
-  async findOne(id: string): Promise<Role> {
+  /**
+   * Fetch one role, scoped to what the caller may see.
+   *
+   * SECURITY: this used to be `where: { id }` with no tenant predicate and no
+   * caller argument, and `update()`, `remove()`, `assignPermissions()` and
+   * `removePermissions()` all went through it. So tenant A's admin could read AND
+   * rewrite tenant B's roles by id — `findAll()` is tenant-scoped so the ids were
+   * not listed, but `getSystemRoles()` hands out system-role ids, and an id from
+   * any other source worked just as well.
+   *
+   * Scoping rules:
+   *   · SUPER_ADMIN            — any role.
+   *   · everyone else          — their own tenant's roles, plus system roles
+   *                              (tenantId IS NULL), which every tenant uses.
+   *
+   * `caller` is optional so internal callers (seeders, other services) keep
+   * working unscoped; every route passes it.
+   */
+  async findOne(id: string, caller?: User): Promise<Role> {
     const role = await this.roleRepository.findOne({
       where: { id },
       relations: ['permissions', 'tenant', 'users'],
@@ -144,7 +186,47 @@ async findAll(queryDto: QueryRoleDto, user: User) {
       throw new NotFoundException(`Role with ID ${id} not found`);
     }
 
+    this.assertCallerMaySee(role, caller);
+
     return role;
+  }
+
+  /**
+   * Not-found rather than forbidden on a cross-tenant id: telling a caller
+   * "that role exists but is not yours" confirms the id, which is the one bit
+   * they should not get.
+   */
+  private assertCallerMaySee(role: Role, caller?: User): void {
+    if (!caller) return;
+    if (caller.role === UserRole.SUPER_ADMIN) return;
+
+    // System roles (tenantId null) are shared platform-wide and readable by all.
+    if (!role.tenantId) return;
+
+    if (role.tenantId !== caller.tenantId) {
+      throw new NotFoundException(`Role with ID ${role.id} not found`);
+    }
+  }
+
+  /**
+   * System roles are platform-wide: the same row backs every tenant. Letting one
+   * tenant rewrite them changes what every other tenant's users can do, so no
+   * tenant admin may touch them — only a SUPER_ADMIN.
+   *
+   * The previous guard was `if (role.isSystem && updateRoleDto.name)`: it blocked
+   * renaming a system role but happily accepted a full `permissionIds` replace on
+   * it, including on "Super Administrator".
+   */
+  private assertCallerMayModify(role: Role, caller?: User): void {
+    if (!caller) return;
+    this.assertCallerMaySee(role, caller);
+
+    if (role.isSystem && caller.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException(
+        `"${role.name}" is a built-in platform role and cannot be modified. ` +
+          'Create a custom role instead.',
+      );
+    }
   }
 
   async findByName(name: string, tenantId?: string): Promise<Role | null> {
@@ -157,15 +239,30 @@ async findAll(queryDto: QueryRoleDto, user: User) {
     });
   }
 
-  async update(id: string, updateRoleDto: UpdateRoleDto): Promise<Role> {
-    const role = await this.findOne(id);
+  async update(
+    id: string,
+    updateRoleDto: UpdateRoleDto,
+    caller?: User,
+  ): Promise<Role> {
+    const role = await this.findOne(id, caller);
 
-    // Prevent updating system roles
-    if (role.isSystem && updateRoleDto.name) {
-      throw new BadRequestException('Cannot modify system role name');
-    }
+    // Covers name AND permissionIds. The old check only blocked a rename.
+    this.assertCallerMayModify(role, caller);
 
     const { permissionIds, tenantId, ...roleData } = updateRoleDto;
+
+    // A tenant admin must not be able to move a role into another tenant, which
+    // `tenantId` in the body would otherwise allow.
+    if (
+      caller &&
+      caller.role !== UserRole.SUPER_ADMIN &&
+      tenantId !== undefined &&
+      tenantId !== caller.tenantId
+    ) {
+      throw new ForbiddenException(
+        'You cannot reassign a role to a different tenant',
+      );
+    }
 
     // Check for name conflicts if name is being updated
     if (roleData.name && roleData.name !== role.name) {
@@ -204,7 +301,20 @@ async findAll(queryDto: QueryRoleDto, user: User) {
       }
     }
 
-    // Update role data
+    // Update role data.
+    //
+    // `isSystem` is stripped for everyone but a SUPER_ADMIN. assertCallerMayModify
+    // inspects the role's state BEFORE the update, so without this a tenant admin
+    // could flip their own role to isSystem:true — publishing it to every tenant
+    // and locking themselves out of it in the same request.
+    if (
+      roleData.isSystem !== undefined &&
+      caller &&
+      caller.role !== UserRole.SUPER_ADMIN
+    ) {
+      delete roleData.isSystem;
+    }
+
     Object.assign(role, roleData);
     if (tenantId !== undefined) {
       role.tenantId = tenantId;
@@ -213,8 +323,8 @@ async findAll(queryDto: QueryRoleDto, user: User) {
     return this.roleRepository.save(role);
   }
 
-  async remove(id: string): Promise<void> {
-    const role = await this.findOne(id);
+  async remove(id: string, caller?: User): Promise<void> {
+    const role = await this.findOne(id, caller);
 
     // Prevent deleting system roles
     if (role.isSystem) {
@@ -231,8 +341,13 @@ async findAll(queryDto: QueryRoleDto, user: User) {
     await this.roleRepository.remove(role);
   }
 
-  async assignPermissions(id: string, assignPermissionsDto: AssignPermissionsDto): Promise<Role> {
-    const role = await this.findOne(id);
+  async assignPermissions(
+    id: string,
+    assignPermissionsDto: AssignPermissionsDto,
+    caller?: User,
+  ): Promise<Role> {
+    const role = await this.findOne(id, caller);
+    this.assertCallerMayModify(role, caller);
     const { permissionIds } = assignPermissionsDto;
 
     const permissions = await this.permissionRepository.findByIds(permissionIds);
@@ -245,8 +360,13 @@ async findAll(queryDto: QueryRoleDto, user: User) {
     return this.roleRepository.save(role);
   }
 
-  async removePermissions(id: string, permissionIds: string[]): Promise<Role> {
-    const role = await this.findOne(id);
+  async removePermissions(
+    id: string,
+    permissionIds: string[],
+    caller?: User,
+  ): Promise<Role> {
+    const role = await this.findOne(id, caller);
+    this.assertCallerMayModify(role, caller);
 
     if (!role.permissions) {
       return role;
@@ -273,20 +393,37 @@ async findAll(queryDto: QueryRoleDto, user: User) {
     });
   }
 
-  async getUsersCount(id: string): Promise<{ count: number; users: User[] }> {
-  const role = await this.roleRepository
-    .createQueryBuilder('role')
-    .leftJoinAndSelect('role.users', 'users')
-    .where('role.id = :id', { id })
-    .getOne();
+  /**
+   * Users holding this role.
+   *
+   * SECURITY: this resolved a bare id globally — `where role.id = :id` with no
+   * tenant predicate — while `leftJoinAndSelect('role.users')` returns full User
+   * rows. So tenant A's admin could call
+   * `GET /roles/<a tenant-B role id>/users` and read tenant B's users' names,
+   * emails and phone numbers. (Only `password` is `select: false`.) It was the
+   * one read path on this controller that the findOne() scoping fix missed.
+   *
+   * Scoped the same way as findOne(): own tenant plus platform system roles.
+   */
+  async getUsersCount(
+    id: string,
+    caller?: User,
+  ): Promise<{ count: number; users: User[] }> {
+    const role = await this.roleRepository
+      .createQueryBuilder('role')
+      .leftJoinAndSelect('role.users', 'users')
+      .where('role.id = :id', { id })
+      .getOne();
 
-  if (!role) {
-    throw new NotFoundException(`Role with ID ${id} not found`);
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${id} not found`);
+    }
+
+    this.assertCallerMaySee(role, caller);
+
+    return {
+      count: role.users?.length || 0,
+      users: role.users || [],
+    };
   }
-
-  return {
-    count: role.users?.length || 0,
-    users: role.users || []
-  };
-}
 }

@@ -14,6 +14,7 @@ import {
   SubscriptionStatus,
   BillingPeriod,
   SupportLevel,
+  UserRole,
 } from '@common/enums/index.enum';
 import {
   SubscriptionFeatures,
@@ -34,6 +35,10 @@ import {
   User,
   Payment,
 } from '@modules/index.entities';
+import {
+  PLAN_FEATURES as SHARED_PLAN_FEATURES,
+  resolveFeatures,
+} from './plan-features';
 import {
   CreateSubscriptionDto,
   UpgradeSubscriptionDto,
@@ -143,121 +148,14 @@ const PLAN_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> = {
   },
 };
 
-// These must match SubscriptionFeatures exactly — TypeScript enforces it
-const PLAN_FEATURES: Record<SubscriptionPlan, SubscriptionFeatures> = {
-  [SubscriptionPlan.FREE]: {
-    overview: true,
-    solutionTemplates: true,
-    solutionDashboards: true,
-    deviceProfiles: true,
-    assetProfiles: true,
-    alerts: true,
-    analytics: false,
-    userRoles: true,
-    integration: false,
-    edge: true,
-    scheduleManagement: false,
-    subscription: true,
-    resources: true,
-    notifications: true,
-    sharingCenter: false,
-    apiMonitoring: false,
-    auditLogs: false,
-    devices: true,
-    dashboards: true,
-    assets: true,
-    floorPlans: false,
-    automations: false,
-    apiAccess: false,
-    smsNotifications: false,
-    whiteLabel: false,
-    settings: true,
-  },
-  [SubscriptionPlan.STARTER]: {
-    overview: true,
-    solutionTemplates: true,
-    solutionDashboards: true,
-    deviceProfiles: true,
-    assetProfiles: true,
-    alerts: true,
-    analytics: true,
-    userRoles: true,
-    integration: true,
-    edge: true,
-    scheduleManagement: true,
-    subscription: true,
-    resources: true,
-    notifications: true,
-    sharingCenter: true,
-    apiMonitoring: true,
-    auditLogs: true,
-    devices: true,
-    dashboards: true,
-    assets: true,
-    settings: true,
-    floorPlans: true,
-    automations: false,
-    apiAccess: true,
-    smsNotifications: false,
-    whiteLabel: false,
-  },
-  [SubscriptionPlan.PROFESSIONAL]: {
-    overview: true,
-    solutionTemplates: true,
-    solutionDashboards: true,
-    deviceProfiles: true,
-    assetProfiles: true,
-    alerts: true,
-    analytics: true,
-    userRoles: true,
-    integration: true,
-    edge: true,
-    scheduleManagement: true,
-    subscription: true,
-    resources: true,
-    notifications: true,
-    sharingCenter: true,
-    apiMonitoring: true,
-    auditLogs: true,
-    settings: true,
-    devices: true,
-    dashboards: true,
-    assets: true,
-    floorPlans: true,
-    automations: true,
-    apiAccess: true,
-    smsNotifications: true,
-    whiteLabel: false,
-  },
-  [SubscriptionPlan.ENTERPRISE]: {
-    overview: true,
-    solutionTemplates: true,
-    solutionDashboards: true,
-    deviceProfiles: true,
-    assetProfiles: true,
-    alerts: true,
-    analytics: true,
-    userRoles: true,
-    integration: true,
-    settings: true,
-    edge: true,
-    scheduleManagement: true,
-    subscription: true,
-    resources: true,
-    notifications: true,
-    sharingCenter: true,
-    apiMonitoring: true,
-    auditLogs: true,
-    devices: true,
-    dashboards: true,
-    assets: true,
-    floorPlans: true,
-    automations: true,
-    apiAccess: true,
-    smsNotifications: true,
-    whiteLabel: true,
-  },
-};
+// PLAN_FEATURES, PLAN_LIMITS and the per-plan feature table used to be declared
+// here AND, separately, inside subscription.seeder.ts — two hand-maintained
+// copies that had already drifted. A tenant seeded by `npm run seed` got a
+// different set of menus from a tenant created through this service: the
+// seeder's copy never set devices/assets/floorPlans/automations/apiAccess at
+// all, and its ENTERPRISE entry dropped the spread, so the top plan resolved to
+// almost nothing. Both now read the one table in ./plan-features.
+const PLAN_FEATURES = SHARED_PLAN_FEATURES;
 
 const PLAN_ORDER: SubscriptionPlan[] = [
   SubscriptionPlan.FREE,
@@ -445,14 +343,95 @@ export class SubscriptionsService {
 
     if (!user) throw new NotFoundException('User not found');
 
-    // Super admin has no tenant and no subscription
+    // ── Super admin: no tenant, therefore no subscription row ────────────────
+    //
+    // This used to throw 404, which had a consequence nobody had traced: the
+    // frontend only writes its feature-flag store inside
+    // `if (query.data?.features)`, so on a 404 the store stays null — and the
+    // sidebar hides any item whose flag is not strictly `true`. A platform
+    // super admin therefore saw almost NO navigation at all, and every
+    // feature-gated route rendered the Unauthorized page. The account with the
+    // most access had the least.
+    //
+    // A super admin is not subject to plan limits (every guard bypasses them for
+    // SUPER_ADMIN), so the honest answer is "everything enabled", not an error.
+    // Returned as an unsaved entity instance: nothing is persisted, and no
+    // subscription row is created for an account that should not have one.
     if (!user.tenantId) {
-      throw new NotFoundException(
-        'No subscription associated with this account',
+      if (user.role !== UserRole.SUPER_ADMIN) {
+        throw new NotFoundException(
+          'No subscription associated with this account',
+        );
+      }
+
+      const platformSubscription = this.subscriptionRepository.create({
+        plan: SubscriptionPlan.ENTERPRISE,
+        status: SubscriptionStatus.ACTIVE,
+        billingPeriod: BillingPeriod.MONTHLY,
+        limits: PLAN_LIMITS[SubscriptionPlan.ENTERPRISE],
+        usage: { ...EMPTY_USAGE },
+        features: resolveFeatures(SubscriptionPlan.ENTERPRISE, null),
+      });
+      return platformSubscription;
+    }
+
+    const subscription = await this.findByTenantId(user.tenantId);
+
+    // Fill any flag the stored `features` jsonb does not mention from the plan
+    // baseline before handing it to the client.
+    //
+    // This endpoint is what populates the frontend sidebar, and the two sides
+    // read a missing key in OPPOSITE directions: the backend guards treat
+    // absent as allowed, the sidebar treats absent as hidden
+    // (`features[key] !== true` → filtered out). So every flag that existed in
+    // the interface but never got written to a row — and every flag added after
+    // a row was created — silently removed a menu for that tenant.
+    //
+    // Resolving on read also means new navigation flags need no backfill
+    // migration: rows keep whatever an admin explicitly set, and only the
+    // unmentioned keys come from the plan.
+    //
+    // Deliberately NOT applied in findByTenantId(): the guards call that one,
+    // and filling in a baseline `false` where a key was previously absent would
+    // turn a fail-open check into a denial. Widening enforcement is a separate
+    // decision from showing the right menus.
+    subscription.features = resolveFeatures(
+      subscription.plan,
+      subscription.features,
+    );
+
+    return subscription;
+  }
+
+  /**
+   * findCurrent() for the methods that are going to WRITE.
+   *
+   * findCurrent() can legitimately return an unsaved, in-memory entity: a
+   * SUPER_ADMIN has no tenant and therefore no subscription row, and answering
+   * that request with "ENTERPRISE, everything enabled" is what keeps the sidebar
+   * populated for the platform admin.
+   *
+   * That phantom has no `id` and no `tenantId`, so any `save()` on it is an
+   * INSERT into a table whose `tenantId` is NOT NULL and UNIQUE — a 500 from a
+   * not-null violation, where the old behaviour was a clean 404. Billing
+   * operations are meaningless for an account with no subscription anyway, so
+   * they get an explicit refusal instead.
+   *
+   * Read-only callers (getUsage, hasFeature) deliberately keep using
+   * findCurrent() — the phantom answers those correctly.
+   */
+  private async findCurrentForMutation(
+    userId: string | undefined,
+  ): Promise<Subscription> {
+    const subscription = await this.findCurrent(userId);
+
+    if (!subscription.id) {
+      throw new BadRequestException(
+        'This account has no subscription to modify. Billing operations apply to a tenant, and platform administrators are not billed.',
       );
     }
 
-    return this.findByTenantId(user.tenantId);
+    return subscription;
   }
 
   /**
@@ -755,7 +734,7 @@ export class SubscriptionsService {
     billingPeriod: BillingPeriod;
     amount: number;
   }> {
-    const subscription = await this.findCurrent(userId);
+    const subscription = await this.findCurrentForMutation(userId);
     const { plan, billingPeriod = subscription.billingPeriod } = upgradeDto;
 
     this.validateUpgrade(subscription.plan, plan);
@@ -777,7 +756,7 @@ export class SubscriptionsService {
     userId: string,
     targetPlan: SubscriptionPlan,
   ): Promise<Subscription> {
-    const subscription = await this.findCurrent(userId);
+    const subscription = await this.findCurrentForMutation(userId);
 
     const currentPlanIndex = PLAN_ORDER.indexOf(subscription.plan);
     const targetIndex = PLAN_ORDER.indexOf(targetPlan);
@@ -811,7 +790,7 @@ export class SubscriptionsService {
    * Used by POST /subscriptions/downgrade/cancel
    */
   async cancelScheduledDowngrade(userId: string): Promise<Subscription> {
-    const subscription = await this.findCurrent(userId);
+    const subscription = await this.findCurrentForMutation(userId);
 
     if (!subscription.metadata?.scheduledDowngrade) {
       throw new NotFoundException('No scheduled downgrade found');
@@ -830,7 +809,7 @@ export class SubscriptionsService {
   async executeScheduledDowngrade(
     userId: string,
   ): Promise<Subscription | null> {
-    const subscription = await this.findCurrent(userId);
+    const subscription = await this.findCurrentForMutation(userId);
 
     if (!subscription.metadata?.scheduledDowngrade) {
       return null;
@@ -868,7 +847,7 @@ export class SubscriptionsService {
    * Used by POST /subscriptions/cancel
    */
   async cancel(userId: string): Promise<Subscription> {
-    const subscription = await this.findCurrent(userId);
+    const subscription = await this.findCurrentForMutation(userId);
 
     if (subscription.status === SubscriptionStatus.CANCELLED) {
       throw new ConflictException('Subscription already cancelled');

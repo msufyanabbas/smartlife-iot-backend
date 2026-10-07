@@ -151,7 +151,82 @@ export interface SubscriptionFeatures {
   // platform features
   apiAccess?: boolean;
   whiteLabel?: boolean;
+
+  // ── Firmware / OTA ────────────────────────────────────────────────────────
+  // `otaUpdates` above is a CAPABILITY descriptor ('manual' | 'automatic'), not
+  // a gate. Subscription.hasFeature() compares with `=== true`, so a plan that
+  // actually sets otaUpdates:'automatic' would be DENIED while a plan that
+  // omits it is allowed — the string can never satisfy the check. `firmware` is
+  // the boolean gate; otaUpdates says which mode the plan is entitled to.
+  firmware?: boolean;
+
+  // Resources sub-sections. The frontend sidebar and the resource pages gate on
+  // these individually; before this they existed only in the frontend's copy of
+  // this interface, so they were always undefined and the pages 403'd for
+  // everyone.
+  widgets?: boolean;
+  imageLibrary?: boolean;
+  scriptLibrary?: boolean;
+
+  // Aliases the frontend sidebar reads. Kept as separate keys rather than
+  // renamed because existing subscription rows store the old spelling in their
+  // `features` jsonb and a rename would silently hide those menus.
+  //   integrations    ← alias of `integration`
+  //   edgeManagement  ← alias of `edge`
+  integrations?: boolean;
+  edgeManagement?: boolean;
 }
+
+/**
+ * Every feature key the frontend sidebar gates a menu entry on.
+ *
+ * The frontend hides an item when `features[key] !== true` — a MISSING key
+ * hides the menu. The backend's guards do the opposite (`hasFeature` treats a
+ * missing key as allowed). That asymmetry is why menus disappeared: any key the
+ * plan table forgot became an invisible menu rather than a visible one.
+ *
+ * `PLAN_FEATURES` in src/modules/subscriptions/plan-features.ts is typed
+ * against this list, so a key added to the sidebar that nobody set on a plan is
+ * a compile error instead of a missing menu in production.
+ */
+export const NAVIGATION_FEATURE_KEYS = [
+  'overview',
+  'solutionTemplates',
+  'solutionDashboards',
+  'deviceProfiles',
+  'assetProfiles',
+  'devices',
+  'assets',
+  'dashboards',
+  'floorPlans',
+  'alerts',
+  'analytics',
+  'userRoles',
+  'automations',
+  'integration',
+  'integrations',
+  'edge',
+  'edgeManagement',
+  'firmware',
+  'scheduleManagement',
+  'resources',
+  'widgets',
+  'imageLibrary',
+  'scriptLibrary',
+  'notifications',
+  'sharingCenter',
+  'apiAccess',
+  'apiMonitoring',
+  'auditLogs',
+  'subscription',
+  'settings',
+  'customerManagement',
+] as const satisfies readonly (keyof SubscriptionFeatures)[];
+
+export type NavigationFeatureKey = (typeof NAVIGATION_FEATURE_KEYS)[number];
+
+/** Every navigation flag, all present — no optionals, so none can be forgotten. */
+export type NavigationFeatures = Record<NavigationFeatureKey, boolean>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SubscriptionUsage

@@ -1,7 +1,7 @@
 // src/database/seeds/permission/permission.seeder.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, IsNull } from 'typeorm';
 import { Permission, Tenant } from '@modules/index.entities';
 import { ISeeder } from '../seeder.interface';
 
@@ -19,14 +19,18 @@ export class PermissionSeeder implements ISeeder {
   async seed(): Promise<void> {
     this.logger.log('🌱 Starting permission seeding...');
 
-    // Check if permissions already exist
+    // NO early return on a non-empty table.
+    //
+    // This seeder used to bail out entirely when any permission row existed,
+    // which made it impossible to introduce a new permission: `firmware:*`
+    // would have been created on fresh databases only and never on the one
+    // actually running in production. Every permission below is upserted
+    // instead — existing rows are left alone, missing ones are added — so the
+    // seeder is safe to re-run and new resources land on old databases.
     const existingPermissions = await this.permissionRepository.count();
-    if (existingPermissions > 0) {
-      this.logger.log(
-        `⏭️  Permissions already seeded (${existingPermissions} records). Skipping...`,
-      );
-      return;
-    }
+    this.logger.log(
+      `Found ${existingPermissions} existing permission(s) — upserting, not replacing.`,
+    );
 
     // ════════════════════════════════════════════════════════════════
     // SYSTEM PERMISSIONS (tenantId = null, isSystem = true)
@@ -450,13 +454,13 @@ export class PermissionSeeder implements ISeeder {
         isSystem: true,
         tenantId: null,
       },
-      {
-        resource: 'alerts',
-        action: 'read',
-        description: 'Read and manage alerts',
-        isSystem: true,
-        tenantId: null,
-      },
+      // NOTE: a second { alerts, read } row used to sit here with the
+      // description 'Read and manage alerts'. The @Unique(['tenantId',
+      // 'resource', 'action']) constraint does NOT dedupe it, because in
+      // Postgres a UNIQUE over a nullable column treats NULLs as distinct and
+      // every system permission has tenantId = null. So both rows inserted,
+      // giving two different permission IDs for alerts:read — the role editor
+      // listed it twice and findByResourceAndAction() picked one at random.
 
       // ════════════════════════════════════════════════════════════════
       // ANALYTICS PERMISSIONS
@@ -653,6 +657,58 @@ export class PermissionSeeder implements ISeeder {
         isSystem: true,
         tenantId: null,
       },
+
+      // ════════════════════════════════════════════════════════════════
+      // FIRMWARE / OTA PERMISSIONS
+      //
+      // `firmware:assign` is separate from `firmware:update` on purpose:
+      // editing a package's title is harmless, pushing it to a fleet of
+      // devices is not. A role can be allowed to curate the library without
+      // being allowed to start a rollout.
+      // ════════════════════════════════════════════════════════════════
+      {
+        resource: 'firmware',
+        action: 'create',
+        description: 'Upload new firmware packages',
+        isSystem: true,
+        tenantId: null,
+      },
+      {
+        resource: 'firmware',
+        action: 'read',
+        description: 'View firmware packages and OTA rollout status',
+        isSystem: true,
+        tenantId: null,
+      },
+      {
+        resource: 'firmware',
+        action: 'update',
+        description: 'Edit firmware package metadata',
+        isSystem: true,
+        tenantId: null,
+      },
+      {
+        resource: 'firmware',
+        action: 'delete',
+        description: 'Delete firmware packages',
+        isSystem: true,
+        tenantId: null,
+      },
+      {
+        resource: 'firmware',
+        action: 'list',
+        description: 'List firmware packages',
+        isSystem: true,
+        tenantId: null,
+      },
+      {
+        resource: 'firmware',
+        action: 'assign',
+        description:
+          'Push firmware to devices, and cancel or retry an OTA update',
+        isSystem: true,
+        tenantId: null,
+      },
     ];
 
     // ════════════════════════════════════════════════════════════════
@@ -661,22 +717,55 @@ export class PermissionSeeder implements ISeeder {
     let createdCount = 0;
     let errorCount = 0;
 
+    let skippedCount = 0;
+
     for (const permissionData of systemPermissions) {
+      const permString = `${permissionData.resource}:${permissionData.action}`;
       try {
+        // IsNull(), not `tenantId: null` — TypeORM renders a plain null in a
+        // where clause as `= NULL`, which is never true in SQL, so the lookup
+        // would miss every system permission and the upsert would insert a
+        // duplicate on every run.
+        const existing = await this.permissionRepository.findOne({
+          where: {
+            resource: permissionData.resource,
+            action: permissionData.action,
+            tenantId: IsNull(),
+          },
+          withDeleted: true,
+        });
+
+        if (existing) {
+          // Restore a soft-deleted row rather than inserting beside it: the
+          // unique constraint does not exclude deleted rows, and two live rows
+          // for one permission string is the bug that produced the duplicate
+          // alerts:read.
+          if (existing.deletedAt) {
+            await this.permissionRepository.restore(existing.id);
+            this.logger.log(`♻️  Restored: ${permString.padEnd(35)} | 🔧 System`);
+            createdCount++;
+          } else {
+            skippedCount++;
+          }
+          continue;
+        }
+
         const permission = this.permissionRepository.create(permissionData);
         await this.permissionRepository.save(permission);
-
-        const permString = `${permissionData.resource}:${permissionData.action}`;
         this.logger.log(
           `✅ Created: ${permString.padEnd(35)} | 🔧 System | ${permissionData.description}`,
         );
         createdCount++;
       } catch (error) {
         this.logger.error(
-          `❌ Failed to seed ${permissionData.resource}:${permissionData.action}: ${error.message}`,
+          `❌ Failed to seed ${permString}: ${error.message}`,
         );
         errorCount++;
       }
+    }
+
+    if (skippedCount > 0) {
+      this.logger.log(`   ⏭️  Already present: ${skippedCount}`);
     }
 
     // ════════════════════════════════════════════════════════════════

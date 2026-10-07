@@ -9,14 +9,14 @@ import {
 import {
   SubscriptionPlan,
   SubscriptionStatus,
-  BillingPeriod,
-  SupportLevel
+  BillingPeriod
 } from '@common/enums/index.enum';
 import {
   EMPTY_USAGE,
   type SubscriptionLimits,
   type SubscriptionFeatures
 } from '@/common/interfaces/index.interface';
+import { getPlanFeatures } from '@modules/subscriptions/plan-features';
 import { ISeeder } from '../seeder.interface';
 
 @Injectable()
@@ -124,85 +124,18 @@ export class SubscriptionSeeder implements ISeeder {
   }
 
   /**
-   * Helper: Get plan features based on plan type
+   * Helper: Get plan features based on plan type.
+   *
+   * Delegates to src/modules/subscriptions/plan-features.ts. The table used to
+   * live here as a private method, which meant the running API had no way to
+   * reach it — so when `defaultFeatures` omitted `devices`, `assets`,
+   * `floorPlans`, `automations`, `apiAccess` and `settings`, and the ENTERPRISE
+   * entry omitted the spread entirely, nothing could fill the gaps and the
+   * frontend hid those menus. One table, two readers (this seeder and
+   * SubscriptionsService), is what prevents that drifting again.
    */
   private getPlanFeatures(plan: SubscriptionPlan): SubscriptionFeatures {
-    const defaultFeatures: SubscriptionFeatures = {
-    overview: true,
-    solutionTemplates: true,
-    solutionDashboards: true,
-    deviceProfiles: true,
-    assetProfiles: true,
-    alerts: true,
-    analytics: false,
-    userRoles: true,
-    integration: false,
-    edge: true,
-    scheduleManagement: false,
-    subscription: true,
-    resources: true,
-    notifications: true,
-    sharingCenter: false,
-    apiMonitoring: false,
-    auditLogs: false,
-      realtimeAnalytics: false,
-      advancedAutomation: false,
-      ruleEngine: 'basic',
-      restApiAccess: true,
-      mqttAccess: true,
-      emailNotifications: true,
-      smsNotifications: false,
-      mobileAppAccess: true,
-      widgetLibrary: 'basic',
-      alarmManagement: 'basic',
-      supportLevel: SupportLevel.COMMUNITY,
-    };
-
-    const featuresMap: Record<SubscriptionPlan, SubscriptionFeatures> = {
-      [SubscriptionPlan.FREE]: { ...defaultFeatures },
-      [SubscriptionPlan.STARTER]: {
-        ...defaultFeatures,
-        realtimeAnalytics: true,
-        advancedAutomation: true,
-        ruleEngine: 'advanced',
-        smsNotifications: true,
-        widgetLibrary: 'standard',
-        supportLevel: SupportLevel.EMAIL,
-      },
-      [SubscriptionPlan.PROFESSIONAL]: {
-        ...defaultFeatures,
-        realtimeAnalytics: true,
-        advancedAutomation: true,
-        ruleEngine: 'advanced',
-        smsNotifications: true,
-        whiteLabelBranding: true,
-        widgetLibrary: 'advanced',
-        supportLevel: SupportLevel.PRIORITY,
-        multiTenancy: true,
-        customerManagement: true,
-      },
-      [SubscriptionPlan.ENTERPRISE]: {
-        realtimeAnalytics: true,
-        advancedAutomation: true,
-        ruleEngine: 'premium',
-        restApiAccess: true,
-        mqttAccess: true,
-        whiteLabelBranding: true,
-        brandingLevel: 'full',
-        emailNotifications: true,
-        smsNotifications: true,
-        mobileAppAccess: true,
-        widgetLibrary: 'advanced',
-        alarmManagement: 'advanced',
-        supportLevel: SupportLevel.DEDICATED,
-        slaGuarantee: true,
-        multiTenancy: true,
-        customerManagement: true,
-        customDevelopment: true,
-      },
-    };
-
-    return featuresMap[plan];
+    return getPlanFeatures(plan);
   }
 
   // FIX: Use BillingPeriod enum values as keys instead of raw string literals

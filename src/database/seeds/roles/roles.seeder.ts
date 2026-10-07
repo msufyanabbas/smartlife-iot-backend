@@ -23,10 +23,20 @@ export class RoleSeeder implements ISeeder {
   async seed(): Promise<void> {
     this.logger.log('🌱 Starting role seeding...');
 
-    // Check if roles already exist
+    // Roles are NOT recreated when they already exist — an operator may have
+    // edited them, and rewriting a live role's permission set would silently
+    // revoke access. But a plain early return meant a newly added resource
+    // (firmware) could never reach the roles on a database that had already
+    // been seeded, so the role would exist without the new permissions and the
+    // feature would 403 for everyone but SUPER_ADMIN / TENANT_ADMIN.
+    //
+    // So: top up the roles that should hold the new resource, then return.
     const existingRoles = await this.roleRepository.count();
     if (existingRoles > 0) {
-      this.logger.log(`⏭️  Roles already seeded (${existingRoles} records). Skipping...`);
+      this.logger.log(
+        `Roles already seeded (${existingRoles} records) — topping up new resources only.`,
+      );
+      await this.topUpNewResources();
       return;
     }
 
@@ -123,6 +133,9 @@ export class RoleSeeder implements ISeeder {
         tenantId: null,
         permissions: dedupePermissions([
           ...getPermissionsByResource('devices'),
+          // Keeping a fleet patched is device management, so this role gets the
+          // full firmware set including `assign` (starting a rollout).
+          ...getPermissionsByResource('firmware'),
           ...getPermissionsByResourceAndActions('dashboards', [
             'read',
             'create',
@@ -454,5 +467,84 @@ export class RoleSeeder implements ISeeder {
         this.logger.log(`   - ${r.name} (${r.permissions.length} permissions)`),
       );
     }
+  }
+
+  /**
+   * Grant newly-introduced permission resources to the roles that should hold
+   * them, on a database whose roles were seeded before those permissions
+   * existed.
+   *
+   * Additive only — it never removes a permission, so an operator who
+   * deliberately narrowed a role keeps their change for everything except the
+   * new resource. Re-running it is a no-op.
+   *
+   * The grant rules mirror how the roles were defined above:
+   *   Super Administrator  → everything
+   *   Read-Only Viewer     → read + list actions only
+   *   Device Manager       → the whole resource (patching is device management)
+   *   Tenant Administrator → everything except tenants/billing
+   */
+  private async topUpNewResources(): Promise<void> {
+    const NEW_RESOURCES = ['firmware'];
+
+    const newPermissions = await this.permissionRepository.find({
+      where: NEW_RESOURCES.map((resource) => ({ resource })),
+    });
+    if (newPermissions.length === 0) {
+      this.logger.warn(
+        `No permissions found for [${NEW_RESOURCES.join(', ')}] — run the permission seeder first.`,
+      );
+      return;
+    }
+
+    const readOnly = newPermissions.filter((p) =>
+      ['read', 'list'].includes(p.action),
+    );
+
+    const grantsByRoleName: Record<string, Permission[]> = {
+      'Super Administrator': newPermissions,
+      'Platform Administrator': newPermissions,
+      'Device Manager': newPermissions,
+      'Tenant Administrator': newPermissions,
+      'Customer Administrator': newPermissions,
+      'Read-Only Viewer': readOnly,
+      'Tenant Device Operator': readOnly,
+      'Customer User': readOnly,
+    };
+
+    let updated = 0;
+
+    for (const [roleName, grants] of Object.entries(grantsByRoleName)) {
+      if (grants.length === 0) continue;
+
+      // `find`, not `findOne` — role names are unique per tenant, not globally,
+      // so 'Tenant Administrator' legitimately exists once per tenant and all
+      // of them need the same top-up.
+      const roles = await this.roleRepository.find({
+        where: { name: roleName },
+        relations: ['permissions'],
+      });
+
+      for (const role of roles) {
+        const held = new Set((role.permissions ?? []).map((p) => p.id));
+        const missing = grants.filter((p) => !held.has(p.id));
+        if (missing.length === 0) continue;
+
+        role.permissions = [...(role.permissions ?? []), ...missing];
+        await this.roleRepository.save(role);
+        this.logger.log(
+          `   + ${roleName}${role.tenantId ? ` (tenant ${role.tenantId.slice(0, 8)})` : ''}: granted ${missing
+            .map((p) => p.permissionString)
+            .join(', ')}`,
+        );
+        updated++;
+      }
+    }
+
+    this.logger.log(
+      updated > 0
+        ? `Topped up ${updated} role(s) with [${NEW_RESOURCES.join(', ')}] permissions.`
+        : `All roles already hold the [${NEW_RESOURCES.join(', ')}] permissions.`,
+    );
   }
 }

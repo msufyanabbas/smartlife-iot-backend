@@ -22,6 +22,13 @@ const RESOURCE_TO_FEATURE: Partial<Record<string, keyof SubscriptionFeatures>> =
   assets:       'assets',
   floor_plans:  'floorPlans',
   automations:  'automations',
+  // Mapped to the boolean `firmware` flag, NOT to `otaUpdates`. `otaUpdates` is
+  // typed 'manual' | 'automatic' while Subscription.hasFeature() compares with
+  // `=== true`, so any plan that actually sets otaUpdates would be DENIED and
+  // only plans that omit it would pass (hasFeature reads a missing key as
+  // allowed). `firmware` is the gate; `otaUpdates` says which rollout mode the
+  // plan is entitled to.
+  firmware:     'firmware',
 };
 
 @Injectable()
