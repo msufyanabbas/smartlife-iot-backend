@@ -19,6 +19,7 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { DevicesService } from './devices.service';
+import { DeviceConnectivityService } from './device-connectivity.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
@@ -61,6 +62,7 @@ export class DevicesController {
     private readonly devicesService: DevicesService,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly codecRegistry: CodecRegistryService,
+    private readonly deviceConnectivityService: DeviceConnectivityService,
   ) {}
 
   // ── Provisioning (public) ─────────────────────────────────────────────────
@@ -211,6 +213,25 @@ async getDeviceCapabilities(
   @ApiResponse({ status: 404, description: 'Device or credentials not found' })
   getCredentials(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
     return this.devicesService.getCredentialsSummary(id, user);
+  }
+
+  @Get(':id/connectivity')
+  @ApiOperation({
+    summary: 'How to connect this device',
+    description:
+      'Endpoints, topics and ready-to-paste client commands for every transport ' +
+      'this platform actually serves. Generated from the live adapters, not from ' +
+      'the profile\'s stored transportConfiguration — the HTTP default in that ' +
+      'config is ThingsBoard\'s /api/v1/{token}/telemetry, which this platform ' +
+      'does not route. No secrets are included; credentials have their own endpoint.',
+  })
+  @ApiResponse({ status: 200, description: 'Connectivity details' })
+  @ApiResponse({ status: 404, description: 'Device not found' })
+  getConnectivity(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.deviceConnectivityService.getConnectivity(id, user.tenantId);
   }
 
   @Post(':id/credentials/regenerate')

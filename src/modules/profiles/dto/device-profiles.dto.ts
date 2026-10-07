@@ -12,7 +12,7 @@ import {
   IsUUID,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
   DeviceTransportType,
   DeviceProvisionType,
@@ -55,6 +55,14 @@ export class CreateDeviceProfileDto {
       'auto-populates transportConfiguration unless one is given explicitly.',
   })
   @IsOptional()
+  // Normalised before validation: the enum is UPPERCASE but the UI's select
+  // sends 'mqtt' / 'http' / 'coap' / 'lwm2m' / 'snmp'. @IsIn is case-sensitive,
+  // so every transport save from the profile form was a 400 — the form appeared
+  // to submit and the protocol was never stored. The frontend now sends the
+  // enum value, and this keeps any other client working.
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.toUpperCase() : value,
+  )
   @IsIn(Object.values(DeviceTransportType))
   transportType?: DeviceTransportType;
 
@@ -65,11 +73,28 @@ export class CreateDeviceProfileDto {
     default: DeviceProvisionType.DISABLED,
   })
   @IsOptional()
+  // Same normalisation, plus the human labels the provisioning form used to
+  // send ('Allow creating new devices', 'Check pre-provisioned devices',
+  // 'Disabled') — those matched no enum value either.
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return value;
+    const normalised = value.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const aliases: Record<string, DeviceProvisionType> = {
+      ALLOW_CREATING_NEW_DEVICES: DeviceProvisionType.ALLOW_CREATE_NEW_DEVICES,
+      CHECK_PRE_PROVISIONED_DEVICES:
+        DeviceProvisionType.CHECK_PRE_PROVISIONED_DEVICES,
+      DISABLED: DeviceProvisionType.DISABLED,
+    };
+    return aliases[normalised] ?? normalised;
+  })
   @IsIn(Object.values(DeviceProvisionType))
   provisionType?: DeviceProvisionType;
 
   @ApiPropertyOptional({
-    description: 'Protocol-specific settings, keyed by protocol (mqtt/http/coap/lwm2m).',
+    description:
+      'Protocol-specific settings, keyed by protocol: mqtt | http | coap | lwm2m | snmp. ' +
+      'Only the sub-object matching transportType is read; the others are kept so ' +
+      'switching transport does not discard previously entered settings.',
     example: {
       mqtt: {
         deviceTelemetryTopic: 'v1/devices/me/telemetry',

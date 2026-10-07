@@ -18,6 +18,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { timingSafeEqual } from 'crypto';
 import { DeviceListenerService } from '@/modules/protocols/device-listener.service';
+import { Public } from '@common/decorators/public.decorator';
 
 @Injectable()
 @Controller('v1/ingestion')
@@ -77,12 +78,25 @@ export class HTTPAdapter implements IProtocolAdapter {
   }
 
   /**
-   * PUBLIC ENDPOINT - Generic device ingestion
-   * POST /api/v1/ingestion/:deviceId
+   * Generic device ingestion — POST /api/v1/ingestion/:deviceKey
    *
-   * Works with ANY device sending HTTP POST
+   * `@Public()` is what makes this usable by a device. The route was documented
+   * as a PUBLIC ENDPOINT but carried no decorator, and JwtAuthGuard is
+   * registered globally as an APP_GUARD — so every bare device POST got a 401.
+   * The only clients that could reach it were ones holding a signed-in user's
+   * Bearer token, which no device has.
+   *
+   * AUTHENTICATION: the deviceKey in the path is the identifier, and
+   * `x-api-key` (when REQUIRE_API_KEY=true) is a single platform-wide shared
+   * secret — there is no per-device HTTP credential. Anyone who learns a
+   * deviceKey can post telemetry as that device. That was already true for
+   * every other ingest path (MQTT auth lives in EMQX, CoAP keys off the
+   * deviceKey), so this does not widen the platform's exposure, but it is worth
+   * knowing before exposing the port publicly: set REQUIRE_API_KEY=true and a
+   * strong DEVICE_API_KEY, or terminate at a gateway that does per-device auth.
    */
   @Post(':deviceId')
+  @Public()
   @HttpCode(200)
   async ingest(
     @Param('deviceId') deviceId: string,
@@ -137,6 +151,7 @@ export class HTTPAdapter implements IProtocolAdapter {
    * Body: { devices: [{ deviceId: "...", data: {...} }] }
    */
   @Post('batch')
+  @Public()
   @HttpCode(200)
   async ingestBatch(
     @Body() payload: { devices: Array<{ deviceId: string; data: any }> },

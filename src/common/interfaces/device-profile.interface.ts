@@ -45,8 +45,45 @@ export interface CoapTransportConfig {
 }
 
 export interface Lwm2mTransportConfig {
+  /** OMA object IDs the server should read/observe, e.g. 3 (Device), 3303 (Temperature). */
   objectIds?: number[];
+  /** Subscribe to notifications for those objects as soon as the client registers. */
   observeOnConnect?: boolean;
+  /** Seconds. How long a registration stays valid before the client must update it. */
+  lifetime?: number;
+  /** Seconds between client-initiated registration updates. */
+  defaultMinPeriod?: number;
+  /** LwM2M 1.1 binding: U=UDP, T=TCP, S=SMS, N=Non-IP (values may be combined). */
+  binding?: string;
+  /** Transmit a reduced object set and let the client fetch the rest on demand. */
+  bootstrapServerUpdateEnabled?: boolean;
+}
+
+/**
+ * SNMP polling settings.
+ *
+ * SNMP inverts the usual direction: the platform POLLS the device rather than
+ * the device pushing to the platform, so this config describes how to reach the
+ * agent and which OIDs to read — there are no topics or ingest URLs.
+ */
+export interface SnmpTransportConfig {
+  /** Agent port. 161 is the SNMP default. */
+  port?: number;
+  /** Protocol version the agent speaks. */
+  version?: 'v1' | 'v2c' | 'v3';
+  /** Shared secret for v1/v2c. v3 uses user-based security instead. */
+  community?: string;
+  /** Seconds between polls. */
+  pollPeriodSeconds?: number;
+  /** Milliseconds to wait for a response before giving up on one poll. */
+  timeoutMs?: number;
+  retries?: number;
+  /** Which OIDs to read, and what telemetry key each maps to. */
+  oidMappings?: Array<{
+    oid: string;
+    key: string;
+    dataType?: 'string' | 'number' | 'boolean';
+  }>;
 }
 
 /**
@@ -59,6 +96,7 @@ export interface DeviceTransportConfiguration {
   http?: HttpTransportConfig;
   coap?: CoapTransportConfig;
   lwm2m?: Lwm2mTransportConfig;
+  snmp?: SnmpTransportConfig;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

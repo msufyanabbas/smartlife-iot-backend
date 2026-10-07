@@ -197,7 +197,12 @@ export class AssetProfilesController {
 
   @Delete(':id')
   @UseGuards(RolesGuard)
-  // @Roles(UserRole.SUPER_ADMIN)
+  // Restored. With @Roles commented out, RolesGuard finds no metadata and
+  // returns true — so this was the one write route on this controller that any
+  // authenticated user could call, including a CUSTOMER_USER. Deleting a
+  // profile strands every asset built on it: the schema that validates their
+  // `configuration` disappears.
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete asset profile' })
   @ApiResponse({ status: 204, description: 'Asset profile deleted' })

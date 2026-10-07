@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DevicesService } from './devices.service';
 import { DevicesController } from './devices.controller';
 import { DeviceCredentialsService } from './device-credentials.service';
+import { DeviceConnectivityService } from './device-connectivity.service';
 import { Device } from './entities/device.entity';
 import { DeviceCredentials } from './entities/device-credentials.entity';
 import { Asset } from '../assets/entities/asset.entity';
@@ -35,7 +36,11 @@ import { ProfilesModule } from '../profiles/profiles.module';
     MailModule,
   ],
   controllers: [DevicesController],
-  providers: [DevicesService, DeviceCredentialsService],
-  exports: [DevicesService, DeviceCredentialsService],
+  providers: [
+    DevicesService,
+    DeviceCredentialsService,
+    DeviceConnectivityService,
+  ],
+  exports: [DevicesService, DeviceCredentialsService, DeviceConnectivityService],
 })
 export class DevicesModule {}

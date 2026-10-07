@@ -79,7 +79,9 @@ export class DeviceProfilesService {
    *
    * These mirror the ThingsBoard defaults so a device flashed against a
    * ThingsBoard-compatible firmware works without further configuration.
-   * Returns null for DEFAULT / LWM2M / SNMP, which carry no defaults.
+   * Returns null only for DEFAULT, which uses the platform's fixed conventions
+   * (devices/:deviceKey/* on MQTT, /api/v1/ingestion/:deviceKey over HTTP) and
+   * has nothing per-profile to configure.
    */
   getDefaultTransportConfig(
     transportType: string,
@@ -113,7 +115,44 @@ export class DeviceProfilesService {
             powerMode: CoapPowerMode.DRX,
           },
         };
+      case DeviceTransportType.LWM2M:
+        return {
+          lwm2m: {
+            // 3 = Device, 3303 = Temperature, 3304 = Humidity. The three OMA
+            // objects almost every LwM2M client implements, so a profile is
+            // useful before anyone edits it.
+            objectIds: [3, 3303, 3304],
+            observeOnConnect: true,
+            lifetime: 300,
+            defaultMinPeriod: 1,
+            binding: 'U',
+            bootstrapServerUpdateEnabled: false,
+          },
+        };
+      case DeviceTransportType.SNMP:
+        return {
+          snmp: {
+            port: 161,
+            version: 'v2c',
+            // 'public' is the universal read-only default. It is a default, not
+            // a recommendation — any real deployment must change it.
+            community: 'public',
+            pollPeriodSeconds: 60,
+            timeoutMs: 5000,
+            retries: 2,
+            // 1.3.6.1.2.1.1.* is MIB-II system, readable on essentially every
+            // SNMP agent, so a new profile polls something real immediately.
+            oidMappings: [
+              { oid: '1.3.6.1.2.1.1.3.0', key: 'uptime', dataType: 'number' },
+              { oid: '1.3.6.1.2.1.1.5.0', key: 'sysName', dataType: 'string' },
+            ],
+          },
+        };
+      case DeviceTransportType.DEFAULT:
       default:
+        // DEFAULT means "the platform's own conventions" — devices/:deviceKey/*
+        // on MQTT and /api/v1/ingestion/:deviceKey over HTTP, both fixed. There
+        // is nothing per-profile to configure.
         return null;
     }
   }
