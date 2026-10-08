@@ -194,9 +194,12 @@ export class TelemetryService {
 
     await this.evaluateProfileAlarms(device.id, dto.data);
 
-    this.logger.log(
-      `🔥 Dispatching to integrations for device: ${saved.deviceId}`,
-    ); // TEMP: verification marker
+    // Was a `logger.log` on every reading, left behind from verifying the
+    // dispatch path — one line per telemetry point per device. Debug level, so
+    // it is available when someone is looking and silent otherwise.
+    this.logger.debug(
+      `Dispatching to integrations for device ${saved.deviceId}`,
+    );
     this.dispatchToIntegrations(device, saved, dto.data);
 
     this.dispatchToAutomations(device.id, device.tenantId, dto.data);

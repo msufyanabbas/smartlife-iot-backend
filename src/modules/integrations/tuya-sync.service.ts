@@ -80,7 +80,7 @@ export interface TuyaSyncResult {
  *
  * Three entry points, in increasing order of latency:
  *   1. `handleWebhook()`      — real-time, driven by Tuya's message service
- *   2. `pollAllIntegrations()`— @Cron safety net, every 30s
+ *   2. `pollAllIntegrations()`— @Cron safety net, every 10s
  *   3. `syncIntegration()`    — full import, on demand and on activation
  *
  * Split out of IntegrationsService (which is CRUD) for the same reason
@@ -101,7 +101,7 @@ export class TuyaSyncService {
 
   /**
    * Guards against overlapping cron ticks. A poll across several integrations
-   * with many devices can exceed 30s; without this, ticks would stack up and
+   * with many devices can exceed 10s; without this, ticks would stack up and
    * multiply the load on both Tuya and the database.
    */
   private polling = false;
@@ -948,7 +948,7 @@ export class TuyaSyncService {
     }
 
     // An offline device that is still offline has nothing to write — skipping
-    // it keeps the 30s poll from issuing one pointless UPDATE per dark device
+    // it keeps the 10s poll from issuing one pointless UPDATE per dark device
     // per tick. An online one always writes, because lastSeenAt must stay
     // fresh (see the doc comment).
     if (!online && !changed) return;

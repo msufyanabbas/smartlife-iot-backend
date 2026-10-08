@@ -235,7 +235,7 @@ iot-platform-backend/
 | `AutomationModule` | Trigger → conditions → actions automations. Six trigger types (TELEMETRY, ATTRIBUTE, ALARM, DEVICE_STATUS, SCHEDULE, MANUAL) and eight action types; `AutomationConsumer` (Kafka `telemetry.device.validated`), `AutomationListener` (`alarm.*` / `device.*` / `attributes.updated` events) and `AutomationScheduler` (per-minute cron) feed it. Every run writes an `automation_logs` row |
 | `SchedulesModule` | Cron-expression-based schedules for automations |
 | `ScriptsModule` | User-defined JavaScript scripts with execution context |
-| `IntegrationsModule` | Third-party integration configs (webhooks, Slack, HTTP push) |
+| `IntegrationsModule` | The Integration Centre: 18 types driven by a declarative catalogue, outbound adapters (MQTT, Kafka, AWS IoT, Azure IoT/Event Hubs, Google Pub/Sub, IBM Watson, CoAP, webhook), inbound uplinks (ChirpStack, TTN, generic HTTP, persistent MQTT subscriptions), Tuya device import and commands, and an append-only event log. See §4e |
 | `RulesModule` | Visual rule chain nodes and connections (rule engine service) |
 
 ### Subscription & Payments
@@ -548,6 +548,182 @@ device quota (`canTenantPerformAction` returns false for tenants with no
 subscription row, which would block imports outright); usage counters are not
 incremented for imported devices.
 
+## 4e. Integration Centre
+
+Eighteen integration types, one declarative catalogue, and a real event log.
+
+```
+integration-catalogue.ts   (the manifest table — label, category, direction,
+     │                      icon, hasAdapter, inboundPath, fields[])
+     ├── GET /integrations/catalogue  → the frontend's type gallery AND its
+     │                                  generated configuration form
+     ├── validateIntegrationConfig()  → create/update return 400 with every
+     │                                  missing required field at once
+     └── isDispatchableType()         → which rows the telemetry fan-out touches
+```
+
+### The catalogue is the single source of truth
+
+`src/modules/integrations/integration-catalogue.ts` holds one
+`IntegrationTypeManifest` per `IntegrationType`. Adding a type means adding a
+manifest (plus an adapter, and an enum label via migration) — the frontend needs
+no change, because both its tile and its form are generated from the manifest.
+
+`npm run check:integrations` validates the table: every enum member has a
+manifest, field keys are unique, `select` fields have options, `showIf` targets
+exist, the direction helpers agree with the declared direction, and an empty
+configuration fails for exactly the required fields.
+
+| Field | Meaning |
+|---|---|
+| `direction` | `inbound` / `outbound` / `bidirectional`. Governs the TELEMETRY pipeline, not the UI — Tuya is `inbound` even though commands flow the other way, because platform telemetry is never forwarded to it. |
+| `hasAdapter` | False means telemetry is not forwarded. The UI labels the tile "Not wired up" rather than accepting a configuration that silently does nothing. |
+| `adapterNote` | What to use instead, surfaced in the UI. |
+| `inboundPath` | The URL an external source pushes to. `:id` is substituted with the integration id. |
+| `fields[]` | What the form renders and what the server validates. |
+
+### Direction decides the fan-out — and that filter is load bearing
+
+`IntegrationDispatchService` selects per-tenant ACTIVE integrations and now
+filters them through `isDispatchableType()` (outbound **and** `hasAdapter`).
+Before that filter:
+
+- **Tuya was destroyed by ordinary traffic.** `TuyaAdapter.dispatch` is
+  command-only, so a telemetry message with no `commands` returned
+  `success:false`; ten consecutive failures flip the row to ERROR with
+  `enabled=false`, which also stops `TuyaSyncService` (it polls only
+  ACTIVE+enabled rows). A working Tuya integration switched itself off after ten
+  readings from any other device in the tenant.
+- **`notification` / `database`** logged "No adapter for integration type" once
+  per reading, per row — ~144k lines a day for one row on a 100-device tenant.
+
+### Outbound adapters
+
+| Type | Transport | Notes |
+|---|---|---|
+| `webhook`, `api` | HTTPS | |
+| `mqtt` | MQTT | One-shot per message: connect → publish → `end(true)`, `reconnectPeriod: 0`, so a dead broker leaves no retry loop. |
+| `kafka` | kafkajs | Producers are **pooled** (`static pool`, idle reaper, `unref()`), keyed by broker set — a producer per message would exhaust connections. |
+| `aws_iot` | AWS SDK | Dynamically imported; a missing SDK degrades to a failed dispatch rather than a boot failure. |
+| `azure_iot` | REST + SAS | A per-device key signs `sr = host/devices/{id}`; a policy key signs `sr = host` and adds `skn`. IoT Hub base64-**decodes** the key before HMAC. |
+| `azure_event_hub` | REST + SAS | Same SAS shape, but the key is used as **UTF-8 text**, not base64-decoded. Getting this backwards is the classic Event Hubs 401. |
+| `google_cloud` | Pub/Sub REST | Service-account JWT (RS256) exchanged for an OAuth token, cached per account with 60s slack. The probe is a GET on the topic, so it has no side effect. |
+| `ibm_watson` | MQTT | Composes `MqttAdapter`. `clientId` must be `a:{orgId}:{appId}` — with the wrong prefix the broker accepts the connection and then silently drops every publish. |
+| `coap` | UDP | Dynamically imported. A non-confirmable request resolves on `setImmediate`: success means the datagram left the host, nothing more, and the result message says so. |
+| `cloud` | — | Legacy catch-all; the adapter is guessed from the configuration keys (`accessKeyId`/`endpoint` → AWS, `clientId`+`clientSecret` → Tuya). |
+
+`POST /integrations/:id/test` probes through the same adapter dispatch uses, so
+a pass means real traffic will work. For publish-style types that means a real
+message reaches subscribers — reported in the result's `sideEffect`.
+
+### Inbound
+
+| Route | Serves |
+|---|---|
+| `POST /integrations/lorawan/chirpstack` | ChirpStack webhook. Auto-creates devices by DevEUI. |
+| `POST /integrations/lorawan/ttn` | The Things Stack v3 webhook (snake_case envelope). |
+| `POST /integrations/http/:id` | **Generic uplink** — Loriot, Sigfox, a vendor cloud, a gateway script. |
+| `POST /integrations/tuya/webhook` | Bridge for a sidecar Pulsar consumer (see §4d — Tuya has no HTTP callback). |
+| MQTT subscriptions | `IntegrationMqttInboundService`, below. |
+
+All of them answer **200** with a `success` field rather than a 4xx/5xx, because
+a push source that receives an error retries and eventually disables the
+destination.
+
+**`POST /integrations/http/:id`** (`IntegrationUplinkService`): the URL names the
+INTEGRATION, and the device is dug out of the body using the integration's own
+field mapping — unlike `POST /api/v1/ingestion/:deviceKey`, where the URL names
+the device. The `routingKey` is **required** and compared with
+`crypto.timingSafeEqual`. Unknown devices are rejected, **not** auto-provisioned:
+an arbitrary HTTP source can send any string, and creating a device per
+unrecognised value would let a misconfigured sender exhaust the tenant's device
+quota. (The LoRaWAN paths do auto-provision, because a DevEUI is a globally
+unique hardware identity.)
+
+**`IntegrationMqttInboundService`**: persistent MQTT clients, one per MQTT
+integration that sets `configuration.inboundTopic`. Opposite lifetime to
+`MqttAdapter` — `reconnectPeriod: 15000`, `clean: true` (a persistent session
+would reconnect into a flood of stale readings after an outage, each stored with
+its original timestamp). Reconciled by `sync()` at boot, on a one-minute cron,
+and whenever `IntegrationsService` changes an MQTT row; a config *fingerprint*
+means only connection-relevant edits force a reconnect, so changing the publish
+topic does not interrupt an inbound stream. Device lookups are cached 60s and
+bounded at 5000 entries. `GET /integrations/inbound-status` reports which
+subscriptions are live.
+
+Both inbound paths hand off to **`DeviceListenerService.handleTelemetry()`**, so
+an uplink gets the same codec decode, Kafka publish, alarm evaluation and
+WebSocket broadcast as a first-party reading. Reimplementing persistence is how
+the Tuya path ended up bypassing alarms entirely.
+
+### The event log
+
+`integration_events` (migration `IntegrationCentre1787400000000`) is
+append-only: one row per dispatch, uplink, probe and lifecycle change.
+
+Before it, "what has this integration been doing?" could only be answered from
+`errorHistory` — a jsonb array capped at the last 10 **failures**, so successes
+left no trace — or `GET /integrations/recent-activity`, which synthesises one
+entry per integration from its current column values and therefore cannot
+distinguish two failures an hour apart from one. Neither could answer "did the
+14:03 reading reach AWS?".
+
+- `IntegrationEventsService.record()` is **fire-and-forget and never throws**:
+  it is on the telemetry hot path, and a log write must not fail the dispatch it
+  describes.
+- Payloads are **truncated at 2000 characters**. A row per message per
+  integration storing full bodies would duplicate the telemetry table at a worse
+  write rate.
+- `prune()` runs daily, keeping `INTEGRATION_EVENT_RETENTION_DAYS` (default 14).
+  Without it the table grows at telemetry rate — one webhook and 100 devices
+  reporting each minute is ~144k rows a day.
+- Inbound failures deliberately do **not** increment `consecutiveFailures`: the
+  quarantine rule exists to stop hammering a dead outbound endpoint, and a run
+  of malformed uplinks from one broken sensor must not disable a working
+  integration.
+- `GET /integrations/:id/events`, `GET /integrations/:id/summary` (counts over a
+  window) and `GET /integrations/events` (tenant-wide) read it.
+  `recent-activity` is kept unchanged because the dashboard tile consumes its
+  shape.
+
+### Scoping and authorization — both were wrong
+
+- **CRUD was scoped by `userId`**, making integrations private to whoever created
+  them: two admins of one tenant could not see each other's rows, and nobody
+  could fix one left behind by a removed user — while
+  `IntegrationDispatchService` selected by **tenant**, so an invisible row was
+  still forwarding telemetry. Now tenant-scoped, with `userId` kept as a record
+  of who created the row. Name uniqueness is per tenant to match.
+- **`IntegrationsController` had no `@Roles` anywhere**, and `RolesGuard`
+  returns **true** when a handler carries no `@Roles` metadata. Any
+  authenticated user — a CUSTOMER_USER included — could create an integration
+  holding a tenant's cloud credentials and read every integration's
+  `configuration`, secrets and all. Writes are now TENANT_ADMIN and above;
+  `GET /integrations/:id` (which returns `configuration`) likewise; the
+  list/statistics/activity routes stay open to CUSTOMER for the dashboard tiles.
+- Editing a configuration, or re-enabling a row, **clears `consecutiveFailures`**
+  — an operator correcting a quarantined integration is saying it is fixed.
+  Without that, it re-quarantined on the next failure.
+
+### Gotchas worth knowing
+
+- `integrations.type` is a **Postgres ENUM**. A new TypeScript member alone is
+  not enough: `@IsEnum` accepts it and the INSERT then fails with
+  `invalid input value for enum integrations_type_enum`. That is exactly why the
+  frontend's "Apache Kafka" tile 400'd — the label did not exist in the database.
+  `migration:run` is blocked (see §11), so use
+  `npm run migration:integration-centre <database> [up|down]` to apply this one
+  in isolation.
+- A nullable column whose property is a **union** (`string | null`) needs an
+  explicit `type`. TypeORM reflects the union as `Object` and refuses it at
+  `DataSource.initialize` — `Data type "Object" in "IntegrationEvent.deviceKey"
+  is not supported by "postgres"` — and the **whole application fails to boot**,
+  not just that entity.
+- An unreachable **Kafka broker stops the application booting**: `KafkaModule`'s
+  factory awaits `initProducer()`, and a consumer's failed `connect()` surfaces
+  as an unhandled rejection that kills the process. Pre-existing, unchanged here,
+  but it makes local work without the full stack impossible.
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
@@ -790,6 +966,9 @@ APPLE_PRIVATE_KEY=
 MOYASAR_API_KEY=
 MOYASAR_WEBHOOK_SECRET=
 
+# Integrations
+INTEGRATION_EVENT_RETENTION_DAYS=14   # How long integration_events rows are kept
+
 # Feature Flags
 AUTO_REGISTER_DEVICES=false    # Auto-create device records on first MQTT message
 ```
@@ -965,6 +1144,9 @@ import { DevicesService } from '@modules/index.service';
 | `src/modules/protocols/adapters/coap.adapter.ts` | Implemented (ThingsBoard-style telemetry/attributes/rpc over UDP 5683). Remaining TODO: two-way server-side RPC dispatch (currently only acknowledges device-initiated RPC). |
 | `src/modules/devices/codecs/milesight/ds/ds3604.codec.ts` | Binary image payload decode not implemented |
 | `src/modules/rules/rule-engine.service.ts` | File exists but is essentially empty (1 line) |
+| `KafkaModule` / the Kafka consumers | An unreachable broker stops the app booting: the module factory awaits `initProducer()`, and a consumer's failed `connect()` becomes an unhandled rejection that kills the process. Running locally therefore needs the full Docker stack. |
+| `src/modules/integrations/` — `notification` and `database` types | Declared in the catalogue with `hasAdapter: false`; they are skipped by the dispatcher rather than forwarding anything. Use a webhook or Kafka instead. |
+| `src/modules/integrations/` — converters | The frontend has seven converter pages under `/integrations/*` and there is **no backend converter module at all**. Payload decoding is done by `CodecRegistryService` in DevicesModule. |
 
 ### Structural Notes
 - The `src/migrations/` directory (at `src/` root, separate from `src/database/migrations/`) exists but is also empty

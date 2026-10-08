@@ -34,6 +34,38 @@ export enum IntegrationType {
   // row identifies whose devices those uplinks belong to.
   CHIRPSTACK = 'chirpstack',
   TTN = 'ttn',
+  LORIOT = 'loriot',
+  SIGFOX = 'sigfox',
+
+  // ── Messaging / streaming targets ─────────────────────────────────────────
+  KAFKA = 'kafka',
+  AZURE_EVENT_HUB = 'azure_event_hub',
+  IBM_WATSON = 'ibm_watson',
+  COAP = 'coap',
+}
+
+/**
+ * Which way data flows for a given integration type.
+ *
+ * This is what stops the telemetry fan-out from touching rows it has no
+ * business touching. Before it existed, every ACTIVE integration received every
+ * telemetry message regardless of type, which had two concrete consequences:
+ *
+ *  · A Tuya integration was quarantined by ordinary traffic. TuyaAdapter's
+ *    dispatch is command-only, so a telemetry message with no `commands`
+ *    returns `success: false`; ten of those set the row to ERROR and
+ *    `enabled = false` — which also silently stopped the Tuya device poll,
+ *    because that only picks up ACTIVE+enabled rows.
+ *  · ChirpStack / TTN / notification / database rows logged
+ *    "No adapter for integration type" once per reading, per integration.
+ */
+export enum IntegrationDirection {
+  /** Receives data from an external system. Never a dispatch target. */
+  INBOUND = 'inbound',
+  /** Telemetry is forwarded to it. */
+  OUTBOUND = 'outbound',
+  /** Both — e.g. MQTT, which can publish out and subscribe in. */
+  BIDIRECTIONAL = 'bidirectional',
 }
 
 export enum IntegrationStatus {

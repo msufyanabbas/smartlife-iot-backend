@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import * as crypto from 'crypto';
 import { Integration } from './entities/integration.entity';
 import {
   Device,
@@ -127,6 +128,27 @@ export class LorawanService {
   // SHARED PIPELINE
   // ══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * Constant-time secret comparison.
+   *
+   * `!==` on a webhook secret leaks it a character at a time: the comparison
+   * returns as soon as two bytes differ, so an attacker who can measure the
+   * response time can recover the secret in linear rather than exponential
+   * attempts. These routes are public and unauthenticated apart from this
+   * check, which makes them exactly the case where it matters.
+   *
+   * `timingSafeEqual` throws on a length mismatch, so lengths are compared
+   * first. That reveals the secret's length, which is accepted — a length is
+   * not usefully guessable material.
+   */
+  private secretMatches(expected: string, provided?: string): boolean {
+    if (!provided) return false;
+    const a = Buffer.from(String(expected));
+    const b = Buffer.from(provided);
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  }
+
   private async handle(
     networkType: IntegrationType,
     deviceProtocol: DeviceProtocol,
@@ -160,7 +182,7 @@ export class LorawanService {
       }
 
       const expectedSecret = (integration.configuration as any)?.webhookSecret;
-      if (expectedSecret && expectedSecret !== ctx.webhookSecret) {
+      if (expectedSecret && !this.secretMatches(expectedSecret, ctx.webhookSecret)) {
         this.logger.warn(
           `Rejected ${networkType} uplink for tenant ${integration.tenantId}: bad webhook secret`,
         );

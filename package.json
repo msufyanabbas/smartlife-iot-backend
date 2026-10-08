@@ -56,7 +56,9 @@
     "seed": "ts-node --files -r tsconfig-paths/register src/database/seeds/seed.command.ts",
     "db:reset": "npm run migration:revert && npm run migration:run && npm run seed",
     "schema:drop": "npm run typeorm -- schema:drop",
-    "schema:sync": "npm run typeorm -- schema:sync"
+    "schema:sync": "npm run typeorm -- schema:sync",
+    "check:integrations": "ts-node -r tsconfig-paths/register scripts/check-integration-catalogue.ts",
+    "migration:integration-centre": "ts-node -r tsconfig-paths/register scripts/run-integration-centre-migration.ts"
   },
   "dependencies": {
     "@aws-sdk/client-iot-data-plane": "^3.1106.0",

@@ -10,6 +10,18 @@ import { MqttAdapter } from './adapters/mqtt.adapter';
 import { TuyaAdapter } from './adapters/tuya.adapter';
 import { AwsIotAdapter } from './adapters/aws-iot.adapter';
 import { HttpAdapter } from './adapters/http.adapter';
+import { AzureIotAdapter } from './adapters/azure-iot.adapter';
+import { AzureEventHubAdapter } from './adapters/azure-event-hub.adapter';
+import { GooglePubSubAdapter } from './adapters/google-pubsub.adapter';
+import { KafkaAdapter } from './adapters/kafka.adapter';
+import { CoapAdapter } from './adapters/coap.adapter';
+import { IbmWatsonAdapter } from './adapters/ibm-watson.adapter';
+import { isDispatchableType } from './integration-catalogue';
+import { IntegrationEventsService } from './integration-events.service';
+import {
+  IntegrationEventDirection,
+  IntegrationEventType,
+} from './entities/integration-event.entity';
 import type {
   ConnectionResult,
   DispatchResult,
@@ -54,6 +66,12 @@ export class IntegrationDispatchService {
     [IntegrationType.TUYA]: new TuyaAdapter(),
     [IntegrationType.AWS_IOT]: new AwsIotAdapter(),
     [IntegrationType.API]: new HttpAdapter(),
+    [IntegrationType.AZURE_IOT]: new AzureIotAdapter(),
+    [IntegrationType.AZURE_EVENT_HUB]: new AzureEventHubAdapter(),
+    [IntegrationType.GOOGLE_CLOUD]: new GooglePubSubAdapter(),
+    [IntegrationType.KAFKA]: new KafkaAdapter(),
+    [IntegrationType.COAP]: new CoapAdapter(),
+    [IntegrationType.IBM_WATSON]: new IbmWatsonAdapter(),
   };
 
   constructor(
@@ -62,7 +80,71 @@ export class IntegrationDispatchService {
     // Read-only: resolves deviceType/assetId when a filter needs them.
     @InjectRepository(Device)
     private readonly deviceRepository: Repository<Device>,
+    private readonly events: IntegrationEventsService,
   ) {}
+
+  /**
+   * Record that an integration RECEIVED something.
+   *
+   * Counters used to move only on outbound dispatch, which made the entity's
+   * own `isHealthy()` — `getSuccessRate() > 90` — permanently false for every
+   * inbound integration: a ChirpStack row ingesting thousands of uplinks sat
+   * at `messagesProcessed: 0` forever and reported unhealthy. Inbound paths
+   * (LoRaWAN, Tuya, the generic HTTP uplink) call this so the same counters
+   * mean the same thing whichever way the data flowed.
+   */
+  async recordInbound(input: {
+    integrationId: string;
+    tenantId: string;
+    success: boolean;
+    message?: string;
+    deviceId?: string | null;
+    deviceKey?: string | null;
+    eventType?: IntegrationEventType;
+    payload?: Record<string, unknown> | null;
+  }): Promise<void> {
+    const now = new Date();
+    const counters: IntegrationUpdate = input.success
+      ? {
+          messagesProcessed: () => '"messagesProcessed" + 1',
+          messagesSucceeded: () => '"messagesSucceeded" + 1',
+          consecutiveFailures: 0,
+          lastActivity: now,
+          lastSuccess: now,
+          lastError: null,
+        }
+      : {
+          messagesProcessed: () => '"messagesProcessed" + 1',
+          messagesFailed: () => '"messagesFailed" + 1',
+          lastActivity: now,
+          lastFailure: now,
+          lastError: input.message ?? 'inbound message rejected',
+        };
+
+    try {
+      await this.integrationRepository.update({ id: input.integrationId }, counters);
+    } catch (error: any) {
+      // Never let bookkeeping fail an ingest.
+      this.logger.warn(`Could not record inbound counters: ${error.message}`);
+    }
+
+    // Inbound failures deliberately do NOT increment consecutiveFailures, so a
+    // run of malformed uplinks from one broken sensor cannot auto-disable an
+    // integration that is otherwise working. That quarantine rule exists to
+    // stop us hammering a dead outbound endpoint; there is no equivalent risk
+    // when we are the ones being called.
+    this.events.record({
+      integrationId: input.integrationId,
+      tenantId: input.tenantId,
+      direction: IntegrationEventDirection.INBOUND,
+      eventType: input.eventType ?? IntegrationEventType.UPLINK,
+      success: input.success,
+      message: input.message ?? null,
+      deviceId: input.deviceId ?? null,
+      deviceKey: input.deviceKey ?? null,
+      payload: input.payload ?? null,
+    });
+  }
 
   /**
    * Pick the adapter for an integration.
@@ -95,13 +177,35 @@ export class IntegrationDispatchService {
 
   async dispatchTelemetry(payload: TelemetryPayload): Promise<void> {
     try {
-      const integrations = await this.integrationRepository.find({
+      const active = await this.integrationRepository.find({
         where: {
           tenantId: payload.tenantId,
           status: IntegrationStatus.ACTIVE,
           enabled: true,
         },
       });
+
+      // Only types that can actually RECEIVE telemetry. This filter is load
+      // bearing, not tidiness:
+      //
+      //  · Tuya was being destroyed by ordinary traffic. TuyaAdapter.dispatch
+      //    is command-only, so a telemetry message with no `commands` returns
+      //    success:false — and ten consecutive failures flip the row to ERROR
+      //    with enabled=false. That also stopped TuyaSyncService, which only
+      //    polls ACTIVE+enabled rows. A working Tuya integration therefore
+      //    switched itself off after ten readings from any other device in the
+      //    tenant.
+      //  · ChirpStack / TTN / Loriot / Sigfox are inbound webhooks and
+      //    notification / database have no adapter at all; each logged
+      //    "No adapter for integration type" once per reading, per row.
+      //
+      // Both halves of the test come from the catalogue — direction and
+      // whether an adapter exists — so a new type is classified in the same
+      // place it is described, rather than in a list here that someone has to
+      // remember to extend.
+      const integrations = active.filter((integration) =>
+        isDispatchableType(integration.type),
+      );
 
       if (integrations.length === 0) return;
 
@@ -214,6 +318,23 @@ export class IntegrationDispatchService {
 
     const duration = Date.now() - startedAt;
     await this.recordOutcome(integration, result, duration);
+
+    this.events.record({
+      integrationId: integration.id,
+      tenantId: integration.tenantId,
+      direction: IntegrationEventDirection.OUTBOUND,
+      eventType: IntegrationEventType.DOWNLINK,
+      success: result.success,
+      message: result.error ?? null,
+      deviceId: payload.deviceId,
+      deviceKey: payload.deviceKey ?? null,
+      statusCode: result.statusCode ?? null,
+      durationMs: duration,
+      // Only recorded for failures. On success the payload is already in the
+      // telemetry table, and duplicating every reading here would make this
+      // the largest table in the database for no added information.
+      payload: result.success ? null : (payload.data as Record<string, unknown>),
+    });
 
     if (result.success) {
       this.logger.debug(
@@ -394,17 +515,18 @@ export class IntegrationDispatchService {
   // ══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Probe an integration through the same adapter dispatch uses.
-   *
-   * Scoped by userId to match the rest of IntegrationsService — the CRUD
-   * surface is per-owner, not per-tenant.
+   * Probe an integration through the same adapter dispatch uses, so a passing
+   * test means real traffic will work — not merely that the host resolves.
    */
   async testConnection(
     integrationId: string,
-    userId: string,
   ): Promise<ConnectionResult & { latencyMs: number }> {
+    // Unscoped by design: IntegrationsService.testConnection() resolves the row
+    // against the caller's tenant first and only then calls this with an id it
+    // has already authorised. Two scope checks of different kinds (the old one
+    // was by userId, the new one by tenantId) is how they drift apart.
     const integration = await this.integrationRepository.findOne({
-      where: { id: integrationId, userId },
+      where: { id: integrationId },
     });
 
     if (!integration) throw new NotFoundException('Integration not found');

@@ -12,11 +12,35 @@ import { User } from '../users/entities/user.entity';
 import { IntegrationDispatchService } from './integration-dispatch.service';
 import { TuyaSyncService, TuyaSyncResult } from './tuya-sync.service';
 import { TuyaAdapter } from './adapters/tuya.adapter';
-import { IntegrationStatus, IntegrationType } from '@common/enums/index.enum';
+import {
+  IntegrationStatus,
+  IntegrationType,
+  UserRole,
+} from '@common/enums/index.enum';
 import { CreateIntegrationDto } from './dto/create-integration.dto';
 import { UpdateIntegrationDto } from './dto/update-integration.dto';
 import { PaginationDto, PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { IntegrationActivityDto } from './dto/integration-activity.dto';
+import {
+  INTEGRATION_CATALOGUE,
+  listCatalogue,
+  validateIntegrationConfig,
+} from './integration-catalogue';
+import { IntegrationEventsService } from './integration-events.service';
+import { IntegrationMqttInboundService } from './integration-mqtt-inbound.service';
+import { IntegrationEventDirection, IntegrationEventType } from './entities/integration-event.entity';
+
+/**
+ * The caller, reduced to what scoping needs.
+ *
+ * Integrations used to be scoped by `userId` alone, which made them private to
+ * whoever created them — two admins of the same tenant could not see each
+ * other's integrations, and neither could fix one left behind by someone who
+ * had since been removed. Meanwhile IntegrationDispatchService selects by
+ * TENANT, so a row nobody could see was still forwarding telemetry. Scoping is
+ * now per tenant, with `userId` kept as a record of who created the row.
+ */
+type CallerScope = Pick<User, 'id' | 'tenantId' | 'role'>;
 
 @Injectable()
 export class IntegrationsService {
@@ -27,7 +51,42 @@ export class IntegrationsService {
     private readonly integrationRepository: Repository<Integration>,
     private readonly dispatchService: IntegrationDispatchService,
     private readonly tuyaSyncService: TuyaSyncService,
+    private readonly eventsService: IntegrationEventsService,
+    private readonly mqttInbound: IntegrationMqttInboundService,
   ) {}
+
+  /**
+   * SUPER_ADMIN has no tenantId and is expected to see everything, so it gets
+   * an empty filter rather than a filter on `tenantId: undefined` — which
+   * TypeORM would silently drop, producing the same result by accident.
+   */
+  private scope(user: CallerScope): { tenantId?: string } {
+    if (user.role === UserRole.SUPER_ADMIN) return {};
+    if (!user.tenantId) {
+      throw new BadRequestException('This user does not belong to a tenant');
+    }
+    return { tenantId: user.tenantId };
+  }
+
+  /**
+   * 400 with every problem at once, rather than one per round trip.
+   *
+   * Only the declared fields of the type's manifest are checked; extra keys
+   * pass through, because `configuration` is a free jsonb column and existing
+   * rows carry keys the catalogue never declared.
+   */
+  private assertValidConfig(
+    type: IntegrationType,
+    configuration: Record<string, any> | undefined | null,
+  ): void {
+    const errors = validateIntegrationConfig(type, configuration);
+    if (errors.length) {
+      throw new BadRequestException({
+        message: 'Integration configuration is incomplete',
+        errors,
+      });
+    }
+  }
 
   /** Shared by the Tuya endpoints — stateless, so one instance is enough. */
   private readonly tuyaAdapter = new TuyaAdapter();
@@ -48,9 +107,16 @@ export class IntegrationsService {
       );
     }
 
-    // Check if integration with same name exists
+    this.assertValidConfig(
+      createIntegrationDto.type,
+      createIntegrationDto.configuration,
+    );
+
+    // Uniqueness is per tenant, matching the new scoping: two admins of one
+    // tenant creating "Site webhook" would otherwise end up with two rows of
+    // the same name, both dispatching.
     const existing = await this.integrationRepository.findOne({
-      where: { name: createIntegrationDto.name, userId: user.id },
+      where: { name: createIntegrationDto.name, tenantId: user.tenantId },
     });
 
     if (existing) {
@@ -71,8 +137,35 @@ export class IntegrationsService {
     const saved = await this.integrationRepository.save(integration);
 
     this.autoSyncIfTuya(saved);
+    this.refreshInbound(saved);
+
+    this.eventsService.record({
+      integrationId: saved.id,
+      tenantId: saved.tenantId,
+      direction: IntegrationEventDirection.LIFECYCLE,
+      eventType: IntegrationEventType.CREATED,
+      message: `Created by ${user.email ?? user.id}`,
+    });
 
     return saved;
+  }
+
+  /**
+   * Re-reconcile the inbound MQTT subscriptions after a change.
+   *
+   * Fire-and-forget, and only for MQTT: connecting to a third-party broker is
+   * a network round trip, and a broker that is down must not make saving the
+   * integration hang. The one-minute cron is the backstop if this call is lost.
+   */
+  private refreshInbound(integration: Integration): void {
+    if (integration.type !== IntegrationType.MQTT) return;
+    setImmediate(() => {
+      void this.mqttInbound.refresh().catch((error) => {
+        this.logger.warn(
+          `Could not refresh inbound MQTT subscriptions: ${error.message}`,
+        );
+      });
+    });
   }
 
   /**
@@ -104,21 +197,19 @@ export class IntegrationsService {
    * the type in every case, so derive it rather than forcing clients to repeat it.
    */
   private static defaultProtocolFor(type: IntegrationType): string {
-    switch (type) {
-      case IntegrationType.MQTT:
-        return 'MQTT';
-      case IntegrationType.AWS_IOT:
-      case IntegrationType.AZURE_IOT:
-        return 'MQTTS';
-      case IntegrationType.DATABASE:
-        return 'SQL';
-      default:
-        // webhook, api, tuya, cloud, notification — all HTTP-based adapters.
-        return 'HTTPS';
-    }
+    // The catalogue carries a defaultProtocol per type, so the switch that used
+    // to live here is gone — it covered six types and silently answered HTTPS
+    // for the ten added since. 'HTTPS' remains the fallback for a type the
+    // catalogue somehow does not know.
+    return INTEGRATION_CATALOGUE[type]?.defaultProtocol ?? 'HTTPS';
   }
 
-  async findAll(userId: string, paginationDto: PaginationDto) {
+  /** The type gallery the create wizard renders. Static — no tenant data. */
+  getCatalogue() {
+    return listCatalogue();
+  }
+
+  async findAll(user: CallerScope, paginationDto: PaginationDto) {
     const {
       page = 1,
       limit = 10,
@@ -128,9 +219,32 @@ export class IntegrationsService {
     } = paginationDto;
     const skip = (page - 1) * limit;
 
-    const queryBuilder = this.integrationRepository
-      .createQueryBuilder('integration')
-      .where('integration.userId = :userId', { userId });
+    // Column allowlist: `sortBy` lands in an ORDER BY clause that QueryBuilder
+    // does not parameterise, so an arbitrary string here is an injection point.
+    const SORTABLE = [
+      'createdAt',
+      'updatedAt',
+      'name',
+      'type',
+      'status',
+      'lastActivity',
+      'messagesProcessed',
+    ];
+    const orderColumn = SORTABLE.includes(sortBy) ? sortBy : 'createdAt';
+    const direction = sortOrder === 'ASC' ? 'ASC' : 'DESC';
+
+    const queryBuilder = this.integrationRepository.createQueryBuilder(
+      'integration',
+    );
+
+    const scope = this.scope(user);
+    if (scope.tenantId) {
+      queryBuilder.where('integration.tenantId = :tenantId', {
+        tenantId: scope.tenantId,
+      });
+    } else {
+      queryBuilder.where('1 = 1');
+    }
 
     if (search) {
       queryBuilder.andWhere(
@@ -140,7 +254,7 @@ export class IntegrationsService {
     }
 
     queryBuilder
-      .orderBy(`integration.${sortBy}`, sortOrder as 'ASC' | 'DESC')
+      .orderBy(`integration.${orderColumn}`, direction)
       .skip(skip)
       .take(limit);
 
@@ -149,9 +263,9 @@ export class IntegrationsService {
     return PaginatedResponseDto.create(data, page, limit, total);
   }
 
-  async findOne(id: string, userId: string): Promise<Integration> {
+  async findOne(id: string, user: CallerScope): Promise<Integration> {
     const integration = await this.integrationRepository.findOne({
-      where: { id, userId },
+      where: { id, ...this.scope(user) },
     });
 
     if (!integration) {
@@ -161,42 +275,119 @@ export class IntegrationsService {
     return integration;
   }
 
+  /** The detail page's health panel: counts over a window, from the event feed. */
+  async getSummary(id: string, user: CallerScope, hours = 24) {
+    const integration = await this.findOne(id, user);
+    return this.eventsService.summarise(
+      integration.id,
+      integration.tenantId,
+      hours,
+    );
+  }
+
+  /** Paginated event feed for one integration. */
+  async getEvents(
+    id: string,
+    user: CallerScope,
+    options: { page?: number; limit?: number; direction?: string; success?: boolean },
+  ) {
+    const integration = await this.findOne(id, user);
+    return this.eventsService.findForIntegration(
+      integration.id,
+      integration.tenantId,
+      options,
+    );
+  }
+
   async update(
     id: string,
-    userId: string,
+    user: CallerScope,
     updateIntegrationDto: UpdateIntegrationDto,
   ): Promise<Integration> {
-    const integration = await this.findOne(id, userId);
+    const integration = await this.findOne(id, user);
+
+    // Validated against the MERGED configuration, not the patch: a PATCH that
+    // sends only the changed keys would otherwise fail every required-field
+    // check for the keys it left alone.
+    const mergedConfig = updateIntegrationDto.configuration
+      ? { ...(integration.configuration ?? {}), ...updateIntegrationDto.configuration }
+      : integration.configuration;
+    this.assertValidConfig(
+      (updateIntegrationDto.type ?? integration.type) as IntegrationType,
+      mergedConfig,
+    );
 
     Object.assign(integration, updateIntegrationDto);
-    integration.updatedBy = userId;
+    if (updateIntegrationDto.configuration) {
+      integration.configuration = mergedConfig as Record<string, any>;
+    }
+    integration.updatedBy = user.id;
+
+    // Editing a quarantined integration is how an operator says "I fixed it",
+    // so the failure streak is cleared. Without this, an integration that the
+    // dispatcher disabled after 10 failures stays disabled no matter what the
+    // operator corrects.
+    if (updateIntegrationDto.configuration) {
+      integration.consecutiveFailures = 0;
+      integration.lastError = null as any;
+    }
 
     const saved = await this.integrationRepository.save(integration);
 
     this.autoSyncIfTuya(saved);
+    this.refreshInbound(saved);
+
+    this.eventsService.record({
+      integrationId: saved.id,
+      tenantId: saved.tenantId,
+      direction: IntegrationEventDirection.LIFECYCLE,
+      eventType: IntegrationEventType.UPDATED,
+      message: `Configuration updated by ${user.id}`,
+    });
 
     return saved;
   }
 
-  async remove(id: string, userId: string): Promise<void> {
-    const integration = await this.findOne(id, userId);
+  async remove(id: string, user: CallerScope): Promise<void> {
+    const integration = await this.findOne(id, user);
     await this.integrationRepository.softRemove(integration);
+    // Drops the broker connection; otherwise a deleted MQTT integration keeps
+    // ingesting until the process restarts.
+    this.refreshInbound(integration);
   }
 
-  async toggleStatus(id: string, userId: string): Promise<Integration> {
-    const integration = await this.findOne(id, userId);
+  async toggleStatus(id: string, user: CallerScope): Promise<Integration> {
+    const integration = await this.findOne(id, user);
 
     integration.enabled = !integration.enabled;
     integration.status = integration.enabled
       ? IntegrationStatus.ACTIVE
       : IntegrationStatus.INACTIVE;
-    integration.updatedBy = userId;
+    integration.updatedBy = user.id;
+
+    // Re-enabling is the operator saying the problem is fixed. The dispatcher
+    // disables an integration after 10 consecutive failures; leaving the streak
+    // at 10 would re-quarantine it on the very next failure.
+    if (integration.enabled) {
+      integration.consecutiveFailures = 0;
+    }
 
     const saved = await this.integrationRepository.save(integration);
 
     // Enabling a Tuya integration is the other way it becomes live, so it
     // imports devices just like create/update does.
     this.autoSyncIfTuya(saved);
+    this.refreshInbound(saved);
+
+    this.eventsService.record({
+      integrationId: saved.id,
+      tenantId: saved.tenantId,
+      direction: IntegrationEventDirection.LIFECYCLE,
+      eventType: saved.enabled
+        ? IntegrationEventType.ENABLED
+        : IntegrationEventType.DISABLED,
+      message: saved.enabled ? 'Enabled' : 'Disabled',
+    });
 
     return saved;
   }
@@ -212,8 +403,23 @@ export class IntegrationsService {
    *   `{ success, message, responseTime? }` to
    *   `{ connected, message, latencyMs, ...adapterExtras }`.
    */
-  async testConnection(id: string, userId: string) {
-    return this.dispatchService.testConnection(id, userId);
+  async testConnection(id: string, user: CallerScope) {
+    // findOne first, so the tenant check happens here and the dispatcher is
+    // handed an id it is allowed to probe.
+    const integration = await this.findOne(id, user);
+    const result = await this.dispatchService.testConnection(integration.id);
+
+    this.eventsService.record({
+      integrationId: integration.id,
+      tenantId: integration.tenantId,
+      direction: IntegrationEventDirection.LIFECYCLE,
+      eventType: IntegrationEventType.TEST,
+      success: result.connected,
+      message: result.message,
+      durationMs: result.latencyMs,
+    });
+
+    return result;
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -227,9 +433,9 @@ export class IntegrationsService {
    */
   private async findTuyaIntegration(
     id: string,
-    userId: string,
+    user: CallerScope,
   ): Promise<Integration> {
-    const integration = await this.findOne(id, userId);
+    const integration = await this.findOne(id, user);
 
     if (!TuyaSyncService.isTuyaIntegration(integration)) {
       throw new BadRequestException(
@@ -240,8 +446,8 @@ export class IntegrationsService {
     return integration;
   }
 
-  async getTuyaDevices(id: string, userId: string): Promise<any[]> {
-    const integration = await this.findTuyaIntegration(id, userId);
+  async getTuyaDevices(id: string, user: CallerScope): Promise<any[]> {
+    const integration = await this.findTuyaIntegration(id, user);
 
     // getDevices() throws on an API/auth/signing failure rather than returning
     // an empty list, so the caller sees the reason instead of "0 devices".
@@ -254,10 +460,10 @@ export class IntegrationsService {
 
   async sendTuyaCommand(
     id: string,
-    userId: string,
+    user: CallerScope,
     body: { tuyaDeviceId: string; commands: any[] },
   ) {
-    const integration = await this.findTuyaIntegration(id, userId);
+    const integration = await this.findTuyaIntegration(id, user);
 
     const result = await this.tuyaAdapter.dispatch(integration.configuration, {
       tuyaDeviceId: body.tuyaDeviceId,
@@ -273,14 +479,12 @@ export class IntegrationsService {
   /**
    * Import every device bound to this Tuya project into the platform.
    *
-   * Scoped by userId, not tenantId, to match the rest of this service: the
-   * integration CRUD surface is per-owner. The tenant the devices are created
-   * in comes from the integration row itself — never from the request — so a
-   * caller cannot import devices into a tenant they do not own an integration
-   * in.
+   * The tenant the devices are created in comes from the integration row
+   * itself — never from the request — so a caller cannot import devices into a
+   * tenant they have no integration in.
    */
-  async syncTuyaDevices(id: string, userId: string): Promise<TuyaSyncResult> {
-    const integration = await this.findTuyaIntegration(id, userId);
+  async syncTuyaDevices(id: string, user: CallerScope): Promise<TuyaSyncResult> {
+    const integration = await this.findTuyaIntegration(id, user);
 
     try {
       return await this.tuyaSyncService.syncIntegration(integration);
@@ -305,10 +509,10 @@ export class IntegrationsService {
 
   async getTuyaDeviceStatus(
     id: string,
-    userId: string,
+    user: CallerScope,
     tuyaDeviceId: string,
   ): Promise<any> {
-    const integration = await this.findTuyaIntegration(id, userId);
+    const integration = await this.findTuyaIntegration(id, user);
 
     try {
       return await this.tuyaAdapter.getDeviceStatus(
@@ -321,22 +525,34 @@ export class IntegrationsService {
   }
 
 
-  async getStatistics(userId: string) {
+  async getStatistics(user: CallerScope) {
+    const where = this.scope(user);
+
     const [total, active, errors] = await Promise.all([
-      this.integrationRepository.count({ where: { userId } }),
+      this.integrationRepository.count({ where }),
       this.integrationRepository.count({
-        where: { userId, status: IntegrationStatus.ACTIVE },
+        where: { ...where, status: IntegrationStatus.ACTIVE },
       }),
       this.integrationRepository.count({
-        where: { userId, status: IntegrationStatus.ERROR },
+        where: { ...where, status: IntegrationStatus.ERROR },
       }),
     ]);
 
-    const byTypeResult = await this.integrationRepository
-      .createQueryBuilder('integration')
-      .select('integration.type', 'type')
-      .addSelect('COUNT(*)', 'count')
-      .where('integration.userId = :userId', { userId })
+    const scoped = <T extends { andWhere: Function; where: Function }>(qb: T): T => {
+      if (where.tenantId) {
+        qb.where('integration.tenantId = :tenantId', { tenantId: where.tenantId });
+      } else {
+        qb.where('1 = 1');
+      }
+      return qb;
+    };
+
+    const byTypeResult = await scoped(
+      this.integrationRepository
+        .createQueryBuilder('integration')
+        .select('integration.type', 'type')
+        .addSelect('COUNT(*)', 'count'),
+    )
       .groupBy('integration.type')
       .getRawMany();
 
@@ -348,11 +564,11 @@ export class IntegrationsService {
       {} as Record<string, number>,
     );
 
-    const totalMessagesResult = await this.integrationRepository
-      .createQueryBuilder('integration')
-      .select('SUM(integration.messagesProcessed)', 'total')
-      .where('integration.userId = :userId', { userId })
-      .getRawOne();
+    const totalMessagesResult = await scoped(
+      this.integrationRepository
+        .createQueryBuilder('integration')
+        .select('SUM(integration.messagesProcessed)', 'total'),
+    ).getRawOne();
 
     return {
       total,
@@ -374,7 +590,7 @@ export class IntegrationsService {
    * stream — see IntegrationActivityDto.
    */
   async getRecentActivity(
-    userId: string,
+    user: CallerScope,
     opts: { limit?: string | number; page?: string | number; type?: string },
   ) {
     // Clamp limit to [1, 50] (default 10) and page to >= 1 (default 1).
@@ -392,9 +608,13 @@ export class IntegrationsService {
         ? opts.type
         : undefined;
 
-    const qb = this.integrationRepository
-      .createQueryBuilder('integration')
-      .where('integration.userId = :userId', { userId });
+    const scope = this.scope(user);
+    const qb = this.integrationRepository.createQueryBuilder('integration');
+    if (scope.tenantId) {
+      qb.where('integration.tenantId = :tenantId', { tenantId: scope.tenantId });
+    } else {
+      qb.where('1 = 1');
+    }
 
     if (type) {
       qb.andWhere('integration.type = :type', { type });
@@ -461,16 +681,45 @@ export class IntegrationsService {
     };
   }
 
-  async incrementMessageCount(id: string, userId: string): Promise<void> {
-    await this.integrationRepository.increment(
-      { id, userId },
-      'messagesProcessed',
-      1,
-    );
+  /**
+   * The tenant-wide event feed — a real append-only one, unlike
+   * `getRecentActivity()` above, which synthesises one entry per integration
+   * from its current column values and so cannot distinguish two failures an
+   * hour apart from one.
+   *
+   * `recent-activity` is kept as it was because the dashboard tile consumes its
+   * shape; new callers should use this.
+   */
+  async getTenantEvents(
+    user: CallerScope,
+    options: { page?: number; limit?: number; direction?: string; success?: boolean },
+  ) {
+    const scope = this.scope(user);
+    if (!scope.tenantId) {
+      // SUPER_ADMIN has no tenant of its own, so there is no feed to show. A
+      // cross-tenant feed would need its own route and its own access rules.
+      throw new BadRequestException(
+        'The event feed is per tenant; sign in as a tenant user to read it',
+      );
+    }
+    return this.eventsService.findForTenant(scope.tenantId, options);
+  }
 
-    await this.integrationRepository.update(
-      { id, userId },
-      { lastActivity: new Date() },
-    );
+  /** Which MQTT integrations currently hold a live inbound subscription. */
+  getInboundStatus(user: CallerScope) {
+    const scope = this.scope(user);
+    return this.mqttInbound.getStatus(scope.tenantId);
+  }
+
+  /**
+   * Counter bump, by id alone.
+   *
+   * Not scoped: the only callers are internal bookkeeping paths that already
+   * resolved the row, and an unscoped UPDATE on a primary key cannot leak
+   * anything — it returns no data.
+   */
+  async incrementMessageCount(id: string): Promise<void> {
+    await this.integrationRepository.increment({ id }, 'messagesProcessed', 1);
+    await this.integrationRepository.update({ id }, { lastActivity: new Date() });
   }
 }

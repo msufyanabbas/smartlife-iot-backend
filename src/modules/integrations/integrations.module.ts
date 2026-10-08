@@ -4,6 +4,7 @@ import { HttpModule } from '@nestjs/axios';
 import { IntegrationsService } from './integrations.service';
 import { IntegrationsController } from './integrations.controller';
 import { Integration } from './entities/integration.entity';
+import { IntegrationEvent } from './entities/integration-event.entity';
 import { User } from '../users/entities/user.entity';
 import { Device } from '../devices/entities/device.entity';
 import { DeviceCredentials } from '../devices/entities/device-credentials.entity';
@@ -11,6 +12,9 @@ import { Telemetry } from '../telemetry/entities/telemetry.entity';
 import { IntegrationDispatchService } from './integration-dispatch.service';
 import { TuyaSyncService } from './tuya-sync.service';
 import { LorawanService } from './lorawan.service';
+import { IntegrationEventsService } from './integration-events.service';
+import { IntegrationUplinkService } from './integration-uplink.service';
+import { IntegrationMqttInboundService } from './integration-mqtt-inbound.service';
 import { WebsocketModule } from '../websocket/websocket.module';
 import { ProtocolsModule } from '../protocols/protocols.module';
 
@@ -23,6 +27,7 @@ import { ProtocolsModule } from '../protocols/protocols.module';
     // mirrors a Tuya project into the platform.
     TypeOrmModule.forFeature([
       Integration,
+      IntegrationEvent,
       User,
       Device,
       DeviceCredentials,
@@ -44,12 +49,19 @@ import { ProtocolsModule } from '../protocols/protocols.module';
   providers: [
     IntegrationsService,
     IntegrationDispatchService,
+    IntegrationEventsService,
+    IntegrationUplinkService,
+    // Opens a persistent client per MQTT integration that declares a subscribe
+    // topic. @nestjs/schedule is global, so its reconcile @Cron needs nothing
+    // registered here.
+    IntegrationMqttInboundService,
     TuyaSyncService,
     LorawanService,
   ],
   exports: [
     IntegrationsService,
     IntegrationDispatchService,
+    IntegrationEventsService,
     TuyaSyncService,
     LorawanService,
   ],
