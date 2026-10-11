@@ -58,7 +58,8 @@
     "schema:drop": "npm run typeorm -- schema:drop",
     "schema:sync": "npm run typeorm -- schema:sync",
     "check:integrations": "ts-node -r tsconfig-paths/register scripts/check-integration-catalogue.ts",
-    "migration:integration-centre": "ts-node -r tsconfig-paths/register scripts/run-integration-centre-migration.ts"
+    "migration:integration-centre": "ts-node -r tsconfig-paths/register scripts/run-integration-centre-migration.ts",
+    "check:rule-nodes": "ts-node -r tsconfig-paths/register scripts/check-rule-nodes.ts"
   },
   "dependencies": {
     "@aws-sdk/client-iot-data-plane": "^3.1106.0",

@@ -236,7 +236,7 @@ iot-platform-backend/
 | `SchedulesModule` | Cron-expression-based schedules for automations |
 | `ScriptsModule` | User-defined JavaScript scripts with execution context |
 | `IntegrationsModule` | The Integration Centre: 18 types driven by a declarative catalogue, outbound adapters (MQTT, Kafka, AWS IoT, Azure IoT/Event Hubs, Google Pub/Sub, IBM Watson, CoAP, webhook), inbound uplinks (ChirpStack, TTN, generic HTTP, persistent MQTT subscriptions), Tuya device import and commands, and an append-only event log. See §4e |
-| `RulesModule` | Visual rule chain nodes and connections (rule engine service) |
+| `RulesModule` | The rule engine: 8 node types from a declarative catalogue, a complete traversal engine with per-node tracing, atomic whole-graph save for the visual editor, dry-run testing, static graph validation, and index-based import/export. See §4f |
 
 ### Subscription & Payments
 | Module | Responsibility |
@@ -724,6 +724,139 @@ distinguish two failures an hour apart from one. Neither could answer "did the
   as an unhandled rejection that kills the process. Pre-existing, unchanged here,
   but it makes local work without the full stack impossible.
 
+## 4f. Rule Engine
+
+Eight node types, a server-driven palette, and a graph saved atomically.
+
+```
+rule-node-catalogue.ts     (manifest per NodeType — label, category, icon,
+     │                      the OUTPUT ROUTES it emits, config fields)
+     ├── GET  /rule-chains/catalogue      → editor palette AND node config form
+     ├── validateNodeConfig()             → 400 listing every missing field
+     └── resolveNodeOutputs()             → which ports to draw; SWITCH reads
+                                            its own cases
+
+RuleChain (configuration, rootNodeId, counters)
+     ↓ ruleChainId
+Node      (type, configuration, position {x,y}, connections[])
+     ↓ connections[].connectionType === the route the engine follows
+RuleEngineService.traverseNodes()  →  per-node trace
+```
+
+### The engine already worked; the surface did not
+
+`rule-engine.service.ts` is a complete traversal engine (**not** the 1-line stub
+§11 claimed) and `modules/nodes/` has a processor for all eight types. What was
+missing was any way to build or inspect a chain: no graph read/write, no test
+run, no palette, and — on the frontend — an empty `RuleChainsPage.tsx`, three
+0-byte components, and 25 hooks nothing imported, pointed at `/rules-chains`
+when the controller is `rule-chains`.
+
+| Route | Purpose |
+|---|---|
+| `GET /rule-chains/catalogue` | Node palette + per-type config fields. |
+| `GET /rule-chains/:id/metadata` | `{ ruleChain, nodes, resolvedRootNodeId, issues }`. |
+| `PUT /rule-chains/:id/metadata` | Replace the whole graph in one transaction. |
+| `POST /rule-chains/:id/test` | Run a sample message; returns the per-node trace. |
+| `POST /rule-chains/:id/root` | Make this the tenant's entry chain. |
+| `GET /rule-chains/:id/export` · `POST /rule-chains/import` · `POST /rule-chains/:id/duplicate` | Portability. |
+
+### Three things the metadata save has to get right
+
+1. **Temporary ids.** A node just dropped on the canvas has no server id, but
+   its edges reference it already. The payload may carry client ids (`tmp-*`);
+   the server maps them to real ones after insert and rewrites every
+   connection. Without this the editor would have to save nodes, read back
+   their ids, then save edges — three round trips and a window where the graph
+   is wrong.
+2. **It is a REPLACE.** Nodes of the chain absent from `nodes` are soft-removed.
+   That is what makes a visual editor safe to save from; the alternative is a
+   dozen `POST /nodes` calls where any one can fail and leave edges pointing at
+   nodes that were never created.
+3. **Tenant scoping on update.** An existing node is only touched when it
+   belongs to this tenant AND this chain, so a crafted payload cannot re-parent
+   another tenant's node by id.
+
+### Output routes are not success/failure everywhere
+
+This is the detail that makes or breaks a chain, and the catalogue is the only
+place it is written down:
+
+| Node | Routes |
+|---|---|
+| `filter` | **`true` / `false`** — not success/failure. A filter's "no" branch is `false`. |
+| `switch` | Whatever its `cases[].outputRoute` name, plus `defaultRoute`. Hence `dynamicOutputs: true`. |
+| everything else | `success` / `failure` |
+
+`RuleEngineService.resolveNextNode()` matches `connection.connectionType`
+against the route the processor returned, so an edge labelled `success` out of a
+FILTER is never followed. `validateGraph()` reports exactly that as a warning
+rather than leaving it to be discovered at runtime.
+
+### validateGraph() — static analysis, returned with every read and save
+
+Each of these is a chain that saves cleanly and then silently does nothing:
+
+- **No entry node** (error) — every node is the target of an edge, so the engine
+  cannot pick a start.
+- **Edge to a deleted node** (error) — drawn on the canvas as a dashed stub so
+  it can be found and removed.
+- **Route the node cannot emit** (warning) — see the table above.
+- **Unreachable node** (warning) — not reachable from the entry point, so it
+  never runs.
+- **Missing required config** (error) and **disabled node** (warning).
+
+`resolvedRootNodeId` repeats the engine's own fallback — the node no edge
+targets — so the editor shows the entry point the engine will actually use
+rather than guessing differently. Keep `RulesService.resolveRootNodeId()` in
+step with `RuleEngineService.resolveStartNode()`.
+
+### Testing a chain does not touch its counters — but does perform its actions
+
+`POST /:id/test` goes through `RuleEngineService.testChain()`, which traverses
+with `persistStats = false`. A few sample payloads should not make a chain's
+health look worse than its real traffic did, and `isHealthy()` drives the UI.
+
+The node processors still do their real work: a test through a `create_alarm` or
+`rest_api_call` action **will** create the alarm and make the call. There is no
+way to verify an action node's configuration without performing it, so the route
+documents it and the UI says so rather than implying a sandbox.
+
+### Export is index-based on purpose
+
+Ids, counters and tenant columns are stripped, and edges are re-expressed
+against each node's **index** in the array. An export therefore imports into
+another tenant instead of colliding on ids or re-pointing at rows it does not
+own. Imports land **disabled**: the nodes may reference device, script or
+integration ids from the source tenant, so going live should be a decision.
+
+### Frontend
+
+`features/rules/` — `RuleChainsPage` (list, stats, root chain, import/export),
+`RuleChainEditorPage` (palette + canvas + config + test), and a canvas built
+from **plain SVG** rather than a flow library: the graph model is already fixed
+by the backend, and the edge semantics (a route from a server-declared set) would
+need mapping onto a library's model anyway.
+
+The editor holds the graph in **local state** and writes it back in one request.
+`useRuleChainMetadata` therefore sets `refetchOnWindowFocus: false` and infinite
+`staleTime`, and the seed is keyed on chain id + `updatedAt` — otherwise tabbing
+away and back replaces the user's unsaved canvas with the server's copy. On save,
+the response is written into the cache (`setQueryData`, not invalidate) so the
+canvas adopts the real node ids; without that the second save would send `tmp-*`
+ids for nodes that already exist and create duplicates.
+
+Sidebar: **Rule Engine** is its own top-level section. The old
+`/automation/rule-chain-templates` route still resolves.
+
+### Still missing
+
+`/queues` and `/default-rule-chains` have **no backend controller at all** — not
+a wrong path, no module. The 13 frontend client methods for them were removed
+rather than left looking available. Rule chains also have no authoring surface
+for node-level debug output, and `rules.controller.ts` has no per-node test
+route (only whole-chain).
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
@@ -1134,16 +1267,16 @@ import { DevicesService } from '@modules/index.service';
 | `src/database/migrations/` | Run migrations against **`dist`** (`npx typeorm migration:run -d dist/database/data-source.js`) — `data-source.ts` globs `*.js` only, so `npm run migration:run` reports "No migrations are pending" from source. |
 | **`migration:run` is currently blocked** | `PreExistingSchemaDrift1786345964232` and `SchemaDriftFix1786348092217` are in the source but have never been applied, and the first one *fails*: `ALTER TABLE solution_templates ALTER COLUMN category TYPE …` → `invalid input value for enum solution_templates_category_enum: "agriculture"`. Because they sort ahead of every later migration, the whole transaction aborts and nothing after them can run. Until they are fixed, a new migration has to be applied with those two temporarily moved out of `dist/database/migrations/`. |
 | Entity/DB drift | `migration:generate` currently also wants to create 8 assignment junction tables, narrow `solution_templates_category_enum` (**destructive** — removes 6 in-use values), rebuild the firmware indexes and rewrite several jsonb defaults. This is pre-existing drift left out of `DeviceAssetProfileEnhancements`; it needs its own reviewed migration. |
-| `src/modules/attributes/attributes.service.ts` line 253 | `getTimeseries()` is a stub — needs to query telemetry table |
-| `src/modules/api-monitoring/api-monitoring.service.ts` line 465 | Health check details not fully implemented |
-| `src/modules/images/images.service.ts` line 77 | File storage delete is TODO — files not actually deleted from disk/S3 |
+| ~~`src/modules/attributes/attributes.service.ts`~~ | **RESOLVED** — `getTimeseries()` is implemented. |
+| ~~`src/modules/api-monitoring/api-monitoring.service.ts`~~ | **RESOLVED** — real health probes. |
+| ~~`src/modules/images/images.service.ts`~~ | **RESOLVED** — local-disk storage and delete are implemented. |
 | `src/modules/images/images.controller.ts` line 46 | File upload to persistent storage (S3/local) is TODO |
 | `src/modules/alarms/alarms.consumer.ts` line 359 | SMS notification integration (Twilio/AWS SNS) is a TODO stub |
 | `src/modules/payments/payments.service.ts` | Stripe is installed as a dependency but Moyasar is the active provider; Stripe integration is not wired |
 | `src/modules/protocols/adapters/ble.adapter.ts` | BLE adapter has placeholder implementation |
 | `src/modules/protocols/adapters/coap.adapter.ts` | Implemented (ThingsBoard-style telemetry/attributes/rpc over UDP 5683). Remaining TODO: two-way server-side RPC dispatch (currently only acknowledges device-initiated RPC). |
 | `src/modules/devices/codecs/milesight/ds/ds3604.codec.ts` | Binary image payload decode not implemented |
-| `src/modules/rules/rule-engine.service.ts` | File exists but is essentially empty (1 line) |
+| ~~`src/modules/rules/rule-engine.service.ts`~~ | **RESOLVED** — 258 lines, a complete traversal engine. See §4f. |
 | `KafkaModule` / the Kafka consumers | An unreachable broker stops the app booting: the module factory awaits `initProducer()`, and a consumer's failed `connect()` becomes an unhandled rejection that kills the process. Running locally therefore needs the full Docker stack. |
 | `src/modules/integrations/` — `notification` and `database` types | Declared in the catalogue with `hasAdapter: false`; they are skipped by the dispatcher rather than forwarding anything. Use a webhook or Kafka instead. |
 | `src/modules/integrations/` — converters | The frontend has seven converter pages under `/integrations/*` and there is **no backend converter module at all**. Payload decoding is done by `CodecRegistryService` in DevicesModule. |

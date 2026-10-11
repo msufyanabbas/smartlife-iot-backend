@@ -26,6 +26,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let message: string | string[] = 'Internal server error';
     let error = 'Internal Server Error';
     let validationErrors: any = null;
+    /**
+     * Field-level detail from a thrown `BadRequestException({ message, errors })`.
+     *
+     * Without this the array was silently dropped: the filter copied only
+     * `message` and `error` off the exception response, so a caller that
+     * reported every invalid field at once — the integration config validator
+     * and the rule-chain graph validator both do — arrived at the client as a
+     * single sentence with no indication of WHICH field was wrong. The form had
+     * nothing to highlight and the user had nothing to fix.
+     */
+    let errors: string[] | null = null;
 
     // Handle different types of exceptions
     if (exception instanceof HttpException) {
@@ -40,6 +51,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         message = responseObj.message || message;
         error = responseObj.error || exception.name;
         validationErrors = responseObj.validationErrors || null;
+        errors = Array.isArray(responseObj.errors) ? responseObj.errors : null;
       }
     } else if (exception instanceof QueryFailedError) {
       // Handle database errors
@@ -88,6 +100,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
     // Add validation errors if present
     if (validationErrors) {
       errorResponse.validationErrors = validationErrors;
+    }
+
+    // `errors` is the preferred shape for new code: throw
+    // `new BadRequestException({ message, errors: string[] })` and the client
+    // receives every problem at once instead of one per round trip.
+    if (errors) {
+      errorResponse.errors = errors;
     }
 
     // Add stack trace in development

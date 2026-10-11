@@ -84,6 +84,50 @@ export class RuleEngineService {
     return this.executeChain(chain, message);
   }
 
+  /**
+   * Run a chain against a supplied message WITHOUT recording anything.
+   *
+   * Backs `POST /rule-chains/:id/test`. The distinction from `executeChain`
+   * matters more than it looks: a test that went through the normal path would
+   * increment `executionCount`, move `lastExecuted`, and — if a node failed —
+   * append to `errorHistory` and raise `failureCount`. An operator trying three
+   * sample payloads would leave the chain's health looking worse than
+   * production traffic made it, and `isHealthy()` drives the UI's status.
+   *
+   * The ACTION and EXTERNAL node processors still do their real work: a test
+   * message through a "create alarm" or "call REST API" node WILL create the
+   * alarm and make the call. That is deliberate — the point of a test is to
+   * learn whether the configuration works — and the route reports it so the
+   * caller is not surprised.
+   */
+  async testChain(
+    tenantId: string,
+    chainId: string,
+    message: NodeMessage,
+  ): Promise<RuleExecutionResultDto> {
+    const chain = await this.rulesService.findOne(tenantId, chainId);
+    const nodes = await this.rulesService.findNodes(tenantId, chainId);
+
+    const startedAt = Date.now();
+    const trace = await this.traverseNodes(
+      nodes,
+      chain.rootNodeId,
+      message,
+      false,
+    );
+    const executionTime = Date.now() - startedAt;
+
+    return {
+      chainId: chain.id,
+      chainName: chain.name,
+      success: trace.length === 0 || trace[trace.length - 1].success,
+      executionTime,
+      nodesExecuted: trace.length,
+      error: trace.find((t) => t.error)?.error,
+      trace,
+    };
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // PRIVATE: CHAIN SELECTION
   // ══════════════════════════════════════════════════════════════════════════
@@ -178,6 +222,8 @@ export class RuleEngineService {
     nodes: Node[],
     rootNodeId: string | undefined,
     initialMessage: NodeMessage,
+    /** False for a dry run — see testChain(). */
+    persistStats = true,
   ): Promise<NodeTraceEntryDto[]> {
     if (nodes.length === 0) return [];
 
@@ -219,14 +265,16 @@ export class RuleEngineService {
       const nodeElapsed = Date.now() - nodeStart;
 
       // Persist node execution stats (fire-and-forget so pipeline is not blocked)
-      currentNode.recordExecution(result.success, nodeElapsed, result.error);
-      this.nodeRepo
-        .save(currentNode)
-        .catch((e) =>
-          this.logger.error(
-            `Failed to save node stats for ${currentNode!.id}: ${e.message}`,
-          ),
-        );
+      if (persistStats) {
+        currentNode.recordExecution(result.success, nodeElapsed, result.error);
+        this.nodeRepo
+          .save(currentNode)
+          .catch((e) =>
+            this.logger.error(
+              `Failed to save node stats for ${currentNode!.id}: ${e.message}`,
+            ),
+          );
+      }
 
       const route = result.route ?? (result.success ? 'success' : 'failure');
 
