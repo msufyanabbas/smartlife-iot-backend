@@ -615,8 +615,19 @@ export class RulesService {
     };
   }
 
-  /** Create a chain from an export. Names are de-duplicated, not rejected. */
-  async importChain(tenantId: string, userId: string, payload: any) {
+  /**
+   * Create a chain from an export. Names are de-duplicated, not rejected.
+   *
+   * `options.enabled` exists for the template path: instantiating a template a
+   * tenant authored itself is not the same risk as importing a stranger's JSON,
+   * so the caller may opt in to a live chain. It stays off by default.
+   */
+  async importChain(
+    tenantId: string,
+    userId: string,
+    payload: any,
+    options: { enabled?: boolean } = {},
+  ) {
     if (!payload || !Array.isArray(payload.nodes)) {
       throw new BadRequestException(
         'Not a rule chain export: expected an object with a "nodes" array',
@@ -640,7 +651,7 @@ export class RulesService {
       // Imported chains land as drafts: activating one that points at device
       // ids or integration ids from another tenant should be a decision, not a
       // side effect of importing.
-      enabled: false,
+      enabled: options.enabled === true,
     } as any);
 
     const nodes: RuleChainNodeDto[] = (payload.nodes as any[]).map(

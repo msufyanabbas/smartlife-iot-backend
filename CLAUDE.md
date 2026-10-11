@@ -236,7 +236,7 @@ iot-platform-backend/
 | `SchedulesModule` | Cron-expression-based schedules for automations |
 | `ScriptsModule` | User-defined JavaScript scripts with execution context |
 | `IntegrationsModule` | The Integration Centre: 18 types driven by a declarative catalogue, outbound adapters (MQTT, Kafka, AWS IoT, Azure IoT/Event Hubs, Google Pub/Sub, IBM Watson, CoAP, webhook), inbound uplinks (ChirpStack, TTN, generic HTTP, persistent MQTT subscriptions), Tuya device import and commands, and an append-only event log. See §4e |
-| `RulesModule` | The rule engine: 8 node types from a declarative catalogue, a complete traversal engine with per-node tracing, atomic whole-graph save for the visual editor, dry-run testing, static graph validation, and index-based import/export. See §4f |
+| `RulesModule` | The rule engine: 8 node types from a declarative catalogue, a complete traversal engine with per-node tracing, atomic whole-graph save for the visual editor, dry-run testing, static graph validation, index-based import/export, and reusable chain templates (built-in plus tenant-saved) that instantiate into real chains. See §4f |
 
 ### Subscription & Payments
 | Module | Responsibility |
@@ -849,13 +849,81 @@ ids for nodes that already exist and create duplicates.
 Sidebar: **Rule Engine** is its own top-level section. The old
 `/automation/rule-chain-templates` route still resolves.
 
+### Templates — `/rule-chain-templates`
+
+A template is a saved chain definition you stamp out into a real chain. The
+definition format **is** the export format (§ "Export is index-based on
+purpose"), so saving a chain as a template, instantiating one, and importing an
+exported chain are all the same code path: `instantiate()` is a wrapper over
+`RulesService.importChain()`.
+
+Two kinds of row share one table, `rule_chain_templates`:
+
+| | `tenantId` | `isBuiltIn` | `slug` | Writable |
+|---|---|---|---|---|
+| Platform template | NULL | true | set | No — 403 |
+| Saved by a tenant | the tenant | false | NULL | Yes |
+
+Every read is `tenantId = :tenantId OR isBuiltIn = true`.
+
+**Built-ins live in code**, in `rule-chain-template-catalogue.ts`, and
+`syncBuiltIns()` upserts them on `onModuleInit` keyed by `slug`. So the
+definitions stay in version control and a deploy can correct one, while still
+being real rows — which is what lets `usageCount` be counted, categories be a
+single `DISTINCT`, and listing be one paginated query instead of a merge of two
+sources. The sync is **non-fatal**: the application must still boot against a
+database where the migration has not been applied.
+
+`npm run check:rule-templates` asserts every built-in is instantiable **as
+shipped** — config complete, every edge on a route its source node can actually
+emit, every node reachable. A built-in that ships broken is worse than none at
+all, because the user assumes the platform's own starting point works and
+debugs their data instead.
+
+| Route | Purpose |
+|---|---|
+| `GET /rule-chain-templates` | `?scope=mine\|builtin`, `?category=`, search, sort. |
+| `GET /rule-chain-templates/categories` | Built-in categories ∪ this tenant's. |
+| `GET /rule-chain-templates/:id` | Definition + the same static analysis the editor shows. |
+| `POST /rule-chain-templates` | `definition` **or** `fromRuleChainId` — not both. |
+| `POST /rule-chain-templates/:id/instantiate` | **The "Use" button.** |
+| `PUT` · `DELETE` · `GET /:id/export` | 403 on a built-in for the first two. |
+
+Details that matter:
+
+- **A new chain lands disabled** unless `instantiate` is passed
+  `enabled: true`. A template can carry a placeholder endpoint or an id from
+  whoever authored it. `importChain()` gained an `options.enabled` parameter
+  for this; its own default is still off.
+- **`setupNotes`** on a definition lists what the template could not guess — an
+  endpoint URL, an email recipient. `instantiate` returns them and the editor
+  shows them on the new chain. Without that, a template-built chain looks
+  finished and quietly does nothing.
+- **`fromRuleChainId` goes through `exportChain()`**, which is tenant-scoped, so
+  a crafted id cannot capture another tenant's graph.
+- **`tenantId` is `uuid` with an FK to `tenants(id)`**, because the entity
+  declares `@ManyToOne('Tenant')` against it — a join column takes the
+  referenced key's type and gets a real constraint whether a hand-written
+  migration says so or not. Contrast `integration_events.tenantId`, which is
+  correctly `character varying` *because it has no relation*. Getting this
+  backwards leaves the migration permanently at odds with the schema
+  `synchronize` builds. `userId` here is deliberately varchar with no FK: a
+  template outlives whoever saved it.
+- `migration:run` is blocked (§11), so apply this one with
+  `npm run migration:rule-chain-templates <database> [up|down]`.
+- `npm run verify:rule-templates <database>` exercises the whole flow against a
+  real PostgreSQL — scoping, instantiate, edge rewriting, usage counting, the
+  403s, capture-and-round-trip, and a real engine traversal proving a
+  template-built switch routes down the branch it names.
+
 ### Still missing
 
 `/queues` and `/default-rule-chains` have **no backend controller at all** — not
 a wrong path, no module. The 13 frontend client methods for them were removed
 rather than left looking available. Rule chains also have no authoring surface
 for node-level debug output, and `rules.controller.ts` has no per-node test
-route (only whole-chain).
+route (only whole-chain). Templates have no preview of the graph as a canvas —
+the editor lists the nodes and their routes instead.
 
 ## 5. Database & ORM Patterns
 
@@ -1178,6 +1246,16 @@ npm run db:reset           # revert + run + seed
 npm run docker:local       # docker-compose.local.yml up
 npm run docker:up          # docker-compose.prod.yml up -d
 npm run test:unit          # Jest unit tests
+
+# Guard scripts — each one asserts something a typecheck cannot
+npm run check:integrations     # the integration catalogue is internally consistent
+npm run check:rule-nodes       # every node type has a manifest and sane output routes
+npm run check:rule-templates   # every built-in template is instantiable as shipped
+npm run verify:rule-templates <db>   # the whole template flow against a real Postgres
+
+# Migrations blocked by the drift described in §11 — apply these in isolation
+npm run migration:integration-centre <db> [up|down]
+npm run migration:rule-chain-templates <db> [up|down]
 ```
 
 ---

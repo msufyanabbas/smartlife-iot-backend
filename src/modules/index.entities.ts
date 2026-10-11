@@ -31,6 +31,7 @@ export { EdgeMetricsSnapshot } from './edge/entities/edge-metrics-snapshot.entit
 export { DeviceProfile } from './profiles/entities/device-profile.entity';
 export { AssetProfile } from './profiles/entities/asset-profile.entity';
 export { RuleChain } from './rules/entities/rule-chain.entity';
+export { RuleChainTemplate } from './rules/entities/rule-chain-template.entity';
 
 // Dashboard & Visualization entities
 export { Dashboard } from './dashboards/entities/dashboard.entity';
