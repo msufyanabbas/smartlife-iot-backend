@@ -1097,6 +1097,107 @@ starts the app without building the document (it already defaults off when
 
 ---
 
+## 4i. Resource assignment — the reads, and the two-tier rule
+
+`AssignmentModule` shipped with `assignResourceToCustomer`,
+`assignResourceToUser` and their two unassign counterparts — permission gates,
+quota gates and counter maintenance across ten junction tables — and **no GET
+route at all**. So a tenant admin could grant a device to a customer and then
+had no way to see or revoke what they had granted, and the frontend had no
+screen because there was nothing to render.
+
+Three reads were added:
+
+| Route | Role | Returns |
+|---|---|---|
+| `GET /assignments/customer/:customerId` | `@TenantAdminOnly()` | Everything the customer holds, grouped by resource type |
+| `GET /assignments/user/:userId` | `@CustomerAdminOnly()` | Everything that user holds, same shape |
+| `GET /assignments/assignable/:resourceType?customerId=&userId=&search=` | `@CustomerAdminOnly()` | What could still be granted |
+
+### Assignment is two-tier, and the picker has to know it
+
+A resource reaches a USER only through their CUSTOMER:
+`assignResourceToUser` refuses anything the customer does not already hold. So
+`listAssignableResources(..., { userId })` is bounded by that user's customer,
+not by the tenant. Offering the whole tenant would be a picker full of options
+the server rejects, which teaches operators to distrust the UI. The panel says
+this in words on both screens, because a picker that silently offers less than
+the tenant owns looks broken unless you explain why.
+
+### Details worth keeping
+
+- **Table and column names come only from the constant maps**
+  (`RESOURCE_SOURCES`, `CUSTOMER_JUNCTIONS`, `USER_JUNCTIONS`), never from the
+  request. `resourceType` arrives from a URL segment; interpolating it into SQL
+  would be an injection point with ten tables behind it.
+- **`loadCustomerForRead` is separate from `loadAndVerifyCustomer`.** The
+  latter refuses an *inactive* customer — correct when granting, wrong when
+  reading or revoking: suspending a customer must not strip the admin's ability
+  to see or take back what it holds.
+- **Reads join to the resource table**, so names come back rather than bare
+  uuids, and soft-deleted rows drop out of both lists.
+- **Scoped to the caller's tenant in both directions**; an id from another
+  tenant answers 404 (§4g).
+- The picker is capped at 100 rows; `search` is how you reach the rest.
+- `npm run verify:resource-assignments <db>` — 20 checks against real
+  PostgreSQL, including the two-tier bound and both isolation directions.
+
+### Frontend
+
+`src/features/assignments/` — one `ResourceAssignmentPanel` takes either
+`customerId` or `userId` and is mounted as an **"Assigned resources"** tab on
+both `CustomerDetailsPage` and `CustomerUserDetailsPage`. Mutations invalidate
+the whole `assignments` query key rather than a surgical subset: granting to a
+customer changes what their *users* may be given, so a narrower invalidation
+leaves the user picker offering something that is no longer correct.
+
+---
+
+## 4j. Sidebar information architecture and role gating
+
+Two facts about `src/components/layout/Sidebar.tsx` that are easy to get wrong:
+
+1. **Hiding a nav item is cosmetic.** The route guard and the server's
+   `@Roles` are the enforcement. An entry absent from the sidebar is still
+   reachable by typing the URL; that is fine, because the API refuses. But an
+   operator-only screen in every user's sidebar is still a bug.
+2. **Two independent filters run**, and both must pass: `item.feature` against
+   the subscription's feature flags, and `item.roles` against `user.role`.
+   Before this round only three items had `roles`, so all four roles saw
+   essentially the same menu and only the backend differentiated.
+
+The role matrix now applied (verified by rendering each role against a mocked
+API rather than by reading the source):
+
+| Role | Top-level entries |
+|---|---|
+| `super_admin` | **Tenants** + all 23 others |
+| `tenant_admin` | The same 23, no Tenants |
+| `customer` | Overview, Solution Dashboards, Objects, Reports, Floor Plans, Alerts, Analytics, Users & Roles, Automation, Schedule Management, Notifications, Sharing Center, Settings |
+| `customer_user` | Overview, Solution Dashboards, Objects, Floor Plans, Alerts, Analytics, Notifications, Settings |
+
+`SUPER_ADMIN` must be listed explicitly everywhere — the frontend filter has no
+bypass for it, matching `RolesGuard` (§4g).
+
+### What moved, and why
+
+- **Integrations** lost six entries: `MQTT Integration` and `Decoder Config`
+  (features of an integration, not sections), `API Logs` and `API Statistics`
+  (they belong to API Monitoring, which already has both), and `Add Converter`
+  and `Test Data Converter` (screens *within* the converter flow). Four of the
+  six used a raw English string as their `titleKey`, so they had never been
+  translated in either language — a reliable sign an entry was added without
+  being thought about.
+- **Payload codecs** moved from Rule Engine to Integrations. A codec decodes a
+  device payload on ingestion; it is not a rule-engine node and no rule chain
+  references one.
+- **Reports** moved to immediately below Firmware & OTA.
+- **Settings** became a parent: *General settings* (`/settings`) and *Email
+  templates* (`/settings/email-templates`, admin-only). Email templates had a
+  working tenant-scoped backend (§4g) and no way in from the menu.
+
+---
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
@@ -1478,6 +1579,8 @@ npm run verify:reports-groups-queues <db>
 npm run verify:snmp                <db>
 npm run verify:lwm2m               <db>
 npm run verify:rpc                 <db>
+npm run verify:resource-assignments <db>  # assignment reads — scoping + the
+                                          #   two-tier customer→user bound (§4i)
 
 # ── Migrations: `migration:run` is blocked by the drift in §11, so each new
 #    migration ships with a standalone runner that applies it in isolation ───

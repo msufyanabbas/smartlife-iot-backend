@@ -14,6 +14,14 @@ import { User, Customer, CustomerUserLimit, CustomerDevice, CustomerDashboard, C
 // ─────────────────────────────────────────────────────────────────────────────
 export type ResourceType = 'devices' | 'dashboards' | 'assets' | 'floorPlans' | 'automations';
 
+/** One assignable resource, with the name a person can actually recognise. */
+export interface AssignedResource {
+  id: string;
+  name: string;
+  assignedAt?: Date;
+  assignedBy?: string | null;
+}
+
 // Maps resource type to the permission resource string used in the permissions table
 const RESOURCE_TO_PERMISSION: Record<ResourceType, string> = {
   devices: 'devices',
@@ -645,6 +653,26 @@ export class AssignmentService {
     return customer;
   }
 
+  /**
+   * Load a customer for a READ, checking tenant ownership only.
+   *
+   * `loadAndVerifyCustomer()` additionally refuses an inactive customer, which
+   * is right for granting a resource and wrong for looking at what they
+   * already hold: a suspended customer is exactly when an operator needs to
+   * see — and revoke — their assignments. Reusing the write-path check here
+   * made the assignment screen 403 for the customers it matters most for.
+   */
+  private async loadCustomerForRead(
+    customerId: string,
+    tenantId: string | undefined,
+  ): Promise<Customer> {
+    const customer = await this.customersRepo.findOne({
+      where: { id: customerId, tenantId },
+    });
+    if (!customer) throw new NotFoundException('Customer not found');
+    return customer;
+  }
+
   private async loadSubscription(tenantId: string | undefined): Promise<Subscription> {
     const subscription = await this.subscriptionsRepo.findOne({
       where: { tenantId },
@@ -777,4 +805,183 @@ private async verifyResourceExists(
     throw new NotFoundException(`${resourceType.slice(0, -1)} not found`);
   }
 }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LISTING — what is assigned, and what could still be assigned
+  //
+  // The module shipped with assign and unassign and **no GET route at all**,
+  // so no screen could ever show the current state: a tenant admin could grant
+  // a device to a customer and then had no way to see, or revoke, what they
+  // had granted. These three reads are what make an assignment UI possible.
+  //
+  // Everything is pinned to the caller's tenant. `customerId` and `userId`
+  // arrive from the URL, so without that predicate one tenant could enumerate
+  // another's assignments by guessing a uuid.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** Junction table, owning column and display column for each resource type. */
+  private static readonly RESOURCE_SOURCES: Record<
+    ResourceType,
+    { table: string; idColumn: string; nameColumn: string }
+  > = {
+    devices: { table: 'devices', idColumn: 'deviceId', nameColumn: 'name' },
+    dashboards: { table: 'dashboards', idColumn: 'dashboardId', nameColumn: 'name' },
+    assets: { table: 'assets', idColumn: 'assetId', nameColumn: 'name' },
+    floorPlans: { table: 'floor_plans', idColumn: 'floorPlanId', nameColumn: 'name' },
+    automations: { table: 'automations', idColumn: 'automationId', nameColumn: 'name' },
+  };
+
+  private static readonly CUSTOMER_JUNCTIONS: Record<ResourceType, string> = {
+    devices: 'customer_devices',
+    dashboards: 'customer_dashboards',
+    assets: 'customer_assets',
+    floorPlans: 'customer_floor_plans',
+    automations: 'customer_automations',
+  };
+
+  private static readonly USER_JUNCTIONS: Record<ResourceType, string> = {
+    devices: 'user_devices',
+    dashboards: 'user_dashboards',
+    assets: 'user_assets',
+    floorPlans: 'user_floor_plans',
+    automations: 'user_automations',
+  };
+
+  static readonly RESOURCE_TYPES: ResourceType[] = [
+    'devices',
+    'dashboards',
+    'assets',
+    'floorPlans',
+    'automations',
+  ];
+
+  /**
+   * Everything assigned to a customer, grouped by resource type.
+   *
+   * Joined to the resource table so the caller gets names, not bare uuids —
+   * a list of uuids is not something anyone can act on.
+   */
+  async listCustomerAssignments(
+    customerId: string,
+    tenantId: string | undefined,
+  ): Promise<Record<ResourceType, AssignedResource[]>> {
+    await this.loadCustomerForRead(customerId, tenantId);
+
+    const result = {} as Record<ResourceType, AssignedResource[]>;
+    for (const type of AssignmentService.RESOURCE_TYPES) {
+      const junction = AssignmentService.CUSTOMER_JUNCTIONS[type];
+      const source = AssignmentService.RESOURCE_SOURCES[type];
+      // Table and column names come from the two constant maps above, never
+      // from the request, so this cannot be injected into.
+      result[type] = await this.dataSource.query(
+        `SELECT r.id            AS "id",
+                r."${source.nameColumn}" AS "name",
+                j.created_at    AS "assignedAt",
+                j."assignedBy"  AS "assignedBy"
+           FROM "${junction}" j
+           JOIN "${source.table}" r ON r.id = j."${source.idColumn}"
+          WHERE j."customerId" = $1
+            AND j."tenantId" = $2
+            AND r.deleted_at IS NULL
+          ORDER BY r."${source.nameColumn}" ASC`,
+        [customerId, tenantId],
+      );
+    }
+    return result;
+  }
+
+  /** Everything assigned to one user, grouped by resource type. */
+  async listUserAssignments(
+    userId: string,
+    tenantId: string | undefined,
+  ): Promise<Record<ResourceType, AssignedResource[]>> {
+    const user = await this.usersRepo.findOne({ where: { id: userId } });
+    if (!user || (tenantId && user.tenantId !== tenantId)) {
+      // 404 rather than 403, so a uuid cannot be probed across tenants.
+      throw new NotFoundException('User not found');
+    }
+
+    const result = {} as Record<ResourceType, AssignedResource[]>;
+    for (const type of AssignmentService.RESOURCE_TYPES) {
+      const junction = AssignmentService.USER_JUNCTIONS[type];
+      const source = AssignmentService.RESOURCE_SOURCES[type];
+      result[type] = await this.dataSource.query(
+        `SELECT r.id            AS "id",
+                r."${source.nameColumn}" AS "name",
+                j.created_at    AS "assignedAt",
+                j."assignedBy"  AS "assignedBy"
+           FROM "${junction}" j
+           JOIN "${source.table}" r ON r.id = j."${source.idColumn}"
+          WHERE j."userId" = $1
+            AND j."tenantId" = $2
+            AND r.deleted_at IS NULL
+          ORDER BY r."${source.nameColumn}" ASC`,
+        [userId, tenantId],
+      );
+    }
+    return result;
+  }
+
+  /**
+   * Resources of one type that could still be assigned.
+   *
+   * For a customer: everything in the tenant not already assigned to them.
+   * For a user: only what their customer already holds — the assign path
+   * enforces that rule, and offering a picker full of options the server will
+   * refuse is how a UI teaches people to distrust it.
+   */
+  async listAssignableResources(
+    resourceType: ResourceType,
+    tenantId: string | undefined,
+    target: { customerId?: string; userId?: string },
+    search?: string,
+  ): Promise<AssignedResource[]> {
+    const source = AssignmentService.RESOURCE_SOURCES[resourceType];
+    if (!source) throw new BadRequestException('Unknown resource type');
+
+    const params: any[] = [tenantId];
+    let sql = `SELECT r.id AS "id", r."${source.nameColumn}" AS "name"
+                 FROM "${source.table}" r
+                WHERE r."tenantId" = $1
+                  AND r.deleted_at IS NULL`;
+
+    if (target.userId) {
+      const user = await this.usersRepo.findOne({ where: { id: target.userId } });
+      if (!user || (tenantId && user.tenantId !== tenantId)) {
+        throw new NotFoundException('User not found');
+      }
+      if (!user.customerId) {
+        // A user with no customer can hold nothing: the assign path requires
+        // the resource to belong to their customer first.
+        return [];
+      }
+      params.push(user.customerId);
+      sql += ` AND EXISTS (
+                 SELECT 1 FROM "${AssignmentService.CUSTOMER_JUNCTIONS[resourceType]}" cj
+                  WHERE cj."${source.idColumn}" = r.id AND cj."customerId" = $${params.length})`;
+      params.push(target.userId);
+      sql += ` AND NOT EXISTS (
+                 SELECT 1 FROM "${AssignmentService.USER_JUNCTIONS[resourceType]}" uj
+                  WHERE uj."${source.idColumn}" = r.id AND uj."userId" = $${params.length})`;
+    } else if (target.customerId) {
+      await this.loadCustomerForRead(target.customerId, tenantId);
+      params.push(target.customerId);
+      sql += ` AND NOT EXISTS (
+                 SELECT 1 FROM "${AssignmentService.CUSTOMER_JUNCTIONS[resourceType]}" cj
+                  WHERE cj."${source.idColumn}" = r.id AND cj."customerId" = $${params.length})`;
+    } else {
+      throw new BadRequestException('Either customerId or userId is required');
+    }
+
+    if (search?.trim()) {
+      params.push(`%${search.trim()}%`);
+      sql += ` AND r."${source.nameColumn}" ILIKE $${params.length}`;
+    }
+
+    // Bounded: a tenant with 50,000 devices must not return all of them into
+    // a picker. The search box is how you reach the rest.
+    sql += ` ORDER BY r."${source.nameColumn}" ASC LIMIT 100`;
+
+    return this.dataSource.query(sql, params);
+  }
 }

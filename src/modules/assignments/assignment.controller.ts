@@ -1,12 +1,15 @@
 // src/modules/assignments/assignment.controller.ts
 import {
   Controller,
+  Get,
   Post,
   Delete,
   Body,
   Param,
+  Query,
   HttpCode,
   HttpStatus,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -194,5 +197,73 @@ export class AssignmentController {
       success: true,
       message: `${resourceType.slice(0, -1)} unassigned from user successfully`,
     };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // READS
+  //
+  // This controller had assign and unassign and no GET at all, so a tenant
+  // admin could grant a device to a customer and then had no way to see or
+  // revoke it. These three are what an assignment screen is built on.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Get('customer/:customerId')
+  @TenantAdminOnly()
+  @ApiOperation({
+    summary: 'Everything assigned to a customer',
+    description:
+      'Grouped by resource type, joined to each resource so names come back ' +
+      'rather than bare uuids.',
+  })
+  @ApiResponse({ status: 200, description: 'Assignments grouped by type' })
+  async listCustomerAssignments(
+    @CurrentUser() user: User,
+    @Param('customerId', ParseUUIDPipe) customerId: string,
+  ) {
+    return this.assignmentService.listCustomerAssignments(
+      customerId,
+      user.tenantId,
+    );
+  }
+
+  @Get('user/:userId')
+  @CustomerAdminOnly()
+  @ApiOperation({ summary: 'Everything assigned to one user' })
+  @ApiResponse({ status: 200, description: 'Assignments grouped by type' })
+  async listUserAssignments(
+    @CurrentUser() user: User,
+    @Param('userId', ParseUUIDPipe) userId: string,
+  ) {
+    return this.assignmentService.listUserAssignments(userId, user.tenantId);
+  }
+
+  @Get('assignable/:resourceType')
+  @CustomerAdminOnly()
+  @ApiOperation({
+    summary: 'Resources that could still be assigned',
+    description:
+      'Pass customerId to see what the tenant holds and the customer does ' +
+      'not. Pass userId to see what that user’s customer holds and the user ' +
+      'does not — the assign path requires the customer to hold it first, so ' +
+      'offering anything else would be a picker full of options the server ' +
+      'refuses. Capped at 100; use `search` to reach the rest.',
+  })
+  @ApiQuery({ name: 'customerId', required: false, type: String })
+  @ApiQuery({ name: 'userId', required: false, type: String })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiResponse({ status: 200, description: 'Assignable resources' })
+  async listAssignable(
+    @CurrentUser() user: User,
+    @Param('resourceType') resourceType: ResourceType,
+    @Query('customerId') customerId?: string,
+    @Query('userId') userId?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.assignmentService.listAssignableResources(
+      resourceType,
+      user.tenantId,
+      { customerId, userId },
+      search,
+    );
   }
 }
