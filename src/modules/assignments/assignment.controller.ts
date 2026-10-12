@@ -23,9 +23,20 @@ import { AssignmentService } from './assignment.service';
 import type { ResourceType } from './assignment.service';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/index.entities';
-import { TenantAdminOnly, CustomerAdminOnly } from '@common/decorators/access-control.decorator';
+import {
+  TenantAdminOnly,
+  CustomerAdminOnly,
+  TenantOrCustomerAdmin,
+} from '@common/decorators/access-control.decorator';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
-import { IsEnum, IsString } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
+  IsEnum,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 
 // ══════════════════════════════════════════════════════════════════════════
 // DTOs
@@ -45,6 +56,49 @@ class AssignToCustomerDto {
 class AssignToUserDto {
   @IsString()
   resourceId: string;
+
+  @IsEnum(['devices', 'dashboards', 'assets', 'floorPlans', 'automations'])
+  resourceType: ResourceType;
+
+  @IsString()
+  userId: string;
+}
+
+/**
+ * Bodies for the bulk and reverse routes.
+ *
+ * `resourceIds` is capped at the DTO layer as well as in the service: the
+ * global ValidationPipe runs `forbidNonWhitelisted`, so an oversized array
+ * should be refused before it reaches a loop that does two writes per element.
+ */
+class ResourceIdsDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(500)
+  @IsUUID('4', { each: true })
+  resourceIds: string[];
+}
+
+class BulkAssignToCustomerDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(200)
+  @IsUUID('4', { each: true })
+  resourceIds: string[];
+
+  @IsEnum(['devices', 'dashboards', 'assets', 'floorPlans', 'automations'])
+  resourceType: ResourceType;
+
+  @IsString()
+  customerId: string;
+}
+
+class BulkAssignToUserDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(200)
+  @IsUUID('4', { each: true })
+  resourceIds: string[];
 
   @IsEnum(['devices', 'dashboards', 'assets', 'floorPlans', 'automations'])
   resourceType: ResourceType;
@@ -264,6 +318,132 @@ export class AssignmentController {
       user.tenantId,
       { customerId, userId },
       search,
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // THE REVERSE DIRECTION — "who holds this device?"
+  //
+  // Everything above is customer-first. These are resource-first, which is
+  // where the question is actually asked: you are looking at a device list
+  // and want to hand one to a customer, exactly as ThingsBoard does it.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Get('resource/:resourceType/:resourceId')
+  @TenantOrCustomerAdmin()
+  @ApiOperation({
+    summary: 'Who holds this resource',
+    description: 'The customers it is assigned to, and the individual users under them.',
+  })
+  @ApiResponse({ status: 200, description: 'Holders of the resource' })
+  async listResourceHolders(
+    @CurrentUser() user: User,
+    @Param('resourceType') resourceType: ResourceType,
+    @Param('resourceId', ParseUUIDPipe) resourceId: string,
+  ) {
+    return this.assignmentService.listResourceHolders(
+      resourceType,
+      resourceId,
+      user.tenantId,
+    );
+  }
+
+  @Post('holders/:resourceType')
+  @TenantOrCustomerAdmin()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Holders for a page of resources',
+    description:
+      'POST rather than GET because a page of 50 uuids does not belong in a ' +
+      'query string. Two queries, not 2N — an "Assigned to" column rendered ' +
+      'one request per row is what this exists to prevent.',
+  })
+  @ApiResponse({ status: 200, description: 'Map of resourceId to its holders' })
+  async listHoldersForMany(
+    @CurrentUser() user: User,
+    @Param('resourceType') resourceType: ResourceType,
+    @Body() dto: ResourceIdsDto,
+  ) {
+    return this.assignmentService.listHoldersForMany(
+      resourceType,
+      dto.resourceIds,
+      user.tenantId,
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BULK
+  //
+  // Partial success is reported, not rolled back: with quotas in play the
+  // 31st of 40 devices can legitimately be the one refused, and "30 done, 10
+  // over the limit" is both the truth and the actionable answer.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  @Post('customer/bulk')
+  @TenantAdminOnly()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Assign many resources to one customer' })
+  @ApiResponse({ status: 200, description: 'Per-resource outcome' })
+  async assignManyToCustomer(
+    @CurrentUser() user: User,
+    @Body() dto: BulkAssignToCustomerDto,
+  ) {
+    return this.assignmentService.assignManyToCustomer(
+      dto.resourceIds,
+      dto.resourceType,
+      dto.customerId,
+      user,
+    );
+  }
+
+  @Post('user/bulk')
+  @CustomerAdminOnly()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Assign many resources to one user' })
+  @ApiResponse({ status: 200, description: 'Per-resource outcome' })
+  async assignManyToUser(
+    @CurrentUser() user: User,
+    @Body() dto: BulkAssignToUserDto,
+  ) {
+    return this.assignmentService.assignManyToUser(
+      dto.resourceIds,
+      dto.resourceType,
+      dto.userId,
+      user,
+    );
+  }
+
+  @Post('customer/bulk-unassign')
+  @TenantAdminOnly()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Unassign many resources from one customer' })
+  @ApiResponse({ status: 200, description: 'Per-resource outcome' })
+  async unassignManyFromCustomer(
+    @CurrentUser() user: User,
+    @Body() dto: BulkAssignToCustomerDto,
+  ) {
+    return this.assignmentService.unassignManyFromCustomer(
+      dto.resourceIds,
+      dto.resourceType,
+      dto.customerId,
+      user,
+    );
+  }
+
+  @Post('user/bulk-unassign')
+  @CustomerAdminOnly()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Unassign many resources from one user' })
+  @ApiResponse({ status: 200, description: 'Per-resource outcome' })
+  async unassignManyFromUser(
+    @CurrentUser() user: User,
+    @Body() dto: BulkAssignToUserDto,
+  ) {
+    return this.assignmentService.unassignManyFromUser(
+      dto.resourceIds,
+      dto.resourceType,
+      dto.userId,
+      user,
     );
   }
 }

@@ -65,9 +65,15 @@ const ADMIN_A = randomUUID();
     ]);
   }
   for (const [id, tenant] of [[CUST_A, T_A], [CUST_B, T_B]] as const) {
-    await q('INSERT INTO customers (id, name, email, "tenantId") VALUES ($1,$2,$3,$4)', [
-      id, `Cust ${id.slice(0, 8)}`, `c-${id.slice(0, 8)}@example.invalid`, tenant,
-    ]);
+    // `customers.status` defaults to 'inactive', and the assign path refuses
+    // an inactive customer. Leaving the default made every bulk assignment
+    // fail with "Customer account is not active" — correct behaviour, useless
+    // fixture.
+    await q(
+      `INSERT INTO customers (id, name, email, "tenantId", status)
+       VALUES ($1,$2,$3,$4,'active')`,
+      [id, `Cust ${id.slice(0, 8)}`, `c-${id.slice(0, 8)}@example.invalid`, tenant],
+    );
   }
   const addUser = (id: string, role: string, tenantId: string, customerId: string | null) =>
     q(`INSERT INTO users (id,email,password,name,role,"tenantId","customerId")
@@ -182,6 +188,123 @@ const ADMIN_A = randomUUID();
     denied = true;
   }
   ok("tenant B cannot read tenant A's user assignments", denied);
+
+  // ── The reverse direction: "who holds this device?" ───────────────────────
+  //
+  // This is where the question is actually asked — you are looking at a
+  // device list and want to hand one over. The per-row lookup and the
+  // batched one must agree, or an "Assigned to" column shows something
+  // different from the dialog that opens next to it.
+  section('7. Reverse lookup — who holds this resource');
+  let holders = await service.listResourceHolders('devices', devices['Beta sensor'], T_A);
+  ok('the holding customer comes back by name',
+    holders.customers.length === 1 && holders.customers[0].name.startsWith('Cust'),
+    holders.customers);
+  ok('no user holds it yet', holders.users.length === 0, holders.users);
+
+  holders = await service.listResourceHolders('devices', devices['Alpha sensor'], T_A);
+  ok('a device held by a user reports that user',
+    holders.users.length === 1 && holders.users[0].id === USER_A,
+    holders.users);
+  ok('and the user row carries their customer',
+    holders.users[0]?.customerId === CUST_A);
+
+  holders = await service.listResourceHolders('devices', devices['Gamma sensor'], T_A);
+  ok('an unassigned device reports nobody',
+    holders.customers.length === 0 && holders.users.length === 0);
+
+  let crossTenant = false;
+  try {
+    await service.listResourceHolders('devices', foreignDevice, T_A);
+  } catch {
+    crossTenant = true;
+  }
+  ok("tenant A cannot ask who holds tenant B's device", crossTenant);
+
+  let badType = false;
+  try {
+    await service.listResourceHolders('devices; DROP TABLE users' as any, devices['Beta sensor'], T_A);
+  } catch {
+    badType = true;
+  }
+  ok('an unknown resourceType is refused, not interpolated', badType);
+
+  section('8. Batched reverse lookup matches the per-row one');
+  const batched = await service.listHoldersForMany(
+    'devices',
+    [devices['Alpha sensor'], devices['Beta sensor'], devices['Gamma sensor']],
+    T_A,
+  );
+  ok('every requested id is a key, even with no holders',
+    Object.keys(batched).length === 3, Object.keys(batched).length);
+  ok('Beta matches the per-row answer',
+    batched[devices['Beta sensor']].customers.length === 1);
+  ok('Gamma is present and empty, not absent',
+    !!batched[devices['Gamma sensor']] &&
+      batched[devices['Gamma sensor']].customers.length === 0);
+  ok('Alpha reports its user',
+    batched[devices['Alpha sensor']].users.length === 1);
+  const foreignBatch = await service.listHoldersForMany('devices', [foreignDevice], T_A);
+  ok("another tenant's device comes back with no holders, not theirs",
+    foreignBatch[foreignDevice].customers.length === 0);
+
+  section('9. Bulk assignment reports per-resource outcome');
+  // A real assignment passes three gates, so the fixture has to satisfy all
+  // three or every row fails for a reason that has nothing to do with bulk:
+  //   1. an ACTIVE subscription whose plan includes the `devices` feature
+  //   2. a customer with a granted `devices` permission
+  //   3. headroom under both the subscription limit and the customer allocation
+  await q(
+    `INSERT INTO subscriptions ("tenantId", plan, status, limits, features, usage)
+     VALUES ($1,'professional','active',$2,$3,$4)`,
+    [
+      T_A,
+      JSON.stringify({ devices: 100, dashboards: 50, assets: 50, floorPlans: 25, automations: 50 }),
+      JSON.stringify({ devices: true, dashboards: true, assets: true, floorPlans: true, automations: true }),
+      JSON.stringify({ devices: 0, dashboards: 0, assets: 0, floorPlans: 0, automations: 0 }),
+    ],
+  );
+  // `grantedPermissions` is a RELATION to customer_permissions, not a jsonb
+  // column on customers — `loadAndVerifyCustomer` pulls it with
+  // `relations: ['grantedPermissions']`.
+  const permId = randomUUID();
+  await q(
+    `INSERT INTO permissions (id, resource, action, "isSystem") VALUES ($1,'devices','read',true)`,
+    [permId],
+  );
+  await q(
+    `INSERT INTO customer_permissions ("customerId","permissionId") VALUES ($1,$2)`,
+    [CUST_A, permId],
+  );
+
+  const actor = { id: ADMIN_A, tenantId: T_A, role: 'tenant_admin' } as any;
+  const bulk = await service.assignManyToCustomer(
+    [devices['Gamma sensor'], randomUUID()],
+    'devices',
+    CUST_A,
+    actor,
+  );
+  ok('the real device succeeded',
+    bulk.succeeded.length === 1 && bulk.succeeded[0] === devices['Gamma sensor'],
+    bulk);
+  ok('the bogus id failed WITHOUT rolling back the good one',
+    bulk.failed.length === 1, bulk.failed);
+  ok('and the failure carries a reason, not just a flag',
+    !!bulk.failed[0]?.reason && bulk.failed[0].reason.length > 3,
+    bulk.failed[0]);
+  ok('requested counts the de-duplicated input', bulk.requested === 2);
+  const afterBulk = await service.listCustomerAssignments(CUST_A, T_A);
+  ok('the successful one really landed',
+    afterBulk.devices.some((d) => d.name === 'Gamma sensor'),
+    afterBulk.devices.map((d) => d.name));
+
+  let emptyRejected = false;
+  try {
+    await service.assignManyToCustomer([], 'devices', CUST_A, actor);
+  } catch {
+    emptyRejected = true;
+  }
+  ok('an empty bulk is refused rather than silently succeeding', emptyRejected);
 
   section('6. A soft-deleted resource disappears');
   await q('UPDATE devices SET deleted_at = now() WHERE id = $1', [devices['Alpha sensor']]);

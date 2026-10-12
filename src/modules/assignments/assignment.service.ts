@@ -22,6 +22,29 @@ export interface AssignedResource {
   assignedBy?: string | null;
 }
 
+/** A customer or user that holds a given resource — the reverse direction. */
+export interface ResourceHolder {
+  id: string;
+  name: string;
+  email?: string;
+  /** Only on a user: which customer they sit under. */
+  customerId?: string;
+  customerName?: string;
+  assignedAt?: Date;
+  assignedBy?: string | null;
+}
+
+/**
+ * Per-resource outcome of a bulk assignment. A partial success is the normal
+ * case once quotas are involved, so the shape makes it reportable rather than
+ * collapsing to a single boolean.
+ */
+export interface BulkAssignmentResult {
+  requested: number;
+  succeeded: string[];
+  failed: { resourceId: string; reason: string }[];
+}
+
 // Maps resource type to the permission resource string used in the permissions table
 const RESOURCE_TO_PERMISSION: Record<ResourceType, string> = {
   devices: 'devices',
@@ -983,5 +1006,219 @@ private async verifyResourceExists(
     sql += ` ORDER BY r."${source.nameColumn}" ASC LIMIT 100`;
 
     return this.dataSource.query(sql, params);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // THE REVERSE DIRECTION
+  //
+  // Everything above answers "what does this customer hold?". A device list
+  // needs the opposite — "who holds THIS device?" — because that is where the
+  // question is actually asked: you are looking at a device and want to give
+  // it to someone. Without these, an "Assigned to" column would be one request
+  // per row.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** Who holds one resource: the customers, and the individual users under them. */
+  async listResourceHolders(
+    resourceType: ResourceType,
+    resourceId: string,
+    tenantId: string | undefined,
+  ): Promise<{ customers: ResourceHolder[]; users: ResourceHolder[] }> {
+    this.assertKnownResourceType(resourceType);
+    await this.verifyResourceExists(resourceId, resourceType, tenantId);
+
+    const idColumn = AssignmentService.RESOURCE_SOURCES[resourceType].idColumn;
+    const customerJunction = AssignmentService.CUSTOMER_JUNCTIONS[resourceType];
+    const userJunction = AssignmentService.USER_JUNCTIONS[resourceType];
+
+    const customers = await this.dataSource.query(
+      `SELECT c.id, c.name, j."assignedAt", j."assignedBy"
+         FROM "${customerJunction}" j
+         JOIN customers c ON c.id = j."customerId" AND c.deleted_at IS NULL
+        WHERE j."${idColumn}" = $1 AND j."tenantId" = $2
+        ORDER BY c.name ASC`,
+      [resourceId, tenantId],
+    );
+
+    const users = await this.dataSource.query(
+      `SELECT u.id, u.name, u.email, j."customerId", c.name AS "customerName",
+              j."assignedAt", j."assignedBy"
+         FROM "${userJunction}" j
+         JOIN users u ON u.id = j."userId" AND u.deleted_at IS NULL
+         LEFT JOIN customers c ON c.id = j."customerId"
+        WHERE j."${idColumn}" = $1 AND j."tenantId" = $2
+        ORDER BY u.name ASC`,
+      [resourceId, tenantId],
+    );
+
+    return { customers, users };
+  }
+
+  /**
+   * The same question for a whole page of rows, in two queries rather than
+   * 2N. A 50-row device table calling `listResourceHolders` per row is 100
+   * round trips to render one column.
+   */
+  async listHoldersForMany(
+    resourceType: ResourceType,
+    resourceIds: string[],
+    tenantId: string | undefined,
+  ): Promise<Record<string, { customers: ResourceHolder[]; users: ResourceHolder[] }>> {
+    this.assertKnownResourceType(resourceType);
+
+    const out: Record<string, { customers: ResourceHolder[]; users: ResourceHolder[] }> = {};
+    const ids = [...new Set(resourceIds.filter(Boolean))];
+    if (ids.length === 0) return out;
+    // A page of a table. Anything larger is a caller bug, not a use case.
+    if (ids.length > 500) {
+      throw new BadRequestException('At most 500 resource ids per lookup');
+    }
+    for (const id of ids) out[id] = { customers: [], users: [] };
+
+    const idColumn = AssignmentService.RESOURCE_SOURCES[resourceType].idColumn;
+
+    const customerRows = await this.dataSource.query(
+      `SELECT j."${idColumn}" AS "resourceId", c.id, c.name
+         FROM "${AssignmentService.CUSTOMER_JUNCTIONS[resourceType]}" j
+         JOIN customers c ON c.id = j."customerId" AND c.deleted_at IS NULL
+        WHERE j."${idColumn}" = ANY($1) AND j."tenantId" = $2
+        ORDER BY c.name ASC`,
+      [ids, tenantId],
+    );
+    for (const row of customerRows) {
+      out[row.resourceId]?.customers.push({ id: row.id, name: row.name });
+    }
+
+    const userRows = await this.dataSource.query(
+      `SELECT j."${idColumn}" AS "resourceId", u.id, u.name, u.email, j."customerId"
+         FROM "${AssignmentService.USER_JUNCTIONS[resourceType]}" j
+         JOIN users u ON u.id = j."userId" AND u.deleted_at IS NULL
+        WHERE j."${idColumn}" = ANY($1) AND j."tenantId" = $2
+        ORDER BY u.name ASC`,
+      [ids, tenantId],
+    );
+    for (const row of userRows) {
+      out[row.resourceId]?.users.push({
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        customerId: row.customerId,
+      });
+    }
+
+    return out;
+  }
+
+  /**
+   * Assign many resources of one type in one call.
+   *
+   * Deliberately **not** a transaction, and deliberately per-resource results.
+   * Every grant runs the permission gate, the quota gate and two counter
+   * updates, so in a selection of 40 devices the 31st can legitimately be the
+   * one that exceeds the customer's allocation. Rolling back the 30 that
+   * succeeded would be worse than reporting them: the operator's intent was
+   * "give them these", and the honest answer is "30 done, 10 refused because
+   * the device limit is 30" — which is also the answer that tells them what to
+   * change.
+   */
+  async assignManyToCustomer(
+    resourceIds: string[],
+    resourceType: ResourceType,
+    customerId: string,
+    actor: User,
+  ): Promise<BulkAssignmentResult> {
+    this.assertKnownResourceType(resourceType);
+    return this.runBulk(resourceIds, (id) =>
+      this.assignResourceToCustomer(id, resourceType, customerId, actor),
+    );
+  }
+
+  async assignManyToUser(
+    resourceIds: string[],
+    resourceType: ResourceType,
+    userId: string,
+    actor: User,
+  ): Promise<BulkAssignmentResult> {
+    this.assertKnownResourceType(resourceType);
+    return this.runBulk(resourceIds, (id) =>
+      this.assignResourceToUser(id, resourceType, userId, actor),
+    );
+  }
+
+  async unassignManyFromCustomer(
+    resourceIds: string[],
+    resourceType: ResourceType,
+    customerId: string,
+    actor: User,
+  ): Promise<BulkAssignmentResult> {
+    this.assertKnownResourceType(resourceType);
+    return this.runBulk(resourceIds, (id) =>
+      this.unassignResourceFromCustomer(id, resourceType, customerId, actor),
+    );
+  }
+
+  async unassignManyFromUser(
+    resourceIds: string[],
+    resourceType: ResourceType,
+    userId: string,
+    actor: User,
+  ): Promise<BulkAssignmentResult> {
+    this.assertKnownResourceType(resourceType);
+    return this.runBulk(resourceIds, (id) =>
+      this.unassignResourceFromUser(id, resourceType, userId, actor),
+    );
+  }
+
+  /**
+   * Sequential on purpose. Each grant reads and writes the same customer's
+   * `usageCounters` and the tenant's subscription `usage`; running them
+   * concurrently makes those read-modify-write pairs race, and the counters
+   * end up under the real number — which then lets the next assignment past a
+   * quota it should have failed.
+   */
+  private async runBulk(
+    resourceIds: string[],
+    operation: (resourceId: string) => Promise<void>,
+  ): Promise<BulkAssignmentResult> {
+    const ids = [...new Set(resourceIds.filter(Boolean))];
+    if (ids.length === 0) {
+      throw new BadRequestException('No resource ids supplied');
+    }
+    if (ids.length > 200) {
+      throw new BadRequestException('At most 200 resources per bulk operation');
+    }
+
+    const succeeded: string[] = [];
+    const failed: { resourceId: string; reason: string }[] = [];
+
+    for (const resourceId of ids) {
+      try {
+        await operation(resourceId);
+        succeeded.push(resourceId);
+      } catch (error: any) {
+        // The reason is the whole point of the result — "quota reached" and
+        // "already assigned" need different reactions from the operator.
+        failed.push({
+          resourceId,
+          reason: error?.message ?? 'Unknown error',
+        });
+      }
+    }
+
+    return { requested: ids.length, succeeded, failed };
+  }
+
+  /**
+   * `resourceType` arrives as a URL segment and is interpolated into table
+   * names below. The constant maps are the only source of those names, but an
+   * unknown key would yield `undefined` and a SQL syntax error rather than a
+   * clean 400, so it is rejected up front.
+   */
+  private assertKnownResourceType(resourceType: ResourceType): void {
+    if (!AssignmentService.RESOURCE_TYPES.includes(resourceType)) {
+      throw new BadRequestException(
+        `Unknown resource type '${resourceType}'. Expected one of: ${AssignmentService.RESOURCE_TYPES.join(', ')}`,
+      );
+    }
   }
 }

@@ -1142,14 +1142,69 @@ the tenant owns looks broken unless you explain why.
 - `npm run verify:resource-assignments <db>` — 20 checks against real
   PostgreSQL, including the two-tier bound and both isolation directions.
 
+### Both directions, and which one the UI uses
+
+The customer-first routes above answer "what does this customer hold?". The
+question people actually ask is the reverse — "who holds THIS device?" —
+because you are looking at a device list and want to hand one over. Three
+more routes serve that direction:
+
+| Route | Role | Purpose |
+|---|---|---|
+| `GET /assignments/resource/:resourceType/:resourceId` | `@TenantOrCustomerAdmin()` | Who holds one resource |
+| `POST /assignments/holders/:resourceType` | `@TenantOrCustomerAdmin()` | Holders for a page of rows — **two queries, not 2N** |
+| `POST /assignments/{customer,user}/bulk[-unassign]` | admin per level | Many resources, one target |
+
+- **`holders/:resourceType` is a POST** because a page of 50 uuids does not
+  belong in a query string. The alternative — a GET per row — is what makes
+  an "Assigned to" column get removed again a week later.
+- **Bulk is sequential and NOT transactional.** Every grant runs the
+  permission gate, the quota gate and two counter updates, so in a selection
+  of 40 the 31st can legitimately be the one that exceeds the allocation.
+  Rolling back the 30 that worked would be worse than reporting them:
+  `{requested, succeeded[], failed[{resourceId, reason}]}` is both the truth
+  and the answer that says what to change. Sequential because each grant
+  read-modify-writes the same customer's `usageCounters` and the tenant's
+  subscription `usage`; running them concurrently races those pairs and
+  leaves the counters under the real number, which then lets the next
+  assignment past a quota it should have failed.
+- `assertKnownResourceType()` guards every route that interpolates
+  `resourceType` into a table name. The constant maps are the only source of
+  those names, but an unknown key yields `undefined` and a SQL syntax error
+  rather than a clean 400.
+
 ### Frontend
 
-`src/features/assignments/` — one `ResourceAssignmentPanel` takes either
-`customerId` or `userId` and is mounted as an **"Assigned resources"** tab on
-both `CustomerDetailsPage` and `CustomerUserDetailsPage`. Mutations invalidate
-the whole `assignments` query key rather than a surgical subset: granting to a
-customer changes what their *users* may be given, so a narrower invalidation
-leaves the user picker offering something that is no longer correct.
+`src/features/assignments/` holds both directions.
+
+**Customer-first** — `ResourceAssignmentPanel` takes either `customerId` or
+`userId`, mounted as an **"Assigned resources"** tab on `CustomerDetailsPage`
+and `CustomerUserDetailsPage`. It is **read-only by default**
+(`allowAssign={false}`): granting happens on the resource, and five Assign
+buttons on a customer page were both redundant and the wrong way round.
+Revoking stays, because a list you cannot correct is a dead end.
+
+**Resource-first** — `useResourceAssignmentColumn(type, ids)` is the whole kit
+in one hook: the "Assigned to" column, the per-row action, the bulk-toolbar
+action and the dialog. Wiring a list page is four guarded insertions; see
+`DevicesPage.tsx` as the reference. Wired into devices, dashboards, assets,
+floor plans and automations.
+
+- `useAssignmentCapability()` is the single place the role rule lives:
+  tenant admin → assigns to **customers**; customer admin → assigns to
+  **users under their own customer**; customer_user → nothing, and the column
+  and action do not render. Hiding them is cosmetic; `@Roles` is the
+  enforcement.
+- The dialog passes `enabled` to `useCustomers` rather than ignoring the
+  result, because `GET /customers` is tenant-admin-only and a customer admin
+  would otherwise take a 403 on every mount.
+- Single-row assignment goes through the **bulk** route too, so one row and
+  forty rows report failures with the same reason string.
+- Mutations invalidate the whole `assignments` query key rather than a
+  surgical subset: granting to a customer changes what their *users* may be
+  given, and the holder columns on every open list are now stale too.
+- `BulkSelectionToolbar` / `BulkActions` gained an `extraActions` slot so
+  assignment could plug into the shared bulk bar instead of forking it.
 
 ---
 
