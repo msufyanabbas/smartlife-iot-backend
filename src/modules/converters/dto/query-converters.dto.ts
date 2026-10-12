@@ -16,12 +16,12 @@ import { ConverterDirection, ConverterType } from '../converter.enums';
  * boolean on its own.
  */
 export class QueryConvertersDto extends PaginationDto {
-  @ApiPropertyOptional({ enum: ConverterDirection })
+  @ApiPropertyOptional({ enum: ConverterDirection, enumName: 'ConverterDirection' })
   @IsOptional()
   @IsEnum(ConverterDirection)
   direction?: ConverterDirection;
 
-  @ApiPropertyOptional({ enum: ConverterType })
+  @ApiPropertyOptional({ enum: ConverterType, enumName: 'ConverterType' })
   @IsOptional()
   @IsEnum(ConverterType)
   type?: ConverterType;

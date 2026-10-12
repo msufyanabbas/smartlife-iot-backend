@@ -123,7 +123,7 @@ export class CreateQueueDto extends RoundTrippedServerFields {
   maxPendingMessages?: number;
 
   @ApiPropertyOptional({
-    enum: QueueSubmitStrategy,
+    enum: QueueSubmitStrategy, enumName: 'QueueSubmitStrategy',
     default: QueueSubmitStrategy.BURST,
     description:
       'HONOURED for BURST, SEQUENTIAL_BY_ORIGINATOR and SEQUENTIAL_BY_TENANT. BATCH and SEQUENTIAL are stored and behave as BURST.',
@@ -133,7 +133,7 @@ export class CreateQueueDto extends RoundTrippedServerFields {
   submitStrategy?: QueueSubmitStrategy;
 
   @ApiPropertyOptional({
-    enum: QueueProcessingStrategy,
+    enum: QueueProcessingStrategy, enumName: 'QueueProcessingStrategy',
     default: QueueProcessingStrategy.SKIP_ALL_FAILURES,
     description: 'HONOURED.',
   })

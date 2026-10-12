@@ -34,7 +34,7 @@ import {
  * `@IsObject()` alone would let an arbitrary blob into a jsonb column.
  */
 export class ReportDateRangeDto {
-  @ApiProperty({ enum: ReportDateRangeMode })
+  @ApiProperty({ enum: ReportDateRangeMode, enumName: 'ReportDateRangeMode' })
   @IsEnum(ReportDateRangeMode)
   mode: ReportDateRangeMode;
 
@@ -144,14 +144,14 @@ export class ReportFiltersDto {
 }
 
 export class ReportGroupingDto {
-  @ApiProperty({ enum: ReportGroupingInterval })
+  @ApiProperty({ enum: ReportGroupingInterval, enumName: 'ReportGroupingInterval' })
   @IsEnum(ReportGroupingInterval)
   interval: ReportGroupingInterval;
 }
 
 export class ReportDefinitionDto {
   @ApiProperty({
-    enum: ReportEntityKind,
+    enum: ReportEntityKind, enumName: 'ReportEntityKind',
     description:
       'Which row source answers this report. GET /reports/sources lists the ' +
       'columns and filters each one supports.',
@@ -231,7 +231,7 @@ export class ReportScheduleDto {
   @IsEmail({}, { each: true })
   recipients: string[];
 
-  @ApiPropertyOptional({ enum: ReportFormat })
+  @ApiPropertyOptional({ enum: ReportFormat, enumName: 'ReportFormat' })
   @IsOptional()
   @IsEnum(ReportFormat)
   format?: ReportFormat;
@@ -261,7 +261,7 @@ export class CreateReportTemplateDto {
   @Type(() => ReportDefinitionDto)
   definition: ReportDefinitionDto;
 
-  @ApiPropertyOptional({ enum: ReportFormat, default: ReportFormat.CSV })
+  @ApiPropertyOptional({ enum: ReportFormat, enumName: 'ReportFormat', default: ReportFormat.CSV })
   @IsOptional()
   @IsEnum(ReportFormat)
   format?: ReportFormat;
@@ -294,7 +294,7 @@ export class ReportTemplateQueryDto extends PaginationDto {
   @MaxLength(80)
   type?: string;
 
-  @ApiPropertyOptional({ enum: ReportEntityKind })
+  @ApiPropertyOptional({ enum: ReportEntityKind, enumName: 'ReportEntityKind' })
   @IsOptional()
   @IsEnum(ReportEntityKind)
   entity?: ReportEntityKind;
@@ -308,7 +308,7 @@ export class ReportTemplateQueryDto extends PaginationDto {
 
 export class GenerateReportDto {
   @ApiPropertyOptional({
-    enum: ReportFormat,
+    enum: ReportFormat, enumName: 'ReportFormat',
     description: 'Overrides the template’s format for this run only.',
   })
   @IsOptional()

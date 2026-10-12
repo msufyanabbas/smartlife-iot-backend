@@ -26,13 +26,13 @@ export enum ModelUpAxis {
  * is not a 2D plan's job to record.
  */
 export class GenerateModelDto {
-  @ApiPropertyOptional({ enum: ModelFormat, default: ModelFormat.GLB })
+  @ApiPropertyOptional({ enum: ModelFormat, enumName: 'ModelFormat', default: ModelFormat.GLB })
   @IsOptional()
   @IsEnum(ModelFormat)
   format?: ModelFormat = ModelFormat.GLB;
 
   @ApiPropertyOptional({
-    enum: ModelUpAxis,
+    enum: ModelUpAxis, enumName: 'ModelUpAxis',
     default: ModelUpAxis.Y_UP,
     description:
       'Ignored for STL, which has no axis convention and is written in the source Z-up frame.',

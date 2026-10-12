@@ -35,7 +35,7 @@ export class CreateGroupDto {
   description?: string;
 
   @ApiProperty({
-    enum: GroupEntityType,
+    enum: GroupEntityType, enumName: 'GroupEntityType',
     description:
       'The kind of entity this group holds. Immutable after creation — the ' +
       'members are ids in a different table per kind.',
@@ -143,7 +143,7 @@ export class MutableGroupFieldsDto {
 export class UpdateGroupDto extends PartialType(MutableGroupFieldsDto) {}
 
 export class GroupQueryDto extends PaginationDto {
-  @ApiPropertyOptional({ enum: GroupEntityType })
+  @ApiPropertyOptional({ enum: GroupEntityType, enumName: 'GroupEntityType' })
   @IsOptional()
   @IsEnum(GroupEntityType)
   entityType?: GroupEntityType;

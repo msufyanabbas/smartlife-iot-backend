@@ -29,7 +29,7 @@ export type FirmwareSortField = (typeof FIRMWARE_SORT_FIELDS)[number];
 
 export class QueryFirmwareDto extends PaginationDto {
   @ApiPropertyOptional({
-    enum: FIRMWARE_SORT_FIELDS,
+    enum: FIRMWARE_SORT_FIELDS, enumName: 'FIRMWARE_SORT_FIELDS',
     default: 'createdAt',
     description: 'Column to order by (allowlisted — see FIRMWARE_SORT_FIELDS)',
   })

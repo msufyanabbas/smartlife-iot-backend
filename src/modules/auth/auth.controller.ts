@@ -328,7 +328,7 @@ async setPassword(@Body() dto: SetCustomerPasswordDto) {
   @Delete('oauth/unlink/:provider')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Unlink an OAuth provider account' })
-  @ApiParam({ name: 'provider', type: String, enum: OAuthProviderEnum })
+  @ApiParam({ name: 'provider', type: String, enum: OAuthProviderEnum, enumName: 'OAuthProviderEnum' })
   @ApiResponse({ status: 200, description: 'OAuth account unlinked' })
   @ApiResponse({ status: 400, description: 'Cannot unlink — set password first' })
   @ApiParam({ name: 'provider', type: String, enum: OAuthProviderEnum, enumName: 'OAuthProviderEnum' })

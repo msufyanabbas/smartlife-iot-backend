@@ -5,12 +5,13 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  ParseEnumPipe,
   Patch,
   Post,
   Put,
   Query,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags, ApiParam,} from '@nestjs/swagger';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import {
   SwaggerAuth,
@@ -76,10 +77,37 @@ export class GroupsController {
       'empty list — not a 404 — for an entity in no groups or one that has been ' +
       'deleted, so a detail page does not break when its subject is removed.',
   })
+  /**
+   * `@ApiParam` with an explicit `enumName` is **required**, not decoration.
+   *
+   * Without it, `SchemaObjectFactory.createFromModel()` skips its
+   * `createEnumParam()` branch and falls through to
+   * `createQueryOrParamSchema()`. There it finds `param.type` holding the enum
+   * OBJECT — because **SWC**, which builds `dist`, emits the enum reference as
+   * `design:type` where `tsc` reduces a string enum to `String`. A TS enum is
+   * a plain object, so `isObjectLiteral()` is true and Swagger walks its
+   * members as if they were DTO properties, throwing
+   *
+   *     A circular dependency has been detected (property key: "DEVICE")
+   *
+   * at `SwaggerModule.createDocument()` — i.e. the container initialises every
+   * module and then exits 1. It reproduces only in the built image, never
+   * under ts-node. `npm run check:swagger` runs against `dist` for exactly
+   * this reason.
+   *
+   * `ParseEnumPipe` is the other half: the type annotation alone never
+   * validated anything, so any string in the path reached the service.
+   */
+  @ApiParam({
+    name: 'entityType',
+    enum: GroupEntityType,
+    enumName: 'GroupEntityType',
+  })
   @SwaggerAuth('Groups for an entity', 'The entity’s groups')
   groupsForEntity(
     @CurrentUser('tenantId') tenantId: string,
-    @Param('entityType') entityType: GroupEntityType,
+    @Param('entityType', new ParseEnumPipe(GroupEntityType))
+    entityType: GroupEntityType,
     @Param('entityId', ParseUUIDPipe) entityId: string,
   ) {
     return this.groupsService.groupsForEntity(tenantId, entityType, entityId);

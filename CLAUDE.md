@@ -1041,6 +1041,62 @@ correctly. The durable answer for untrusted code is a separate V8 isolate
 
 ---
 
+## 4h. Swagger, SWC, and the boot crash that only happens in the container
+
+`SwaggerModule.createDocument()` is the last thing `bootstrap()` does. When it
+throws, every module logs "dependencies initialized" and the process then exits
+**1** — so a container crash-loops with a stack trace that points into
+`@nestjs/swagger` and names a property but never the DTO it belongs to.
+
+### The rule
+
+> An enum on a **`@Query()` or `@Param()`** needs `enumName`, always.
+
+```ts
+@ApiParam({ name: 'entityType', enum: GroupEntityType, enumName: 'GroupEntityType' })
+@ApiPropertyOptional({ enum: ConverterDirection, enumName: 'ConverterDirection' })
+```
+
+Without `enumName`, `SchemaObjectFactory.createFromModel()` skips its
+`createEnumParam()` branch, falls through to `createQueryOrParamSchema()`, finds
+`param.type` holding the enum **object**, and — since a TypeScript enum is a
+plain object — `isObjectLiteral()` is true, so Swagger walks the enum's members
+as if they were DTO properties. The message you get is:
+
+```
+A circular dependency has been detected (property key: "DEVICE")
+```
+
+There is no circular dependency. "DEVICE" is the first member of the enum.
+
+### Why it reproduces only in the image
+
+**`dist` is built by SWC, and SWC emits different `design:type` metadata than
+tsc**: for `entityType: GroupEntityType`, tsc reduces a string enum to `String`
+while SWC keeps a reference to the enum object. So the same code builds a
+Swagger document perfectly under `ts-node` and crashes in the container.
+
+`npm run check:swagger` therefore builds `dist` first and probes **that** — it
+registers all 53 controllers into one bare module with stubbed dependencies
+(no database, no Kafka) and calls `createDocument`, in about a second. Pass
+`src` as an argument to compare the two compilers.
+
+Two things that make this easy to get wrong a second time:
+
+- **Describing controllers one at a time is not equivalent.** `createDocument`
+  accumulates one `schemas` map across the whole app, so the check builds a
+  single document, exactly as `bootstrap()` does.
+- **`enumName` means something completely different on a TypeORM column.**
+  `@Column({ type: 'enum', enum: X, enumName: 'X' })` names the **Postgres enum
+  type**, so adding it there is a schema change that makes every generated
+  migration want to rename a type. Only `@Api*` decorators take it.
+
+Immediate mitigation if this ever fires in production again: `ENABLE_SWAGGER=false`
+starts the app without building the document (it already defaults off when
+`NODE_ENV=production`).
+
+---
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
@@ -1402,6 +1458,9 @@ npm run check:rule-nodes          # every node type has a manifest and sane rout
 npm run check:rule-templates      # every built-in template is instantiable as shipped
 npm run check:expression-sandbox  # calculated-field formulas cannot reach the host
 npm run check:node-sandbox        # rule-node scripts cannot reach the host
+npm run check:swagger             # the Swagger document builds from dist (see §4h)
+                                  #   — builds dist first; this is the only check
+                                  #     that covers bootstrap()
 node scripts/check-exception-filter.js   # field-level errors reach the client
 
 # ── Verification: each needs its own empty database (createdb first) ────────

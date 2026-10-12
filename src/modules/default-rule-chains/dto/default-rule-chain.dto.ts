@@ -58,7 +58,7 @@ export class CreateDefaultRuleChainDto {
   description?: string;
 
   @ApiPropertyOptional({
-    enum: DefaultRuleChainOriginatorType,
+    enum: DefaultRuleChainOriginatorType, enumName: 'DefaultRuleChainOriginatorType',
     default: DefaultRuleChainOriginatorType.DEVICE,
     description: '`*` matches any originator.',
   })
@@ -67,7 +67,7 @@ export class CreateDefaultRuleChainDto {
   originatorType?: DefaultRuleChainOriginatorType;
 
   @ApiPropertyOptional({
-    enum: DefaultRuleChainOriginatorType,
+    enum: DefaultRuleChainOriginatorType, enumName: 'DefaultRuleChainOriginatorType',
     description:
       'Alias of `originatorType`, for the shipped frontend client which calls it `type`.',
   })
@@ -119,13 +119,13 @@ export class UpdateDefaultRuleChainDto extends PartialType(
 ) {}
 
 export class DefaultRuleChainQueryDto extends PaginationDto {
-  @ApiPropertyOptional({ enum: DefaultRuleChainOriginatorType })
+  @ApiPropertyOptional({ enum: DefaultRuleChainOriginatorType, enumName: 'DefaultRuleChainOriginatorType' })
   @IsOptional()
   @IsEnum(DefaultRuleChainOriginatorType)
   originatorType?: DefaultRuleChainOriginatorType;
 
   @ApiPropertyOptional({
-    enum: DefaultRuleChainOriginatorType,
+    enum: DefaultRuleChainOriginatorType, enumName: 'DefaultRuleChainOriginatorType',
     description: 'Alias of `originatorType` for the shipped frontend client.',
   })
   @IsOptional()
@@ -166,7 +166,7 @@ export class ResolveDefaultRuleChainDto {
   @MaxLength(80)
   messageType?: string;
 
-  @ApiPropertyOptional({ enum: DefaultRuleChainOriginatorType, default: DefaultRuleChainOriginatorType.DEVICE })
+  @ApiPropertyOptional({ enum: DefaultRuleChainOriginatorType, enumName: 'DefaultRuleChainOriginatorType', default: DefaultRuleChainOriginatorType.DEVICE })
   @IsOptional()
   @IsEnum(DefaultRuleChainOriginatorType)
   originatorType?: DefaultRuleChainOriginatorType;

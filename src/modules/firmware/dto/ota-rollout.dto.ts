@@ -39,7 +39,7 @@ export enum OtaRolloutState {
 
 export class QueryOtaRolloutDto extends PaginationDto {
   @ApiPropertyOptional({
-    enum: OTA_SORT_FIELDS,
+    enum: OTA_SORT_FIELDS, enumName: 'OTA_SORT_FIELDS',
     default: 'firmwareUpdateStartedAt',
   })
   @IsOptional()
@@ -49,7 +49,7 @@ export class QueryOtaRolloutDto extends PaginationDto {
   declare sortBy?: OtaSortField;
 
   @ApiPropertyOptional({
-    enum: OtaRolloutState,
+    enum: OtaRolloutState, enumName: 'OtaRolloutState',
     description: 'Group devices by where they sit in the rollout',
   })
   @IsOptional()
@@ -57,7 +57,7 @@ export class QueryOtaRolloutDto extends PaginationDto {
   state?: OtaRolloutState;
 
   @ApiPropertyOptional({
-    enum: FirmwareUpdateStatus,
+    enum: FirmwareUpdateStatus, enumName: 'FirmwareUpdateStatus',
     description: 'Exact last-reported status (narrower than `state`)',
   })
   @IsOptional()

@@ -40,16 +40,16 @@ export class CreateConverterDto {
   @MaxLength(2000)
   description?: string;
 
-  @ApiProperty({ enum: ConverterDirection, default: ConverterDirection.UPLINK })
+  @ApiProperty({ enum: ConverterDirection, enumName: 'ConverterDirection', default: ConverterDirection.UPLINK })
   @IsEnum(ConverterDirection)
   direction: ConverterDirection;
 
-  @ApiProperty({ enum: ConverterType, default: ConverterType.JSON })
+  @ApiProperty({ enum: ConverterType, enumName: 'ConverterType', default: ConverterType.JSON })
   @IsEnum(ConverterType)
   type: ConverterType;
 
   @ApiPropertyOptional({
-    enum: ConverterProtocol,
+    enum: ConverterProtocol, enumName: 'ConverterProtocol',
     description: 'Filtering/presentation only — nothing in execution reads it.',
   })
   @IsOptional()
