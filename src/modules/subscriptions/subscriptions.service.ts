@@ -164,6 +164,21 @@ const PLAN_ORDER: SubscriptionPlan[] = [
   SubscriptionPlan.ENTERPRISE,
 ];
 
+/**
+ * Explicit NULL for a nullable timestamp column.
+ *
+ * TypeORM's `save()` IGNORES a property set to `undefined` — it reads as "not
+ * provided" and the column keeps whatever it held. So `subscription.trialEndsAt
+ * = undefined` does not clear the column; it does nothing at all, which is why
+ * a trial's end date survived an upgrade and a cancellation date survived a
+ * renewal. A null does clear it.
+ *
+ * The entity properties are declared `?: Date` rather than `Date | null`
+ * because other modules read them, so the null needs a cast — CLEARED is that
+ * cast, written once with the reason attached.
+ */
+const CLEARED = null as unknown as undefined;
+
 const PLAN_DISPLAY_NAMES: Record<SubscriptionPlan, string> = {
   [SubscriptionPlan.FREE]: 'Free',
   [SubscriptionPlan.STARTER]: 'Starter',
@@ -178,6 +193,18 @@ const PLAN_DISPLAY_NAMES: Record<SubscriptionPlan, string> = {
 @Injectable()
 export class SubscriptionsService {
   private readonly logger = new Logger(SubscriptionsService.name);
+
+  /**
+   * Days a paid plan survives a failed or missing renewal payment before the
+   * sweep drops it to FREE. `SUBSCRIPTION_GRACE_PERIOD_DAYS`, default 3.
+   *
+   * Clamped to 0–30: a typo that reads as 3000 would keep an unpaid tenant on
+   * a paid plan for eight years.
+   */
+  private readonly gracePeriodDays: number = Math.min(
+    30,
+    Math.max(0, Number(process.env.SUBSCRIPTION_GRACE_PERIOD_DAYS ?? 3) || 0),
+  );
 
   constructor(
     @InjectRepository(Subscription)
@@ -248,8 +275,14 @@ export class SubscriptionsService {
     tenantId: string | undefined,
     createSubscriptionDto: CreateSubscriptionDto,
   ): Promise<Subscription> {
+    // Existence is checked WITHOUT a status filter. `subscriptions` is
+    // @Unique(['tenantId']), so a tenant whose row was CANCELLED or EXPIRED
+    // used to pass this check and then die on a unique-constraint violation
+    // (a 500, where a 409 was intended) — and if it had succeeded it would
+    // have been a fresh row with a fresh TRIAL, i.e. a free trial farm: cancel,
+    // re-create, trial again.
     const existing = await this.subscriptionRepository.findOne({
-      where: { tenantId, status: SubscriptionStatus.ACTIVE },
+      where: { tenantId },
     });
 
     if (existing) {
@@ -259,6 +292,10 @@ export class SubscriptionsService {
     const { plan, billingPeriod = BillingPeriod.MONTHLY } =
       createSubscriptionDto;
     const trialDays = PLAN_TRIAL_DAYS[plan];
+    const startsTrial = plan !== SubscriptionPlan.FREE && trialDays > 0;
+    const trialEndsAt = startsTrial
+      ? this.calculateTrialEnd(trialDays)
+      : undefined;
     const subscription = this.subscriptionRepository.create({
       plan,
       billingPeriod,
@@ -284,12 +321,23 @@ export class SubscriptionsService {
             ? SubscriptionStatus.TRIAL
             : SubscriptionStatus.ACTIVE,
       nextBillingDate: this.calculateNextBillingDate(billingPeriod),
-      trialEndsAt:
-        plan !== SubscriptionPlan.FREE && trialDays > 0
-          ? this.calculateTrialEnd(trialDays)
-          : undefined,
+      trialEndsAt,
       metadata: {
         lastUsageReset: new Date(),
+        // A trial started here burns the tenant's one trial, exactly as
+        // startTrial() does — otherwise registering straight onto a paid plan
+        // would leave `trial.usedAt` unset and POST /subscriptions/trial would
+        // hand out a second one.
+        ...(startsTrial
+          ? {
+              trial: {
+                usedAt: new Date().toISOString(),
+                plan,
+                endsAt: trialEndsAt!.toISOString(),
+                fromPlan: SubscriptionPlan.FREE,
+              },
+            }
+          : {}),
       },
     });
 
@@ -321,10 +369,27 @@ export class SubscriptionsService {
   /**
    * Primary lookup — by tenantId.
    * Used internally and by guards.
+   *
+   * Deliberately NOT filtered by `status = 'active'` any more. `subscriptions`
+   * is `@Unique(['tenantId'])`, so there is exactly one row per tenant and the
+   * filter could only ever hide it. What it actually did was make every
+   * non-ACTIVE state indistinguishable from "no subscription":
+   *
+   *   - a tenant on a TRIAL had no subscription at all as far as
+   *     `SubscriptionGuard` was concerned, so it answered every request with
+   *     "No subscription found for this tenant. Please contact support." —
+   *     trials were unusable, and so were the quota checks in
+   *     CustomersService and SolutionTemplateService.
+   *   - an EXPIRED / SUSPENDED / CANCELLED tenant got that same support
+   *     message instead of the "not active, please renew" the guard is written
+   *     to produce three lines further down.
+   *
+   * Status is still enforced — by `isActive()` / `isTrialExpired()` in
+   * SubscriptionGuard, which is where that decision belongs.
    */
   async findByTenantId(tenantId: string | undefined): Promise<Subscription> {
     const subscription = await this.subscriptionRepository.findOne({
-      where: { tenantId, status: SubscriptionStatus.ACTIVE },
+      where: { tenantId },
     });
     if (!subscription) {
       throw new NotFoundException('No subscription found for this tenant');
@@ -576,6 +641,12 @@ export class SubscriptionsService {
     billingPeriod: BillingPeriod,
     paymentAmount: number,
     queryRunner?: QueryRunner,
+    /**
+     * Payment id. Written into `metadata.appliedPayments` so the same payment
+     * cannot be applied twice (webhook retries), and onto `previousPlan` so a
+     * refund of THIS payment knows what to reverse to.
+     */
+    paymentId?: string,
   ): Promise<Subscription> {
     const useTransaction = !!queryRunner;
     const repository = useTransaction
@@ -591,6 +662,21 @@ export class SubscriptionsService {
       throw new NotFoundException('No subscription found');
     }
 
+    // Idempotency, before validateUpgrade(): a second delivery of the same
+    // payment finds the tenant already ON the target plan, and validateUpgrade
+    // would then reject it as a downgrade — a 400 back to Moyasar for a payment
+    // that was processed perfectly well, which is indistinguishable from a real
+    // failure in the logs.
+    const alreadyApplied = paymentId
+      ? subscription.metadata?.appliedPayments?.[paymentId]
+      : undefined;
+    if (alreadyApplied) {
+      this.logger.warn(
+        `Upgrade for payment ${paymentId} already applied at ${alreadyApplied.at} — ignoring duplicate delivery (tenant ${tenantId})`,
+      );
+      return subscription;
+    }
+
     this.validateUpgrade(subscription.plan, plan);
 
     if (Math.abs(paymentAmount - PLAN_PRICING[plan][billingPeriod]) > 0.01) {
@@ -599,6 +685,12 @@ export class SubscriptionsService {
       );
     }
 
+    const previousPlan = subscription.plan;
+    const previousBillingPeriod = subscription.billingPeriod;
+    const previousNextBillingDate = subscription.nextBillingDate
+      ? new Date(subscription.nextBillingDate).toISOString()
+      : null;
+
     subscription.plan = plan;
     subscription.billingPeriod = billingPeriod;
     subscription.price = PLAN_PRICING[plan][billingPeriod];
@@ -606,21 +698,47 @@ export class SubscriptionsService {
     subscription.features = PLAN_FEATURES[plan];
     subscription.status = SubscriptionStatus.ACTIVE;
     subscription.nextBillingDate = this.calculateNextBillingDate(billingPeriod);
-    subscription.trialEndsAt = undefined;
-    subscription.cancelledAt = undefined;
+    subscription.trialEndsAt = CLEARED;
+    subscription.cancelledAt = CLEARED;
     subscription.updatedBy = tenantId;
 
-    if (subscription.metadata?.scheduledDowngrade) {
-      subscription.metadata = {
-        ...subscription.metadata,
-        scheduledDowngrade: undefined,
-      };
-    }
+    const nextBillingDate = subscription.nextBillingDate
+      ? new Date(subscription.nextBillingDate).toISOString()
+      : null;
+
+    subscription.metadata = {
+      ...subscription.metadata,
+      scheduledDowngrade: undefined,
+      // Paying clears a past-due grace period: money arrived.
+      pastDue: undefined,
+      cancellation: undefined,
+      // What a refund of this payment reverses to. Nothing recorded this
+      // before, which is why the refund path had nowhere to go but FREE.
+      previousPlan: {
+        plan: previousPlan,
+        billingPeriod: previousBillingPeriod,
+        nextBillingDate: previousNextBillingDate,
+        at: new Date().toISOString(),
+        paymentId,
+      },
+      ...(paymentId
+        ? {
+            appliedPayments: {
+              ...(subscription.metadata?.appliedPayments ?? {}),
+              [paymentId]: {
+                kind: 'upgrade' as const,
+                at: new Date().toISOString(),
+                periodEnd: nextBillingDate,
+              },
+            },
+          }
+        : {}),
+    };
 
     const updated = await repository.save(subscription);
 
     this.logger.log(
-      `✅ Subscription upgraded: ${subscription.plan} → ${plan} (User: ${tenantId})`,
+      `✅ Subscription upgraded: ${previousPlan} → ${plan} (Tenant: ${tenantId}, payment: ${paymentId ?? 'n/a'})`,
     );
 
     return updated;
@@ -635,6 +753,17 @@ export class SubscriptionsService {
     billingPeriod: BillingPeriod,
     paymentAmount: number,
     queryRunner?: QueryRunner,
+    /**
+     * Payment id — the renewal idempotency key.
+     *
+     * Moyasar retries a webhook it did not get a clean answer to, so the same
+     * `invoice_paid` arrives twice as a matter of course. `verifyPayment()`
+     * short-circuits on `status === SUCCEEDED && paidAt`, but that is a
+     * read-then-write with no lock: two concurrent deliveries both see PENDING,
+     * both reach here, and the pessimistic lock only makes them take turns —
+     * it does not stop the second one adding another month. The ledger does.
+     */
+    paymentId?: string,
   ): Promise<Subscription> {
     const useTransaction = !!queryRunner;
     const repository = useTransaction
@@ -648,6 +777,26 @@ export class SubscriptionsService {
 
     if (!subscription) {
       throw new NotFoundException('No subscription found');
+    }
+
+    const alreadyApplied = paymentId
+      ? subscription.metadata?.appliedPayments?.[paymentId]
+      : undefined;
+    if (alreadyApplied) {
+      this.logger.warn(
+        `Renewal for payment ${paymentId} already applied at ${alreadyApplied.at} ` +
+          `(period end ${alreadyApplied.periodEnd}) — ignoring duplicate delivery (tenant ${tenantId})`,
+      );
+      return subscription;
+    }
+
+    if (!paymentId) {
+      // Not fatal — a caller with no payment id is either a legacy path or an
+      // admin action — but it means this renewal is NOT protected against a
+      // repeat, so it is worth a line in the log.
+      this.logger.warn(
+        `Renewal applied for tenant ${tenantId} with no payment id — not idempotency-protected`,
+      );
     }
 
     this.validatePaymentAmount(paymentAmount, subscription.plan, billingPeriod);
@@ -671,14 +820,41 @@ export class SubscriptionsService {
 
     subscription.billingPeriod = billingPeriod;
     subscription.status = SubscriptionStatus.ACTIVE;
-    subscription.cancelledAt = undefined;
-    subscription.trialEndsAt = undefined;
+    subscription.cancelledAt = CLEARED;
+    // The trial is over once money has changed hands — but `metadata.trial`
+    // (and with it `trial.usedAt`) is deliberately kept, so clearing this
+    // column cannot give the tenant a second trial.
+    subscription.trialEndsAt = CLEARED;
     subscription.updatedBy = tenantId;
+
+    subscription.metadata = {
+      ...subscription.metadata,
+      pastDue: undefined,
+      cancellation: undefined,
+      ...(paymentId
+        ? {
+            appliedPayments: {
+              ...(subscription.metadata?.appliedPayments ?? {}),
+              [paymentId]: {
+                kind: 'renewal' as const,
+                at: new Date().toISOString(),
+                periodEnd: subscription.nextBillingDate
+                  ? new Date(subscription.nextBillingDate).toISOString()
+                  : null,
+              },
+            },
+          }
+        : {}),
+    };
+
+    // A renewal does NOT silently re-enable auto-renew. If the tenant turned it
+    // off and then paid for one more period by hand, turning it back on would
+    // charge them again next month without being asked.
 
     await repository.save(subscription);
 
     this.logger.log(
-      `✅ Subscription renewed (User: ${tenantId}, Next billing: ${subscription.nextBillingDate})`,
+      `✅ Subscription renewed (Tenant: ${tenantId}, payment: ${paymentId ?? 'n/a'}, next billing: ${subscription.nextBillingDate})`,
     );
 
     return subscription;
@@ -694,8 +870,25 @@ export class SubscriptionsService {
     billingPeriod: BillingPeriod,
     paymentAmount: number,
     queryRunner?: QueryRunner,
+    /** Payment id — idempotency key, see renewAfterPayment(). */
+    paymentId?: string,
   ): Promise<Subscription> {
     const subscription = await this.findByTenantId(tenantId);
+
+    // Replay of a payment that has already been applied. Checked here as well
+    // as inside the two appliers so that the duplicate never reaches the
+    // downgrade rejection below: once an upgrade has landed, the tenant's
+    // current plan EQUALS the target, which reads as a renewal, and a replayed
+    // upgrade would otherwise be applied a second time as a free month.
+    const applied = paymentId
+      ? subscription.metadata?.appliedPayments?.[paymentId]
+      : undefined;
+    if (applied) {
+      this.logger.warn(
+        `Payment ${paymentId} already applied to tenant ${tenantId} as ${applied.kind} at ${applied.at} — ignoring duplicate delivery`,
+      );
+      return subscription;
+    }
 
     if (this.isUpgrade(subscription.plan, targetPlan)) {
       return await this.upgradeAfterPayment(
@@ -704,6 +897,7 @@ export class SubscriptionsService {
         billingPeriod,
         paymentAmount,
         queryRunner,
+        paymentId,
       );
     }
 
@@ -713,6 +907,7 @@ export class SubscriptionsService {
         billingPeriod,
         paymentAmount,
         queryRunner,
+        paymentId,
       );
     } else {
       throw new BadRequestException(
@@ -846,6 +1041,19 @@ export class SubscriptionsService {
    * Cancels the subscription immediately.
    * Used by POST /subscriptions/cancel
    */
+  /**
+   * Cancels the subscription. Paid access continues to the end of the period
+   * already paid for; the sweep (`sweepExpiredSubscriptions`) drops the tenant
+   * to FREE when that date passes.
+   *
+   * It used to ALSO call `create(tenantId, {plan: FREE})` to make a second row.
+   * That could not work and never did: `subscriptions` is `@Unique(['tenantId'])`,
+   * and `create()` saw the still-ACTIVE row in the database (the CANCELLED
+   * status was only set on the in-memory copy at that point) and threw
+   * `ConflictException` — so **every** call to POST /subscriptions/cancel
+   * answered 409 and nothing was ever cancelled. Had the conflict check not
+   * fired, the INSERT would have hit the unique constraint instead.
+   */
   async cancel(userId: string): Promise<Subscription> {
     const subscription = await this.findCurrentForMutation(userId);
 
@@ -853,15 +1061,802 @@ export class SubscriptionsService {
       throw new ConflictException('Subscription already cancelled');
     }
 
+    const now = new Date();
+
     subscription.status = SubscriptionStatus.CANCELLED;
-    subscription.cancelledAt = new Date();
+    subscription.cancelledAt = now;
+    subscription.updatedBy = userId;
+    subscription.metadata = {
+      ...subscription.metadata,
+      // Cancelling means "do not charge me again". Leaving auto-renew on would
+      // let the renewal path re-activate a cancelled subscription from a
+      // webhook.
+      autoRenew: false,
+      scheduledDowngrade: undefined,
+      cancellation: { cancelledAt: now.toISOString() },
+    };
+
+    const saved = await this.subscriptionRepository.save(subscription);
+
+    this.logger.log(
+      `Subscription cancelled for tenant ${saved.tenantId}: ${saved.plan} access until ${saved.getAccessEndsAt()?.toISOString() ?? 'immediately'}`,
+    );
+
+    return saved;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LIFECYCLE — trial, renewal, auto-renew, expiry, refund reversal
+  //
+  // Two rules govern everything in this section:
+  //
+  //   1. When a transition is ambiguous, take the branch that does NOT grant
+  //      paid capability, and log loudly.
+  //   2. A loss of plan NEVER deletes a tenant's data and never locks them out
+  //      of reading it. A tenant who drops from PROFESSIONAL (200 devices) to
+  //      FREE (5) with 40 devices keeps all 40: they can read them, operate
+  //      them and delete them, and `SubscriptionLimitGuard.isLimitReached()`
+  //      refuses only the creation of the 41st. That is why a downgrade lands
+  //      on `status = ACTIVE` with the FREE plan rather than on EXPIRED or
+  //      SUSPENDED — both of those fail `isActive()`, which makes
+  //      `SubscriptionGuard` reject EVERY request including plain reads.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Start the plan's free trial.
+   *
+   * Refused if this tenant has ever had one. The record lives in
+   * `metadata.trial.usedAt`, which survives cancellation, expiry and renewal —
+   * `trialEndsAt` does not (renewAfterPayment clears it), and a brand-new row
+   * is no longer reachable either (`create()` now refuses when any row exists),
+   * so cancel-and-resubscribe cannot farm trials.
+   */
+  async startTrial(
+    userId: string,
+    targetPlan: SubscriptionPlan,
+    billingPeriod?: BillingPeriod,
+  ): Promise<Subscription> {
+    const subscription = await this.findCurrentForMutation(userId);
+
+    const trialDays = PLAN_TRIAL_DAYS[targetPlan];
+    if (!trialDays || targetPlan === SubscriptionPlan.FREE) {
+      throw new BadRequestException(
+        `The ${PLAN_DISPLAY_NAMES[targetPlan]} plan has no trial period.`,
+      );
+    }
+
+    if (subscription.hasUsedTrial()) {
+      this.logger.warn(
+        `Tenant ${subscription.tenantId} attempted a second trial (first used at ${subscription.metadata?.trial?.usedAt})`,
+      );
+      throw new ConflictException(
+        'This account has already used its free trial. Please choose a paid plan.',
+      );
+    }
+
+    if (subscription.plan !== SubscriptionPlan.FREE) {
+      throw new ConflictException(
+        `A trial can only be started from the Free plan — this account is on ${PLAN_DISPLAY_NAMES[subscription.plan]}.`,
+      );
+    }
+
+    if (subscription.status === SubscriptionStatus.SUSPENDED) {
+      throw new ConflictException(
+        'This subscription is suspended. Please settle the outstanding balance first.',
+      );
+    }
+
+    const period = billingPeriod ?? subscription.billingPeriod;
+    const endsAt = this.calculateTrialEnd(trialDays);
+
+    subscription.plan = targetPlan;
+    subscription.billingPeriod = period;
+    // Price is what the tenant will owe when the trial converts. The trial
+    // itself is not charged — `status = TRIAL` is what says so.
+    subscription.price = PLAN_PRICING[targetPlan][period];
+    subscription.limits = PLAN_LIMITS[targetPlan];
+    subscription.features = PLAN_FEATURES[targetPlan];
+    subscription.status = SubscriptionStatus.TRIAL;
+    subscription.trialEndsAt = endsAt;
+    // The trial period IS the billing period: nothing is owed until it ends.
+    subscription.nextBillingDate = endsAt;
+    subscription.cancelledAt = CLEARED;
+    subscription.updatedBy = userId;
+    subscription.metadata = {
+      ...subscription.metadata,
+      // A trial must never auto-charge. Converting is an explicit payment.
+      autoRenew: false,
+      pastDue: undefined,
+      cancellation: undefined,
+      trial: {
+        usedAt: new Date().toISOString(),
+        plan: targetPlan,
+        endsAt: endsAt.toISOString(),
+        fromPlan: SubscriptionPlan.FREE,
+      },
+    };
+
+    const saved = await this.subscriptionRepository.save(subscription);
+
+    this.logger.log(
+      `Trial started for tenant ${saved.tenantId}: ${targetPlan} for ${trialDays} days, ends ${endsAt.toISOString()}`,
+    );
+
+    return saved;
+  }
+
+  /**
+   * Tenant-initiated renewal. Like `upgrade()`, this does NOT change the
+   * subscription — it validates and hands back the amount to pay. The period is
+   * only extended by `renewAfterPayment()`, from a confirmed payment.
+   */
+  async requestRenewal(
+    userId: string,
+    billingPeriod?: BillingPeriod,
+  ): Promise<{
+    requiresPayment: true;
+    message: string;
+    plan: SubscriptionPlan;
+    billingPeriod: BillingPeriod;
+    amount: number;
+    currentPeriodEnd: Date | null;
+  }> {
+    const subscription = await this.findCurrentForMutation(userId);
+    const period = billingPeriod ?? subscription.billingPeriod;
+
+    if (subscription.plan === SubscriptionPlan.FREE) {
+      throw new BadRequestException(
+        'The Free plan does not expire and cannot be renewed. Upgrade to a paid plan instead.',
+      );
+    }
+
+    const amount = PLAN_PRICING[subscription.plan][period];
+    if (amount <= 0) {
+      // ENTERPRISE is quoted, not priced in PLAN_PRICING. Taking 0 SAR for it
+      // here would extend the most expensive plan for free.
+      throw new BadRequestException(
+        `${PLAN_DISPLAY_NAMES[subscription.plan]} renewals are handled by your account manager — please contact sales.`,
+      );
+    }
+
+    return {
+      requiresPayment: true,
+      message:
+        'Please complete payment to extend your subscription for another period',
+      plan: subscription.plan,
+      billingPeriod: period,
+      amount,
+      currentPeriodEnd: subscription.nextBillingDate
+        ? new Date(subscription.nextBillingDate)
+        : null,
+    };
+  }
+
+  /**
+   * Turn auto-renew on or off.
+   *
+   * Off is not a cancellation: the plan runs to the end of the period already
+   * paid for and then the sweep drops it to FREE. The response carries the date
+   * to show as "your plan ends on X".
+   */
+  async setAutoRenew(
+    userId: string,
+    enabled: boolean,
+  ): Promise<ReturnType<SubscriptionsService['describeLifecycle']>> {
+    const subscription = await this.findCurrentForMutation(userId);
+
+    if (enabled && subscription.plan === SubscriptionPlan.FREE) {
+      throw new BadRequestException(
+        'There is nothing to renew on the Free plan.',
+      );
+    }
+
+    if (enabled && subscription.status === SubscriptionStatus.CANCELLED) {
+      throw new ConflictException(
+        'This subscription has been cancelled. Renew it to restart billing.',
+      );
+    }
+
+    subscription.metadata = {
+      ...subscription.metadata,
+      autoRenew: enabled,
+    };
     subscription.updatedBy = userId;
 
-    await this.create(subscription.tenantId, {
-      plan: SubscriptionPlan.FREE,
+    const saved = await this.subscriptionRepository.save(subscription);
+
+    this.logger.log(
+      `Auto-renew ${enabled ? 'enabled' : 'disabled'} for tenant ${saved.tenantId} ` +
+        `(${saved.plan}, access ends ${saved.getAccessEndsAt()?.toISOString() ?? 'n/a'})`,
+    );
+
+    return this.describeLifecycle(saved);
+  }
+
+  /**
+   * Everything the billing screen needs to say what happens next, in one call.
+   */
+  async getLifecycle(userId: string) {
+    return this.describeLifecycle(await this.findCurrent(userId));
+  }
+
+  private describeLifecycle(subscription: Subscription) {
+    const accessEndsAt = subscription.getAccessEndsAt();
+    const overQuota = subscription.getOverQuotaResources();
+    const trialDays = PLAN_TRIAL_DAYS[subscription.plan] ?? 0;
+
+    return {
+      plan: subscription.plan,
+      planName: PLAN_DISPLAY_NAMES[subscription.plan],
+      status: subscription.status,
+      billingPeriod: subscription.billingPeriod,
+      price: Number(subscription.price),
+      autoRenew: subscription.isAutoRenewEnabled(),
+      currentPeriodEnd: subscription.nextBillingDate ?? null,
+      /** Null while the plan keeps renewing; a date once it does not. */
+      accessEndsAt,
+      willRenew:
+        subscription.isAutoRenewEnabled() &&
+        subscription.plan !== SubscriptionPlan.FREE &&
+        subscription.status !== SubscriptionStatus.CANCELLED,
+      /** Rendered verbatim by the frontend — one sentence, already resolved. */
+      message: this.lifecycleMessage(subscription, accessEndsAt),
+      trial: {
+        used: subscription.hasUsedTrial(),
+        active: subscription.status === SubscriptionStatus.TRIAL,
+        endsAt: subscription.trialEndsAt ?? null,
+        expired: subscription.isTrialExpired(),
+        /** Days the CURRENT plan's trial runs for, 0 if it has none. */
+        eligiblePlanTrialDays: trialDays,
+      },
+      pastDue: subscription.metadata?.pastDue ?? null,
+      scheduledDowngrade: subscription.metadata?.scheduledDowngrade ?? null,
+      cancelledAt: subscription.cancelledAt ?? null,
+      /**
+       * Usage keys currently above the plan ceiling — the tenant keeps these
+       * resources and can keep using them, but cannot create more.
+       */
+      overQuota,
+      canCreateResources: overQuota.length === 0,
+    };
+  }
+
+  private lifecycleMessage(
+    subscription: Subscription,
+    accessEndsAt: Date | null,
+  ): string {
+    const on = (date: Date) => date.toISOString().slice(0, 10);
+    const name = PLAN_DISPLAY_NAMES[subscription.plan];
+
+    if (subscription.status === SubscriptionStatus.SUSPENDED) {
+      return `Your subscription is suspended. Settle the outstanding balance to restore ${name} access.`;
+    }
+    if (subscription.status === SubscriptionStatus.TRIAL) {
+      return subscription.trialEndsAt
+        ? `Your ${name} trial ends on ${on(new Date(subscription.trialEndsAt))}. Pay before then to keep ${name} features.`
+        : `Your ${name} trial is active.`;
+    }
+    if (subscription.metadata?.pastDue) {
+      return `Payment for your ${name} plan has not been received. ${name} features remain available until ${on(new Date(subscription.metadata.pastDue.graceEndsAt))}, then the account moves to Free.`;
+    }
+    if (subscription.status === SubscriptionStatus.CANCELLED) {
+      return accessEndsAt
+        ? `Your ${name} plan is cancelled and ends on ${on(accessEndsAt)}. You keep ${name} features until then.`
+        : `Your ${name} plan is cancelled.`;
+    }
+    if (subscription.plan === SubscriptionPlan.FREE) {
+      return 'You are on the Free plan. It does not expire.';
+    }
+    if (!subscription.isAutoRenewEnabled()) {
+      return accessEndsAt
+        ? `Auto-renew is off — your ${name} plan ends on ${on(accessEndsAt)} and the account moves to Free.`
+        : `Auto-renew is off for your ${name} plan.`;
+    }
+    return subscription.nextBillingDate
+      ? `Your ${name} plan renews on ${on(new Date(subscription.nextBillingDate))}.`
+      : `Your ${name} plan is active.`;
+  }
+
+  /**
+   * Called by PaymentsService when a payment that was meant to RENEW the
+   * current plan fails or is cancelled.
+   *
+   * The plan is kept for a grace window rather than cut off immediately: a
+   * failed card on a renewal is overwhelmingly an expired card, not a tenant
+   * trying to get free service, and killing a live IoT deployment's quota the
+   * minute a charge bounces is a worse failure than a few days of grace. When
+   * the window closes `sweepExpiredSubscriptions()` drops the tenant to FREE.
+   */
+  async markRenewalPaymentFailed(
+    tenantId: string,
+    reason: string,
+  ): Promise<Subscription | null> {
+    const subscription = await this.subscriptionRepository.findOne({
+      where: { tenantId },
+    });
+    if (!subscription) return null;
+
+    if (subscription.plan === SubscriptionPlan.FREE) return subscription;
+
+    const existing = subscription.metadata?.pastDue;
+    const now = new Date();
+
+    subscription.metadata = {
+      ...subscription.metadata,
+      pastDue: {
+        // The grace window starts at the FIRST failure, so retrying a failing
+        // card cannot extend it indefinitely.
+        since: existing?.since ?? now.toISOString(),
+        graceEndsAt:
+          existing?.graceEndsAt ??
+          new Date(
+            now.getTime() + this.gracePeriodDays * 24 * 60 * 60 * 1000,
+          ).toISOString(),
+        reason,
+        attempts: (existing?.attempts ?? 0) + 1,
+      },
+    };
+
+    const saved = await this.subscriptionRepository.save(subscription);
+
+    this.logger.warn(
+      `⚠️ Renewal payment failed for tenant ${tenantId} (${reason}). ` +
+        `${saved.plan} kept until ${saved.metadata!.pastDue!.graceEndsAt}, attempt ${saved.metadata!.pastDue!.attempts}`,
+    );
+
+    return saved;
+  }
+
+  /**
+   * Reverses the plan change a payment bought, because the money went back.
+   *
+   * Reached from every refund path — the direct `POST /payments/refund`, a
+   * Moyasar `payment_refunded` / `payment_voided` webhook, and a chargeback —
+   * because all three funnel through `PaymentsService.reverseForPayment()`.
+   *
+   * ### What it reverses TO
+   *
+   * The plan recorded on the payment (`payment.metadata.originalPlan`, written
+   * when the invoice was created) and, failing that, the plan recorded on the
+   * subscription when the upgrade landed (`metadata.previousPlan`). If neither
+   * exists — a payment from before either was recorded — the target is FREE,
+   * logged as an error, because the alternative is leaving the tenant on a tier
+   * they no longer paid for.
+   *
+   * Then: **never a plan above the one the tenant is on now.** If they upgraded
+   * again after this payment, reversing an old payment must not promote them
+   * from the result of a later one; the lower of the two ranks wins.
+   *
+   * ### Why a paid target can still end up FREE
+   *
+   * Reverting STARTER→PROFESSIONAL leaves the tenant on STARTER — but only for
+   * the period STARTER was already paid for. That date comes from
+   * `previousPlan.nextBillingDate`. If it is missing or already past, there is
+   * no evidence of paid time remaining, so the target becomes FREE: granting a
+   * fresh paid period for money that was handed back is the one outcome that
+   * costs real money.
+   *
+   * Resources are never touched. See the section header.
+   */
+  async reverseAfterRefund(
+    tenantId: string,
+    options: {
+      paymentId: string;
+      kind: 'refund' | 'chargeback' | 'void';
+      /** `payment.metadata.originalPlan`, if the payment recorded one. */
+      originalPlan?: SubscriptionPlan | null;
+      reason?: string;
+    },
+    queryRunner?: QueryRunner,
+  ): Promise<Subscription> {
+    const repository = queryRunner
+      ? queryRunner.manager.getRepository(Subscription)
+      : this.subscriptionRepository;
+
+    const subscription = await repository.findOne({
+      where: { tenantId },
+      lock: queryRunner ? { mode: 'pessimistic_write' } : undefined,
     });
 
-    return await this.subscriptionRepository.save(subscription);
+    if (!subscription) {
+      throw new NotFoundException('No subscription found');
+    }
+
+    // Idempotent: a refund webhook is retried like any other.
+    if (
+      subscription.metadata?.reversedPayments?.includes(options.paymentId)
+    ) {
+      this.logger.warn(
+        `Payment ${options.paymentId} already reversed for tenant ${tenantId} — ignoring duplicate`,
+      );
+      return subscription;
+    }
+
+    const recordedPrevious =
+      subscription.metadata?.previousPlan?.paymentId === options.paymentId
+        ? subscription.metadata.previousPlan
+        : undefined;
+
+    let target =
+      options.originalPlan ??
+      recordedPrevious?.plan ??
+      subscription.metadata?.previousPlan?.plan;
+
+    if (!target) {
+      this.logger.error(
+        `🚨 Payment ${options.paymentId} reversed for tenant ${tenantId} but no previous plan was recorded ` +
+          `(neither payment.metadata.originalPlan nor subscription.metadata.previousPlan). ` +
+          `Falling back to FREE — a tenant must not keep a tier whose payment was returned.`,
+      );
+      target = SubscriptionPlan.FREE;
+    }
+
+    // Never reverse UP.
+    if (PLAN_ORDER.indexOf(target) > PLAN_ORDER.indexOf(subscription.plan)) {
+      this.logger.warn(
+        `Reversal target ${target} is above the tenant's current plan ${subscription.plan} ` +
+          `(tenant ${tenantId}) — a later upgrade must have landed. Keeping ${subscription.plan}.`,
+      );
+      target = subscription.plan;
+    }
+
+    // Paid target: it is only honoured for period the tenant had already paid
+    // for independently of the refunded payment.
+    let restoredPeriodEnd: Date | null = null;
+    if (target !== SubscriptionPlan.FREE) {
+      const recorded =
+        recordedPrevious?.nextBillingDate ??
+        subscription.metadata?.previousPlan?.nextBillingDate ??
+        null;
+      const candidate = recorded ? new Date(recorded) : null;
+      if (candidate && candidate.getTime() > Date.now()) {
+        restoredPeriodEnd = candidate;
+      } else {
+        this.logger.warn(
+          `No remaining paid period recorded for ${target} (tenant ${tenantId}, payment ${options.paymentId}) — ` +
+            `reversing to FREE instead of granting an unpaid ${target} period.`,
+        );
+        target = SubscriptionPlan.FREE;
+      }
+    }
+
+    const fromPlan = subscription.plan;
+    const billingPeriod =
+      target === SubscriptionPlan.FREE
+        ? subscription.billingPeriod
+        : (recordedPrevious?.billingPeriod ??
+          subscription.metadata?.previousPlan?.billingPeriod ??
+          subscription.billingPeriod);
+
+    subscription.plan = target;
+    subscription.billingPeriod = billingPeriod;
+    subscription.price = PLAN_PRICING[target][billingPeriod];
+    subscription.limits = PLAN_LIMITS[target];
+    subscription.features = PLAN_FEATURES[target];
+    // ACTIVE, not EXPIRED/SUSPENDED: the tenant keeps reading and operating
+    // what they already have (see the section header). The FREE ceilings are
+    // what stops them creating more.
+    subscription.status = SubscriptionStatus.ACTIVE;
+    subscription.nextBillingDate = restoredPeriodEnd ?? CLEARED;
+    subscription.trialEndsAt = CLEARED;
+    subscription.cancelledAt = CLEARED;
+
+    const overQuota = subscription.getOverQuotaResources();
+
+    subscription.metadata = {
+      ...subscription.metadata,
+      // Nothing is scheduled to renew a plan that was just refunded.
+      autoRenew: false,
+      pastDue: undefined,
+      scheduledDowngrade: undefined,
+      previousPlan: undefined,
+      reversedPayments: [
+        ...(subscription.metadata?.reversedPayments ?? []),
+        options.paymentId,
+      ],
+      reversals: [
+        ...(subscription.metadata?.reversals ?? []),
+        {
+          paymentId: options.paymentId,
+          kind: options.kind,
+          at: new Date().toISOString(),
+          fromPlan,
+          toPlan: target,
+          reason: options.reason,
+          overQuota: overQuota as string[],
+        },
+      ],
+    };
+
+    const saved = await repository.save(subscription);
+
+    this.logger.warn(
+      `💸 Plan reversed after ${options.kind} of payment ${options.paymentId}: ` +
+        `${fromPlan} → ${target} (tenant ${tenantId}${
+          restoredPeriodEnd
+            ? `, paid period restored to ${restoredPeriodEnd.toISOString()}`
+            : ''
+        })`,
+    );
+
+    if (overQuota.length) {
+      this.logger.warn(
+        `⚠️ Tenant ${tenantId} is over the ${target} ceiling after reversal on: ` +
+          overQuota
+            .map(
+              (key) =>
+                `${key} ${saved.usage[key]}/${saved.getLimitValue(key)}`,
+            )
+            .join(', ') +
+          '. Existing resources are KEPT and remain usable; creation of new ones is blocked until usage is under the limit.',
+      );
+    }
+
+    return saved;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EXPIRY SWEEP
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Drives every time-based transition. Nothing else did: `trialEndsAt` and
+   * `nextBillingDate` were written but never read by any scheduled job, so a
+   * trial "expired" only in the sense that `SubscriptionGuard` started
+   * answering 403 to every request — including reads — and stayed that way
+   * forever, because no code path ever moved the row out of TRIAL.
+   *
+   * Hourly rather than daily: the window between a trial ending and the sweep
+   * noticing is a window in which the tenant is locked out of their own data by
+   * `isTrialExpired()`.
+   *
+   * Follows `IntegrationEventsService.prune()` / `DevicesService.checkOfflineDevices()`:
+   * one narrow query, a per-row try/catch so one bad row cannot abort the
+   * sweep, and a single summary log line.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async sweepExpiredSubscriptions(): Promise<{
+    trialsExpired: number;
+    cancellationsCompleted: number;
+    gracePeriodsStarted: number;
+    downgradedAfterGrace: number;
+  }> {
+    const summary = {
+      trialsExpired: 0,
+      cancellationsCompleted: 0,
+      gracePeriodsStarted: 0,
+      downgradedAfterGrace: 0,
+    };
+
+    const candidates = await this.subscriptionRepository
+      .createQueryBuilder('s')
+      .where('s.status IN (:...statuses)', {
+        statuses: [
+          SubscriptionStatus.ACTIVE,
+          SubscriptionStatus.TRIAL,
+          SubscriptionStatus.CANCELLED,
+        ],
+      })
+      .andWhere('s.plan != :free', { free: SubscriptionPlan.FREE })
+      .andWhere(
+        `(
+          (s.status = :trial AND s."trialEndsAt" IS NOT NULL AND s."trialEndsAt" <= NOW())
+          OR (s."nextBillingDate" IS NOT NULL AND s."nextBillingDate" <= NOW())
+          OR ((s.metadata->'pastDue'->>'graceEndsAt')::timestamptz <= NOW())
+        )`,
+        { trial: SubscriptionStatus.TRIAL },
+      )
+      .getMany();
+
+    if (candidates.length === 0) return summary;
+
+    // Sequential, like syncAllTenantsUsage(): this is an hourly job with no
+    // deadline, and every branch below writes.
+    for (const subscription of candidates) {
+      try {
+        const outcome = await this.applyExpiry(subscription);
+        if (outcome) summary[outcome]++;
+      } catch (err) {
+        this.logger.error(
+          `Expiry sweep failed for tenant ${subscription.tenantId}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Subscription expiry sweep: ${candidates.length} candidate(s) — ` +
+        `trials expired ${summary.trialsExpired}, cancellations completed ${summary.cancellationsCompleted}, ` +
+        `grace periods started ${summary.gracePeriodsStarted}, downgraded after grace ${summary.downgradedAfterGrace}`,
+    );
+
+    return summary;
+  }
+
+  /**
+   * The state machine for one expired row. Exported via the sweep only.
+   *
+   * Order matters: a past grace period is settled before a new one would be
+   * opened, and the trial branch runs before the billing-date branch because a
+   * trial's `nextBillingDate` IS its `trialEndsAt`.
+   */
+  private async applyExpiry(
+    subscription: Subscription,
+  ): Promise<
+    | 'trialsExpired'
+    | 'cancellationsCompleted'
+    | 'gracePeriodsStarted'
+    | 'downgradedAfterGrace'
+    | null
+  > {
+    const now = Date.now();
+    const pastDue = subscription.metadata?.pastDue;
+
+    // ── 1. A grace period that has run out ──────────────────────────────────
+    if (pastDue && new Date(pastDue.graceEndsAt).getTime() <= now) {
+      await this.downgradeToFree(subscription, {
+        reason: `grace period expired (${pastDue.reason})`,
+        clearPastDue: true,
+      });
+      this.logger.warn(
+        `⚠️ Tenant ${subscription.tenantId} downgraded to FREE: grace period ended (${pastDue.reason})`,
+      );
+      return 'downgradedAfterGrace';
+    }
+    if (pastDue) return null; // still inside the window
+
+    // ── 2. Trial expiry ─────────────────────────────────────────────────────
+    if (
+      subscription.status === SubscriptionStatus.TRIAL &&
+      subscription.trialEndsAt &&
+      new Date(subscription.trialEndsAt).getTime() <= now
+    ) {
+      // To FREE, not EXPIRED. The trial converting is a payment, and no payment
+      // arrived; but the tenant's devices and dashboards are still theirs to
+      // read. `trialEndsAt` is cleared so `isTrialExpired()` stops locking the
+      // guard out, while `metadata.trial.usedAt` stays — no second trial.
+      await this.downgradeToFree(subscription, {
+        reason: 'trial expired without payment',
+        clearTrialEndsAt: true,
+        trialExpired: true,
+      });
+      this.logger.log(
+        `Trial expired for tenant ${subscription.tenantId} (${subscription.metadata?.trial?.plan}) → FREE`,
+      );
+      return 'trialsExpired';
+    }
+
+    const periodEnded =
+      !!subscription.nextBillingDate &&
+      new Date(subscription.nextBillingDate).getTime() <= now;
+
+    if (!periodEnded) return null;
+
+    // ── 3. A cancelled subscription whose paid period ran out ───────────────
+    if (subscription.status === SubscriptionStatus.CANCELLED) {
+      await this.downgradeToFree(subscription, {
+        reason: 'cancelled subscription reached the end of its paid period',
+        completeCancellation: true,
+      });
+      this.logger.log(
+        `Cancellation completed for tenant ${subscription.tenantId} → FREE`,
+      );
+      return 'cancellationsCompleted';
+    }
+
+    // ── 4. Auto-renew off: the tenant already said do not charge again ──────
+    if (!subscription.isAutoRenewEnabled()) {
+      await this.downgradeToFree(subscription, {
+        reason: 'period ended with auto-renew off',
+      });
+      this.logger.log(
+        `Period ended with auto-renew off for tenant ${subscription.tenantId} → FREE`,
+      );
+      return 'cancellationsCompleted';
+    }
+
+    // ── 5. ENTERPRISE is invoiced out of band ───────────────────────────────
+    // PLAN_PRICING puts ENTERPRISE at 0 because it is quoted by sales, so no
+    // Moyasar payment is ever going to arrive for it and "no payment received"
+    // means nothing here. Downgrading a contracted enterprise tenant on that
+    // basis would be the most expensive possible wrong answer, so the sweep
+    // rolls the period forward and says so loudly instead.
+    if (subscription.plan === SubscriptionPlan.ENTERPRISE) {
+      subscription.nextBillingDate = this.calculateNextBillingDate(
+        subscription.billingPeriod,
+      );
+      await this.subscriptionRepository.save(subscription);
+      this.logger.warn(
+        `⚠️ ENTERPRISE period ended for tenant ${subscription.tenantId} with no renewal payment. ` +
+          `Plan KEPT (enterprise is invoiced outside Moyasar) and the period rolled to ` +
+          `${subscription.nextBillingDate.toISOString()} — verify the contract manually.`,
+      );
+      return null;
+    }
+
+    // ── 6. Auto-renew on, period over, no payment: open the grace window ────
+    await this.markRenewalPaymentFailed(
+      subscription.tenantId,
+      'renewal payment not received by the end of the billing period',
+    );
+    return 'gracePeriodsStarted';
+  }
+
+  /**
+   * The one place a subscription loses its plan.
+   *
+   * Lands on FREE + ACTIVE deliberately — see the LIFECYCLE section header for
+   * why EXPIRED and SUSPENDED are the wrong answer. `usage` is never touched:
+   * a tenant over the FREE ceiling keeps every resource and simply cannot
+   * create more.
+   */
+  private async downgradeToFree(
+    subscription: Subscription,
+    options: {
+      reason: string;
+      clearPastDue?: boolean;
+      clearTrialEndsAt?: boolean;
+      trialExpired?: boolean;
+      completeCancellation?: boolean;
+    },
+  ): Promise<Subscription> {
+    const fromPlan = subscription.plan;
+
+    subscription.plan = SubscriptionPlan.FREE;
+    subscription.price = PLAN_PRICING[SubscriptionPlan.FREE][
+      subscription.billingPeriod
+    ];
+    subscription.limits = PLAN_LIMITS[SubscriptionPlan.FREE];
+    subscription.features = PLAN_FEATURES[SubscriptionPlan.FREE];
+    subscription.status = SubscriptionStatus.ACTIVE;
+    subscription.nextBillingDate = CLEARED;
+    if (options.clearTrialEndsAt) subscription.trialEndsAt = CLEARED;
+
+    subscription.metadata = {
+      ...subscription.metadata,
+      autoRenew: false,
+      pastDue: options.clearPastDue ? undefined : subscription.metadata?.pastDue,
+      scheduledDowngrade: undefined,
+      previousPlan: undefined,
+      ...(options.trialExpired
+        ? {
+            trial: {
+              ...(subscription.metadata?.trial ?? {}),
+              expiredAt: new Date().toISOString(),
+            },
+          }
+        : {}),
+      ...(options.completeCancellation
+        ? {
+            cancellation: {
+              cancelledAt:
+                subscription.metadata?.cancellation?.cancelledAt ??
+                subscription.cancelledAt?.toISOString() ??
+                new Date().toISOString(),
+              completedAt: new Date().toISOString(),
+            },
+          }
+        : {}),
+      lastDowngrade: {
+        at: new Date().toISOString(),
+        fromPlan,
+        reason: options.reason,
+      },
+    };
+
+    const saved = await this.subscriptionRepository.save(subscription);
+    const overQuota = saved.getOverQuotaResources();
+
+    if (overQuota.length) {
+      this.logger.warn(
+        `⚠️ Tenant ${saved.tenantId} is over the Free ceiling after downgrade from ${fromPlan} (${options.reason}) on: ` +
+          overQuota
+            .map((key) => `${key} ${saved.usage[key]}/${saved.getLimitValue(key)}`)
+            .join(', ') +
+          '. Existing resources KEPT; creation blocked until usage is under the limit.',
+      );
+    }
+
+    return saved;
   }
 
   /**

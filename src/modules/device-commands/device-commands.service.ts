@@ -214,6 +214,138 @@ export class DeviceCommandsService {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
+  // TWO-WAY RPC HISTORY
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // `GatewayService.sendRpcRequest()` used to publish and return, leaving no
+  // trace: a device's RPC history showed nothing, so there was no way to tell
+  // afterwards whether a command had been answered, refused or lost. These two
+  // methods give an RPC the same audit trail as a queued command.
+  //
+  // They deliberately do NOT publish to Kafka. `createCommand()` does, because
+  // DeviceCommandsConsumer owns delivery for queued commands; an RPC is
+  // delivered synchronously by GatewayService over MQTT/CoAP, so handing the
+  // same row to the consumer would make it send the command a second time.
+
+  /**
+   * Open a history row for an RPC that is about to be published.
+   *
+   * Status starts at SENDING — not PENDING — because nothing is going to pick
+   * this row up off a queue; the caller is sending it right now.
+   */
+  async createRpcCommand(args: {
+    deviceId: string;
+    tenantId: string;
+    userId: string;
+    method: string;
+    params?: Record<string, any>;
+    timeoutMs: number;
+    /** The RPC correlation id, so a response can be traced back to this row. */
+    requestId: string;
+    /** 'mqtt' | 'coap' — which transport carried the request. */
+    transport: string;
+  }): Promise<DeviceCommand> {
+    const command = this.commandRepository.create({
+      deviceId: args.deviceId,
+      tenantId: args.tenantId,
+      userId: args.userId,
+      commandType: args.method,
+      params: args.params ?? {},
+      priority: 'NORMAL',
+      timeout: args.timeoutMs,
+      // An RPC is a one-shot request/response; the platform does not re-issue
+      // it, so advertising retries here would be a lie in the history view.
+      retries: 0,
+      status: 'SENDING',
+      statusMessage: 'Two-way RPC published; awaiting device response',
+      metadata: {
+        rpc: true,
+        rpcRequestId: args.requestId,
+        transport: args.transport,
+      },
+    });
+
+    return this.commandRepository.save(command);
+  }
+
+  /**
+   * Record what actually happened to an RPC.
+   *
+   *   responded + no error → COMPLETED, response under metadata.response
+   *   responded + error     → FAILED,   reason in statusMessage
+   *   timeout / cancelled   → FAILED,   reason in statusMessage
+   *
+   * Never throws: the caller is in the middle of answering an HTTP request and
+   * a failed history write must not turn a successful RPC into a 500. The
+   * failure is logged instead.
+   */
+  async recordRpcOutcome(
+    commandId: string,
+    outcome: {
+      status: 'response' | 'timeout' | 'cancelled';
+      response?: any;
+      error?: string;
+      durationMs?: number;
+      via?: string;
+    },
+  ): Promise<void> {
+    try {
+      const command = await this.commandRepository.findOne({
+        where: { id: commandId },
+      });
+      if (!command) return;
+
+      const succeeded = outcome.status === 'response' && !outcome.error;
+
+      command.status = succeeded ? 'COMPLETED' : 'FAILED';
+      command.statusMessage = succeeded
+        ? 'Device responded'
+        : (outcome.error ??
+          (outcome.status === 'timeout'
+            ? 'Device did not respond before the RPC timeout'
+            : 'RPC cancelled before the device responded'));
+      command.completedAt = new Date();
+
+      // The device answering at all proves the request reached it.
+      if (outcome.status === 'response') command.deliveredAt ??= new Date();
+
+      command.metadata = {
+        ...(command.metadata ?? {}),
+        rpcStatus: outcome.status,
+        ...(outcome.response !== undefined && { response: outcome.response }),
+        ...(outcome.durationMs !== undefined && {
+          rpcDurationMs: outcome.durationMs,
+        }),
+        ...(outcome.via && { respondedVia: outcome.via }),
+      };
+
+      await this.commandRepository.save(command);
+    } catch (error) {
+      console.error(
+        `Failed to record RPC outcome for command ${commandId}: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Mark the request as having reached the broker. Called right after a
+   * successful publish, before the response arrives.
+   */
+  async markRpcDelivered(commandId: string): Promise<void> {
+    try {
+      await this.commandRepository.update(commandId, {
+        status: 'DELIVERED',
+        deliveredAt: new Date(),
+        statusMessage: 'Published to the device; awaiting response',
+      });
+    } catch (error) {
+      console.error(
+        `Failed to mark RPC command ${commandId} delivered: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   // INTERNAL METHODS (Called by Consumer)
   // ══════════════════════════════════════════════════════════════════════════
 

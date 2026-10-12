@@ -21,9 +21,22 @@ import {
 import { MailService } from '../mail/mail.service';
 import { TenantsService } from '../tenants/tenants.service';
 import { UsersService } from '../users/users.service';
-import { SubscriptionsService } from '../index.service';
+// Direct path, not the '../index.service' barrel: that barrel re-exports every
+// service in the platform, so importing SubscriptionsService through it pulled
+// all of them into this module's dependency graph — which is what made
+// CustomersService impossible to construct in a verification script.
+// UsersService already imports it this way.
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { SubscriptionLimits, SubscriptionUsage } from '@/common/interfaces/subscription.interface';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
+import {
+  BulkResultBuilder,
+  BulkResultDto,
+} from '@common/dto/bulk-operation.dto';
+import {
+  BulkDeleteCustomersDto,
+  BulkUpdateCustomersDto,
+} from './dto/bulk-customer.dto';
 @Injectable()
 export class CustomersService {
    private readonly logger = new Logger(CustomersService.name);
@@ -382,21 +395,290 @@ export class CustomersService {
   }
 
   /**
-   * Bulk update customer status
+   * Bulk update customer status.
+   *
+   * @deprecated Use PATCH /customers/bulk, which reports per-id outcomes.
+   * Kept because the existing route's contract is `void`; it now goes through
+   * the tenant-scoped bulkUpdate() instead of the unscoped
+   * `UPDATE ... WHERE id IN (...)` it used to run.
    */
   async bulkUpdateStatus(
     bulkUpdateDto: BulkUpdateCustomerStatusDto,
+    actor: User,
   ): Promise<void> {
-    await this.customerRepository.update(
-      { id: In(bulkUpdateDto.customerIds) },
-      { status: bulkUpdateDto.status },
+    await this.bulkUpdate(
+      { ids: bulkUpdateDto.customerIds, status: bulkUpdateDto.status },
+      actor,
     );
+  }
 
-    // Emit event
-    this.eventEmitter.emit('customers.status.bulk.updated', {
-      customerIds: bulkUpdateDto.customerIds,
-      status: bulkUpdateDto.status,
-    });
+  // ── Bulk delete / bulk update (per-id outcomes) ────────────────────────────
+  //
+  // TRANSACTION GRANULARITY: ONE TRANSACTION PER ITEM. Per batch, a single
+  // customer that still owns devices would roll back every other delete in
+  // the request, which contradicts the partial-success contract.
+  //
+  // TENANT SCOPING: every id is re-resolved against the caller's tenantId
+  // before anything is written; a foreign id answers `not_found`. The existing
+  // `bulkUpdateStatus()` below did `UPDATE customers SET status WHERE id IN
+  // (...)` with no tenant predicate, so it could re-status another tenant's
+  // customers — it now delegates here.
+  //
+  // DELETES ARE SOFT here, unlike the single-customer `remove()`, which calls
+  // `repository.remove()` (a HARD delete) with the `softRemove` line commented
+  // out. Soft is what the rest of the repo does and what the brief for these
+  // routes requires; the single-route inconsistency is left alone rather than
+  // changed underneath whoever depends on it.
+  //
+  // CASCADES: the paired login accounts (`users.customerId = customer.id`,
+  // created alongside the customer by create()) are soft-removed in the same
+  // transaction. A customer whose login account outlived it would still be
+  // able to sign in to an organisation that no longer exists.
+  //
+  // COUNTERS: `subscriptions.usage.customers` is decremented by the number of
+  // customers deleted and `subscriptions.usage.users` by the number of paired
+  // accounts removed — mirroring the two increments CustomerListener performs
+  // on `customer.created`. This path deliberately does NOT emit
+  // `customer.deleted`: CustomerListener's handler for it decrements both
+  // counters by exactly 1, which would double-count here and would be wrong
+  // for a customer with no paired user. `customers.bulk.deleted` is emitted
+  // instead, for anything that wants to observe without owning counters.
+  //
+  // BLOCKS: a customer that still has devices assigned to it — either
+  // `devices.customerId` or a `customer_devices` assignment row. Soft-deleting
+  // the org would leave those devices scoped to an organisation that no longer
+  // resolves: they vanish from every customer-filtered list while still
+  // counting against the tenant's device quota. Unassign them first
+  // (`PATCH /devices/bulk` with `customerId: null`).
+
+  async bulkDelete(
+    dto: BulkDeleteCustomersDto,
+    actor: User,
+  ): Promise<BulkResultDto> {
+    const result = new BulkResultBuilder(dto.ids);
+    const customers = await this.resolveForBulk(result.ids, actor);
+
+    const deviceCounts = await this.countAttachedDevices([...customers.keys()]);
+
+    let deletedCustomers = 0;
+    let deletedUsers = 0;
+    const deleted: Customer[] = [];
+
+    for (const id of result.ids) {
+      const customer = customers.get(id);
+
+      if (!customer) {
+        result.notFound(id, 'Customer not found in your scope');
+        continue;
+      }
+
+      const attached = deviceCounts.get(id) ?? 0;
+      if (attached > 0) {
+        result.blocked(
+          id,
+          `Customer still has ${attached} device(s) assigned; unassign them first`,
+        );
+        continue;
+      }
+
+      try {
+        const removedUsers = await this.dataSource.transaction(
+          async (manager) => {
+            const linked = await manager.find(User, {
+              where: { customerId: customer.id },
+            });
+            if (linked.length > 0) {
+              await manager.softRemove(linked);
+            }
+            await manager.softRemove(customer);
+            return linked.length;
+          },
+        );
+
+        deletedCustomers++;
+        deletedUsers += removedUsers;
+        deleted.push(customer);
+        result.success(id);
+      } catch (err) {
+        this.logger.error(
+          `Bulk delete failed for customer ${id}: ${(err as Error).message}`,
+        );
+        result.failed(id, (err as Error).message);
+      }
+    }
+
+    // One UPDATE per counter per tenant, after the loop. Non-fatal: the rows
+    // ARE deleted, so a failed counter write must not look like a failed
+    // delete.
+    const tenantId = actor.tenantId ?? deleted[0]?.tenantId;
+    if (tenantId && deletedCustomers > 0) {
+      await this.releaseQuota(tenantId, 'customers', deletedCustomers);
+    }
+    if (tenantId && deletedUsers > 0) {
+      await this.releaseQuota(tenantId, 'users', deletedUsers);
+    }
+
+    if (deleted.length > 0) {
+      this.eventEmitter.emit('customers.bulk.deleted', {
+        customerIds: deleted.map((c) => c.id),
+        tenantId,
+        usersRemoved: deletedUsers,
+      });
+    }
+
+    return result.build();
+  }
+
+  async bulkUpdate(
+    dto: BulkUpdateCustomersDto,
+    actor: User,
+  ): Promise<BulkResultDto> {
+    const patch: Record<string, unknown> = {};
+    if (dto.status !== undefined) patch.status = dto.status;
+
+    if (Object.keys(patch).length === 0) {
+      throw new BadRequestException({
+        message: 'No updatable field supplied',
+        errors: [
+          'Supply at least one of: status',
+          'allocatedLimits and grantedPermissions are deliberately not bulk-updatable',
+        ],
+      });
+    }
+
+    const result = new BulkResultBuilder(dto.ids);
+    const customers = await this.resolveForBulk(result.ids, actor);
+    const updated: Customer[] = [];
+
+    for (const id of result.ids) {
+      const customer = customers.get(id);
+
+      if (!customer) {
+        result.notFound(id, 'Customer not found in your scope');
+        continue;
+      }
+
+      const changes = Object.entries(patch).filter(
+        ([key, value]) =>
+          (customer[key as keyof Customer] ?? null) !== (value ?? null),
+      );
+
+      if (changes.length === 0) {
+        result.skipped(id, 'Already in the requested state');
+        continue;
+      }
+
+      const previousStatus = customer.status;
+
+      try {
+        await this.dataSource.transaction(async (manager) => {
+          await manager.update(Customer, { id: customer.id }, patch);
+        });
+        updated.push(customer);
+        result.success(id);
+
+        if (dto.status !== undefined) {
+          this.eventEmitter.emit('customer.status.changed', {
+            customerId: customer.id,
+            status: dto.status,
+            previousStatus,
+          });
+        }
+      } catch (err) {
+        this.logger.error(
+          `Bulk update failed for customer ${id}: ${(err as Error).message}`,
+        );
+        result.failed(id, (err as Error).message);
+      }
+    }
+
+    if (dto.status !== undefined && updated.length > 0) {
+      this.eventEmitter.emit('customers.status.bulk.updated', {
+        customerIds: updated.map((c) => c.id),
+        status: dto.status,
+      });
+    }
+
+    return result.build();
+  }
+
+  // ── Bulk helpers ───────────────────────────────────────────────────────────
+
+  /**
+   * Re-resolves every requested id inside the caller's tenant. This is the
+   * security boundary: the request body is a bare uuid array, so nothing else
+   * stops a caller submitting another tenant's customer ids.
+   */
+  private async resolveForBulk(
+    ids: string[],
+    actor: User,
+  ): Promise<Map<string, Customer>> {
+    if (ids.length === 0) return new Map();
+
+    if (actor.role !== UserRole.SUPER_ADMIN && !actor.tenantId) {
+      this.logger.warn(
+        `Bulk customer request from ${actor.id} with role ${actor.role} and no tenantId — denied`,
+      );
+      return new Map();
+    }
+
+    const where =
+      actor.role === UserRole.SUPER_ADMIN
+        ? { id: In(ids) }
+        : { id: In(ids), tenantId: actor.tenantId };
+
+    const rows = await this.customerRepository.find({ where });
+    return new Map(rows.map((customer) => [customer.id, customer]));
+  }
+
+  /**
+   * customerId → number of live devices still pointing at it, counting both
+   * the `devices.customerId` column and the `customer_devices` assignment
+   * table, because the platform has both mechanisms and either one leaves an
+   * orphan.
+   */
+  private async countAttachedDevices(
+    customerIds: string[],
+  ): Promise<Map<string, number>> {
+    if (customerIds.length === 0) return new Map();
+
+    const rows: Array<{ customerId: string; count: string }> =
+      await this.dataSource.query(
+        `SELECT "customerId", SUM(cnt) AS count FROM (
+            SELECT "customerId", COUNT(*)::int AS cnt
+              FROM devices
+             WHERE "customerId" = ANY($1) AND deleted_at IS NULL
+             GROUP BY "customerId"
+            UNION ALL
+            SELECT "customerId", COUNT(*)::int AS cnt
+              FROM customer_devices
+             WHERE "customerId" = ANY($1)
+             GROUP BY "customerId"
+         ) AS attached
+         GROUP BY "customerId"`,
+        [customerIds],
+      );
+
+    return new Map(rows.map((row) => [row.customerId, Number(row.count)]));
+  }
+
+  private async releaseQuota(
+    tenantId: string,
+    resource: keyof SubscriptionUsage,
+    amount: number,
+  ): Promise<void> {
+    try {
+      await this.subscriptionsService.decrementTenantUsage(
+        tenantId,
+        resource,
+        amount,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to decrement ${String(resource)} usage for tenant ${tenantId} by ${amount}`,
+        err,
+      );
+    }
   }
 
   /**

@@ -4,6 +4,7 @@ import {
   NodeMessage,
   NodeProcessorResult,
 } from './nodes-processor.interface';
+import { runUserScript } from '@common/utils/script-sandbox';
 
 @Injectable()
 export class TransformationNodeProcessor implements INodeProcessor {
@@ -56,13 +57,19 @@ export class TransformationNodeProcessor implements INodeProcessor {
     }
   }
 
+  /**
+   * Run the node's transformation script.
+   *
+   * Was `new Function('msg', 'metadata', script)` — host-realm compilation of
+   * tenant-authored code, i.e. remote code execution for anyone able to edit a
+   * rule chain. See `@common/utils/script-sandbox`.
+   */
   private executeTransformScript(script: string, msg: NodeMessage): any {
-    try {
-      const func = new Function('msg', 'metadata', script);
-      return func(msg.data, msg.metadata);
-    } catch (error) {
-      throw new Error(`Transformation script failed: ${error.message}`);
-    }
+    return runUserScript(
+      script,
+      { msg: msg.data, metadata: msg.metadata },
+      { label: 'transformation node script' },
+    );
   }
 
   private applyKeyMapping(data: any, mapping: Record<string, string>): any {

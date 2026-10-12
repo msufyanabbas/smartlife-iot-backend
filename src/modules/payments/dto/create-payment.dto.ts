@@ -42,3 +42,17 @@ export class RefundPaymentDto {
   @IsString()
   reason?: string;
 }
+
+export class RecordChargebackDto {
+  @ApiProperty({ description: 'Payment ID the chargeback was raised against' })
+  @IsString()
+  paymentId: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Dispute reason / acquirer reference, stored on the payment',
+  })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}

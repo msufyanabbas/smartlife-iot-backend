@@ -12,6 +12,8 @@ import { RedisService } from '@/lib/redis/redis.service';
 import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
 import { IntegrationDispatchService } from '@modules/integrations/integration-dispatch.service';
 import { AutomationService } from '@modules/automation/automation.service';
+import { TelemetryRollupService } from '../telemetry-rollup.service';
+import { TelemetryRetentionService } from '../telemetry-retention.service';
 
 // NOTE: do NOT jest.mock('@lib/redis/redis.service') with a factory that only
 // exports a `redisService` instance — TelemetryService injects the RedisService
@@ -68,6 +70,28 @@ describe('TelemetryService', () => {
     evaluateTelemetryTriggers: jest.fn().mockResolvedValue(undefined),
   };
 
+  // The rollup/retention services are what the statistics, aggregated and
+  // timeseries reads consult before falling back to a raw scan, and what
+  // deleteOldData() now delegates to. `shouldUseRollups: false` keeps every
+  // test in this file on the raw path, which is what they assert.
+  const mockRollupService = {
+    settings: { rollupEnabled: true },
+    shouldUseRollups: jest.fn().mockReturnValue(false),
+    pickGranularity: jest.fn().mockReturnValue('hour'),
+    readSeries: jest.fn().mockResolvedValue([]),
+    readAllKeys: jest.fn().mockResolvedValue([]),
+    readStatistics: jest.fn().mockResolvedValue({ buckets: 0, keys: {} }),
+    coverage: jest.fn().mockResolvedValue([]),
+  };
+
+  const mockRetentionService = {
+    settings: { retentionEnabled: true },
+    sweepTenant: jest
+      .fn()
+      .mockResolvedValue({ deleted: 0, batches: 0, moreRemaining: false }),
+    preview: jest.fn().mockResolvedValue({}),
+  };
+
   beforeEach(async () => {
     // Create testing module
     const module: TestingModule = await Test.createTestingModule({
@@ -96,6 +120,14 @@ describe('TelemetryService', () => {
         {
           provide: AutomationService,
           useValue: mockAutomationService,
+        },
+        {
+          provide: TelemetryRollupService,
+          useValue: mockRollupService,
+        },
+        {
+          provide: TelemetryRetentionService,
+          useValue: mockRetentionService,
         },
       ],
     }).compile();

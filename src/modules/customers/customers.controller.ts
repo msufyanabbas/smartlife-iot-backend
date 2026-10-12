@@ -27,6 +27,11 @@ import {
   BulkUpdateCustomerStatusDto,
   SetCustomerPasswordDto,
 } from './dto/customers.dto';
+import {
+  BulkDeleteCustomersDto,
+  BulkUpdateCustomersDto,
+} from './dto/bulk-customer.dto';
+import { BulkResultDto } from '@common/dto/bulk-operation.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -198,11 +203,83 @@ export class CustomersController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Bulk update customer status' })
   @ApiResponse({ status: 200, description: 'Status updated successfully' })
-  async bulkUpdateStatus(@Body() bulkUpdateDto: BulkUpdateCustomerStatusDto) {
-    await this.customersService.bulkUpdateStatus(bulkUpdateDto);
+  async bulkUpdateStatus(
+    @CurrentUser() user: User,
+    @Body() bulkUpdateDto: BulkUpdateCustomerStatusDto,
+  ) {
+    await this.customersService.bulkUpdateStatus(bulkUpdateDto, user);
     return {
       message: 'Status updated successfully',
     };
+  }
+
+  // ── Bulk operations (declared before ':id' so 'bulk' is not read as an id) ─
+
+  @Post('bulk/delete')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Bulk soft-delete customers (max 100 per request)',
+    description:
+      'Partial success is the normal outcome: always answers 200 with one entry ' +
+      'per requested id in `outcomes`. Every id is re-resolved against the ' +
+      "caller's own tenantId server-side; an id belonging to another tenant " +
+      'comes back as `not_found` and is NOT deleted. At most 100 ids — more is ' +
+      'a 400. Deletes are soft (`deleted_at` is set), unlike ' +
+      'DELETE /customers/:id which still hard-deletes.\n\n' +
+      'CASCADES: the paired login accounts (`users.customerId`) created with ' +
+      'the customer are soft-removed in the same transaction — otherwise ' +
+      'someone could still sign in to an organisation that no longer exists.\n\n' +
+      'COUNTERS: `subscriptions.usage.customers` goes down by the number of ' +
+      'customers deleted and `subscriptions.usage.users` by the number of ' +
+      'paired accounts removed, mirroring the two increments made on create.\n\n' +
+      'BLOCKS: a customer that still has devices assigned (either ' +
+      '`devices.customerId` or a `customer_devices` row). Those devices would ' +
+      'be scoped to a non-existent org — invisible in every customer-filtered ' +
+      "list while still consuming the tenant's device quota. Unassign them " +
+      'first with PATCH /devices/bulk and `customerId: null`.\n\n' +
+      'One transaction per id.',
+  })
+  @ApiResponse({ status: 200, description: 'Per-id outcomes', type: BulkResultDto })
+  @ApiResponse({ status: 400, description: 'More than 100 ids, or a malformed id' })
+  async bulkDelete(
+    @CurrentUser() user: User,
+    @Body() dto: BulkDeleteCustomersDto,
+  ) {
+    return this.customersService.bulkDelete(dto, user);
+  }
+
+  @Patch('bulk')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Bulk update customers (max 100 per request)',
+    description:
+      'Applies the same patch to every listed customer and returns one outcome ' +
+      'per id. ONLY `status` is bulk-updatable. `allocatedLimits` is excluded ' +
+      "because every write has to be validated against the tenant's remaining " +
+      'subscription capacity as a SET, not per row, and a half-applied batch ' +
+      'would leave the tenant over-allocated; `grantedPermissions` is excluded ' +
+      'because it is the permission ceiling for every user under the customer. ' +
+      'Both stay on PATCH /customers/:id.\n\n' +
+      "Every id is re-resolved against the caller's tenant — a foreign id is " +
+      '`not_found` and untouched. A customer already in the requested status is ' +
+      '`skipped` and counts as a success. One transaction per id. Max 100 ids.',
+  })
+  @ApiResponse({ status: 200, description: 'Per-id outcomes', type: BulkResultDto })
+  @ApiResponse({
+    status: 400,
+    description: 'More than 100 ids, a malformed id, or no updatable field supplied',
+  })
+  async bulkUpdate(
+    @CurrentUser() user: User,
+    @Body() dto: BulkUpdateCustomersDto,
+  ) {
+    return this.customersService.bulkUpdate(dto, user);
   }
 
   /**
@@ -328,11 +405,24 @@ export class CustomersController {
    * Delete customer
    */
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Delete customer' })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Delete customer',
+    description:
+      'Removes the customer and the user accounts belonging to it. ' +
+      'TENANT_ADMIN and above only.',
+  })
   @ApiResponse({ status: 204, description: 'Customer deleted successfully' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
   async remove(@CurrentUser() user: User, @Param('id') id: string) {
+    // This handler carried NO @Roles, and RolesGuard returns true without it —
+    // so any authenticated user, a CUSTOMER_USER included, could destroy a
+    // customer and every user account under it. The service was already
+    // tenant-scoped, so the blast radius was the caller's own tenant, which is
+    // quite bad enough.
     await this.customersService.remove(user, id);
   }
 }

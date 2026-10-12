@@ -260,6 +260,39 @@ export class AlarmQueryDto {
   @IsString()
   deviceId?: string;
 
+  /**
+   * Filter to alarms sitting on one asset — including the propagated copies
+   * `AlarmPropagationService` writes up the asset tree.
+   *
+   * `alarms.assetId` has existed (with an FK and a relation) since the entity
+   * was written and was simply never filterable, so an alarm raised on a room
+   * could not be found from the building that contains it. That is the whole
+   * point of propagation, so without this the feature is invisible through the
+   * API.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Alarms on this asset, including ones propagated up from its devices.',
+  })
+  @IsOptional()
+  @IsString()
+  assetId?: string;
+
+  /**
+   * Drop propagated copies and return only the alarms that physically fired.
+   *
+   * A propagated alarm is a real row (see CLAUDE.md §4b), so a tenant-wide
+   * count includes one entry per hierarchy level. That is right for "what is
+   * active on this building" and wrong for "how many alarms happened".
+   */
+  @ApiPropertyOptional({
+    description: 'Exclude alarms propagated from a lower level.',
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  originOnly?: boolean;
+
   @ApiPropertyOptional({ type: String, enum: AlarmSeverity, enumName: 'AlarmSeverity' })
   @IsOptional()
   @IsEnum(AlarmSeverity)

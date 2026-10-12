@@ -10,6 +10,7 @@ import {
   HttpCode,
   HttpStatus,
   Header,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -40,7 +41,11 @@ import {
   StatisticsQueryDto,
   ExportQueryDto,
 } from './dto/telemetry-stats-query.dto';
+import { RollupQueryDto } from './dto/rollup-query.dto';
 import { IsArray } from 'class-validator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { TenantAdminOnly } from '../../common/decorators/access-control.decorator';
+import { UserRole } from '../../common/enums/index.enum';
 
 @ApiTags('telemetry')
 @Controller('telemetry')
@@ -227,6 +232,80 @@ export class TelemetryController {
       startDate,
       endDate,
     );
+  }
+
+  // ── Rollups ───────────────────────────────────────────────────────────────
+
+  /**
+   * The un-pivoted rollup read: one row per (bucket, key).
+   *
+   * `…/aggregated` can only ever report the five columns `telemetry`
+   * denormalises, so a device reporting `co2`, `power` or `pm25` had no coarse
+   * read at all — a year-long chart of those keys had to pull raw rows. This
+   * route serves any rolled-up key at any granularity.
+   *
+   * `@Roles` is explicit and deliberate: `RolesGuard` returns **true** for a
+   * handler with no `@Roles` metadata, so an undecorated route here would be
+   * open to every authenticated principal. The three roles below are the ones
+   * that render device charts.
+   */
+  @Get('devices/:deviceId/rollups')
+  @Roles(UserRole.TENANT_ADMIN, UserRole.CUSTOMER, UserRole.CUSTOMER_USER)
+  @ApiOperation({
+    summary: 'Read pre-aggregated telemetry rollups for a device',
+    description:
+      'Returns one entry per (bucket, key). Buckets are built by the ' +
+      '`aggregate-telemetry` job (hour, day) and the `calculate-statistics` ' +
+      'job (week, month); a range that has not been aggregated yet comes back ' +
+      'empty rather than falling back to a raw scan.',
+  })
+  @ApiResponse({ status: 200, description: 'Rollup buckets retrieved' })
+  @ApiResponse({ status: 404, description: 'Device not found' })
+  getRollups(
+    @CurrentUser() user: User,
+    @Param('deviceId', ParseIdPipe) deviceId: string,
+    @Query() query: RollupQueryDto,
+  ) {
+    return this.telemetryService.getRollups(
+      deviceId,
+      user.id,
+      query.granularity,
+      query.startDate,
+      query.endDate,
+      query.keys,
+    );
+  }
+
+  /**
+   * What the nightly retention sweep will do to this tenant, and how far the
+   * rollups have got.
+   *
+   * TENANT_ADMIN and above: it exposes the tenant's effective retention (a
+   * subscription limit) and a count of rows that are one cron tick away from
+   * being deleted irreversibly. `source: 'unset'` here is the signal that a
+   * tenant is accumulating telemetry nothing will ever clean up.
+   */
+  @Get('maintenance/status')
+  @TenantAdminOnly()
+  @ApiOperation({
+    summary: 'Telemetry retention and rollup status for the current tenant',
+    description:
+      'Read-only preview. Reports the effective retention days and where they ' +
+      'came from (subscription limit, env fallback, or unset = never swept), ' +
+      'how many rows are already past the cutoff, the batch bounds the sweep ' +
+      'will use, and the rollup coverage per granularity.',
+  })
+  @ApiResponse({ status: 200, description: 'Maintenance status retrieved' })
+  getMaintenanceStatus(@CurrentUser() user: User) {
+    // SUPER_ADMIN carries no tenantId (CLAUDE.md §7), and retention is a
+    // per-tenant setting — there is no platform-wide answer to give, and
+    // passing `undefined` through would silently report on no tenant at all.
+    if (!user.tenantId) {
+      throw new BadRequestException(
+        'Telemetry maintenance status is per tenant; this account has no tenantId',
+      );
+    }
+    return this.telemetryService.getMaintenanceStatus(user.tenantId);
   }
 
   @Delete('devices/:deviceId')

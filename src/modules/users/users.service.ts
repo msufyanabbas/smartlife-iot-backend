@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, In } from 'typeorm';
+import { DataSource, Repository, Like, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as crypto from 'crypto';
 import { User } from './entities/user.entity';
@@ -42,6 +42,15 @@ import { Permission } from '../permissions/entities/permissions.entity';
 import { Role } from '../roles/entities/roles.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
+import {
+  BulkOutcome,
+  BulkResultBuilder,
+  BulkResultDto,
+} from '@common/dto/bulk-operation.dto';
+import {
+  BulkDeleteUsersByIdDto,
+  BulkUpdateUsersDto,
+} from './dto/bulk-user.dto';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
 @Injectable()
@@ -64,6 +73,8 @@ export class UsersService {
     @Inject(forwardRef(() => SubscriptionsService))
     private subscriptionsService: SubscriptionsService,
     private configService: ConfigService,
+    // Bulk operations commit one transaction per item — see bulkDelete.
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -178,11 +189,58 @@ export class UsersService {
   /**
    * Find one user by ID
    */
+  /**
+   * Load a user by id.
+   *
+   * **Unscoped on purpose, and only safe for internal callers** that have
+   * already established who may see the row — `JwtStrategy` resolving the
+   * caller themselves, `CustomerUsersService` acting within a customer it has
+   * already checked. Anything reachable from a controller must use
+   * `findOneScoped()` instead.
+   */
   async findOne(id: string): Promise<User> {
     const user = await this.userRepository.findOne({ where: { id } });
 
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    return user;
+  }
+
+  /**
+   * Load a user by id, visible only to a caller entitled to see them.
+   *
+   * `GET /users/:id` used to call the unscoped `findOne` above with no
+   * `@Roles` on the handler, so **any authenticated user could read any user
+   * row in the platform by id** — email, status, role, tenant, the lot — just
+   * by guessing or harvesting a uuid. A uuid is not an access control.
+   *
+   * The rule mirrors the device filter: SUPER_ADMIN sees everyone; everyone
+   * else is confined to their own tenant, and a customer-scoped caller to
+   * their own customer. A caller may always read themselves.
+   */
+  async findOneScoped(id: string, caller: User): Promise<User> {
+    const user = await this.findOne(id);
+
+    if (caller.role === UserRole.SUPER_ADMIN) return user;
+    if (caller.id === id) return user;
+
+    // Only SUPER_ADMIN is legitimately tenant-less; a falsy tenantId here must
+    // deny rather than match everything.
+    if (!caller.tenantId || user.tenantId !== caller.tenantId) {
+      // 404, not 403: a caller must not be able to confirm that a user id
+      // exists in another tenant.
+      throw new NotFoundException('User not found');
+    }
+
+    if (
+      caller.role === UserRole.CUSTOMER ||
+      caller.role === UserRole.CUSTOMER_USER
+    ) {
+      if (!caller.customerId || user.customerId !== caller.customerId) {
+        throw new NotFoundException('User not found');
+      }
     }
 
     return user;
@@ -456,18 +514,320 @@ export class UsersService {
     return updatedUser;
   }
 
-  // ── Bulk Delete ───────────────────────────────────────────────────────────────
+  // ── Bulk delete / bulk update (per-id outcomes) ────────────────────────────
+  //
+  // TRANSACTION GRANULARITY: ONE TRANSACTION PER ITEM, deliberately. A
+  // per-batch transaction would roll back 49 good deletes because the 50th id
+  // belonged to another tenant, which is the opposite of what these routes
+  // are for.
+  //
+  // TENANT SCOPING: every id is re-resolved against the caller's tenant in
+  // resolveForBulk() before anything is written. The previous untenanted
+  // bulk helpers below now route through it — they selected by
+  // `id IN (...)` with no tenant predicate at all, so a TENANT_ADMIN who knew
+  // a uuid could soft-delete another tenant's users and flip their statuses.
+  //
+  // COUNTERS: `subscriptions.usage.users` is decremented once per tenant for
+  // the number actually deleted. `POST /users` is gated by
+  // @RequireSubscriptionLimit({resource:'users'}) reading that counter, so a
+  // bulk delete that skipped it would leave the tenant unable to create users
+  // it has quota for. CustomerListener's own 'users' decrement fires on
+  // `customer.deleted`, which this path does not emit, so there is no
+  // double-count.
+  //
+  // CASCADES: `user.deleted` is emitted per deleted user so CustomerListener
+  // removes the paired Customer row for CUSTOMER-role users — the same
+  // cascade the single-user remove() triggers. Notifications addressed to the
+  // user are kept (their FK CASCADE does not fire on a soft delete, and a
+  // notification history is not the user's account).
+  //
+  // BLOCKS: the caller's own row, any SUPER_ADMIN row, and the tenant's last
+  // remaining TENANT_ADMIN. Deleting the last admin leaves a tenant with
+  // paying data and nobody able to administer it, and it cannot be undone
+  // through the API.
 
-  async bulkDelete(dto: BulkDeleteUsersDto): Promise<{ deleted: number }> {
-    const users = await this.findByIds(dto.userIds);
+  async bulkDelete(
+    dto: BulkDeleteUsersByIdDto,
+    actor: User,
+  ): Promise<BulkResultDto> {
+    const result = new BulkResultBuilder(dto.ids);
+    const users = await this.resolveForBulk(result.ids, actor);
 
-    if (users.length === 0) return { deleted: 0 };
+    // Remaining-admin budget per tenant, so deleting four of five admins
+    // succeeds and deleting all five blocks on the last one.
+    const adminsLeft = await this.countTenantAdmins(
+      [...new Set([...users.values()].map((u) => u.tenantId).filter((t): t is string => !!t))],
+      false,
+    );
 
-    await this.userRepository.softRemove(users);
+    const deleted: User[] = [];
 
-    // Decrement per tenant in one call each rather than once per user — a bulk
-    // delete can span tenants, and ten single-step updates on the same row
-    // would be ten write conflicts.
+    for (const id of result.ids) {
+      const user = users.get(id);
+
+      if (!user) {
+        result.notFound(id, 'User not found in your scope');
+        continue;
+      }
+
+      if (user.id === actor.id) {
+        result.blocked(id, 'You cannot delete your own account');
+        continue;
+      }
+
+      if (user.role === UserRole.SUPER_ADMIN) {
+        result.blocked(id, 'Platform super admins cannot be deleted in bulk');
+        continue;
+      }
+
+      if (user.role === UserRole.TENANT_ADMIN && user.tenantId) {
+        const left = adminsLeft.get(user.tenantId) ?? 0;
+        if (left <= 1) {
+          result.blocked(
+            id,
+            'This is the last tenant admin — the tenant would be left with no administrator',
+          );
+          continue;
+        }
+      }
+
+      try {
+        await this.dataSource.transaction(async (manager) => {
+          await manager.softRemove(user);
+        });
+        if (user.role === UserRole.TENANT_ADMIN && user.tenantId) {
+          adminsLeft.set(user.tenantId, (adminsLeft.get(user.tenantId) ?? 1) - 1);
+        }
+        deleted.push(user);
+        result.success(id);
+      } catch (err) {
+        this.logger.error(
+          `Bulk delete failed for user ${id}: ${(err as Error).message}`,
+        );
+        result.failed(id, (err as Error).message);
+      }
+    }
+
+    await this.releaseUserQuota(deleted);
+
+    // Per user, not per batch: CustomerListener cascades one Customer row per
+    // CUSTOMER-role user.
+    for (const user of deleted) {
+      this.eventEmitter.emit('user.deleted', {
+        userId: user.id,
+        role: user.role,
+        customerId: user.customerId,
+        tenantId: user.tenantId,
+      });
+    }
+
+    return result.build();
+  }
+
+  async bulkUpdate(
+    dto: BulkUpdateUsersDto,
+    actor: User,
+  ): Promise<BulkResultDto> {
+    // See BulkUpdateUsersDto for the field set and why role / password /
+    // tenantId / email are not in it. `undefined` leaves a field alone;
+    // `null` clears customerId. The patch is applied with update(), not
+    // save(), because save() treats a property set to undefined as unchanged
+    // and would silently fail to clear a column.
+    const patch: Record<string, unknown> = {};
+    if (dto.status !== undefined) patch.status = dto.status;
+    if (dto.customerId !== undefined) patch.customerId = dto.customerId;
+
+    if (Object.keys(patch).length === 0) {
+      throw new BadRequestException({
+        message: 'No updatable field supplied',
+        errors: [
+          'Supply at least one of: status, customerId',
+          'role, password, tenantId and email are deliberately not bulk-updatable',
+        ],
+      });
+    }
+
+    if (dto.customerId) {
+      await this.assertCustomerInTenant(dto.customerId, actor);
+    }
+
+    const result = new BulkResultBuilder(dto.ids);
+    const users = await this.resolveForBulk(result.ids, actor);
+
+    const deactivating =
+      dto.status !== undefined && dto.status !== UserStatus.ACTIVE;
+
+    const activeAdminsLeft = deactivating
+      ? await this.countTenantAdmins(
+          [...new Set([...users.values()].map((u) => u.tenantId).filter((t): t is string => !!t))],
+          true,
+        )
+      : new Map<string, number>();
+
+    const updated: User[] = [];
+
+    for (const id of result.ids) {
+      const user = users.get(id);
+
+      if (!user) {
+        result.notFound(id, 'User not found in your scope');
+        continue;
+      }
+
+      if (deactivating && user.id === actor.id) {
+        result.blocked(id, 'You cannot deactivate your own account');
+        continue;
+      }
+
+      if (
+        deactivating &&
+        user.role === UserRole.TENANT_ADMIN &&
+        user.status === UserStatus.ACTIVE &&
+        user.tenantId
+      ) {
+        const left = activeAdminsLeft.get(user.tenantId) ?? 0;
+        if (left <= 1) {
+          result.blocked(
+            id,
+            'This is the last active tenant admin — the tenant would be locked out',
+          );
+          continue;
+        }
+      }
+
+      const changes = Object.entries(patch).filter(
+        ([key, value]) => (user[key as keyof User] ?? null) !== (value ?? null),
+      );
+
+      if (changes.length === 0) {
+        result.skipped(id, 'Already in the requested state');
+        continue;
+      }
+
+      try {
+        await this.dataSource.transaction(async (manager) => {
+          await manager.update(User, { id: user.id }, patch);
+        });
+        if (
+          deactivating &&
+          user.role === UserRole.TENANT_ADMIN &&
+          user.status === UserStatus.ACTIVE &&
+          user.tenantId
+        ) {
+          activeAdminsLeft.set(
+            user.tenantId,
+            (activeAdminsLeft.get(user.tenantId) ?? 1) - 1,
+          );
+        }
+        updated.push(user);
+        result.success(id);
+      } catch (err) {
+        this.logger.error(
+          `Bulk update failed for user ${id}: ${(err as Error).message}`,
+        );
+        result.failed(id, (err as Error).message);
+      }
+    }
+
+    // CustomerListener syncs a CUSTOMER-role user's paired Customer row off
+    // this event, so a bulk status change has to emit it or the customer row
+    // drifts out of step with its login account.
+    if (dto.status !== undefined && updated.length > 0) {
+      this.eventEmitter.emit('users.status.bulk.updated', {
+        status: dto.status,
+        affectedUsers: updated.map((u) => ({
+          userId: u.id,
+          role: u.role,
+          customerId: u.customerId,
+          tenantId: u.tenantId,
+        })),
+      });
+    }
+
+    return result.build();
+  }
+
+  // ── Bulk helpers ───────────────────────────────────────────────────────────
+
+  /**
+   * Re-resolves every requested id inside the caller's tenant. This is the
+   * security boundary of the bulk routes: the body is a bare uuid array, so
+   * nothing else stops a caller submitting another tenant's user ids.
+   *
+   * A SUPER_ADMIN is unscoped (they have no tenantId by design). Anyone else
+   * without a tenantId is denied outright rather than falling through to an
+   * unscoped query.
+   */
+  private async resolveForBulk(
+    ids: string[],
+    actor: User,
+  ): Promise<Map<string, User>> {
+    if (ids.length === 0) return new Map();
+
+    if (actor.role !== UserRole.SUPER_ADMIN && !actor.tenantId) {
+      this.logger.warn(
+        `Bulk user request from ${actor.id} with role ${actor.role} and no tenantId — denied`,
+      );
+      return new Map();
+    }
+
+    const where =
+      actor.role === UserRole.SUPER_ADMIN
+        ? { id: In(ids) }
+        : { id: In(ids), tenantId: actor.tenantId };
+
+    const rows = await this.userRepository.find({ where });
+    return new Map(rows.map((user) => [user.id, user]));
+  }
+
+  /** tenantId → number of TENANT_ADMIN rows left (optionally only ACTIVE ones). */
+  private async countTenantAdmins(
+    tenantIds: string[],
+    activeOnly: boolean,
+  ): Promise<Map<string, number>> {
+    if (tenantIds.length === 0) return new Map();
+
+    const rows: Array<{ tenantId: string; count: string }> =
+      await this.dataSource.query(
+        `SELECT "tenantId", COUNT(*) AS count
+           FROM users
+          WHERE "tenantId" = ANY($1)
+            AND role::text = $2
+            AND deleted_at IS NULL
+            ${activeOnly ? 'AND status::text = $3' : ''}
+          GROUP BY "tenantId"`,
+        activeOnly
+          ? [tenantIds, UserRole.TENANT_ADMIN, UserStatus.ACTIVE]
+          : [tenantIds, UserRole.TENANT_ADMIN],
+      );
+
+    return new Map(rows.map((row) => [row.tenantId, Number(row.count)]));
+  }
+
+  private async assertCustomerInTenant(
+    customerId: string,
+    actor: User,
+  ): Promise<void> {
+    const rows: Array<{ id: string }> = await this.dataSource.query(
+      actor.tenantId
+        ? `SELECT id FROM customers WHERE id = $1 AND "tenantId" = $2 AND deleted_at IS NULL`
+        : `SELECT id FROM customers WHERE id = $1 AND deleted_at IS NULL`,
+      actor.tenantId ? [customerId, actor.tenantId] : [customerId],
+    );
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Customer ${customerId} not found`);
+    }
+  }
+
+  /**
+   * One UPDATE per distinct tenant rather than one per user — a bulk delete
+   * can span tenants for a SUPER_ADMIN, and N single-step updates on the same
+   * subscription row would be N write conflicts. Non-fatal: the users ARE
+   * deleted, so a failed counter write must not be reported as a failed
+   * delete.
+   */
+  private async releaseUserQuota(users: User[]): Promise<void> {
     const perTenant = new Map<string, number>();
     for (const user of users) {
       if (!user.tenantId) continue;
@@ -483,23 +843,32 @@ export class UsersService {
         );
       } catch (err) {
         this.logger.error(
-          `Failed to decrement users usage for tenant ${tenantId}`,
+          `Failed to decrement users usage for tenant ${tenantId} by ${count}`,
           err,
         );
       }
     }
+  }
 
-    // Emit per-user so CustomerListener can cascade for CUSTOMER role users
-    for (const user of users) {
-      this.eventEmitter.emit('user.deleted', {
-        userId: user.id,
-        role: user.role,
-        customerId: user.customerId,
-        tenantId: user.tenantId,
-      });
-    }
+  // ── Legacy bulk shims ──────────────────────────────────────────────────────
+  //
+  // Both of these were tenant-unscoped: they matched `id IN (:...ids)` with no
+  // tenant predicate, so any admin who knew a uuid could delete or re-status
+  // another tenant's users. They now delegate to the scoped implementations
+  // above and keep their original response shapes so the existing routes do
+  // not change contract.
 
-    return { deleted: users.length };
+  /** @deprecated Use POST /users/bulk/delete, which returns per-id outcomes. */
+  async bulkDeleteLegacy(
+    dto: BulkDeleteUsersDto,
+    actor: User,
+  ): Promise<{ deleted: number }> {
+    const result = await this.bulkDelete({ ids: dto.userIds }, actor);
+    return {
+      deleted: result.outcomes.filter(
+        (o) => o.outcome === BulkOutcome.SUCCESS,
+      ).length,
+    };
   }
 
   // ── Bulk Assign Role ──────────────────────────────────────────────────────────
@@ -646,25 +1015,21 @@ export class UsersService {
   }
 
   /**
-   * Bulk update user status
+   * Bulk update user status.
+   *
+   * @deprecated Use PATCH /users/bulk, which returns per-id outcomes and says
+   * which ids were rejected. Kept because the existing route's contract is
+   * `void`; it now goes through the tenant-scoped bulkUpdate() instead of the
+   * unscoped `id IN (...)` UPDATE it used to run.
    */
-  async bulkUpdateStatus(bulkUpdateDto: BulkUpdateStatusDto): Promise<void> {
-    const users = await this.findByIds(bulkUpdateDto.userIds);
-
-    await this.userRepository.update(
-      { id: In(bulkUpdateDto.userIds) },
-      { status: bulkUpdateDto.status },
+  async bulkUpdateStatus(
+    bulkUpdateDto: BulkUpdateStatusDto,
+    actor: User,
+  ): Promise<void> {
+    await this.bulkUpdate(
+      { ids: bulkUpdateDto.userIds, status: bulkUpdateDto.status },
+      actor,
     );
-
-    this.eventEmitter.emit('users.status.bulk.updated', {
-      status: bulkUpdateDto.status,
-      affectedUsers: users.map((u) => ({
-        userId: u.id,
-        role: u.role,
-        customerId: u.customerId,
-        tenantId: u.tenantId,
-      })),
-    });
   }
 
   /**

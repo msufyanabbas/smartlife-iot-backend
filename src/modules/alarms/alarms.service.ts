@@ -436,6 +436,8 @@ export class AlarmsService {
       page = 1,
       limit = 20,
       deviceId,
+      assetId,
+      originOnly,
       severity,
       status,
       search,
@@ -455,6 +457,21 @@ export class AlarmsService {
     // Filter by device
     if (deviceId) {
       queryBuilder.andWhere('alarm.deviceId = :deviceId', { deviceId });
+    }
+
+    // Filter by asset. `alarms.assetId` is where AlarmPropagationService
+    // writes the copies it walks up the asset tree, so this is how a building
+    // view sees an alarm that fired on one of its rooms (CLAUDE.md §4b).
+    if (assetId) {
+      queryBuilder.andWhere('alarm.assetId = :assetId', { assetId });
+    }
+
+    // Only alarms that physically fired, excluding propagated copies — a
+    // tenant-wide count would otherwise include one row per hierarchy level.
+    if (originOnly) {
+      queryBuilder.andWhere(
+        `(alarm.metadata->'propagation'->>'isMirror') IS NULL`,
+      );
     }
 
     // Filter by severity

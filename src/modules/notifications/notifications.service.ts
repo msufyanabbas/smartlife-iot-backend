@@ -9,7 +9,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { DataSource, Repository, In } from 'typeorm';
 import { NotificationChannel, NotificationStatus, NotificationType } from '@common/enums/index.enum';
 import {
   Notification,
@@ -31,6 +31,14 @@ import { UserRole } from '@common/enums/index.enum';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { UsersService } from '@modules/users/users.service';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
+import {
+  BulkResultBuilder,
+  BulkResultDto,
+} from '@common/dto/bulk-operation.dto';
+import {
+  BulkDeleteNotificationsDto,
+  BulkUpdateNotificationsDto,
+} from './dto/bulk-notification.dto';
 
 @Injectable()
 export class NotificationsService {
@@ -51,7 +59,34 @@ export class NotificationsService {
     private smsChannel: SmsChannel,
     private pushChannel: PushChannel,
     private whatsappChannel: WhatsappChannel,
+    // Bulk operations commit one transaction per item — see bulkDelete.
+    private readonly dataSource: DataSource,
   ) { }
+
+  /**
+   * Does this customer belong to this tenant?
+   *
+   * Used by the bulk-to-customer broadcast, which previously took the customer
+   * id straight from the URL and sent to whoever it named — in any tenant.
+   * Queried through `dataSource` rather than by importing `CustomersModule`,
+   * which would add an import cycle for one existence check (the same reason
+   * `AssignmentService` reaches other modules' tables directly).
+   */
+  async customerBelongsToTenant(
+    customerId: string,
+    tenantId?: string,
+  ): Promise<boolean> {
+    if (!customerId || !tenantId) return false;
+
+    const rows = await this.dataSource.query(
+      `SELECT 1 FROM customers
+        WHERE id = $1 AND "tenantId" = $2 AND deleted_at IS NULL
+        LIMIT 1`,
+      [customerId, tenantId],
+    );
+
+    return rows.length > 0;
+  }
 
   /**
    * ✅ ENHANCED: Create notification with tenant/customer context
@@ -348,6 +383,160 @@ export class NotificationsService {
     }
 
     return { deleted: notifications.length };
+  }
+
+  // ── Bulk delete / bulk update (per-id outcomes) ────────────────────────────
+  //
+  // TRANSACTION GRANULARITY: ONE TRANSACTION PER ITEM, for the same reason as
+  // the other bulk routes — a per-batch transaction would roll back 49 good
+  // deletes because the 50th id belonged to another tenant.
+  //
+  // SCOPING: resolveForBulk() applies the same role-based rule the rest of
+  // this service uses (SUPER_ADMIN everything, TENANT_ADMIN its tenant,
+  // CUSTOMER its customer, everyone else only their own rows) — but it ALWAYS
+  // adds the tenant predicate as well. `markAllAsRead()` and
+  // `deleteAllRead()` filter by `customerId` or `userId` ALONE, which is only
+  // safe because those are uuids; a bulk route taking ids from a request body
+  // cannot rely on that.
+  //
+  // NOTHING CASCADES and NOTHING BLOCKS: no table has a foreign key to
+  // `notifications`, and a notification carries no quota. There is therefore
+  // no counter to maintain here, which is why this module's bulk delete is
+  // the simplest of the four.
+
+  async bulkDelete(
+    dto: BulkDeleteNotificationsDto,
+    user: User,
+  ): Promise<BulkResultDto> {
+    const result = new BulkResultBuilder(dto.ids);
+    const notifications = await this.resolveForBulk(result.ids, user);
+
+    for (const id of result.ids) {
+      const notification = notifications.get(id);
+
+      if (!notification) {
+        result.notFound(id, 'Notification not found in your scope');
+        continue;
+      }
+
+      try {
+        await this.dataSource.transaction(async (manager) => {
+          await manager.softRemove(notification);
+        });
+        result.success(id);
+      } catch (err) {
+        this.logger.error(
+          `Bulk delete failed for notification ${id}: ${(err as Error).message}`,
+        );
+        result.failed(id, (err as Error).message);
+      }
+    }
+
+    return result.build();
+  }
+
+  async bulkUpdate(
+    dto: BulkUpdateNotificationsDto,
+    user: User,
+  ): Promise<BulkResultDto> {
+    if (dto.isRead === undefined) {
+      throw new BadRequestException({
+        message: 'No updatable field supplied',
+        errors: [
+          'Supply isRead',
+          'Delivery fields (status, sentAt, deliveredAt, retryCount) are written by the delivery pipeline and are not client-writable',
+        ],
+      });
+    }
+
+    const result = new BulkResultBuilder(dto.ids);
+    const notifications = await this.resolveForBulk(result.ids, user);
+
+    for (const id of result.ids) {
+      const notification = notifications.get(id);
+
+      if (!notification) {
+        result.notFound(id, 'Notification not found in your scope');
+        continue;
+      }
+
+      if (notification.isRead === dto.isRead) {
+        result.skipped(
+          id,
+          dto.isRead ? 'Already read' : 'Already unread',
+        );
+        continue;
+      }
+
+      try {
+        await this.dataSource.transaction(async (manager) => {
+          await manager.update(
+            Notification,
+            { id: notification.id },
+            {
+              isRead: dto.isRead,
+              // Mirrors Notification.markAsRead(): the timestamp is part of
+              // the flag, and leaving a stale readAt on an un-read row would
+              // misreport when it was seen.
+              // `null`, not `undefined`: TypeORM's update() treats undefined
+              // as "leave this column alone", so marking a row unread would
+              // keep a stale readAt and misreport when it was seen.
+              readAt: dto.isRead ? new Date() : (null as any),
+            },
+          );
+        });
+        result.success(id);
+      } catch (err) {
+        this.logger.error(
+          `Bulk update failed for notification ${id}: ${(err as Error).message}`,
+        );
+        result.failed(id, (err as Error).message);
+      }
+    }
+
+    return result.build();
+  }
+
+  /**
+   * Re-resolves every requested id inside the caller's own scope. This is the
+   * security boundary of the bulk routes: the body is a bare uuid array.
+   */
+  private async resolveForBulk(
+    ids: string[],
+    user: User,
+  ): Promise<Map<string, Notification>> {
+    if (ids.length === 0) return new Map();
+
+    if (user.role === UserRole.SUPER_ADMIN) {
+      const rows = await this.notificationRepository.find({
+        where: { id: In(ids) },
+      });
+      return new Map(rows.map((n) => [n.id, n]));
+    }
+
+    if (!user.tenantId) {
+      this.logger.warn(
+        `Bulk notification request from ${user.id} with role ${user.role} and no tenantId — denied`,
+      );
+      return new Map();
+    }
+
+    const where: Record<string, unknown> = {
+      id: In(ids),
+      tenantId: user.tenantId,
+    };
+
+    if (user.role === UserRole.TENANT_ADMIN) {
+      // Tenant-wide, nothing further.
+    } else if (user.role === UserRole.CUSTOMER) {
+      if (!user.customerId) return new Map();
+      where.customerId = user.customerId;
+    } else {
+      where.userId = user.id;
+    }
+
+    const rows = await this.notificationRepository.find({ where: where as any });
+    return new Map(rows.map((n) => [n.id, n]));
   }
 
   /**

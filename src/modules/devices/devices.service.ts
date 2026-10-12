@@ -9,10 +9,24 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, LessThan } from 'typeorm';
+import { Repository, In, LessThan, DataSource, EntityManager } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Asset, Device, DeviceProfile, User } from '@modules/index.entities';
-import { DeviceProvisionType, DeviceStatus, DeviceType } from '@common/enums/index.enum';
+import { DeviceCredentials } from '@modules/devices/entities/device-credentials.entity';
+import {
+  AlarmStatus,
+  DeviceProvisionType,
+  DeviceStatus,
+  DeviceType,
+} from '@common/enums/index.enum';
+import {
+  BulkResultBuilder,
+  BulkResultDto,
+} from '@common/dto/bulk-operation.dto';
+import {
+  BulkDeleteDevicesDto,
+  BulkUpdateDevicesDto,
+} from '@modules/devices/dto/bulk-device.dto';
 import { CreateDeviceDto } from '@modules/devices/dto/create-device.dto';
 import { UpdateDeviceDto } from '@modules/devices/dto/update-device.dto';
 import { DeviceCredentialsDto } from '@modules/devices/dto/device-credentials.dto';
@@ -57,6 +71,13 @@ export class DevicesService {
     private subscriptionsService: SubscriptionsService,
     @Inject(ProfileAlarmService)
     private profileAlarmService: ProfileAlarmService,
+    // Bulk operations run one transaction per item (see bulkDelete) and have
+    // to touch tables owned by other modules (floor_plan_devices,
+    // customer_devices, user_devices, customers.usageCounters). Taking the
+    // DataSource rather than importing four more modules keeps this module's
+    // import graph as it is — DevicesModule is already in two forwardRef
+    // cycles.
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -680,6 +701,337 @@ export class DevicesService {
     await this.deviceRepository.update({ id: In(deviceIds) }, { status });
   }
 
+  // ── Bulk delete / bulk update (per-id outcomes) ───────────────────────────
+  //
+  // TRANSACTION GRANULARITY: ONE TRANSACTION PER ITEM, chosen deliberately.
+  // A per-batch transaction would roll back 49 good deletes because the 50th
+  // id belonged to another tenant, which contradicts the partial-success
+  // contract these routes exist to provide. Per item, each device's
+  // credentials + placements + assignment rows + counter adjustments + the
+  // soft delete itself are all-or-nothing, and a failure is reported against
+  // that one id.
+  //
+  // WHAT CASCADES when a device is soft-deleted:
+  //   - device_credentials  — HARD deleted. The DB-level onDelete:'CASCADE' on
+  //     DeviceCredentials.deviceId only fires on a hard delete of the device,
+  //     and a soft delete leaves the FK row present, so credentials that could
+  //     still authenticate an MQTT connection would outlive the device. Same
+  //     reasoning and same order as the single-device remove().
+  //   - floor_plan_devices  — soft-removed. Its FK is also onDelete:'CASCADE'
+  //     and so also does not fire; the entity's own comment says it exists to
+  //     stop placements orphaning when a device goes away.
+  //   - customer_devices / user_devices — deleted, and the denormalised
+  //     counters they feed (customers.usageCounters.devices and
+  //     customer_user_limits.usageCounters.devices) are decremented by the
+  //     number of rows actually removed. Without this a customer's device
+  //     allocation is consumed forever by devices that no longer exist.
+  //   - subscriptions.usage.devices — decremented once per tenant for the
+  //     number of devices actually deleted, after the loop.
+  //
+  // WHAT IS RETAINED (deliberately not cascaded): telemetry, attributes,
+  // alarms and device_commands. They are the historical record of what the
+  // device did; deleting a device is an inventory action, not a request to
+  // erase its history. Telemetry in particular is the largest table in the
+  // platform and a synchronous cascade of it would make a 100-device delete
+  // unbounded in time.
+  //
+  // WHAT BLOCKS: a device with an ACTIVE or ACKNOWLEDGED alarm. A live
+  // incident must be cleared or resolved first — deleting the device would
+  // hide an open alarm from every alarm list while leaving the row behind.
+
+  async bulkDelete(dto: BulkDeleteDevicesDto, user: User): Promise<BulkResultDto> {
+    const result = new BulkResultBuilder(dto.ids);
+    const devices = await this.resolveForBulk(result.ids, user);
+
+    // One query for the block rule rather than one per device.
+    const openAlarms = await this.countOpenAlarmsByDevice([...devices.keys()]);
+
+    for (const id of result.ids) {
+      const device = devices.get(id);
+
+      if (!device) {
+        // Covers "no such device" and "belongs to another tenant" with the
+        // same answer — a caller must not learn that a foreign id exists.
+        result.notFound(id, 'Device not found in your scope');
+        continue;
+      }
+
+      const alarmCount = openAlarms.get(id) ?? 0;
+      if (alarmCount > 0) {
+        result.blocked(
+          id,
+          `Device has ${alarmCount} active or acknowledged alarm(s); clear or resolve them first`,
+        );
+        continue;
+      }
+
+      try {
+        await this.dataSource.transaction(async (manager) => {
+          await manager.delete(DeviceCredentials, { deviceId: device.id });
+          await this.detachDeviceReferences(manager, device);
+          await manager.softRemove(device);
+        });
+        result.success(id);
+      } catch (err) {
+        this.logger.error(
+          `Bulk delete failed for device ${id}: ${(err as Error).message}`,
+        );
+        result.failed(id, (err as Error).message);
+      }
+    }
+
+    await this.releaseDeviceQuota(
+      result.successfulIds().map((id) => devices.get(id)!),
+    );
+
+    return result.build();
+  }
+
+  async bulkUpdate(dto: BulkUpdateDevicesDto, user: User): Promise<BulkResultDto> {
+    // `undefined` means "field absent — leave it alone"; an explicit null
+    // means "clear it". Testing `!== undefined` is what makes omitting a
+    // field safe under the global ValidationPipe's transform.
+    //
+    // The patch is applied with repository.update(), not save(): TypeORM's
+    // save() diffs against the loaded entity and treats a property set to
+    // undefined as "unchanged", so assigning `undefined` to clear a column
+    // silently does nothing. `null` through update() writes a real NULL,
+    // which is what unassigning a customer has to do.
+    const patch: Record<string, unknown> = {};
+    if (dto.status !== undefined) patch.status = dto.status;
+    if (dto.customerId !== undefined) patch.customerId = dto.customerId;
+    if (dto.assetId !== undefined) patch.assetId = dto.assetId;
+
+    if (Object.keys(patch).length === 0) {
+      throw new BadRequestException({
+        message: 'No updatable field supplied',
+        errors: [
+          'Supply at least one of: status, customerId, assetId',
+          'Other device fields are not bulk-updatable by design',
+        ],
+      });
+    }
+
+    // The target customer / asset is one value shared by the whole batch, so a
+    // foreign or unknown id is a request-level error (400), not a per-item
+    // outcome — nothing in the batch could ever succeed.
+    if (dto.customerId) {
+      await this.assertCustomerInTenant(dto.customerId, user);
+    }
+    if (dto.assetId) {
+      await this.assertAssetInTenant(dto.assetId, user.tenantId);
+    }
+
+    const result = new BulkResultBuilder(dto.ids);
+    const devices = await this.resolveForBulk(result.ids, user);
+
+    for (const id of result.ids) {
+      const device = devices.get(id);
+
+      if (!device) {
+        result.notFound(id, 'Device not found in your scope');
+        continue;
+      }
+
+      const changes = Object.entries(patch).filter(
+        ([key, value]) =>
+          (device[key as keyof Device] ?? null) !== (value ?? null),
+      );
+
+      if (changes.length === 0) {
+        result.skipped(id, 'Already in the requested state');
+        continue;
+      }
+
+      try {
+        await this.dataSource.transaction(async (manager) => {
+          const row = { ...patch };
+          // Mirror activate(): a device that becomes ACTIVE for the first time
+          // gets its activation timestamp, so the bulk path and the
+          // single-device route leave the same row behind.
+          if (patch.status === DeviceStatus.ACTIVE && !device.activatedAt) {
+            row.activatedAt = new Date();
+          }
+          await manager.update(Device, { id: device.id }, row);
+        });
+        result.success(id);
+      } catch (err) {
+        this.logger.error(
+          `Bulk update failed for device ${id}: ${(err as Error).message}`,
+        );
+        result.failed(id, (err as Error).message);
+      }
+    }
+
+    return result.build();
+  }
+
+  // ── Bulk helpers ──────────────────────────────────────────────────────────
+
+  /**
+   * Re-resolves every requested id against the caller's own scope, server
+   * side. This is the security boundary of the bulk routes: the request body
+   * is a bare array of uuids, so nothing but this lookup stops a caller from
+   * listing another tenant's device ids.
+   */
+  private async resolveForBulk(
+    ids: string[],
+    user: User,
+  ): Promise<Map<string, Device>> {
+    if (ids.length === 0) return new Map();
+
+    // applyAccessFilter() adds no tenant predicate when user.tenantId is
+    // falsy, which is correct for SUPER_ADMIN and a cross-tenant read for
+    // anybody else. Deny instead of running an unscoped IN (...) query.
+    if (user.role !== UserRole.SUPER_ADMIN && !user.tenantId) {
+      this.logger.warn(
+        `Bulk request from user ${user.id} with role ${user.role} and no tenantId — denied`,
+      );
+      return new Map();
+    }
+
+    const qb = this.deviceRepository
+      .createQueryBuilder('device')
+      .where('device.id IN (:...ids)', { ids });
+
+    this.applyAccessFilter(qb, user);
+
+    const rows = await qb.getMany();
+    return new Map(rows.map((device) => [device.id, device]));
+  }
+
+  /** deviceId → number of alarms still open on it. */
+  private async countOpenAlarmsByDevice(
+    deviceIds: string[],
+  ): Promise<Map<string, number>> {
+    if (deviceIds.length === 0) return new Map();
+
+    const rows: Array<{ deviceId: string; count: string }> =
+      await this.dataSource.query(
+        `SELECT "deviceId", COUNT(*) AS count
+           FROM alarms
+          WHERE "deviceId" = ANY($1)
+            AND status::text = ANY($2)
+            AND deleted_at IS NULL
+          GROUP BY "deviceId"`,
+        [deviceIds, [AlarmStatus.ACTIVE, AlarmStatus.ACKNOWLEDGED]],
+      );
+
+    return new Map(rows.map((row) => [row.deviceId, Number(row.count)]));
+  }
+
+  private async assertCustomerInTenant(
+    customerId: string,
+    user: User,
+  ): Promise<void> {
+    const rows: Array<{ id: string }> = await this.dataSource.query(
+      user.tenantId
+        ? `SELECT id FROM customers WHERE id = $1 AND "tenantId" = $2 AND deleted_at IS NULL`
+        : `SELECT id FROM customers WHERE id = $1 AND deleted_at IS NULL`,
+      user.tenantId ? [customerId, user.tenantId] : [customerId],
+    );
+
+    if (rows.length === 0) {
+      throw new NotFoundException(`Customer ${customerId} not found`);
+    }
+  }
+
+  /**
+   * Removes the rows that point at a device and would otherwise survive its
+   * soft delete, keeping the counters they feed honest. Runs inside the
+   * caller's per-item transaction.
+   *
+   * Raw SQL rather than repositories on purpose: these four tables belong to
+   * FloorPlansModule and AssignmentsModule, and `AssignmentService` maintains
+   * the same jsonb counters with the same statements.
+   */
+  private async detachDeviceReferences(
+    manager: EntityManager,
+    device: Device,
+  ): Promise<void> {
+    // Floor plan placements — soft, like the device itself.
+    await manager.query(
+      `UPDATE floor_plan_devices
+          SET deleted_at = now()
+        WHERE "deviceId" = $1 AND deleted_at IS NULL`,
+      [device.id],
+    );
+
+    // User-level assignments first: their counter lives on
+    // customer_user_limits and is keyed by (userId, customerId).
+    await manager.query(
+      `UPDATE customer_user_limits cul
+          SET "usageCounters" = jsonb_set(
+                cul."usageCounters",
+                '{devices}',
+                GREATEST(0, (COALESCE(cul."usageCounters"->>'devices', '0')::int - sub.cnt))::text::jsonb
+              )
+         FROM (
+                SELECT "userId", "customerId", COUNT(*)::int AS cnt
+                  FROM user_devices
+                 WHERE "deviceId" = $1
+                 GROUP BY "userId", "customerId"
+              ) AS sub
+        WHERE cul."userId" = sub."userId"
+          AND cul."customerId" = sub."customerId"`,
+      [device.id],
+    );
+    await manager.query(`DELETE FROM user_devices WHERE "deviceId" = $1`, [
+      device.id,
+    ]);
+
+    // Customer-level assignments and customers.usageCounters.devices.
+    await manager.query(
+      `UPDATE customers c
+          SET "usageCounters" = jsonb_set(
+                c."usageCounters",
+                '{devices}',
+                GREATEST(0, (COALESCE(c."usageCounters"->>'devices', '0')::int - sub.cnt))::text::jsonb
+              )
+         FROM (
+                SELECT "customerId", COUNT(*)::int AS cnt
+                  FROM customer_devices
+                 WHERE "deviceId" = $1
+                 GROUP BY "customerId"
+              ) AS sub
+        WHERE c.id = sub."customerId"`,
+      [device.id],
+    );
+    await manager.query(`DELETE FROM customer_devices WHERE "deviceId" = $1`, [
+      device.id,
+    ]);
+  }
+
+  /**
+   * Gives the plan quota back, one UPDATE per distinct tenant rather than one
+   * per device. Non-fatal for the same reason the single-device remove() is:
+   * the devices ARE deleted, so a failed counter write must not be reported
+   * as a failed delete. Without it the counter only ever climbs and a tenant
+   * that creates and deletes devices is eventually locked out of creating any.
+   */
+  private async releaseDeviceQuota(devices: Device[]): Promise<void> {
+    const perTenant = new Map<string, number>();
+    for (const device of devices) {
+      if (!device.tenantId) continue;
+      perTenant.set(device.tenantId, (perTenant.get(device.tenantId) ?? 0) + 1);
+    }
+
+    for (const [tenantId, count] of perTenant) {
+      try {
+        await this.subscriptionsService.decrementTenantUsage(
+          tenantId,
+          'devices',
+          count,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to decrement devices usage for tenant ${tenantId} by ${count}`,
+          err,
+        );
+      }
+    }
+  }
+
   // ── Offline cron ──────────────────────────────────────────────────────────
 
   @Cron(CronExpression.EVERY_5_MINUTES)
@@ -737,9 +1089,16 @@ export class DevicesService {
   ): void {
     if (user.role === UserRole.SUPER_ADMIN) return;
 
-    if (user.tenantId) {
-      qb.andWhere('device.tenantId = :tenantId', { tenantId: user.tenantId });
+    // A non-SUPER_ADMIN with no tenantId used to fall straight through this
+    // block, leaving the query UNSCOPED — every device of every tenant. The
+    // falsy case has to deny, not skip: only SUPER_ADMIN is legitimately
+    // tenant-less, and that case already returned above.
+    if (!user.tenantId) {
+      qb.andWhere('1 = 0');
+      return;
     }
+
+    qb.andWhere('device.tenantId = :tenantId', { tenantId: user.tenantId });
 
     if (
       user.role === UserRole.CUSTOMER_USER ||

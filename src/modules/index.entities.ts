@@ -89,3 +89,14 @@ export { TwoFactorAuth } from './two-factor/entities/two-factor-auth.entity';
 export { Customer } from './customers/entities/customers.entity';
 export { Invitation } from './auth/entities/invitation.entity';
 export { UserSettings } from './user-settings/entities/user-settings.entity';
+
+// ── Added with the converters / telemetry-rollup / reports / groups /
+//    queues / default-rule-chains work ──────────────────────────────────────
+export { Converter } from './converters/entities/converter.entity';
+export { TelemetryRollup } from './telemetry/entities/telemetry-rollup.entity';
+export { ReportTemplate } from './reports/entities/report-template.entity';
+export { ReportExecution } from './reports/entities/report-execution.entity';
+export { Group } from './groups/entities/group.entity';
+export { GroupMember } from './groups/entities/group-member.entity';
+export { Queue } from './queues/entities/queue.entity';
+export { DefaultRuleChain } from './default-rule-chains/entities/default-rule-chain.entity';

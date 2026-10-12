@@ -236,6 +236,11 @@ iot-platform-backend/
 | `SchedulesModule` | Cron-expression-based schedules for automations |
 | `ScriptsModule` | User-defined JavaScript scripts with execution context |
 | `IntegrationsModule` | The Integration Centre: 18 types driven by a declarative catalogue, outbound adapters (MQTT, Kafka, AWS IoT, Azure IoT/Event Hubs, Google Pub/Sub, IBM Watson, CoAP, webhook), inbound uplinks (ChirpStack, TTN, generic HTTP, persistent MQTT subscriptions), Tuya device import and commands, and an append-only event log. See §4e |
+| `ConvertersModule` | Data converters: uplink/downlink payload transformation driven by a declarative catalogue — `json` field mapping, sandboxed `script`, and `codec` which delegates to `CodecRegistryService` so the 127 registered codecs are reachable from a converter. Includes `POST /converters/:id/test` with a per-step trace |
+| `ReportsModule` | Report templates and real generation (CSV / JSON / PDF) as a declarative query over `TelemetryService`, `AnalyticsService`, alarms, devices and the audit log, plus a cron scheduler that emails a summary |
+| `GroupsModule` | Named sets of entities of one kind (devices, assets, customers, users) with bulk membership, used for assignment and filtering |
+| `QueuesModule` | Queue definitions a rule chain can be assigned to. `GET /queues/capabilities` reports which fields are honoured and which are stored-only — see §4h |
+| `DefaultRuleChainsModule` | Maps (originator type, message type, device profile) → rule chain, consulted by `RuleEngineConsumer` before the fan-out fallback |
 | `RulesModule` | The rule engine: 8 node types from a declarative catalogue, a complete traversal engine with per-node tracing, atomic whole-graph save for the visual editor, dry-run testing, static graph validation, index-based import/export, and reusable chain templates (built-in plus tenant-saved) that instantiate into real chains. See §4f |
 
 ### Subscription & Payments
@@ -384,9 +389,44 @@ Key details:
   `temperature`. Dotted paths (`values.temperature`) also resolve.
 - `Alarm.rule` is NOT NULL, so the first filter is collapsed into the flat `AlarmRule`
   shape; the full rule lives in `metadata.profileRule`.
-- **Not implemented:** `spec.type` `DURATION`/`REPEATING` are evaluated as `SIMPLE`
-  (logged as a warning); `predicate.value.dynamicValue` causes the rule to be skipped;
-  propagation flags are recorded but nothing acts on them.
+- **All three items this note used to list as missing are now implemented.**
+
+  - **`DURATION` / `REPEATING`** are evaluated properly. Per-device, per-rule
+    progress lives in **`alarms.metadata.conditionState`** — on the
+    materialised row that already exists one-per-(device, rule), so it costs no
+    extra round trip and, crucially, **survives a restart**. In-process state
+    would silently reset every in-flight 10-minute window on deploy; this
+    deployment's Redis is a cache shared with Bull, so an eviction would do the
+    same. A sample that breaks the condition resets progress, a `clearRule`
+    clears and resets in one write, and progress accumulated under a different
+    `spec.type` is discarded. Note the real field names are `spec.unit` +
+    `spec.value`, not `spec.predicate`; ThingsBoard's
+    `spec.predicate.defaultValue` is read as a tolerated alias.
+  - **`predicate.value.dynamicValue`** resolves against the `attributes` table.
+    `numberValue` is a DECIMAL and comes back as a string, so it is coerced —
+    otherwise `EQUAL` compares `"30.000000"` to `"30"`. An absent attribute
+    skips the rule rather than comparing against a stale literal.
+  - **The propagation flags** drive `AlarmPropagationService`: a recursive CTE
+    up `assets.parentAssetId` with **both** a cycle guard
+    (`NOT id = ANY(path)`) and a depth bound (`ALARM_PROPAGATION_MAX_DEPTH`,
+    default 10), every row pinned to the tenant.
+
+    A propagated alarm is a **real row** with `assetId` (or `customerId`) set
+    and `deviceId` NULL. `alarms.assetId` had existed with an FK since the
+    entity was written and was simply never populated, so using it means
+    `GET /alarms`, `/active`, `/critical`, `/counts` and `/statistics` pick the
+    copies up with **no query changes**, while `GET /alarms/device/:id` still
+    shows only the device's own. Copies carry
+    `metadata.propagation.isMirror`, emit no `alarm.*` events and get no
+    escalation jobs — one physical fire must trigger automation once, not once
+    per hierarchy level. `?originOnly=true` excludes them from counts;
+    `?assetId=` is how a building view finds a room's alarm. Clear and
+    acknowledge travel in both directions, idempotently.
+
+- **Still not implemented:** there is no periodic sweep, so continuity is
+  judged across *samples*. A DURATION alarm fires on the first matching sample
+  after its window has elapsed, not while the device is silent. ThingsBoard's
+  on-sample path behaves the same way.
 
 ## 4c. Asset Profile Schema Validation (bilingual)
 
@@ -925,6 +965,82 @@ for node-level debug output, and `rules.controller.ts` has no per-node test
 route (only whole-chain). Templates have no preview of the graph as a canvas —
 the editor lists the nodes and their routes instead.
 
+## 4g. Multi-tenancy holes that were fixed (read this before touching a controller)
+
+This section exists because the same bug was found **eight times** in one pass,
+always in the same shape, and it will be written a ninth time by anyone who
+does not know the rule.
+
+### The rule
+
+> **`RolesGuard` returns `true` when a handler has no `@Roles` metadata.**
+
+An undecorated route is not "default deny" and it is not "inherit from the
+class". It is open to every authenticated account on the platform, including a
+`CUSTOMER_USER` belonging to someone else's organisation. Combine that with a
+service that resolves a row by id alone, and one tenant reads or destroys
+another's data.
+
+Every handler needs `@Roles(...)` or a composed decorator
+(`@TenantOrCustomerAdmin()`, `@TenantAdminOnly()`), **and** the service beneath
+it needs a tenant predicate. Neither alone is sufficient: the guard does not
+know which row is being touched, and the service does not know who is asking
+unless it is told.
+
+Two further details, both of which bit:
+
+- **`SUPER_ADMIN` has no bypass in `RolesGuard`**, despite what
+  `access-control.decorator.ts` says. List it explicitly on every route it
+  should reach.
+- **A falsy `tenantId` must deny, not skip.** The pattern
+  `if (user.tenantId) qb.andWhere('tenantId = :tenantId')` leaves the query
+  *unscoped* for a non-super-admin whose `tenantId` is missing. Only
+  `SUPER_ADMIN` is legitimately tenant-less, and that case returns earlier.
+
+Answer **404, not 403**, for a row outside the caller's scope. A 403 confirms
+the id exists, which turns any detail route into an enumeration oracle.
+
+### What was actually found, and where
+
+| Where | What it meant |
+|---|---|
+| `TelemetryService` — every read | **The worst one.** `getTimeSeries`, `getAggregated`, `getStatistics`, `findByDevice`, `getLatest`, `getCountByDevice`, `exportToCSV` and `deleteByDevice` all resolved the device with `findOne({ where: { id } })` and accepted a `userId` they ignored — one even carried a comment claiming it used the tenant id. Any authenticated user could read, export or **delete** any tenant's telemetry given a device id. Fixed by `resolveDeviceForUser()`; asserted by `npm run verify:telemetry-scoping`. |
+| `TenantsController` | `@Roles` on one route out of nine. List, create, update, activate, suspend and **delete** were open to everyone — a customer user could delete every organisation on the platform. |
+| `EmailTemplatesService` | The entity had `tenantId` and a `UNIQUE (tenantId, type)` index from the start; the service used neither. The first tenant to save a `password_reset` template owned the password-reset email **every other tenant** sent — and the uniqueness check then refused everyone else a template of their own. Now resolves a tenant override first, falling back to the system template (`tenantId IS NULL`). |
+| `NotificationsController` | `bulk/tenant/:tenantId` and `bulk/customer/:customerId` took the target from the URL unchecked, with no `@Roles`. Any user could notify every user of any tenant — a phishing channel wearing this platform's branding. |
+| `CustomersController` | `@Delete(':id')` and `@Post()` undecorated. Any authenticated user could delete a customer and its users. (`remove()` is still a **hard** delete of both — see §11.) |
+| `UsersService.findOne` + `GET /users/:id` | Unscoped lookup, undecorated handler: any user readable by id, across tenants. `findOneScoped()` is now the controller-facing method; the unscoped one is documented as internal-only. |
+| `DevicesService.applyAccessFilter` | Skipped the tenant predicate entirely when `user.tenantId` was falsy. |
+| `SubscriptionsController` / `PaymentsController` | No `@Roles` anywhere: cancellation and plan changes open to `CUSTOMER_USER`, invoice history readable by anyone, and the two routes commented "TODO: Add AdminGuard" open across all tenants. |
+
+### Related: three remote code execution holes
+
+User-authored JavaScript was being run through bare **`new Function()`**, which
+compiles into the **host realm** — so the script saw this process's globals and
+`process.mainModule.require('child_process')` was two hops away. All three
+sources are rows a TENANT_ADMIN can write through the API, so "edit an asset
+profile" and "edit a rule chain" were both equivalent to "run code as the
+server".
+
+| File | Now |
+|---|---|
+| `profiles/asset-profiles.service.ts` | Calculated-field formulas: identifier denylist + `vm.runInNewContext` + 50 ms budget + JSON-cloned primitives. A formula is arithmetic, not a program, so it is held to the stricter rule. `npm run check:expression-sandbox` |
+| `nodes/filter-node.ts` | `@common/utils/script-sandbox` (vm2, matching `ScriptsService.runInSandbox`). `npm run check:node-sandbox` |
+| `nodes/transformation-node.ts` | Same helper. |
+
+**`@common/utils/script-sandbox.ts` is the only place user JS should ever be
+executed.** Everything funnels through `runUserScript()` so the configuration
+cannot drift between call sites — and so the eventual move off vm2 is a change
+to one function.
+
+Be honest about what that buys: **vm2 is a JavaScript-level sandbox with a
+history of critical escape CVEs**, not a security boundary. It is enormously
+better than `new Function`, and it is what `ScriptsService` already used
+correctly. The durable answer for untrusted code is a separate V8 isolate
+(`isolated-vm`) or an out-of-process worker with hard CPU and memory caps.
+
+---
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
@@ -1170,6 +1286,39 @@ MOYASAR_WEBHOOK_SECRET=
 # Integrations
 INTEGRATION_EVENT_RETENTION_DAYS=14   # How long integration_events rows are kept
 
+# Telemetry lifecycle (see §4h). The defaults are deliberately conservative:
+# nothing is deleted for a tenant whose plan does not state a retention.
+TELEMETRY_RETENTION_ENABLED=true
+TELEMETRY_RETENTION_FALLBACK_DAYS=0   # 0 = SKIP a tenant whose plan says nothing
+TELEMETRY_RETENTION_MIN_DAYS=1        # floor; below it a tenant is refused, not swept
+TELEMETRY_RETENTION_BATCH_SIZE=5000
+TELEMETRY_RETENTION_MAX_BATCHES=200   # per tenant per run
+TELEMETRY_ROLLUP_ENABLED=true
+TELEMETRY_ROLLUP_RETENTION_FACTOR=12  # day/week/month kept retentionDays × this
+TELEMETRY_ROLLUP_MAX_BUCKETS=168
+TELEMETRY_ROLLUP_BACKFILL_DAYS=7
+TELEMETRY_ROLLUP_KEY_LIMIT=50
+TELEMETRY_ROLLUP_READ_MIN_RANGE_DAYS=2
+TELEMETRY_ROLLUP_ACTIVE_LOOKBACK_HOURS=48
+
+# Alarms
+ALARM_PROPAGATION_MAX_DEPTH=10        # ceiling on the asset-tree walk
+
+# Subscriptions
+SUBSCRIPTION_GRACE_PERIOD_DAYS=3      # paid plan survives a failed renewal this long
+
+# Reports
+REPORT_SCHEDULER_ENABLED=true         # set false on all but ONE instance:
+                                      # the tick has no distributed lock
+
+# Transports (see §4i)
+SNMP_ENABLED=true                     # false => no poller, no timer, no sockets
+SNMP_REFRESH_SECONDS=60
+SNMP_MAX_DEVICES=500
+LWM2M_LIFETIME_GRACE_SECONDS=30
+LWM2M_EXPIRY_SWEEP_SECONDS=15
+GATEWAY_RPC_LISTENER_ENABLED=true     # false => every two-way RPC times out
+
 # Feature Flags
 AUTO_REGISTER_DEVICES=false    # Auto-create device records on first MQTT message
 ```
@@ -1247,15 +1396,37 @@ npm run docker:local       # docker-compose.local.yml up
 npm run docker:up          # docker-compose.prod.yml up -d
 npm run test:unit          # Jest unit tests
 
-# Guard scripts — each one asserts something a typecheck cannot
-npm run check:integrations     # the integration catalogue is internally consistent
-npm run check:rule-nodes       # every node type has a manifest and sane output routes
-npm run check:rule-templates   # every built-in template is instantiable as shipped
-npm run verify:rule-templates <db>   # the whole template flow against a real Postgres
+# ── Guard scripts: no database needed, each asserts something tsc cannot ────
+npm run check:integrations        # the integration catalogue is self-consistent
+npm run check:rule-nodes          # every node type has a manifest and sane routes
+npm run check:rule-templates      # every built-in template is instantiable as shipped
+npm run check:expression-sandbox  # calculated-field formulas cannot reach the host
+npm run check:node-sandbox        # rule-node scripts cannot reach the host
+node scripts/check-exception-filter.js   # field-level errors reach the client
 
-# Migrations blocked by the drift described in §11 — apply these in isolation
-npm run migration:integration-centre <db> [up|down]
-npm run migration:rule-chain-templates <db> [up|down]
+# ── Verification: each needs its own empty database (createdb first) ────────
+# These exercise real repositories, real SQL and real transactions. The app
+# itself cannot be booted without Kafka (§11), so the services are wired by
+# hand inside each script.
+npm run verify:rule-templates      <db>
+npm run verify:data-converters     <db>
+npm run verify:telemetry-retention <db>
+npm run verify:telemetry-scoping   <db>   # cross-tenant telemetry access — see §4g
+npm run verify:profile-alarms      <db>
+npm run verify:bulk-operations     <db>
+npm run verify:subscriptions       <db>
+npm run verify:reports-groups-queues <db>
+npm run verify:snmp                <db>
+npm run verify:lwm2m               <db>
+npm run verify:rpc                 <db>
+
+# ── Migrations: `migration:run` is blocked by the drift in §11, so each new
+#    migration ships with a standalone runner that applies it in isolation ───
+npm run migration:integration-centre     <db> [up|down]
+npm run migration:rule-chain-templates   <db> [up|down]
+npm run migration:data-converters        <db> [up|down]
+npm run migration:telemetry-rollups      <db> [up|down]
+npm run migration:reports-groups-queues  <db> [up|down]
 ```
 
 ---
@@ -1357,7 +1528,16 @@ import { DevicesService } from '@modules/index.service';
 | ~~`src/modules/rules/rule-engine.service.ts`~~ | **RESOLVED** — 258 lines, a complete traversal engine. See §4f. |
 | `KafkaModule` / the Kafka consumers | An unreachable broker stops the app booting: the module factory awaits `initProducer()`, and a consumer's failed `connect()` becomes an unhandled rejection that kills the process. Running locally therefore needs the full Docker stack. |
 | `src/modules/integrations/` — `notification` and `database` types | Declared in the catalogue with `hasAdapter: false`; they are skipped by the dispatcher rather than forwarding anything. Use a webhook or Kafka instead. |
-| `src/modules/integrations/` — converters | The frontend has seven converter pages under `/integrations/*` and there is **no backend converter module at all**. Payload decoding is done by `CodecRegistryService` in DevicesModule. |
+| ~~`src/modules/integrations/` — converters~~ | **RESOLVED** — `ConvertersModule` exists; the `codec` converter type delegates to `CodecRegistryService` rather than reimplementing decoding. See §4. |
+| Frontend: groups and default rule chains | The backend modules, API clients and hooks are complete and verified, but **no screen was built** for either (`src/features/groups/` and `src/features/default-rule-chains/` contain services, hooks and — for default rule chains — a `ResolvePanel`, with no page). They are therefore unrouted. Everything else in this round is reachable from the sidebar. |
+| Frontend: bulk operations | The shared machinery (`src/features/bulk/`) is complete and wired into the **devices** and **users** list pages. **Customers and notifications are not wired yet**, though their backend routes exist and are verified. |
+| Frontend: subscription lifecycle | `GET /subscriptions/lifecycle`, `trial`, `renew` and `auto-renew` exist and are verified; the billing screens have **not** been updated to use them. |
+| `payments.paymentIntentId` | Holds the **invoice** id while Moyasar's refund endpoint is `/payments/{payment_id}/refund`. `metadata.moyasarPaymentId` is now captured off the paid invoice and preferred, but the fallback to the invoice id cannot be verified without live credentials. |
+| `auth.service.ts:789` | Calls `getOrCreateFreeSubscription(user.id)` with a **user id** where a tenant id is expected — `subscriptions.tenantId` has an FK to `tenants(id)`, so this 500s. The same bug was fixed in `payments.service.ts`; this call site was outside that change. |
+| `CustomersService.remove()` | **Hard**-deletes the customer *and* its user accounts (`repository.remove`, with the `softRemove` line commented out) — irreversible data loss from one API call. The authorization hole in front of it is fixed (§4g); the delete semantics are not, because switching to a soft delete makes the unique `name`/`email` permanently unavailable for re-creation, which is a product decision rather than a bug fix. |
+| `TelemetryService.exportToCSV()` | Does not quote fields, so a device named `Lobby, North` shifts every later column on that row. |
+| `WidgetRenderer.tsx` (frontend) | Calls `useState` **inside** a conditional branch after early returns — a hooks-order violation that throws when a widget's classification changes. |
+| `src/services/api/analytics.api.ts` (frontend) | Declares six routes that do not exist on `AnalyticsController`; all 404 at runtime. |
 
 ### Structural Notes
 - The `src/migrations/` directory (at `src/` root, separate from `src/database/migrations/`) exists but is also empty

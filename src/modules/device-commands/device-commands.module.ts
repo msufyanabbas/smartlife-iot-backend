@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DeviceCommand } from '@modules/device-commands/entities/device-commands.entity';
 import { Device } from '../devices/entities/device.entity';
@@ -12,7 +12,10 @@ import { GatewayModule } from '../gateway/gateway.module';
   imports: [
     TypeOrmModule.forFeature([DeviceCommand, Device]),
     KafkaModule,
-    GatewayModule,  // provides GatewayService → DeviceCommandsConsumer
+    // Circular: GatewayModule now imports this module too, because
+    // GatewayService persists a two-way RPC's outcome through
+    // DeviceCommandsService. forwardRef is required at both ends.
+    forwardRef(() => GatewayModule), // provides GatewayService → DeviceCommandsConsumer
   ],
   controllers: [DeviceCommandsController],
   providers: [DeviceCommandsService, DeviceCommandsConsumer],

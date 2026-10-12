@@ -23,11 +23,30 @@ import { EmailTemplatesService } from './email-templates.service';
 import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { EmailTemplateType } from '@common/enums/index.enum';
+import { RolesGuard } from '@common/guards/roles.guard';
+import { Roles } from '@common/decorators/roles.decorator';
+import { CurrentUser } from '@common/decorators/current-user.decorator';
+import { User } from '@modules/users/entities/user.entity';
+import { EmailTemplateType, UserRole } from '@common/enums/index.enum';
 
 @ApiTags('Email Templates')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+/**
+ * Email templates.
+ *
+ * Had NO `@Roles` on any handler and no tenant scoping whatsoever. Since
+ * `RolesGuard` returns TRUE for an undecorated handler, any authenticated
+ * user — a CUSTOMER_USER included — could create, edit and delete templates;
+ * and because the service ignored the entity's own `tenantId` column, the
+ * template they edited was the one EVERY tenant's MailService rendered. One
+ * customer could rewrite the password-reset email the whole platform sends.
+ *
+ * Reads stay open to any signed-in user (the template they receive is their
+ * own tenant's, resolved per caller). Writes are TENANT_ADMIN and above, and
+ * confined to the caller's tenant; the shared system template is editable
+ * only by SUPER_ADMIN, who has no tenant of their own.
+ */
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('email-templates')
 export class EmailTemplatesController {
   constructor(private readonly emailTemplatesService: EmailTemplatesService) { }
@@ -39,22 +58,26 @@ export class EmailTemplatesController {
     description: 'Email template created successfully',
   })
   @ApiResponse({ status: 409, description: 'Template type already exists' })
-  create(@Body() createDto: CreateEmailTemplateDto) {
-    return this.emailTemplatesService.create(createDto);
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  create(
+    @CurrentUser() user: User,
+    @Body() createDto: CreateEmailTemplateDto,
+  ) {
+    return this.emailTemplatesService.create(user.tenantId, createDto);
   }
 
   @Get()
   @ApiOperation({ summary: 'Get all email templates' })
   @ApiResponse({ status: 200, description: 'List of email templates' })
-  findAll() {
-    return this.emailTemplatesService.findAll();
+  findAll(@CurrentUser() user: User) {
+    return this.emailTemplatesService.findAll(user.tenantId);
   }
 
   @Get('active')
   @ApiOperation({ summary: 'Get all active email templates' })
   @ApiResponse({ status: 200, description: 'List of active templates' })
-  findAllActive() {
-    return this.emailTemplatesService.findAllActive();
+  findAllActive(@CurrentUser() user: User) {
+    return this.emailTemplatesService.findAllActive(user.tenantId);
   }
 
   @Get('type/:type')
@@ -64,8 +87,11 @@ export class EmailTemplatesController {
   // enumName is required — without it Swagger's schema factory treats a bare
   // enum @Param as a circular dependency and throws at bootstrap
   @ApiParam({ name: 'type', type: String, enum: EmailTemplateType, enumName: 'EmailTemplateType' })
-  findByType(@Param('type') type: EmailTemplateType) {
-    return this.emailTemplatesService.findByType(type);
+  findByType(
+    @Param('type') type: EmailTemplateType,
+    @CurrentUser() user: User,
+  ) {
+    return this.emailTemplatesService.findByType(type, user.tenantId);
   }
 
   @Get(':id/preview')
@@ -81,6 +107,7 @@ export class EmailTemplatesController {
   })
   async previewTemplate(
     @Param('id') id: string,
+    @CurrentUser() user: User,
     @Query('variables') variablesJson?: string,
   ) {
     let variables: Record<string, any> | undefined;
@@ -95,7 +122,11 @@ export class EmailTemplatesController {
       }
     }
 
-    return this.emailTemplatesService.previewTemplate(id, variables);
+    return this.emailTemplatesService.previewTemplate(
+      id,
+      variables,
+      user.tenantId,
+    );
   }
 
   @Post(':id/validate')
@@ -103,8 +134,14 @@ export class EmailTemplatesController {
   @ApiOperation({ summary: 'Validate template placeholders' })
   @ApiResponse({ status: 200, description: 'Validation results returned' })
   @ApiResponse({ status: 404, description: 'Template not found' })
-  async validateTemplate(@Param('id') id: string) {
-    const template = await this.emailTemplatesService.findOne(id);
+  async validateTemplate(
+    @Param('id') id: string,
+    @CurrentUser() user: User,
+  ) {
+    const template = await this.emailTemplatesService.findOne(
+      id,
+      user.tenantId,
+    );
 
     const subjectValidation =
       this.emailTemplatesService.validateTemplatePlaceholders(
@@ -134,8 +171,8 @@ export class EmailTemplatesController {
   @ApiOperation({ summary: 'Get email template by ID' })
   @ApiResponse({ status: 200, description: 'Email template found' })
   @ApiResponse({ status: 404, description: 'Template not found' })
-  findOne(@Param('id') id: string) {
-    return this.emailTemplatesService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.emailTemplatesService.findOne(id, user.tenantId);
   }
 
   @Patch(':id')
@@ -143,8 +180,13 @@ export class EmailTemplatesController {
   @ApiResponse({ status: 200, description: 'Template updated successfully' })
   @ApiResponse({ status: 404, description: 'Template not found' })
   @ApiResponse({ status: 409, description: 'Template type conflict' })
-  update(@Param('id') id: string, @Body() updateDto: UpdateEmailTemplateDto) {
-    return this.emailTemplatesService.update(id, updateDto);
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  update(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateEmailTemplateDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.emailTemplatesService.update(id, updateDto, user.tenantId);
   }
 
   @Delete(':id')
@@ -152,7 +194,8 @@ export class EmailTemplatesController {
   @ApiOperation({ summary: 'Delete email template' })
   @ApiResponse({ status: 204, description: 'Template deleted successfully' })
   @ApiResponse({ status: 404, description: 'Template not found' })
-  remove(@Param('id') id: string) {
-    return this.emailTemplatesService.remove(id);
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  remove(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.emailTemplatesService.remove(id, user.tenantId);
   }
 }

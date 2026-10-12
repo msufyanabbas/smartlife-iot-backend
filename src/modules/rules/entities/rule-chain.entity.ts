@@ -90,6 +90,18 @@ export class RuleChain extends BaseEntity {
     maxExecutionTime?: number; // Max time in ms
     retryOnFailure?: boolean;
     maxRetries?: number;
+    /**
+     * Name of the `queues` row whose processing semantics govern executions of
+     * this chain — submit strategy, pack processing timeout, processing
+     * strategy and retries. Written by `POST /queues/:id/rule-chains` and read
+     * by `RuleEngineConsumer`; see `QueuesModule`.
+     *
+     * Stored in this jsonb rather than as a column so adding it needs no
+     * migration against `rule_chains`, and because `PUT /rule-chains/:id`
+     * already round-trips the whole `configuration` object, which means the
+     * visual editor cannot drop the assignment on save.
+     */
+    queueName?: string;
   };
   // Example:
   // configuration: {

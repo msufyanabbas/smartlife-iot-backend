@@ -42,6 +42,11 @@ import {
   BulkDeleteUsersDto,
 } from './dto/users.dto';
 import {
+  BulkDeleteUsersByIdDto,
+  BulkUpdateUsersDto,
+} from './dto/bulk-user.dto';
+import { BulkResultDto } from '@common/dto/bulk-operation.dto';
+import {
   JwtAuthGuard,
   RolesGuard,
   ResourceType,
@@ -320,11 +325,88 @@ export class UsersController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Bulk update user status' })
   @ApiResponse({ status: 200, description: 'Status updated successfully' })
-  async bulkUpdateStatus(@Body() bulkUpdateDto: BulkUpdateStatusDto) {
-    await this.usersService.bulkUpdateStatus(bulkUpdateDto);
+  async bulkUpdateStatus(
+    @CurrentUser() user: User,
+    @Body() bulkUpdateDto: BulkUpdateStatusDto,
+  ) {
+    await this.usersService.bulkUpdateStatus(bulkUpdateDto, user);
     return {
       message: 'Status updated successfully',
     };
+  }
+
+  // ── Bulk operations (declared before ':id' so 'bulk' is not read as an id) ─
+
+  @Post('bulk/delete')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Bulk soft-delete users (max 100 per request)',
+    description:
+      'Partial success is the normal outcome: always answers 200 with one entry ' +
+      'per requested id in `outcomes`, so the caller sees exactly which ids ' +
+      'failed and why. Every id is re-resolved against the caller\'s own ' +
+      'tenantId server-side; an id belonging to another tenant comes back as ' +
+      '`not_found` and is NOT deleted. At most 100 ids — more is a 400. ' +
+      'Deletes are soft (`deleted_at` is set).\n\n' +
+      'BLOCKS: your own account, any SUPER_ADMIN, and the tenant\'s last ' +
+      'remaining TENANT_ADMIN (which would leave the tenant with no ' +
+      'administrator).\n\n' +
+      'COUNTERS: `subscriptions.usage.users` is decremented once per tenant for ' +
+      'the number actually deleted — POST /users is gated on that counter, so ' +
+      'skipping it would lock a tenant out of quota it owns.\n\n' +
+      'CASCADES: a `user.deleted` event per deleted user, so a CUSTOMER-role ' +
+      "user's paired Customer row is removed exactly as it is on the " +
+      'single-user delete. Notifications addressed to the user are kept.\n\n' +
+      'One transaction per id, so a blocked or failing id never rolls back the ' +
+      'others.',
+  })
+  @ApiResponse({ status: 200, description: 'Per-id outcomes', type: BulkResultDto })
+  @ApiResponse({ status: 400, description: 'More than 100 ids, or a malformed id' })
+  async bulkDeleteByIds(
+    @CurrentUser() user: User,
+    @Body() dto: BulkDeleteUsersByIdDto,
+  ) {
+    return this.usersService.bulkDelete(dto, user);
+  }
+
+  @Patch('bulk')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Bulk update users (max 100 per request)',
+    description:
+      'Applies the same narrow patch to every listed user and returns one ' +
+      'outcome per id. ONLY `status` and `customerId` are bulk-updatable. ' +
+      '`role`, `password`, `tenantId` and `email` are rejected by validation ' +
+      'on purpose: a bulk role write could promote 100 accounts to ' +
+      'TENANT_ADMIN, a bulk password write is an account-takeover primitive, ' +
+      '`tenantId` is the security boundary of the platform, and `email` is the ' +
+      'unique login identifier and reset-token destination. Use ' +
+      'PATCH /users/:id for those, one reviewable change at a time.\n\n' +
+      'Send `null` for `customerId` to detach; omit a field to leave it alone. ' +
+      'The target customer must belong to the caller\'s tenant (404 otherwise). ' +
+      'Every id is re-resolved against the caller\'s tenant — a foreign id is ' +
+      '`not_found` and untouched. A user already in the requested state is ' +
+      '`skipped` and counts as a success.\n\n' +
+      'BLOCKS when deactivating: your own account, and the tenant\'s last ' +
+      'active TENANT_ADMIN. One transaction per id. Max 100 ids.',
+  })
+  @ApiResponse({ status: 200, description: 'Per-id outcomes', type: BulkResultDto })
+  @ApiResponse({
+    status: 400,
+    description: 'More than 100 ids, a malformed id, or no updatable field supplied',
+  })
+  @ApiResponse({ status: 404, description: 'Target customer not in your tenant' })
+  async bulkUpdate(
+    @CurrentUser() user: User,
+    @Body() dto: BulkUpdateUsersDto,
+  ) {
+    return this.usersService.bulkUpdate(dto, user);
   }
 
   /**
@@ -366,10 +448,21 @@ export class UsersController {
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Bulk delete users' })
+  @ApiOperation({
+    summary: '[Deprecated] Bulk delete users',
+    deprecated: true,
+    description:
+      'Kept for existing clients. Use POST /users/bulk/delete, which reports ' +
+      'per-id outcomes instead of a single count. This route now goes through ' +
+      'the same tenant-scoped implementation — it previously deleted by ' +
+      '`id IN (...)` with no tenant predicate at all.',
+  })
   @ApiResponse({ status: 200, description: 'Users deleted successfully' })
-  async bulkDelete(@Body() dto: BulkDeleteUsersDto) {
-    const result = await this.usersService.bulkDelete(dto);
+  async bulkDelete(
+    @CurrentUser() user: User,
+    @Body() dto: BulkDeleteUsersDto,
+  ) {
+    const result = await this.usersService.bulkDeleteLegacy(dto, user);
     return { message: 'Users deleted successfully', data: result };
   }
 
@@ -449,13 +542,23 @@ export class UsersController {
    * Get user by ID
    */
   @Get(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get user by ID' })
+  @ApiOperation({
+    summary: 'Get user by ID',
+    description:
+      'Scoped to the caller: SUPER_ADMIN sees any user, everyone else only ' +
+      'users in their own tenant (and customer, for customer-scoped roles). ' +
+      'A user outside that scope answers 404, not 403, so the endpoint cannot ' +
+      'be used to confirm that an id exists elsewhere.',
+  })
   @ApiResponse({ status: 200, description: 'User retrieved successfully' })
   @ApiResponse({ status: 404, description: 'User not found' })
-  async findOne(@Param('id') id: string) {
-    const user = await this.usersService.findOne(id);
+  async findOne(@Param('id') id: string, @CurrentUser() caller: User) {
+    // Was `usersService.findOne(id)` with no @Roles on the handler, which
+    // RolesGuard treats as "open to every authenticated user" — so any
+    // CUSTOMER_USER could read any user row in any tenant by id.
+    const user = await this.usersService.findOneScoped(id, caller);
     return {
       message: 'User retrieved successfully',
       data: user,

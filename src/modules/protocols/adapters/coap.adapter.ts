@@ -21,6 +21,8 @@ import { OtaStatusDto } from '@/modules/firmware/dto/ota-status.dto';
 import { AttributeScope } from '@common/enums/index.enum';
 import { Device } from '@modules/devices/entities/device.entity';
 import type { User } from '@modules/users/entities/user.entity';
+import { Lwm2mService } from '@/modules/protocols/lwm2m/lwm2m.service';
+import { RpcCorrelatorService } from '@/modules/protocols/rpc-correlator.service';
 import * as coap from 'coap';
 
 /**
@@ -36,6 +38,17 @@ import * as coap from 'coap';
  *   POST coap://host:5683/api/v1/{deviceToken}/attributes  → set attributes
  *   GET  coap://host:5683/api/v1/{deviceToken}/attributes  → read attributes
  *   POST coap://host:5683/api/v1/{deviceToken}/rpc         → RPC request
+ *                                                            / RPC response
+ *
+ * ── LwM2M routes (same UDP socket) ────────────────────────────────────────
+ *   POST   coap://host:5683/rd?ep={endpoint}&lt=&b=&lwm2m=  → Register
+ *   POST   coap://host:5683/rd/{registrationId}             → Update
+ *   DELETE coap://host:5683/rd/{registrationId}             → De-register
+ *   POST   coap://host:5683/dp?ep={endpoint}                → Send (SenML JSON)
+ *
+ * Handled by Lwm2mService. Registration and client-initiated reporting ONLY —
+ * no Observe/Notify, no server-initiated Read/Write/Execute, no Bootstrap, no
+ * DTLS. `GET /lwm2m/capabilities` (HTTP) serves that scope list for the UI.
  *
  * ── Device authentication ─────────────────────────────────────────────────
  * The {deviceToken} segment is the platform-wide unique `deviceKey` — the same
@@ -68,6 +81,8 @@ export class CoAPAdapter
     private readonly deviceListener: DeviceListenerService,
     private readonly attributesService: AttributesService,
     private readonly firmwareService: FirmwareService,
+    private readonly lwm2mService: Lwm2mService,
+    private readonly rpcCorrelator: RpcCorrelatorService,
     @InjectRepository(Device)
     private readonly deviceRepository: Repository<Device>,
     private readonly configService: ConfigService,
@@ -124,9 +139,16 @@ export class CoAPAdapter
     });
 
     this.isStarted = true;
+
+    // LwM2M registration lifetimes are only meaningful while the socket that
+    // receives registration updates is open, so the expiry sweep is tied to
+    // the server's lifecycle rather than to module init. COAP_ENABLED=false
+    // therefore leaves no stray timer behind.
+    this.lwm2mService.startExpirySweep();
   }
 
   async stop(): Promise<void> {
+    this.lwm2mService.stopExpirySweep();
     if (!this.server) return;
     this.logger.log('Stopping CoAP adapter...');
     try {
@@ -145,15 +167,29 @@ export class CoAPAdapter
 
   private async handleRequest(req: any, res: any): Promise<void> {
     const method: string = req.method || 'GET';
-    const path: string = (req.url || '').split('?')[0];
+    const rawUrl: string = req.url || '';
+    const path: string = rawUrl.split('?')[0];
     this.logger.log(`CoAP ${method} ${path}`);
 
-    // Expected: /api/v1/{deviceToken}/{resource}
     const parts = path.split('/').filter(Boolean);
+
+    // ── LwM2M shares this socket ────────────────────────────────────────────
+    // /rd and /dp are the LwM2M registration and reporting interfaces. They
+    // are checked before the /api/v1 shape because they are top-level paths
+    // defined by the LwM2M specification and cannot be moved under /api/v1.
+    if (parts[0] === 'rd') {
+      return this.handleLwm2mRegistration(method, parts, rawUrl, req, res);
+    }
+    if (parts[0] === 'dp') {
+      return this.handleLwm2mSend(method, rawUrl, req, res);
+    }
+
+    // Expected: /api/v1/{deviceToken}/{resource}
     if (parts.length < 4 || parts[0] !== 'api' || parts[1] !== 'v1') {
       this.safeRespond(res, '4.00', {
         error:
-          'Invalid path. Use /api/v1/{deviceToken}/{telemetry|attributes|rpc}',
+          'Invalid path. Use /api/v1/{deviceToken}/{telemetry|attributes|rpc}, ' +
+          'or the LwM2M paths /rd and /dp.',
       });
       return;
     }
@@ -296,18 +332,184 @@ export class CoAPAdapter
       return;
     }
 
-    // ThingsBoard RPC request shape: { id, method, params }.
-    // Server-side RPC dispatch (matching against a pending-command queue and
-    // returning a device-command response) is not wired yet — we acknowledge
-    // receipt so device-initiated RPC does not error. TODO: integrate with
-    // DeviceCommandsService for two-way RPC.
+    // A device POSTs here for two different reasons, distinguished by whether
+    // the `id` matches something the platform is waiting on:
+    //
+    //   1. It is ANSWERING a server-issued RPC. The id correlates, so the
+    //      pending request is resolved through the same RpcCorrelatorService
+    //      that the MQTT path uses — one pending map, one timeout policy, one
+    //      place where the outcome gets persisted.
+    //   2. It is INITIATING an RPC of its own (ThingsBoard's client-side RPC).
+    //      Nothing is waiting on that id, so it is acknowledged, as before.
+    //
+    // Case 1 is why `sendRpcRequest` can target a CoAP device at all.
+    const matched = this.rpcCorrelator.resolveResponse({
+      requestId: payload?.id,
+      payload,
+      via: 'coap',
+      deviceKey: device.deviceKey,
+    });
+
+    if (matched) {
+      this.logger.log(
+        `CoAP RPC response from ${device.deviceKey} resolved pending request ${payload.id}`,
+      );
+      this.safeRespond(res, '2.04', { id: payload.id, result: 'correlated' });
+      return;
+    }
+
     this.logger.log(
-      `CoAP RPC from ${device.deviceKey}: method=${payload?.method ?? 'unknown'}`,
+      `CoAP device-initiated RPC from ${device.deviceKey}: method=${payload?.method ?? 'unknown'} ` +
+        '(no pending server request with this id)',
     );
     this.safeRespond(res, '2.05', {
       id: payload?.id ?? null,
       method: payload?.method ?? null,
       result: 'accepted',
+    });
+  }
+
+  // ── LwM2M: registration interface (/rd) ───────────────────────────────────
+
+  /**
+   * POST   /rd?ep=&lt=&b=&lwm2m=   → 2.01 Created + Location-Path /rd/{id}
+   * POST   /rd/{registrationId}    → 2.04 Changed
+   * DELETE /rd/{registrationId}    → 2.02 Deleted
+   *
+   * Response codes follow LwM2M/RFC 7252: 4.00 malformed, 4.03 the endpoint is
+   * not a known device (never auto-provisioned), 4.04 unknown registration id,
+   * 4.05 wrong method.
+   */
+  private async handleLwm2mRegistration(
+    method: string,
+    parts: string[],
+    rawUrl: string,
+    req: any,
+    res: any,
+  ): Promise<void> {
+    const query = this.parseQuery(rawUrl);
+    const body = this.payloadAsString(req);
+    const { address, port } = this.sourceOf(req);
+    const registrationId = parts[1];
+
+    // ── Register ────────────────────────────────────────────────────────────
+    if (!registrationId) {
+      if (method !== 'POST') return this.methodNotAllowed(res, method, 'rd');
+
+      const result = await this.lwm2mService.register({
+        endpoint: query.ep,
+        lifetime: query.lt !== undefined ? Number(query.lt) : undefined,
+        binding: query.b,
+        version: query.lwm2m,
+        payload: body,
+        address,
+        port,
+      });
+
+      if (!result.ok) {
+        this.safeRespond(res, result.code, { error: result.error });
+        return;
+      }
+
+      // LwM2M clients read the registration id from Location-Path and use it
+      // for Update/De-register, so this option is load-bearing, not cosmetic.
+      // The values MUST be Buffers: coap-packet serialises each option with
+      // `value.copy(...)`, so a plain string fails at res.end() with
+      // "value.copy is not a function" — the response is simply never sent and
+      // the client times out.
+      try {
+        res.setOption('Location-Path', [
+          Buffer.from('rd'),
+          Buffer.from(result.value.registrationId),
+        ]);
+      } catch (error) {
+        this.logger.warn(
+          `Could not set Location-Path on LwM2M registration response: ${(error as Error).message}`,
+        );
+      }
+      this.safeRespond(res, '2.01', {
+        registrationId: result.value.registrationId,
+        location: `/rd/${result.value.registrationId}`,
+        lifetime: result.value.lifetime,
+        binding: result.value.binding,
+      });
+      return;
+    }
+
+    // ── Update ──────────────────────────────────────────────────────────────
+    if (method === 'POST') {
+      const result = await this.lwm2mService.update(registrationId, {
+        lifetime: query.lt !== undefined ? Number(query.lt) : undefined,
+        binding: query.b,
+        payload: body,
+        address,
+        port,
+      });
+      if (!result.ok) {
+        this.safeRespond(res, result.code, { error: result.error });
+        return;
+      }
+      this.safeRespond(res, '2.04', {
+        registrationId,
+        lifetime: result.value.lifetime,
+        expiresAt: result.value.expiresAt.toISOString(),
+      });
+      return;
+    }
+
+    // ── De-register ─────────────────────────────────────────────────────────
+    if (method === 'DELETE') {
+      const result = await this.lwm2mService.deregister(registrationId);
+      if (!result.ok) {
+        this.safeRespond(res, result.code, { error: result.error });
+        return;
+      }
+      this.safeRespond(res, '2.02', { registrationId, status: 'deregistered' });
+      return;
+    }
+
+    return this.methodNotAllowed(res, method, 'rd/{registrationId}');
+  }
+
+  // ── LwM2M: Send (/dp) ─────────────────────────────────────────────────────
+
+  /**
+   * POST /dp?ep={endpoint} with a SenML JSON body → 2.04 Changed.
+   *
+   * Readings go through `DeviceListenerService.handleTelemetry()` — the same
+   * unified path as MQTT/HTTP/CoAP telemetry — so they get codec decode, the
+   * Kafka publish, alarm evaluation and WebSocket broadcast.
+   */
+  private async handleLwm2mSend(
+    method: string,
+    rawUrl: string,
+    req: any,
+    res: any,
+  ): Promise<void> {
+    if (method !== 'POST') return this.methodNotAllowed(res, method, 'dp');
+
+    const query = this.parseQuery(rawUrl);
+    const { address, port } = this.sourceOf(req);
+
+    const result = await this.lwm2mService.handleSend({
+      endpoint: query.ep,
+      payload: req?.payload,
+      // Content-Format 110 = application/senml+json. Recorded for diagnostics;
+      // the parser decides by payload shape so a client that omits the option
+      // still works.
+      contentFormat: req?.headers?.['Content-Format'],
+      address,
+      port,
+    });
+
+    if (!result.ok) {
+      this.safeRespond(res, result.code, { error: result.error });
+      return;
+    }
+
+    this.safeRespond(res, '2.04', {
+      endpoint: result.value.endpoint,
+      keys: Object.keys(result.value.values),
     });
   }
 
@@ -422,6 +624,45 @@ export class CoAPAdapter
       );
     }
     return resolved;
+  }
+
+  /**
+   * CoAP Uri-Query options, as `req.url`'s query string.
+   *
+   * The /api/v1 routes discard the query (they have no use for it), but LwM2M
+   * carries the endpoint name, lifetime and binding there, so it is parsed
+   * rather than dropped. A repeated key keeps the first value; a bare key
+   * (`?obs`) becomes an empty string.
+   */
+  private parseQuery(rawUrl: string): Record<string, string | undefined> {
+    const queryString = rawUrl.split('?').slice(1).join('?');
+    if (!queryString) return {};
+
+    const out: Record<string, string> = {};
+    for (const pair of queryString.split('&')) {
+      if (!pair) continue;
+      const eq = pair.indexOf('=');
+      const key = decodeURIComponent(eq === -1 ? pair : pair.slice(0, eq));
+      if (!key || key in out) continue;
+      out[key] = eq === -1 ? '' : decodeURIComponent(pair.slice(eq + 1));
+    }
+    return out;
+  }
+
+  /** Raw request body as text (CoRE Link Format / SenML JSON), never undefined. */
+  private payloadAsString(req: any): string {
+    return req?.payload ? req.payload.toString('utf8') : '';
+  }
+
+  /**
+   * Source address of the datagram. Used only as a fallback for identifying a
+   * /dp sender that omitted `?ep=` — it is not authentication (there is no
+   * DTLS; see lwm2m.scope.ts).
+   */
+  private sourceOf(req: any): { address?: string; port?: number } {
+    const rsinfo = req?.rsinfo;
+    if (!rsinfo) return {};
+    return { address: rsinfo.address, port: rsinfo.port };
   }
 
   /** Returns the parsed object, or `undefined` when the body is not valid JSON. */

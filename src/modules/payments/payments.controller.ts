@@ -22,6 +22,7 @@ import {
 import { PaymentsService } from './payments.service';
 import {
   CreatePaymentIntentDto,
+  RecordChargebackDto,
   RefundPaymentDto,
 } from './dto/create-payment.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -29,6 +30,21 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { MoyasarWebhookDto } from './dto/moyasar-webhook.dto';
 import { Public } from '@/common/decorators/public.decorator';
+import { Roles } from '@common/decorators/index.decorator';
+import { UserRole } from '@common/enums/index.enum';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ROLES: this controller had no @Roles metadata on any handler, and RolesGuard
+// returns TRUE when a handler carries none. Every route was therefore open to
+// any authenticated user — including `admin/review-required`, which returns
+// EVERY tenant's payments, and `admin/retry/:paymentId`, which re-applies a
+// plan change for a payment id of the caller's choosing.
+//
+// Paying for and refunding a tenant's subscription is TENANT_ADMIN work; the
+// admin routes are platform-level and SUPER_ADMIN only. The webhook stays
+// @Public — Moyasar cannot send a bearer token — and is authenticated by its
+// signature instead.
+// ─────────────────────────────────────────────────────────────────────────────
 @ApiTags('payments')
 @Controller('payments')
 export class PaymentsController {
@@ -36,6 +52,7 @@ export class PaymentsController {
 
   @Post('create')
   @UseGuards(JwtAuthGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ 
     summary: 'Create a payment invoice for subscription upgrade/renewal',
@@ -86,6 +103,7 @@ export class PaymentsController {
 
   @Get('verify/:invoiceId')
   @UseGuards(JwtAuthGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ 
     summary: 'Verify payment status and update subscription',
@@ -137,6 +155,7 @@ export class PaymentsController {
 
   @Get('history')
   @UseGuards(JwtAuthGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ 
     summary: 'Get payment history',
@@ -178,6 +197,7 @@ export class PaymentsController {
 
   @Get(':id')
   @UseGuards(JwtAuthGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ 
     summary: 'Get payment details by ID',
@@ -191,6 +211,7 @@ export class PaymentsController {
 
   @Post('refund')
   @UseGuards(JwtAuthGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -200,10 +221,19 @@ export class PaymentsController {
       
       **Business Logic:**
       - Only successful payments can be refunded
-      - Refunds are processed through Moyasar
-      - Uses transaction to ensure atomicity
-      
-      **TODO:** Implement subscription downgrade logic after refund based on your business rules
+      - Refunds are processed through Moyasar, then recorded in one transaction
+        together with the subscription change
+      - A **FULL** refund reverses the plan change the payment bought: back to
+        \`metadata.originalPlan\` if that plan still has paid period remaining,
+        otherwise to FREE. Never to a plan above the current one.
+      - A **PARTIAL** refund does NOT change the plan — it is a price
+        adjustment, and the tenant is still a customer of that tier. Partial
+        refunds accumulate (\`metadata.refundedTotal\`); when they add up to the
+        full amount the plan is reversed at that point.
+      - Resources created on the higher tier are **never deleted**. A tenant
+        left over the new ceiling keeps everything and can keep using it;
+        creating more is blocked until usage is back under the limit.
+      - Idempotent: a payment already reversed is not reversed again.
     `
   })
   @ApiResponse({ 
@@ -282,7 +312,8 @@ export class PaymentsController {
   // ============================================================================
 
   @Get('admin/review-required')
-  @UseGuards(JwtAuthGuard) // TODO: Add AdminGuard
+  @UseGuards(JwtAuthGuard)
+  @Roles(UserRole.SUPER_ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ 
     summary: '[ADMIN] Get payments requiring manual review',
@@ -290,7 +321,7 @@ export class PaymentsController {
       Returns payments where the payment succeeded but subscription update failed.
       These require manual intervention.
       
-      **TODO:** Add admin role guard to restrict access
+      Restricted to SUPER_ADMIN — the query is not tenant-scoped.
     `
   })
   @ApiResponse({ 
@@ -317,7 +348,8 @@ export class PaymentsController {
   }
 
   @Post('admin/retry/:paymentId')
-  @UseGuards(JwtAuthGuard) // TODO: Add AdminGuard
+  @UseGuards(JwtAuthGuard)
+  @Roles(UserRole.SUPER_ADMIN)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -329,7 +361,8 @@ export class PaymentsController {
       - Payment succeeded but subscription update failed due to temporary error
       - Admin reviews the issue and manually retries
       
-      **TODO:** Add admin role guard to restrict access
+      Idempotent: a payment whose plan change has already been applied is
+      recognised by its id and not applied twice.
     `
   })
   @ApiResponse({ 
@@ -345,5 +378,29 @@ export class PaymentsController {
     @Param('paymentId') paymentId: string,
   ) {
     return this.paymentsService.retrySubscriptionUpdate(paymentId);
+  }
+
+  @Post('admin/chargeback')
+  @UseGuards(JwtAuthGuard)
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: '[ADMIN] Record a chargeback against a payment',
+    description: `
+      For a dispute that reached us some other way than the
+      \`payment_chargeback\` webhook — an email from the acquirer, a dashboard
+      notification.
+
+      A chargeback is always treated as a FULL reversal: the money is gone, so
+      the plan change it bought is reversed exactly as a full refund would
+      reverse it. There is no provider call — nothing is being requested, it has
+      already happened. Idempotent per payment.
+    `,
+  })
+  @ApiResponse({ status: 200, description: 'Chargeback recorded, plan reversed' })
+  @ApiResponse({ status: 404, description: 'Payment not found' })
+  async recordChargeback(@Body() dto: RecordChargebackDto) {
+    return this.paymentsService.recordChargeback(dto.paymentId, dto.reason);
   }
 }

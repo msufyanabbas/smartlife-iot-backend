@@ -47,6 +47,11 @@ import {
   ProvisionDeviceResponseDto,
 } from './dto/provision-device.dto';
 import { DeviceCredentialsSummaryDto } from './dto/device-credentials-summary.dto';
+import {
+  BulkDeleteDevicesDto,
+  BulkUpdateDevicesDto,
+} from './dto/bulk-device.dto';
+import { BulkResultDto } from '@common/dto/bulk-operation.dto';
 // Device control endpoints (command, rpc, telemetry) live in GatewayController
 // at POST /gateway/devices/:deviceKey/command|rpc|telemetry.
 // Keeping them here would create a circular dependency:
@@ -175,6 +180,74 @@ async getDeviceCapabilities(
   @ApiResponse({ status: 404, description: 'Device not found' })
   findOne(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
     return this.devicesService.findOne(id, user);
+  }
+
+  // ── Bulk operations (declared before ':id' so 'bulk' is not read as an id) ─
+
+  @Post('bulk/delete')
+  @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Bulk soft-delete devices (max 100 per request)',
+    description:
+      'Partial success is the normal outcome: this route always answers 200 and ' +
+      'returns one entry per requested id in `outcomes`, so a caller can see ' +
+      'exactly which ids failed and why. Every id is re-resolved against the ' +
+      "caller's own tenant (and customer, for customer roles) server-side; an id " +
+      'belonging to another tenant comes back as `not_found` and is NOT deleted. ' +
+      'At most 100 ids per request — more is a 400 from validation. Deletes are ' +
+      'soft (`deleted_at` is set; the row stays).\n\n' +
+      'CASCADES: device credentials are hard-deleted (the DB CASCADE does not ' +
+      'fire on a soft delete, so credentials would otherwise keep authenticating ' +
+      'MQTT connections); floor-plan placements are soft-removed; ' +
+      'customer/user device assignments are removed and the denormalised ' +
+      'counters they feed (`customers.usageCounters.devices`, ' +
+      '`customer_user_limits.usageCounters.devices`) are decremented; ' +
+      '`subscriptions.usage.devices` is decremented once per tenant for the ' +
+      'number actually deleted, so a delete gives the plan quota back.\n\n' +
+      'RETAINED: telemetry, attributes, alarms and queued commands are kept — ' +
+      "deleting a device is an inventory action, not a request to erase its " +
+      'history.\n\n' +
+      'BLOCKS: a device with an ACTIVE or ACKNOWLEDGED alarm is returned as ' +
+      '`blocked`; clear or resolve the alarm first.\n\n' +
+      'Each id is committed in its own transaction, so one blocked or failing ' +
+      'id never rolls back the others.',
+  })
+  @ApiResponse({ status: 200, description: 'Per-id outcomes', type: BulkResultDto })
+  @ApiResponse({ status: 400, description: 'More than 100 ids, or a malformed id' })
+  bulkDelete(@CurrentUser() user: User, @Body() dto: BulkDeleteDevicesDto) {
+    return this.devicesService.bulkDelete(dto, user);
+  }
+
+  @Patch('bulk')
+  @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Bulk update devices (max 100 per request)',
+    description:
+      'Applies the same narrow patch to every listed device and returns one ' +
+      'outcome per id. Only `status`, `customerId` and `assetId` are ' +
+      'bulk-updatable; everything else (deviceKey, protocol, manufacturer, ' +
+      'model, metadata, deviceProfileId, tenantId, userId) is rejected by ' +
+      'validation, because rewriting device identity or codec resolution across ' +
+      'a fleet behind one request is not reviewable. Send `null` for ' +
+      '`customerId` or `assetId` to unassign/unlink; omit a field to leave it ' +
+      'alone.\n\n' +
+      'Every id is re-resolved against the caller\'s tenant: a foreign id comes ' +
+      'back as `not_found` and is not touched. The target `customerId` / ' +
+      '`assetId` is one value shared by the whole batch, so a foreign or unknown ' +
+      'target is a 404 for the whole request rather than 100 identical per-item ' +
+      'failures. A device already in the requested state is reported as ' +
+      '`skipped` and counts as a success. One transaction per id. Max 100 ids.',
+  })
+  @ApiResponse({ status: 200, description: 'Per-id outcomes', type: BulkResultDto })
+  @ApiResponse({
+    status: 400,
+    description: 'More than 100 ids, a malformed id, or no updatable field supplied',
+  })
+  @ApiResponse({ status: 404, description: 'Target customer or asset not in your tenant' })
+  bulkUpdate(@CurrentUser() user: User, @Body() dto: BulkUpdateDevicesDto) {
+    return this.devicesService.bulkUpdate(dto, user);
   }
 
   @Patch(':id')

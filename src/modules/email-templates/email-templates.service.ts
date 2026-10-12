@@ -2,10 +2,11 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import {
   EmailTemplate,
 } from './entities/email-template.entity';
@@ -25,27 +26,56 @@ export class EmailTemplatesService {
   /**
    * Create a new email template
    */
-  async create(createDto: CreateEmailTemplateDto): Promise<EmailTemplate> {
-    // Check if template type already exists
+  /**
+   * ── Tenant scoping ────────────────────────────────────────────────────────
+   *
+   * The entity was built for this all along: `tenantId` is nullable with the
+   * comment "null = system template, non-null = tenant-specific override", a
+   * UNIQUE index on `(tenantId, type)`, and an `isSystemTemplate()` helper.
+   * The service then ignored every bit of it — `create` never set `tenantId`,
+   * and `findByType` matched on type alone.
+   *
+   * The consequence was not a missing feature, it was a cross-tenant one:
+   * the FIRST tenant to save a `password_reset` template owned the
+   * password-reset email every OTHER tenant's MailService rendered, including
+   * its wording, its links and its branding. The uniqueness check made it
+   * worse by refusing a second tenant a template of their own at all.
+   *
+   * Reads now resolve a tenant's own override first and fall back to the
+   * system template; writes are confined to the caller's tenant.
+   */
+  async create(
+    tenantId: string | undefined,
+    createDto: CreateEmailTemplateDto,
+  ): Promise<EmailTemplate> {
+    // Uniqueness is per tenant, matching the UNIQUE (tenantId, type) index.
     const existing = await this.emailTemplateRepository.findOne({
-      where: { type: createDto.type },
+      where: { type: createDto.type, tenantId: tenantId ?? IsNull() },
     });
 
     if (existing) {
       throw new ConflictException(
-        `Email template with type '${createDto.type}' already exists`,
+        `Email template with type '${createDto.type}' already exists for this tenant`,
       );
     }
 
-    const template = this.emailTemplateRepository.create(createDto);
+    // A SUPER_ADMIN with no tenantId authors the SYSTEM template every tenant
+    // falls back to; everyone else authors their own override.
+    const template = this.emailTemplateRepository.create(
+      createDto as Partial<EmailTemplate>,
+    );
+    template.tenantId = tenantId ?? undefined;
     return this.emailTemplateRepository.save(template);
   }
 
   /**
    * Get all email templates
    */
-  async findAll(): Promise<EmailTemplate[]> {
+  async findAll(tenantId?: string): Promise<EmailTemplate[]> {
     return this.emailTemplateRepository.find({
+      where: tenantId
+        ? [{ tenantId }, { tenantId: IsNull() }]
+        : { tenantId: IsNull() },
       order: { createdAt: 'DESC' },
     });
   }
@@ -53,9 +83,14 @@ export class EmailTemplatesService {
   /**
    * Get active email templates only
    */
-  async findAllActive(): Promise<EmailTemplate[]> {
+  async findAllActive(tenantId?: string): Promise<EmailTemplate[]> {
     return this.emailTemplateRepository.find({
-      where: { isActive: true },
+      where: tenantId
+        ? [
+            { isActive: true, tenantId },
+            { isActive: true, tenantId: IsNull() },
+          ]
+        : { isActive: true, tenantId: IsNull() },
       order: { createdAt: 'DESC' },
     });
   }
@@ -63,12 +98,18 @@ export class EmailTemplatesService {
   /**
    * Get email template by ID
    */
-  async findOne(id: string): Promise<EmailTemplate> {
+  async findOne(id: string, tenantId?: string): Promise<EmailTemplate> {
     const template = await this.emailTemplateRepository.findOne({
       where: { id },
     });
 
-    if (!template) {
+    // A system template (tenantId null) is readable by everyone — it is the
+    // fallback they actually receive. Another TENANT's override is not, and
+    // answers 404 rather than 403 so ids cannot be probed.
+    if (
+      !template ||
+      (template.tenantId != null && tenantId !== undefined && template.tenantId !== tenantId)
+    ) {
       throw new NotFoundException(`Email template with ID '${id}' not found`);
     }
 
@@ -78,18 +119,32 @@ export class EmailTemplatesService {
   /**
    * Get email template by type
    */
-  async findByType(type: EmailTemplateType): Promise<EmailTemplate> {
-    const template = await this.emailTemplateRepository.findOne({
-      where: { type, isActive: true },
+  /**
+   * Resolve the template a given tenant should actually receive: their own
+   * override if they have one, otherwise the system template.
+   */
+  async findByType(
+    type: EmailTemplateType,
+    tenantId?: string,
+  ): Promise<EmailTemplate> {
+    if (tenantId) {
+      const override = await this.emailTemplateRepository.findOne({
+        where: { type, isActive: true, tenantId },
+      });
+      if (override) return override;
+    }
+
+    const system = await this.emailTemplateRepository.findOne({
+      where: { type, isActive: true, tenantId: IsNull() },
     });
 
-    if (!template) {
+    if (!system) {
       throw new NotFoundException(
         `Active email template with type '${type}' not found`,
       );
     }
 
-    return template;
+    return system;
   }
 
   /**
@@ -98,13 +153,15 @@ export class EmailTemplatesService {
   async update(
     id: string,
     updateDto: UpdateEmailTemplateDto,
+    tenantId?: string,
   ): Promise<EmailTemplate> {
-    const template = await this.findOne(id);
+    const template = await this.findOne(id, tenantId);
+    this.assertWritable(template, tenantId);
 
-    // If updating type, check it doesn't conflict
+    // If updating type, check it doesn't conflict — within this tenant.
     if (updateDto.type && updateDto.type !== template.type) {
       const existing = await this.emailTemplateRepository.findOne({
-        where: { type: updateDto.type },
+        where: { type: updateDto.type, tenantId: tenantId ?? IsNull() },
       });
 
       if (existing && existing.id !== id) {
@@ -121,9 +178,27 @@ export class EmailTemplatesService {
   /**
    * Delete email template
    */
-  async remove(id: string): Promise<void> {
-    const template = await this.findOne(id);
+  async remove(id: string, tenantId?: string): Promise<void> {
+    const template = await this.findOne(id, tenantId);
+    this.assertWritable(template, tenantId);
     await this.emailTemplateRepository.remove(template);
+  }
+
+  /**
+   * A tenant may edit only its own override. The system template is readable
+   * by all and writable only by a caller with no tenant of their own, i.e.
+   * SUPER_ADMIN — otherwise the first tenant to click Edit would rewrite the
+   * default every other tenant falls back to.
+   */
+  private assertWritable(template: EmailTemplate, tenantId?: string): void {
+    if (template.tenantId == null && tenantId !== undefined) {
+      throw new ForbiddenException(
+        'This is a system template. Create your own version of it instead of editing the default.',
+      );
+    }
+    if (template.tenantId != null && template.tenantId !== tenantId) {
+      throw new NotFoundException('Email template not found');
+    }
   }
 
   /**
@@ -166,8 +241,9 @@ export class EmailTemplatesService {
   async getRenderedEmail(
     type: EmailTemplateType,
     variables: Record<string, any>,
+    tenantId?: string,
   ): Promise<{ subject: string; html: string; text: string }> {
-    const template = await this.findByType(type);
+    const template = await this.findByType(type, tenantId);
 
     // Add default variables if not provided
     const enrichedVariables = {
@@ -189,8 +265,9 @@ export class EmailTemplatesService {
   async previewTemplate(
     id: string,
     sampleVariables?: Record<string, any>,
+    tenantId?: string,
   ): Promise<{ subject: string; html: string; text: string }> {
-    const template = await this.findOne(id);
+    const template = await this.findOne(id, tenantId);
 
     // Use provided sample variables or generate defaults from template variables
     const variables = sampleVariables || this.generateSampleVariables(template);

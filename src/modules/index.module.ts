@@ -123,7 +123,29 @@ import { EdgeModule } from './edge/edge.module';
 // ============================================
 // FEATURE MODULES ARRAY (for spreading in app.module.ts)
 // ============================================
+
+// ── Added with the converters / reports / groups / queues /
+//    default-rule-chains work ─────────────────────────────────────────────
+export { ConvertersModule } from './converters/converters.module';
+export { ReportsModule } from './reports/reports.module';
+export { GroupsModule } from './groups/groups.module';
+export { QueuesModule } from './queues/queues.module';
+export { DefaultRuleChainsModule } from './default-rule-chains/default-rule-chains.module';
+
+import { ConvertersModule } from './converters/converters.module';
+import { ReportsModule } from './reports/reports.module';
+import { GroupsModule } from './groups/groups.module';
+import { QueuesModule } from './queues/queues.module';
+import { DefaultRuleChainsModule } from './default-rule-chains/default-rule-chains.module';
+
 export const featureModules = [
+  // RulesModule imports QueuesModule and DefaultRuleChainsModule directly for
+  // the engine; listing them here is what makes their controllers reachable.
+  ConvertersModule,
+  ReportsModule,
+  GroupsModule,
+  QueuesModule,
+  DefaultRuleChainsModule,
   EdgeModule,
   MQTTModule,
   KafkaModule,

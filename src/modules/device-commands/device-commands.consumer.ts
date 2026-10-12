@@ -1,4 +1,10 @@
-import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  Logger,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { KafkaService } from '@/lib/kafka/kafka.service';
@@ -30,6 +36,11 @@ export class DeviceCommandsConsumer implements OnModuleInit {
     private readonly commandsService: DeviceCommandsService,
     // GatewayService is the single owner of downlink MQTT operations.
     // MQTTAdapter has been removed — do not re-add it here.
+    //
+    // forwardRef: GatewayModule imports DeviceCommandsModule (to persist a
+    // two-way RPC's outcome) and DeviceCommandsModule imports GatewayModule,
+    // so the token has to be resolved lazily at both ends.
+    @Inject(forwardRef(() => GatewayService))
     private readonly gatewayService: GatewayService,
     @InjectRepository(Device)
     private readonly deviceRepository: Repository<Device>,

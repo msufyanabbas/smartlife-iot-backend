@@ -974,23 +974,109 @@ export class AssetProfilesService {
   }
 
   /**
-   * Evaluate calculated field expression
-   * Note: This is a simplified implementation. In production, use a safe evaluator
+   * Identifiers and syntax that have no legitimate place in a calculated-field
+   * formula and are the building blocks of every sandbox escape.
+   *
+   * `constructor` is the important one: `({}).constructor.constructor` is the
+   * `Function` constructor, which reaches the host realm from inside a vm
+   * context. The rest close the obvious doors.
+   */
+  private static readonly EXPRESSION_DENYLIST =
+    /\b(process|require|module|exports|global|globalThis|eval|Function|constructor|prototype|__proto__|__defineGetter__|__lookupGetter__|import|async|await|function|class|new|this|arguments|Reflect|Proxy|WeakRef|Atomics|SharedArrayBuffer|setTimeout|setInterval|setImmediate|queueMicrotask|Buffer|fetch)\b|=>|`|\$\{/;
+
+  /**
+   * Evaluate a calculated-field expression.
+   *
+   * ── Why this is not `new Function` any more ────────────────────────────────
+   * It used to be exactly that, with a comment admitting it was dangerous:
+   *
+   *     const func = new Function(...Object.keys(context), `return ${expr}`);
+   *
+   * `new Function` compiles into the HOST realm, so the expression ran with the
+   * application's own globals in reach — `process.mainModule.require('child_process')`
+   * is a two-hop walk from there. The expression is not a constant: it comes
+   * from `profile.calculatedFields[].expression`, which any TENANT_ADMIN can
+   * set through the asset-profile API. That made "edit a profile" equivalent to
+   * "run code as the server process", for every tenant, on a multi-tenant
+   * platform. It is the single worst thing in this file.
+   *
+   * ── What it is now ─────────────────────────────────────────────────────────
+   * Three layers, because none of them is sufficient alone:
+   *
+   *  1. A denylist over the source text, rejecting the identifiers and syntax
+   *     an escape needs before anything is compiled.
+   *  2. `vm.runInNewContext`, which builds a FRESH global object — no
+   *     `process`, no `require`, no host realm — rather than compiling into
+   *     this one.
+   *  3. A 50 ms timeout, so `while(true)` cannot pin the event loop, and a
+   *     context containing only JSON-cloned primitives, so there is no host
+   *     object reference to climb out through.
+   *
+   * ── What this still is not ─────────────────────────────────────────────────
+   * Node's own documentation is explicit that `vm` is not a security mechanism.
+   * This is a large improvement, not a guarantee. The strictly correct fix is a
+   * real expression PARSER that never compiles JavaScript at all — `expr-eval`
+   * is ~40 kB and does exactly this. Swapping it in is a contained change:
+   * replace the body of this method and drop the denylist. It was not added
+   * here only to avoid an npm install racing other work in this checkout.
    */
   private evaluateExpression(
     expression: string,
     context: Record<string, any>,
   ): any {
-    try {
-      // Create a function from the expression
-      // WARNING: This uses eval which is dangerous in production
-      // Use a library like mathjs, expr-eval, or vm2 in production
-      const func = new Function(
-        ...Object.keys(context),
-        `return ${expression}`,
+    if (typeof expression !== 'string' || !expression.trim()) {
+      throw new Error('Expression is empty');
+    }
+
+    // A formula has no business being long; a 10 kB "expression" is an attack,
+    // not an arithmetic mistake.
+    if (expression.length > 500) {
+      throw new Error('Expression is too long (max 500 characters)');
+    }
+
+    if (AssetProfilesService.EXPRESSION_DENYLIST.test(expression)) {
+      throw new Error(
+        'Expression contains a disallowed identifier. Calculated fields may ' +
+          'use attribute names, numbers, arithmetic and comparisons only.',
       );
-      return func(...Object.values(context));
-    } catch (error) {
+    }
+
+    // Only primitives cross the boundary. Passing a live object would hand the
+    // expression a reference whose prototype chain leads back to this realm,
+    // which is precisely what the fresh context is meant to prevent.
+    const safeContext: Record<string, any> = Object.create(null);
+    for (const [key, value] of Object.entries(context ?? {})) {
+      if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key)) continue;
+      const type = typeof value;
+      if (type === 'number' || type === 'string' || type === 'boolean') {
+        safeContext[key] = value;
+      } else if (value === null || value === undefined) {
+        safeContext[key] = null;
+      } else {
+        // Arrays and objects are deep-cloned through JSON so that only plain
+        // data arrives, never a class instance or a getter.
+        try {
+          safeContext[key] = JSON.parse(JSON.stringify(value));
+        } catch {
+          /* unserialisable value — leave it out entirely */
+        }
+      }
+    }
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const vm = require('node:vm') as typeof import('node:vm');
+      const result = vm.runInNewContext(`(${expression})`, safeContext, {
+        timeout: 50,
+        displayErrors: false,
+      });
+
+      if (typeof result === 'function' || typeof result === 'symbol') {
+        throw new Error('Expression must evaluate to a value');
+      }
+
+      return result;
+    } catch (error: any) {
       throw new Error(`Invalid expression: ${error.message}`);
     }
   }

@@ -5,6 +5,7 @@ import {
   NodeProcessorResult,
 } from './nodes-processor.interface';
 import { ConditionOperator, evaluateCondition } from './condition.util';
+import { runUserScript } from '@common/utils/script-sandbox';
 
 interface ConditionRule {
   key: string;
@@ -110,12 +111,25 @@ export class FilterNodeProcessor implements INodeProcessor {
     return evaluateCondition(data, rule.key, rule.operator, rule.value);
   }
 
+  /**
+   * Run the node's filter script.
+   *
+   * This was `new Function('msg', 'metadata', script)`, which compiles into
+   * the host realm — so a filter script saved on a rule node ran with this
+   * process's globals in reach and `process.mainModule.require(...)` two hops
+   * away. The script is tenant-authored (`node.configuration.script`), so
+   * anyone who could edit a rule chain had arbitrary code execution on the
+   * server. See `@common/utils/script-sandbox` for the full account.
+   */
   private executeScript(script: string, msg: NodeMessage): boolean {
-    try {
-      const func = new Function('msg', 'metadata', script);
-      return func(msg.data, msg.metadata);
-    } catch (error: any) {
-      throw new Error(`Script execution failed: ${error.message}`);
-    }
+    const result = runUserScript(
+      script,
+      { msg: msg.data, metadata: msg.metadata },
+      { label: 'filter node script' },
+    );
+    // A filter routes on true/false, so a script that returns a string or an
+    // object is coerced rather than crashing the chain — but an explicit
+    // boolean is what the node documentation asks for.
+    return Boolean(result);
   }
 }

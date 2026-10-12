@@ -26,6 +26,40 @@ import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 
 @Injectable()
 export class PaymentsService {
+  // ── Moyasar webhook event names ────────────────────────────────────────────
+  //
+  // Grouped rather than matched inline so that every event that moves money is
+  // visible in one place. Both the `payment_*` and `invoice_*` spellings are
+  // listed: which one is delivered depends on how the charge was created
+  // (hosted invoice vs direct payment) and on the account's webhook settings,
+  // and a refund that arrives under an unlisted name would silently leave the
+  // tenant on a plan they no longer paid for — the exact bug this fixes.
+  private static readonly PAID_EVENTS = [
+    'invoice_paid',
+    'payment_paid',
+    'payment_captured',
+  ];
+  private static readonly REFUND_EVENTS = [
+    'payment_refunded',
+    'invoice_refunded',
+    'payment_voided',
+    'invoice_voided',
+    'payment_partially_refunded',
+  ];
+  private static readonly CHARGEBACK_EVENTS = [
+    'payment_chargeback',
+    'chargeback_created',
+    'dispute_created',
+    'payment_disputed',
+  ];
+  private static readonly FAILED_EVENTS = [
+    'payment_failed',
+    'payment_abandoned',
+    'invoice_canceled',
+    'invoice_cancelled',
+    'invoice_expired',
+  ];
+
   private readonly moyasarApiUrl: string;
   private readonly moyasarApiKey: string;
   private readonly moyasarWebhookSecret: string;
@@ -106,8 +140,25 @@ export class PaymentsService {
         .catch(() => null);
 
       if (!subscription) {
-        this.logger.log(`Creating free subscription for user ${user.id} before payment`);
-        subscription = await this.subscriptionsService.getOrCreateFreeSubscription(user.id);
+        if (!user.tenantId) {
+          // A subscription belongs to a TENANT. An account with no tenant
+          // (a platform super admin) has nothing to bill.
+          throw new BadRequestException(
+            'This account is not associated with a tenant, so it cannot hold a subscription.',
+          );
+        }
+        this.logger.log(
+          `Creating free subscription for tenant ${user.tenantId} before payment`,
+        );
+        // `user.tenantId`, NOT `user.id`: getOrCreateFreeSubscription() takes a
+        // TENANT id and writes it to `subscriptions.tenantId`, which carries a
+        // foreign key to tenants(id) (the entity declares @OneToOne('Tenant')
+        // against it). Passing a user id made this fallback fail on that
+        // constraint — a 500 on the first payment of any tenant whose
+        // subscription row was missing, which is exactly when it runs.
+        subscription = await this.subscriptionsService.getOrCreateFreeSubscription(
+          user.tenantId,
+        );
       }
 
       // CRITICAL: Validate this is an upgrade or renewal, NOT a downgrade
@@ -250,7 +301,14 @@ export class PaymentsService {
           plan,
           billingPeriod,
           invoiceId: invoice.id,
+          // The plan to put the tenant back on if this payment is refunded.
           originalPlan: subscription.plan,
+          // Whether this payment buys a higher tier or another period of the
+          // same one. A failed RENEWAL opens a grace period; a failed upgrade
+          // changes nothing, because the upgrade never landed.
+          intent: this.subscriptionsService.isUpgrade(subscription.plan, plan)
+            ? 'upgrade'
+            : 'renewal',
           createdAt: new Date().toISOString(),
         },
         createdBy: userId,
@@ -369,6 +427,22 @@ export class PaymentsService {
       // Update payment status first (within transaction)
       payment.status = PaymentStatus.SUCCEEDED;
       payment.paidAt = new Date(invoice.paid_at || invoice.updated_at);
+
+      // Capture the underlying PAYMENT id off the invoice while it is in hand.
+      // `paymentIntentId` holds the INVOICE id, and Moyasar's refund endpoint
+      // is `/payments/{payment_id}/refund` — without this the refund call has
+      // only the invoice id to send. See `providerPaymentId()`.
+      const paidMoyasarPayment = Array.isArray(invoice.payments)
+        ? invoice.payments.find((p: any) => p?.status === 'paid') ??
+          invoice.payments[0]
+        : undefined;
+      if (paidMoyasarPayment?.id) {
+        payment.metadata = {
+          ...payment.metadata,
+          moyasarPaymentId: paidMoyasarPayment.id,
+        };
+      }
+
       const updatedPayment = await queryRunner.manager.save(Payment, payment);
 
       // Process subscription upgrade/renewal
@@ -378,13 +452,16 @@ export class PaymentsService {
 
         this.logger.log(`Processing subscription change: ${targetPlan} - ${targetBilling}`);
 
-        // Call subscription service with query runner for transaction
+        // Call subscription service with query runner for transaction.
+        // `payment.id` is the idempotency key — a webhook WILL arrive twice and
+        // the early return above is a read-then-write with no lock.
         await this.subscriptionsService.processSubscriptionAfterPayment(
           payment.tenantId,
           targetPlan,
           targetBilling,
-          payment.amount,
+          Number(payment.amount),
           queryRunner,
+          payment.id,
         );
 
         this.logger.log(`✅ Subscription updated successfully within transaction`);
@@ -444,6 +521,25 @@ export class PaymentsService {
 
     await this.paymentRepository.save(payment);
 
+    // A failed UPGRADE needs no handling: the upgrade is only applied from a
+    // confirmed payment, so the tenant simply stays where they are. A failed
+    // RENEWAL is different — the period they are on has been paid for only up
+    // to `nextBillingDate`, and nothing is coming. Open the grace window.
+    if (payment.metadata?.intent === 'renewal') {
+      await this.subscriptionsService
+        .markRenewalPaymentFailed(
+          payment.tenantId,
+          `renewal invoice ${invoice.status} (payment ${payment.id})`,
+        )
+        .catch((err) =>
+          // Never let this fail the webhook: Moyasar would retry, and the
+          // payment row is already correct.
+          this.logger.error(
+            `Could not mark renewal failure for tenant ${payment.tenantId}: ${err.message}`,
+          ),
+        );
+    }
+
     return payment;
   }
 
@@ -469,8 +565,10 @@ export class PaymentsService {
         this.logger.log('✅ Webhook signature verified');
       }
 
-      // Moyasar sends different event types
-      if (payload.type === 'invoice_paid' || payload.type === 'payment_paid') {
+      const type: string = payload.type ?? '';
+
+      // ── Money in ───────────────────────────────────────────────────────────
+      if (PaymentsService.PAID_EVENTS.includes(type)) {
         // Extract invoice ID from payload
         const invoiceId = payload.data?.invoice_id;
 
@@ -487,10 +585,81 @@ export class PaymentsService {
         this.logger.log(`✅ Webhook processed successfully for: ${invoiceId}`);
 
         return { received: true, message: 'Payment processed' };
-      } else {
-        this.logger.log(`ℹ️ Unhandled webhook type: ${payload.type}`);
-        return { received: true, message: 'Event type not handled' };
       }
+
+      // ── Money back out ─────────────────────────────────────────────────────
+      //
+      // This is the second half of the refund bug. The direct
+      // POST /payments/refund path was not the only way a refund happened —
+      // a refund issued from the Moyasar dashboard, a void, or a cardholder
+      // dispute arrives here and nowhere else, and this handler used to answer
+      // "Event type not handled" and leave the tenant on the paid plan with the
+      // money returned.
+      if (
+        PaymentsService.REFUND_EVENTS.includes(type) ||
+        PaymentsService.CHARGEBACK_EVENTS.includes(type)
+      ) {
+        const kind: 'refund' | 'chargeback' | 'void' =
+          PaymentsService.CHARGEBACK_EVENTS.includes(type)
+            ? 'chargeback'
+            : type.includes('void')
+              ? 'void'
+              : 'refund';
+
+        const payment = await this.findPaymentFromWebhook(payload);
+        if (!payment) {
+          this.logger.error(
+            `❌ ${type} webhook could not be matched to a payment row: ${JSON.stringify(payload.data ?? {})}`,
+          );
+          return { received: true, message: 'Payment not found' };
+        }
+
+        // Moyasar reports the refunded total in halalas. A dispute payload may
+        // carry no amount at all, in which case treat it as the full amount —
+        // a chargeback takes the whole charge.
+        const refundedMinor =
+          payload.data?.refunded ??
+          payload.data?.refunded_amount ??
+          payload.data?.amount;
+        const refundedAmount =
+          kind === 'chargeback' || refundedMinor === undefined
+            ? Number(payment.amount)
+            : Number(refundedMinor) / 100;
+
+        await this.applyRefundOutcome(payment, {
+          kind,
+          refundedAmount,
+          reason: `Moyasar ${type}`,
+          refundId:
+            payload.data?.refund_id ?? payload.data?.id ?? `${type}:${payment.paymentIntentId}`,
+        });
+
+        return { received: true, message: `${kind} processed` };
+      }
+
+      // ── Money never arrived ────────────────────────────────────────────────
+      if (PaymentsService.FAILED_EVENTS.includes(type)) {
+        const payment = await this.findPaymentFromWebhook(payload);
+        if (!payment) {
+          this.logger.warn(`${type} webhook matched no payment row`);
+          return { received: true, message: 'Payment not found' };
+        }
+        if (payment.status === PaymentStatus.SUCCEEDED) {
+          // Paid first, then a late failure event for the same invoice. Trust
+          // the money, not the ordering.
+          this.logger.warn(
+            `Ignoring ${type} for payment ${payment.id} which is already SUCCEEDED`,
+          );
+          return { received: true, message: 'Already paid' };
+        }
+        await this.processFailedPayment(payment, {
+          status: type.replace(/^.*_/, ''),
+        });
+        return { received: true, message: 'Failure recorded' };
+      }
+
+      this.logger.log(`ℹ️ Unhandled webhook type: ${type}`);
+      return { received: true, message: 'Event type not handled' };
     } catch (error) {
       this.logger.error(
         `❌ Webhook processing failed: ${error.message}`,
@@ -555,7 +724,27 @@ export class PaymentsService {
   }
 
   /**
-   * Refund payment with subscription downgrade handling
+   * Refund a payment, in full or in part, and reverse what it bought.
+   *
+   * ### The plan change is reversed here — it was not before
+   *
+   * This method used to end with `// TODO: Handle subscription downgrade if
+   * needed based on refund`, so a tenant could upgrade, be refunded in full,
+   * and keep the paid tier for ever. Every refund path now funnels through
+   * `applyRefundOutcome()` → `SubscriptionsService.reverseAfterRefund()`:
+   * this method, the Moyasar webhook (`payment_refunded` / `payment_voided`),
+   * a chargeback (`recordChargeback()`), and repeated partial refunds that add
+   * up to the whole charge.
+   *
+   * ### A PARTIAL refund does not change the plan
+   *
+   * Decided deliberately. A partial refund is a price adjustment — a goodwill
+   * credit, a proration, a duplicated line — and the tenant is still a paying
+   * customer of that tier. Downgrading on a 10 SAR courtesy credit against a
+   * 499 SAR plan would take away capability they did pay for. What it does do
+   * is accumulate: `metadata.refundedTotal` is tracked, and the moment the
+   * refunded total reaches the amount charged, the plan is reversed exactly as
+   * a single full refund would have reversed it.
    */
   async refundPayment(
     userId: string,
@@ -581,20 +770,42 @@ export class PaymentsService {
       throw new BadRequestException('Can only refund successful payments');
     }
 
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+    const charged = Number(payment.amount);
+    const alreadyRefunded = Number(payment.metadata?.refundedTotal ?? 0);
+    const requested = amount ?? charged - alreadyRefunded;
 
+    if (requested <= 0) {
+      throw new BadRequestException('Refund amount must be greater than zero');
+    }
+
+    // Refusing to over-refund is the cheap half of this check. The expensive
+    // half is that an over-refund would also read as a full refund and reverse
+    // the plan on the strength of money that was never returned.
+    if (alreadyRefunded + requested > charged + 0.01) {
+      throw new BadRequestException(
+        `Refund of ${requested} exceeds the refundable balance of ` +
+          `${(charged - alreadyRefunded).toFixed(2)} ${payment.currency} ` +
+          `(charged ${charged}, already refunded ${alreadyRefunded})`,
+      );
+    }
+
+    const refundMinor = Math.round(requested * 100);
+
+    this.logger.log(
+      `💸 Refunding payment ${paymentId}: ${requested} ${payment.currency} ` +
+        `(charged ${charged}, previously refunded ${alreadyRefunded})`,
+    );
+
+    // The provider call is made OUTSIDE the database transaction on purpose.
+    // It used to sit inside one, so a refund Moyasar had accepted but whose
+    // commit then failed left the money returned and the row untouched —
+    // invisible, and refundable a second time. Now: provider first, then one
+    // transaction that records the refund and reverses the plan together.
+    let refundId: string;
     try {
-      const refundAmount = amount
-        ? Math.round(amount * 100)
-        : Math.round(payment.amount * 100);
-
-      this.logger.log(`💸 Refunding payment ${paymentId}: ${refundAmount / 100} SAR`);
-
       const refundResponse = await axios.post(
-        `${this.moyasarApiUrl}/payments/${payment.paymentIntentId}/refund`,
-        { amount: refundAmount },
+        `${this.moyasarApiUrl}/payments/${this.providerPaymentId(payment)}/refund`,
+        { amount: refundMinor },
         {
           auth: {
             username: this.moyasarApiKey,
@@ -602,29 +813,8 @@ export class PaymentsService {
           },
         },
       );
-
-      payment.status = PaymentStatus.REFUNDED;
-      payment.refundedAt = new Date();
-      payment.metadata = {
-        ...payment.metadata,
-        refundId: refundResponse.data.id,
-        refundReason: reason || '',
-        refundAmount: refundAmount / 100,
-      };
-
-      await queryRunner.manager.save(Payment, payment);
-
-      // TODO: Handle subscription downgrade if needed based on refund
-      // This would depend on your business logic
-
-      await queryRunner.commitTransaction();
-
-      this.logger.log(`✅ Payment refunded: ${paymentId}`);
-
-      return payment;
+      refundId = refundResponse.data?.id ?? `refund:${payment.paymentIntentId}`;
     } catch (error) {
-      await queryRunner.rollbackTransaction();
-
       if (axios.isAxiosError(error)) {
         const errorData = error.response?.data;
         this.logger.error(`Moyasar refund error: ${JSON.stringify(errorData)}`);
@@ -636,9 +826,224 @@ export class PaymentsService {
 
       this.logger.error(`Refund failed: ${error.message}`, error.stack);
       throw new InternalServerErrorException('Failed to process refund');
+    }
+
+    return this.applyRefundOutcome(payment, {
+      kind: 'refund',
+      refundedAmount: requested,
+      reason,
+      refundId,
+    });
+  }
+
+  /**
+   * Record a chargeback. The money is already gone — there is no provider call
+   * to make and no partial case: a dispute takes the whole charge.
+   *
+   * Reachable from the `payment_chargeback` / `dispute_created` webhook and
+   * from `POST /payments/admin/chargeback` for a dispute that arrived by email
+   * from the acquirer instead of as an event.
+   */
+  async recordChargeback(paymentId: string, reason?: string): Promise<Payment> {
+    const payment = await this.paymentRepository.findOne({
+      where: { id: paymentId },
+    });
+
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+
+    return this.applyRefundOutcome(payment, {
+      kind: 'chargeback',
+      refundedAmount: Number(payment.amount),
+      reason: reason ?? 'chargeback',
+      refundId: `chargeback:${payment.paymentIntentId}`,
+    });
+  }
+
+  /**
+   * THE single place money-out is recorded and a plan change reversed.
+   *
+   * Every path lands here: direct refund, webhook refund, webhook void,
+   * chargeback, and the partial refund that completes a full one. One
+   * transaction covers the payment row and the subscription, so the two cannot
+   * disagree about whether a refund happened.
+   */
+  private async applyRefundOutcome(
+    payment: Payment,
+    outcome: {
+      kind: 'refund' | 'chargeback' | 'void';
+      refundedAmount: number;
+      reason?: string;
+      refundId: string;
+    },
+  ): Promise<Payment> {
+    const charged = Number(payment.amount);
+    const previouslyRefunded = Number(payment.metadata?.refundedTotal ?? 0);
+    const refundedTotal = Math.min(
+      charged,
+      previouslyRefunded + Number(outcome.refundedAmount),
+    );
+
+    // A chargeback always takes the whole charge; otherwise "full" means the
+    // refunded total has reached the amount charged. The 0.01 tolerance covers
+    // the halala rounding `createPaymentIntent()` applies — Moyasar requires an
+    // amount ending in 0, so a refunded total can land a halala short of the
+    // charge and must still count as full.
+    const isFull =
+      outcome.kind === 'chargeback' || refundedTotal >= charged - 0.01;
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const repo = queryRunner.manager.getRepository(Payment);
+
+      payment.metadata = {
+        ...payment.metadata,
+        refundId: outcome.refundId,
+        refundReason: outcome.reason ?? '',
+        refundAmount: Number(outcome.refundedAmount),
+        refundedTotal,
+        refundKind: outcome.kind,
+        partialRefund: !isFull,
+        refunds: [
+          ...((payment.metadata?.refunds as any[]) ?? []),
+          {
+            at: new Date().toISOString(),
+            amount: Number(outcome.refundedAmount),
+            kind: outcome.kind,
+            refundId: outcome.refundId,
+            reason: outcome.reason ?? null,
+          },
+        ],
+      };
+
+      if (isFull) {
+        payment.status = PaymentStatus.REFUNDED;
+        payment.refundedAt = new Date();
+      } else {
+        // Status stays SUCCEEDED. There is no PARTIALLY_REFUNDED member in
+        // PaymentStatus, and adding one needs `ALTER TYPE ... ADD VALUE` on
+        // payments_status_enum before any row could store it — while marking a
+        // partially refunded charge REFUNDED would both misreport revenue and
+        // make the remaining balance unrefundable (`canRefund()` is
+        // SUCCEEDED-only). The amounts in `metadata` are the record.
+        this.logger.log(
+          `Partial refund recorded on payment ${payment.id}: ${refundedTotal}/${charged} ${payment.currency} — plan unchanged`,
+        );
+      }
+
+      const saved = await repo.save(payment);
+
+      if (isFull) {
+        await this.subscriptionsService.reverseAfterRefund(
+          payment.tenantId,
+          {
+            paymentId: payment.id,
+            kind: outcome.kind,
+            originalPlan:
+              (payment.metadata?.originalPlan as SubscriptionPlan) ?? null,
+            reason: outcome.reason,
+          },
+          queryRunner,
+        );
+      }
+
+      await queryRunner.commitTransaction();
+
+      this.logger.log(
+        `✅ ${outcome.kind} applied to payment ${payment.id} ` +
+          `(${isFull ? 'FULL — plan reversed' : 'partial — plan kept'})`,
+      );
+
+      return saved;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+
+      // The money has already moved by this point, so losing the record is the
+      // worst outcome available. Flag the row for review outside the failed
+      // transaction rather than letting the refund vanish.
+      this.logger.error(
+        `🚨 CRITICAL: ${outcome.kind} of ${outcome.refundedAmount} on payment ${payment.id} ` +
+          `was accepted by the provider but could not be recorded: ${error.message}`,
+        error.stack,
+      );
+
+      const reviewMetadata: Payment['metadata'] = {
+        ...payment.metadata,
+        refundId: outcome.refundId,
+        refundKind: outcome.kind,
+        refundAmount: Number(outcome.refundedAmount),
+        requiresManualReview: true,
+        refundReversalError: error.message,
+        errorTimestamp: new Date().toISOString(),
+      };
+
+      await this.paymentRepository
+        // `metadata` is a jsonb bag with an index signature; TypeORM's
+        // QueryDeepPartialEntity cannot express that, hence the cast.
+        .update(payment.id, { metadata: reviewMetadata as any })
+        .catch(() => undefined);
+
+      throw new InternalServerErrorException(
+        'Refund was processed by the payment provider but could not be applied to the subscription. Our team will review this shortly.',
+      );
     } finally {
       await queryRunner.release();
     }
+  }
+
+  /**
+   * Finds the payment row a money-out webhook refers to.
+   *
+   * Moyasar identifies the charge differently depending on the event: an
+   * invoice event carries `invoice_id`, a payment event carries the payment's
+   * own `id`, and `payments.paymentIntentId` holds whichever of the two the
+   * charge was created with (an invoice id, for everything this service
+   * creates). Both are tried, plus `metadata.moyasarPaymentId` for a row whose
+   * underlying payment id has been recorded.
+   */
+  private async findPaymentFromWebhook(payload: any): Promise<Payment | null> {
+    const candidates = [
+      payload?.data?.invoice_id,
+      payload?.data?.payment_id,
+      payload?.data?.id,
+    ].filter((value): value is string => typeof value === 'string' && !!value);
+
+    for (const candidate of candidates) {
+      const byIntent = await this.paymentRepository.findOne({
+        where: { paymentIntentId: candidate },
+      });
+      if (byIntent) return byIntent;
+
+      const byProviderId = await this.paymentRepository
+        .createQueryBuilder('payment')
+        .where("payment.metadata->>'moyasarPaymentId' = :candidate", {
+          candidate,
+        })
+        .getOne();
+      if (byProviderId) return byProviderId;
+    }
+
+    return null;
+  }
+
+  /**
+   * The id to call the provider's refund endpoint with.
+   *
+   * `paymentIntentId` holds the INVOICE id for everything `createPaymentIntent`
+   * creates, and Moyasar's refund endpoint is `/payments/{payment_id}/refund` —
+   * an invoice id there is rejected. `metadata.moyasarPaymentId` is preferred
+   * when a row has it recorded; the invoice id stays as the fallback so nothing
+   * changes for rows that do not. This mismatch is pre-existing and cannot be
+   * verified without live credentials — see the report.
+   */
+  private providerPaymentId(payment: Payment): string {
+    return (
+      (payment.metadata?.moyasarPaymentId as string) ?? payment.paymentIntentId
+    );
   }
 
   /**
@@ -682,12 +1087,18 @@ export class PaymentsService {
       const targetPlan = payment.metadata.plan as SubscriptionPlan;
       const targetBilling = payment.metadata.billingPeriod as BillingPeriod;
 
+      // `payment.tenantId`, NOT `payment.userId` — the first parameter of
+      // processSubscriptionAfterPayment is a tenant id, and passing a user id
+      // meant the retry looked up a subscription by a userId, found nothing and
+      // threw NotFoundException every single time. The admin retry route could
+      // never resolve anything.
       await this.subscriptionsService.processSubscriptionAfterPayment(
-        payment.userId,
+        payment.tenantId,
         targetPlan,
         targetBilling,
-        payment.amount,
+        Number(payment.amount),
         queryRunner,
+        payment.id,
       );
 
       // Clear manual review flag

@@ -4,6 +4,7 @@ import {
   OnModuleInit,
   OnModuleDestroy,
   Inject,
+  forwardRef,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -14,6 +15,12 @@ import { CodecRegistryService } from '@modules/devices/codecs/codec-registry.ser
 import { DeviceProtocol } from '@modules/devices/entities/device.entity';
 import { UserRole } from '@/common/enums/user.enum';
 import { User } from '../index.entities';
+import {
+  RpcCorrelatorService,
+  type RpcOutcome,
+} from '@modules/protocols/rpc-correlator.service';
+import { DeviceCommandsService } from '@modules/device-commands/device-commands.service';
+import { RpcResponseListener } from './rpc-response.listener';
 
 export interface DeviceMessage {
   deviceKey: string;
@@ -58,6 +65,14 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
     // It delegates all publish operations to MQTTService (the single client).
     private readonly mqttService: MQTTService,
     private readonly codecRegistry: CodecRegistryService,
+    // Pending-request table for two-way RPC. Lives in ProtocolsModule because
+    // CoAPAdapter resolves into the same map.
+    private readonly rpcCorrelator: RpcCorrelatorService,
+    private readonly rpcResponseListener: RpcResponseListener,
+    // DeviceCommandsModule imports GatewayModule (its consumer needs this
+    // service), so this direction must be forwardRef'd at both ends.
+    @Inject(forwardRef(() => DeviceCommandsService))
+    private readonly deviceCommandsService: DeviceCommandsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -134,20 +149,193 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Command sent → ${deviceKey} (${command.method})`);
   }
 
-  // ── Send RPC request ──────────────────────────────────────────────────────
+  // ── Send RPC request (two-way) ────────────────────────────────────────────
 
+  /**
+   * Send an RPC to a device and wait for its answer.
+   *
+   * ── What changed and why ────────────────────────────────────────────────
+   * This used to publish to `devices/{deviceKey}/rpc/request` and return void.
+   * Nothing subscribed to any response topic, so the HTTP caller was told
+   * "RPC request sent" whether the device executed the command, rejected it,
+   * or had been unplugged for a week. There was also no history row, so you
+   * could not find out afterwards either.
+   *
+   * Three concrete fixes:
+   *   1. The correlation id is a UUID. It was `Date.now().toString()`, which
+   *      is not a correlation id at all: two requests in the same millisecond
+   *      — the normal case when a dashboard fans a command out over a group —
+   *      share an id, so one device's answer resolves another's request.
+   *   2. `RpcResponseListener` subscribes to `devices/+/rpc/response` and
+   *      resolves the pending request through `RpcCorrelatorService`.
+   *   3. The outcome is persisted on the `device_commands` row, so
+   *      `GET /device-commands/device/:deviceId` reflects what the device did,
+   *      not only what was published.
+   *
+   * ── Wait or poll? WAIT. ─────────────────────────────────────────────────
+   * The HTTP caller blocks until the device answers or the timeout expires,
+   * and the response body carries the device's payload. That is the two-way
+   * semantic the name `sendRpcRequest` already implied, it needs no second
+   * round trip from the client, and the timeout bounds the request. The
+   * alternative — return a request id and have the UI poll — is available for
+   * free as a side effect: every RPC also has a `commandId`, and
+   * `GET /device-commands/{commandId}` shows its terminal status. So a caller
+   * that does not want to hold a connection open can pass
+   * `waitForResponse: false` and poll that row instead.
+   *
+   * The returned promise NEVER rejects on a device-side problem; a timeout or
+   * a device error is a result, not an exception. It rejects only when the
+   * publish itself fails (no broker), because that is a server fault.
+   */
   async sendRpcRequest(
     deviceKey: string,
     method: string,
     params?: Record<string, any>,
-  ): Promise<void> {
+    options: {
+      /** Milliseconds. Clamped to 1s–300s; default 30s. */
+      timeoutMs?: number;
+      /** Who issued it — for the history row. */
+      userId?: string;
+      tenantId?: string;
+      /**
+       * false → publish, open the history row, and return immediately without
+       * waiting. The caller polls GET /device-commands/{commandId}.
+       */
+      waitForResponse?: boolean;
+    } = {},
+  ): Promise<{
+    requestId: string;
+    commandId?: string;
+    deviceKey: string;
+    method: string;
+    /** 'response' | 'timeout' | 'cancelled' | 'sent' (fire-and-forget). */
+    status: RpcOutcome['status'] | 'sent';
+    response?: any;
+    error?: string;
+    durationMs?: number;
+    via?: string;
+    /** False when no response topic is being listened to right now. */
+    responseListenerConnected: boolean;
+  }> {
+    const device = await this.devicesService.findByDeviceKey(
+      deviceKey,
+      this.systemUser,
+    );
+
+    const requestId = this.rpcCorrelator.newRequestId();
+    const timeoutMs = this.rpcCorrelator.clampTimeout(options.timeoutMs);
     const topic = `devices/${deviceKey}/rpc/request`;
-    await this.mqttService.publish(topic, {
-      id: Date.now().toString(),
+    const listening = this.rpcResponseListener.isListening();
+
+    if (!listening) {
+      // Say so rather than letting every RPC silently time out.
+      this.logger.warn(
+        `RPC response listener is not connected — the RPC to ${deviceKey} will ` +
+          'almost certainly time out. Check the broker connection and ' +
+          'GATEWAY_RPC_LISTENER_ENABLED.',
+      );
+    }
+
+    // History row first, so even a publish failure leaves a trace.
+    let commandId: string | undefined;
+    if (options.userId && options.tenantId) {
+      try {
+        const command = await this.deviceCommandsService.createRpcCommand({
+          deviceId: device.id,
+          tenantId: options.tenantId,
+          userId: options.userId,
+          method,
+          params,
+          timeoutMs,
+          requestId,
+          transport: 'mqtt',
+        });
+        commandId = command.id;
+      } catch (error) {
+        // A missing audit row must not block the command itself.
+        this.logger.error(
+          `Could not open an RPC history row for ${deviceKey}: ${(error as Error).message}`,
+        );
+      }
+    }
+
+    // ── Fire-and-forget path ────────────────────────────────────────────────
+    if (options.waitForResponse === false) {
+      await this.mqttService.publish(topic, { id: requestId, method, params });
+      if (commandId) await this.deviceCommandsService.markRpcDelivered(commandId);
+      this.logger.log(
+        `RPC published (no wait) → ${deviceKey}: ${method} [id ${requestId}]`,
+      );
+      return {
+        requestId,
+        commandId,
+        deviceKey,
+        method,
+        status: 'sent',
+        responseListenerConnected: listening,
+      };
+    }
+
+    // ── Two-way path ────────────────────────────────────────────────────────
+    // Register BEFORE publishing: a fast device could answer between the
+    // publish returning and the entry existing, and that response would then
+    // match nothing.
+    const pending = this.rpcCorrelator.register({
+      requestId,
+      deviceKey,
       method,
-      params,
+      timeoutMs,
     });
-    this.logger.log(`RPC request sent → ${deviceKey}: ${method}`);
+
+    try {
+      await this.mqttService.publish(topic, { id: requestId, method, params });
+    } catch (error) {
+      // The request never left the host. Settle the pending entry — otherwise
+      // it would sit in the map for the whole timeout window for a request
+      // that provably cannot be answered.
+      this.rpcCorrelator.cancel(
+        requestId,
+        `Publish to ${topic} failed: ${(error as Error).message}`,
+      );
+      await pending;
+      if (commandId) {
+        await this.deviceCommandsService.recordRpcOutcome(commandId, {
+          status: 'cancelled',
+          error: `Publish failed: ${(error as Error).message}`,
+        });
+      }
+      throw error;
+    }
+
+    if (commandId) await this.deviceCommandsService.markRpcDelivered(commandId);
+    this.logger.log(
+      `RPC request sent → ${deviceKey}: ${method} [id ${requestId}, waiting up to ${timeoutMs}ms]`,
+    );
+
+    const outcome = await pending;
+
+    if (commandId) {
+      await this.deviceCommandsService.recordRpcOutcome(commandId, {
+        status: outcome.status,
+        response: outcome.response,
+        error: outcome.error,
+        durationMs: outcome.durationMs,
+        via: outcome.via,
+      });
+    }
+
+    return {
+      requestId,
+      commandId,
+      deviceKey,
+      method,
+      status: outcome.status,
+      response: outcome.response,
+      error: outcome.error,
+      durationMs: outcome.durationMs,
+      via: outcome.via,
+      responseListenerConnected: listening,
+    };
   }
 
   // ── Update device attributes ──────────────────────────────────────────────
@@ -231,6 +419,10 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
       brokerUrl: this.config.brokerUrl,
       clientId: this.config.clientId,
       verifiedConnectionsCached: this.verifiedConnections.size,
+      // Without this an operator cannot tell a dead device from a gateway that
+      // is not listening for responses at all.
+      rpcResponseListenerConnected: this.rpcResponseListener.isListening(),
+      rpcPendingRequests: this.rpcCorrelator.pendingCount(),
     };
   }
 
