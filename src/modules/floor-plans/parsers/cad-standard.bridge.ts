@@ -37,6 +37,12 @@ const ROLE_TO_BUCKET: Partial<Record<CadRole, ParserBucket>> = {
   window: 'window',
   column: 'column',
   stair: 'stair',
+  // The flight above the cut plane is the same staircase, so it belongs in
+  // the same bucket — it is simply built from its own mounting height
+  // upwards. Leaving it unmapped is what sent it to the wall solver, where
+  // it became a wall lying across the floor instead of the rest of the
+  // stair, and is why an imported staircase appeared to stop halfway.
+  stair_above: 'stair',
   room_label: 'room',
 };
 
@@ -45,7 +51,10 @@ export interface ParserClassification {
   role: CadRole;
   /** The regex array this layer belongs to, or null for none of them. */
   patternSet: RegExp[] | null;
-  buildable: boolean;
+  /** Becomes building fabric — the wall solver may consume it. */
+  fabric: boolean;
+  /** Occupies space in the finished building, fabric or equipment. */
+  physical: boolean;
 }
 
 /**
@@ -91,7 +100,8 @@ export const CAD_STANDARD = {
       bucket,
       role: c.role,
       patternSet: bucket ? (registry.get(bucket) ?? null) : null,
-      buildable: c.solid !== 'ignore',
+      fabric: c.solid === 'build',
+      physical: c.solid === 'build' || c.solid === 'marker' || c.solid === 'route',
     };
   },
 };

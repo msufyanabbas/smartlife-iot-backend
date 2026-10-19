@@ -24,6 +24,17 @@ export interface MaterialDefinition {
 }
 
 export interface MeshGroup {
+  /**
+   * The group key — `wall`, `floor`, or `device:T-CCTV` / `route:P-DOMW` for
+   * services, which carry their source layer after the colon.
+   *
+   * Exposed because services are deliberately split into one group PER
+   * LAYER so each can be shown, hidden and labelled on its own. Without the
+   * key the client receives seven indistinguishable "Telecoms equipment"
+   * groups and cannot tell the cameras from the access control, which makes
+   * the per-layer split pointless.
+   */
+  key: string;
   material: MaterialDefinition;
   positions: number[];
   normals: number[];
@@ -44,7 +55,88 @@ export const FLOOR_PLAN_MATERIALS: Record<string, MaterialDefinition> = {
   },
   stair: { name: 'Stair', color: [0.7, 0.68, 0.65, 1], metallic: 0, roughness: 0.85 },
   furniture: { name: 'Furniture', color: [0.45, 0.5, 0.55, 1], metallic: 0, roughness: 0.7 },
+  beam: { name: 'Beam', color: [0.52, 0.54, 0.58, 1], metallic: 0.15, roughness: 0.75 },
+  ceiling: {
+    name: 'Ceiling',
+    color: [0.92, 0.92, 0.9, 0.5],
+    metallic: 0,
+    roughness: 0.9,
+    transparent: true,
+  },
 };
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Services get their discipline's colour
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Device and route groups are keyed `device:<layer>` / `route:<layer>` so the
+ * viewer can toggle each service independently. Those keys are not in
+ * `FLOOR_PLAN_MATERIALS`, so without this they would every one fall through
+ * to the Wall material — and the whole point of drawing the equipment is
+ * lost if a camera, a sprinkler head and a cable tray all come out the same
+ * off-white as the walls they are mounted on.
+ *
+ * Colours follow the usual services conventions, which is also what the
+ * disciplines are drawn in on the reference sheets: fire red, electrical
+ * amber, mechanical green, plumbing blue-green, telecoms blue, controls
+ * violet.
+ */
+const DISCIPLINE_COLOURS: Array<[string, string, [number, number, number]]> = [
+  // Two-character disciplines first: FA must beat F.
+  ['FA', 'Fire alarm', [0.85, 0.15, 0.15]],
+  ['F', 'Fire protection', [0.9, 0.35, 0.1]],
+  ['T', 'Telecoms', [0.15, 0.45, 0.85]],
+  ['E', 'Electrical', [0.95, 0.7, 0.1]],
+  ['M', 'Mechanical', [0.2, 0.65, 0.35]],
+  ['P', 'Plumbing', [0.1, 0.7, 0.7]],
+  ['B', 'Controls', [0.55, 0.3, 0.75]],
+  ['S', 'Structural', [0.5, 0.52, 0.56]],
+];
+
+function disciplineMaterial(
+  layer: string,
+  kind: 'device' | 'route',
+): MaterialDefinition {
+  const upper = layer.toUpperCase();
+  const match = DISCIPLINE_COLOURS.find(
+    ([code]) => upper === code || upper.startsWith(`${code}-`),
+  );
+  const [, label, rgb] = match ?? ['', 'Service', [0.6, 0.6, 0.6] as [number, number, number]];
+
+  return {
+    name: `${label} ${kind === 'device' ? 'equipment' : 'route'}`,
+    // Routes are drawn slightly darker than the equipment they feed, so a
+    // tray reads as distinct from the devices sitting along it.
+    color:
+      kind === 'route'
+        ? [rgb[0] * 0.75, rgb[1] * 0.75, rgb[2] * 0.75, 1]
+        : [rgb[0], rgb[1], rgb[2], 1],
+    metallic: kind === 'route' ? 0.3 : 0.1,
+    roughness: 0.55,
+  };
+}
+
+/**
+ * Resolve a group key to a material.
+ *
+ * Plain keys (`wall`, `floor`) hit the table. Compound keys carry the layer
+ * after a colon so services resolve by discipline, and an unknown plain key
+ * still falls back to Wall rather than throwing.
+ */
+export function resolveMaterial(key: string): MaterialDefinition {
+  const colon = key.indexOf(':');
+  if (colon === -1) return FLOOR_PLAN_MATERIALS[key] ?? FLOOR_PLAN_MATERIALS.wall;
+
+  const kind = key.slice(0, colon);
+  const layer = key.slice(colon + 1);
+
+  if (kind === 'device' || kind === 'route') {
+    return disciplineMaterial(layer, kind);
+  }
+  // `beam:S-BEAM`, `ceiling:A-CLNG` — the kind is the material.
+  return FLOOR_PLAN_MATERIALS[kind] ?? FLOOR_PLAN_MATERIALS.wall;
+}
 
 export class MeshBuilder {
   private readonly groups = new Map<string, MeshGroup>();
@@ -53,7 +145,8 @@ export class MeshBuilder {
     let group = this.groups.get(key);
     if (!group) {
       group = {
-        material: FLOOR_PLAN_MATERIALS[key] ?? FLOOR_PLAN_MATERIALS.wall,
+        key,
+        material: resolveMaterial(key),
         positions: [],
         normals: [],
         indices: [],

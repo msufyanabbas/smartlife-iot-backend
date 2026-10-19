@@ -160,4 +160,49 @@ export class GenerateModelDto {
   @Type(() => Boolean)
   @IsBoolean()
   includeFurniture?: boolean;
+
+  @ApiPropertyOptional({
+    default: true,
+    description:
+      'Equipment on the services layers — luminaires, cameras, sockets, ' +
+      'detectors, sprinkler heads, panels and racks. Each is drawn at the ' +
+      'mounting height its layer specifies, and grouped per layer so it can ' +
+      'be shown or hidden on its own.',
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  includeDevices?: boolean;
+
+  @ApiPropertyOptional({
+    default: true,
+    description:
+      'Service runs — cable tray, conduit, ductwork and pipework — drawn ' +
+      'through the ceiling void at their coordinated levels.',
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  includeRoutes?: boolean;
+
+  @ApiPropertyOptional({
+    default: true,
+    description: 'Beams from S-BEAM, built at the soffit rather than on the floor.',
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  includeBeams?: boolean;
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'The ceiling plane from A-CLNG. Off by default: a ceiling hides ' +
+      'everything beneath it when the model is viewed from above, which is ' +
+      'how a floor plan is normally looked at.',
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  includeCeilings?: boolean;
 }

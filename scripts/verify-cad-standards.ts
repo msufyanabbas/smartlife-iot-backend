@@ -12,6 +12,10 @@
 import { readFileSync, existsSync } from 'fs';
 import { CadStandardsService } from '../src/modules/cad-standards/cad-standards.service';
 import { parseLayerName } from '../src/modules/cad-standards/ncs-layer';
+import {
+  HIDDEN_LINETYPES,
+  LAYER_RULES,
+} from '../src/modules/cad-standards/cad-standard.catalogue';
 // Static, not a dynamic import(): ts-node resolves a dynamic one as ESM and
 // then demands a file extension the TypeScript source does not have.
 import { FloorPlanMeshFactory } from '../src/modules/floor-plans/mesh/floor-plan-mesh.factory';
@@ -101,10 +105,7 @@ function scan(path: string) {
     ['A-WALL-PATT', 'a wall hatch is not a second wall'],
     ['A-COLS-PATT', 'column poche'],
     ['A-WALL-DEMO', 'being demolished'],
-    ['A-FLOR-STRS-ABOV', 'above the cut plane'],
     ['A-HIDN', 'hidden'],
-    ['S-BEAM', 'above the cut plane'],
-    ['A-CLNG', 'above the cut plane'],
     ['Defpoints', 'never plots'],
     ['0', 'reserved'],
     ['A-SECT-MCUT', 'belongs to a section view'],
@@ -117,6 +118,116 @@ function scan(path: string) {
       ok(`   …and says why`, !!c.ignoreReason && c.ignoreReason.length > 20);
     }
   }
+
+  // ── 2b. Present but not a wall ──────────────────────────────────────────
+  //
+  // These were originally all 'ignore', which was wrong. A light fitting, a
+  // camera, a cable tray and a beam are physically in the building; they are
+  // simply not building fabric. Collapsing "not a wall" into "not drawn"
+  // emptied 34 layers of real equipment out of the model.
+  //
+  // Above the cut plane is a reason to RAISE geometry, not to drop it.
+  section('2b. Equipment and services are built, not discarded');
+
+  const mustMark: Array<[string, string]> = [
+    ['T-CCTV', 'ceiling'],
+    ['E-LITE', 'ceiling'],
+    ['FA-DEVC', 'ceiling'],
+    ['F-PROT-SPRN', 'ceiling'],
+    ['E-POWR', 'wall'],
+    ['T-ACCS', 'wall'],
+    ['E-POWR-PANL', 'wall'],
+    ['T-RACK', 'floor'],
+    ['M-CHIL', 'floor'],
+  ];
+  for (const [layer, plane] of mustMark) {
+    const c = svc.classify(layer);
+    ok(`${layer} → device marker on the ${plane}`,
+      c.solid === 'marker' && c.mount === plane, c);
+    ok(`   …with a size to draw it at`, (c.sizeMm ?? 0) > 0, c.sizeMm);
+  }
+
+  const mustRoute: Array<[string, string]> = [
+    ['T-DATA-CABL', 'soffit'],
+    ['M-HVAC-SUPP', 'soffit'],
+    ['E-POWR-CIRC', 'soffit'],
+    ['P-DOMW', 'soffit'],
+    ['E-GRND', 'floor'],
+    ['P-SANR', 'floor'],
+  ];
+  for (const [layer, plane] of mustRoute) {
+    const c = svc.classify(layer);
+    ok(`${layer} → service run on the ${plane}`,
+      c.solid === 'route' && c.mount === plane, c);
+  }
+
+  for (const [layer, role] of [
+    ['S-BEAM', 'beam'],
+    ['A-CLNG', 'ceiling'],
+    ['A-FLOR-STRS-ABOV', 'stair_above'],
+  ] as const) {
+    const c = svc.classify(layer);
+    ok(`${layer} → built at its own height, not dropped`,
+      c.solid === 'build' && c.role === role && c.mount !== undefined, c);
+  }
+
+  // The regression that made this whole correction necessary: these three
+  // layers are specified DASHED by the standard precisely because they are
+  // above the cut plane. The hidden-linetype override must not then throw
+  // them away — the catalogue already carries the height to build them at.
+  for (const lt of ['ISO-DASHED', 'DASHED', 'HIDDEN']) {
+    for (const layer of ['S-BEAM', 'A-FLOR-STRS-ABOV']) {
+      const c = svc.classify(layer, lt);
+      ok(`${layer} survives linetype ${lt}`, c.solid === 'build', c);
+    }
+    // …while a dashed layer with NO mounting height still drops, because
+    // there is nowhere to put it instead.
+    const w = svc.classify('A-WALL', lt);
+    ok(`a ${lt} wall with no mount is still excluded`, w.solid === 'ignore', w);
+  }
+
+  // AutoCAD's stock linetype names must trigger the rule, not just the
+  // standard's ISO-* ones. Checking only ISO-DASHED made this assertion pass
+  // while the rule never fired on a real drawing at all.
+  ok('AutoCAD stock linetype names count as hidden',
+    HIDDEN_LINETYPES.has('HIDDEN') && HIDDEN_LINETYPES.has('DASHED') &&
+    HIDDEN_LINETYPES.has('ISO-DASHED'));
+  ok('…but CONTINUOUS does not', !HIDDEN_LINETYPES.has('CONTINUOUS'));
+
+  // ── 2c. Nothing is modelled through the floor above ─────────────────────
+  //
+  // The soffit offsets are budgeted against a 450 mm ceiling void. Without
+  // this check a 400 mm duct sat at +120 and its top came out 70 mm above
+  // the structural slab — a duct running through the storey above.
+  section('2c. Every mounted layer fits inside the storey');
+
+  const STOREY = 3.0;
+  const CEILING = Math.max(2.1, STOREY - 0.45);
+  const mountZ = (c: any, height: number): number => {
+    const offset = (c.mountMm ?? 0) / 1000;
+    switch (c.mount) {
+      case 'ceiling': return Math.max(0, CEILING - offset - height);
+      case 'soffit':  return Math.max(0, CEILING + offset);
+      case 'wall':
+      case 'floor':   return Math.max(0, offset);
+      default:        return 0;
+    }
+  };
+
+  let outside = 0;
+  for (const rule of LAYER_RULES) {
+    if (rule.mount === undefined) continue;
+    const c = svc.classify(rule.layer);
+    const size = (c.sizeMm ?? 200) / 1000;
+    const h = c.solid === 'route' ? size : (c.heightMm ?? c.sizeMm ?? 200) / 1000;
+    const z = mountZ(c, h);
+    if (z < 0 || z + h > STOREY + 1e-6) {
+      outside++;
+      console.log(`      ${rule.layer} z=${z.toFixed(3)} top=${(z + h).toFixed(3)}`);
+    }
+  }
+  ok(`all ${LAYER_RULES.filter((r) => r.mount !== undefined).length} mounted layers sit within a ${STOREY} m storey`,
+    outside === 0, { outside });
 
   section('3. Real fabric becomes geometry');
   for (const layer of ['A-WALL', 'A-WALL-PRTN', 'A-WALL-CURT', 'A-COLS', 'S-COLS',
@@ -285,10 +396,17 @@ function scan(path: string) {
 
   const dropMsg = built.warnings.join('\n');
   for (const layer of ['G-GRID', 'G-ANNO-DIMS', 'A-WALL-PATT', 'A-WALL-DEMO',
-                       'S-BEAM', 'A-HIDN', 'MYSTERY-LAYER']) {
+                       'A-HIDN', 'MYSTERY-LAYER']) {
     ok(`${layer} was excluded, and the model says so`,
       dropMsg.includes(layer), dropMsg.slice(0, 300));
   }
+
+  // S-BEAM is the counter-example: above the cut plane, so NOT a wall, but
+  // still a physical member. It must be built at the soffit rather than
+  // excluded — and it must not be counted among the walls.
+  ok('S-BEAM is built as a beam, not excluded and not a wall',
+    built.stats.beams === 1 && !dropMsg.includes('S-BEAM'),
+    { beams: built.stats.beams });
   ok('each exclusion carries a human reason, not just a layer name',
     /Excluded 1 walls on G-GRID \(grid\): .{25,}/.test(dropMsg), dropMsg);
 
@@ -298,10 +416,16 @@ function scan(path: string) {
     centerOnOrigin: false,
     enforceCadStandard: false,
   });
-  ok('with the standard turned OFF all 11 lines become walls (the old behaviour)',
-    raw.stats.walls === 11, { walls: raw.stats.walls });
-  ok('…which is 7 phantom walls the standard removes',
-    raw.stats.walls - built.stats.walls === 7);
+  // 10 walls, not 11: S-BEAM is still lifted to the soffit even with
+  // enforcement off. Turning the standard off means "drop nothing", not
+  // "put the beams on the floor" — an elevation is a correction, not an
+  // exclusion, so it is not something the operator needs to opt out of.
+  ok('with the standard turned OFF the linework all becomes geometry (the old behaviour)',
+    raw.stats.walls === 10 && raw.stats.beams === 1,
+    { walls: raw.stats.walls, beams: raw.stats.beams });
+  ok('…which is 6 phantom walls the standard removes',
+    raw.stats.walls - built.stats.walls === 6,
+    { raw: raw.stats.walls, built: built.stats.walls });
 
   ok('keepUnrecognisedLayers rescues only the undocumented one',
     FloorPlanMeshFactory.build(plan as any, {

@@ -29,14 +29,55 @@
  * So every layer declares `solid`:
  *   'build'   → becomes geometry
  *   'void'    → becomes an OPENING cut into the host wall (doors, windows)
+ *   'marker'  → becomes a device symbol placed at its mounting height
+ *   'route'   → becomes a service run (cable, duct, pipe) at its service height
  *   'ignore'  → contributes nothing; the space stays empty
  *
  * That is the generalisation of "if the standard says X is empty space, the
  * 3D model must show empty space there". The standard says it by layer.
+ *
+ * ═════════════════════════════════════════════════════════════════════════
+ * WHY 'marker' AND 'route' EXIST
+ * ═════════════════════════════════════════════════════════════════════════
+ *
+ * These two were originally folded into 'ignore', and that was wrong. A
+ * light fitting, a camera, a sprinkler head, a cable tray — these are all
+ * physically PRESENT in the building. They are simply not WALLS.
+ *
+ * Collapsing "not a wall" into "not drawn" deleted 31 layers of real
+ * equipment from the model and left the operator with a bare shell, even
+ * though their drawing told us exactly where every device sat.
+ *
+ * The right answer is that they are drawn with the geometry their role
+ * calls for, at the height their role puts them:
+ *
+ *   'marker' → a small solid at `mount`/`mountMm`, sized by `sizeMm`. A
+ *              ceiling camera hangs under the slab; a socket sits at 300.
+ *   'route'  → the polyline swept as a thin run at `mount`/`mountMm`. A
+ *              data cable runs in the ceiling void; drainage runs under the
+ *              slab.
+ *
+ * Both are excluded from the wall solver, so they never fuse into the
+ * building fabric, and both are individually toggleable at build time.
  */
 
 /** What a layer's geometry becomes in the 3D model. */
-export type SolidBehaviour = 'build' | 'void' | 'ignore';
+export type SolidBehaviour = 'build' | 'void' | 'marker' | 'route' | 'ignore';
+
+/**
+ * The plane a mounting height is measured from.
+ *
+ * `mountMm` is stored as a height above finished floor level at the default
+ * floor-to-floor, but a building with 4 m floors puts its ceiling devices 850
+ * higher. Naming the plane lets the builder re-derive the height instead of
+ * leaving every camera stranded mid-air.
+ *
+ *   'floor'   → z = mountMm                      (floor-standing plant, racks)
+ *   'wall'    → z = mountMm                      (sockets, readers, panels)
+ *   'ceiling' → z = ceilingHeight - mountMm      (hangs below the ceiling)
+ *   'soffit'  → z = ceilingHeight + mountMm      (in the void above it)
+ */
+export type MountPlane = 'floor' | 'wall' | 'ceiling' | 'soffit';
 
 /** The semantic role the 3D builder switches on. */
 export type CadRole =
@@ -81,9 +122,25 @@ export interface LayerRule {
   heightMm?: number;
   /** Height of the opening's underside (sill) in mm, for windows. */
   sillMm?: number;
+  /** Which plane `mountMm` is measured from. Required for marker/route. */
+  mount?: MountPlane;
+  /**
+   * Offset from `mount`, in mm. For 'floor'/'wall' it is the height above
+   * FFL; for 'ceiling'/'soffit' it is the drop below / rise above the ceiling.
+   */
+  mountMm?: number;
+  /**
+   * Marker: the symbol's size across. Route: the run's diameter or tray
+   * width. Both in mm, both deliberately generous enough to be visible at
+   * building scale rather than physically exact.
+   */
+  sizeMm?: number;
   /** Why it is ignored — surfaced verbatim in the compliance report. */
   ignoreReason?: string;
 }
+
+/** Behaviours that put something physical in the model. */
+export const PHYSICAL_BEHAVIOURS: SolidBehaviour[] = ['build', 'marker', 'route'];
 
 // ════════════════════════════════════════════════════════════════════════════
 // WALL TYPES — LIB-01 section B, "WALL TYPES IN PLAN (cut at 1.0-1.2 m
@@ -138,17 +195,20 @@ const STRUCTURE_RULES: LayerRule[] = [
   { layer: 'A-COLS-PATT', role: 'hatch', solid: 'ignore',
     description: 'Column hatch / poche.',
     ignoreReason: 'Fill pattern for a column drawn on A-COLS or S-COLS.' },
-  { layer: 'S-BEAM', role: 'beam', solid: 'ignore',
-    description: 'Beam above — drawn dashed.',
-    ignoreReason:
-      'A beam is above the 1200 cut plane. It belongs to the ceiling of ' +
-      'this level, not its floor; building it at floor level puts a block ' +
-      'in mid-air across the room.' },
-  { layer: 'A-CLNG', role: 'ceiling', solid: 'ignore',
-    description: 'Reflected ceiling.',
-    ignoreReason:
-      'A reflected ceiling plan is drawn looking UP, above the 1200 cut ' +
-      'plane. Its grid would land on the floor if it were built here.' },
+  // Both of these are above the 1200 cut plane, which is a reason to raise
+  // them to their true height — not a reason to leave them out. Building a
+  // beam at floor level puts a block across the room; building it at the
+  // soffit puts it where the beam is.
+  { layer: 'S-BEAM', role: 'beam', solid: 'build',
+    mount: 'soffit', mountMm: 0, thicknessMm: 300, heightMm: 400,
+    description:
+      'Beam above — drawn dashed because it is over the cut plane. Built at ' +
+      'the soffit, 300 wide x 400 deep, hanging under the slab above.' },
+  { layer: 'A-CLNG', role: 'ceiling', solid: 'build',
+    mount: 'ceiling', mountMm: 0, thicknessMm: 20,
+    description:
+      'Reflected ceiling, drawn looking up. Built as the ceiling plane at ' +
+      'its own height rather than landing on the floor.' },
 ];
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -166,11 +226,14 @@ const CIRCULATION_RULES: LayerRule[] = [
     description:
       'Stair treads below the cut plane. Riser 175 / going 280 is the ' +
       'library flight; a stair is modelled as a stair, never as walls.' },
-  { layer: 'A-FLOR-STRS-ABOV', role: 'stair_above', solid: 'ignore',
-    description: 'Stair flight ABOVE the cut plane — dashed 0.18.',
-    ignoreReason:
-      'Explicitly the part of the stair above 1200. It is shown so the ' +
-      'reader knows the stair continues; it is not on this floor.' },
+  // The flight above the cut plane is the rest of the SAME stair. Dropping
+  // it is what makes an imported staircase stop halfway up, which is exactly
+  // the defect visible in the viewer. Built from 1200 upwards it completes.
+  { layer: 'A-FLOR-STRS-ABOV', role: 'stair_above', solid: 'build',
+    mount: 'floor', mountMm: 1200,
+    description:
+      'Stair flight ABOVE the cut plane — dashed 0.18. Built from 1200 up, ' +
+      'continuing the flight drawn below the cut rather than truncating it.' },
   { layer: 'A-FLOR-STRS-ARRW', role: 'annotation', solid: 'ignore',
     description: 'Stair direction arrow (dot = first riser, UP / DN).',
     ignoreReason: 'An annotation arrow, not a physical object.' },
@@ -319,52 +382,104 @@ const ANNOTATION_RULES: LayerRule[] = [
 // standing for equipment, never a wall.
 // ════════════════════════════════════════════════════════════════════════════
 
-const SERVICE_LAYERS: Array<[string, CadRole, string]> = [
-  ['T-CCTV', 'device', 'CCTV cameras'],
-  ['T-CCTV-FOVW', 'annotation', 'CCTV field of view — dotted coverage'],
-  ['T-ACCS', 'device', 'Access control'],
-  ['T-INTR', 'device', 'Intercom'],
-  ['T-DATA', 'device', 'Data outlets'],
-  ['T-DATA-CABL', 'cable', 'Data cabling'],
-  ['T-DATA-FIBR', 'cable', 'Fibre'],
-  ['T-WIFI', 'device', 'Wireless access points'],
-  ['T-RACK', 'device', 'Racks and cabinets'],
-  ['T-PAGE', 'device', 'Paging / PA speakers'],
-  ['T-IPTV', 'device', 'IPTV'],
-  ['T-CTRY', 'device', 'Clock / time systems'],
-  ['FA-DEVC', 'device', 'Fire alarm devices'],
-  ['FA-PANL', 'device', 'Fire alarm panels'],
-  ['FA-WIRE', 'cable', 'Fire alarm wiring'],
-  ['E-LITE', 'device', 'Light fittings'],
-  ['E-LITE-CIRC', 'cable', 'Lighting circuits'],
-  ['E-LTNG-KNX', 'device', 'KNX devices'],
-  ['E-POWR', 'device', 'Power outlets'],
-  ['E-POWR-CIRC', 'cable', 'Power circuits'],
-  ['E-POWR-PANL', 'device', 'Distribution boards'],
-  ['E-GRND', 'cable', 'Earthing'],
-  ['B-CTRL-DEVC', 'device', 'BMS field devices'],
-  ['B-CTRL-PANL', 'device', 'BMS controllers'],
-  ['B-CTRL-WIRE', 'cable', 'BMS wiring'],
-  ['M-HVAC-EQPM', 'device', 'HVAC equipment'],
-  ['M-HVAC-SUPP', 'cable', 'HVAC supply ductwork'],
-  ['M-HVAC-RETN', 'cable', 'HVAC return ductwork'],
-  ['M-CHIL', 'device', 'Chilled water plant'],
-  ['P-DOMW', 'cable', 'Domestic water'],
-  ['P-SANR', 'cable', 'Sanitary drainage'],
-  ['F-PROT-SPRN', 'device', 'Sprinklers'],
+/**
+ * Every service layer with where its equipment physically sits.
+ *
+ * Heights are the normal coordinated positions for a commercial fit-out:
+ * sockets at 300, switches and readers at 1100, panels at 1500, screens at
+ * 1600, detectors and heads tight to the ceiling.
+ *
+ * The route offsets are deliberately STAGGERED rather than all set to one
+ * value. Real services coordination stacks runs at different levels in the
+ * ceiling void so they do not clash — ducts lowest because they are biggest,
+ * then power, then data, then fire. Reproducing that spacing both matches how
+ * the building is actually built and stops every run from z-fighting in a
+ * single plane in the viewer.
+ *
+ * Every soffit offset plus the run's own size stays inside the 450 mm void
+ * allowance, which is checked by `verify:cad-standards`. An earlier version
+ * of this table staggered the offsets without that budget and put a 400 mm
+ * duct at +120, whose top came out 70 mm above the structural slab — a duct
+ * modelled through the floor of the storey above.
+ *
+ * [layer, role, description, mount, mountMm, sizeMm, heightMm?]
+ */
+const SERVICE_LAYERS: Array<
+  [string, CadRole, string, MountPlane, number, number, number?]
+> = [
+  // ── Security and comms ────────────────────────────────────────────────
+  ['T-CCTV', 'device', 'CCTV cameras', 'ceiling', 150, 250],
+  ['T-ACCS', 'device', 'Access control readers', 'wall', 1100, 120],
+  ['T-INTR', 'device', 'Intercom', 'wall', 1400, 150],
+  ['T-DATA', 'device', 'Data outlets', 'wall', 300, 100],
+  ['T-WIFI', 'device', 'Wireless access points', 'ceiling', 50, 200],
+  ['T-RACK', 'device', 'Racks and cabinets', 'floor', 0, 600, 2000],
+  ['T-PAGE', 'device', 'Paging / PA speakers', 'ceiling', 50, 200],
+  ['T-IPTV', 'device', 'IPTV screens', 'wall', 1600, 400],
+  ['T-CTRY', 'device', 'Clock / time systems', 'wall', 2200, 300],
+  ['T-DATA-CABL', 'cable', 'Data cabling', 'soffit', 330, 100],
+  ['T-DATA-FIBR', 'cable', 'Fibre', 'soffit', 290, 60],
+
+  // ── Fire ──────────────────────────────────────────────────────────────
+  ['FA-DEVC', 'device', 'Fire alarm devices', 'ceiling', 30, 150],
+  ['FA-PANL', 'device', 'Fire alarm panels', 'wall', 1500, 400],
+  ['FA-WIRE', 'cable', 'Fire alarm wiring', 'soffit', 250, 40],
+  ['F-PROT-SPRN', 'device', 'Sprinkler heads', 'ceiling', 20, 100],
+
+  // ── Electrical ────────────────────────────────────────────────────────
+  ['E-LITE', 'device', 'Light fittings', 'ceiling', 60, 300],
+  ['E-LTNG-KNX', 'device', 'KNX switches and sensors', 'wall', 1100, 90],
+  ['E-POWR', 'device', 'Power outlets', 'wall', 300, 100],
+  ['E-POWR-PANL', 'device', 'Distribution boards', 'wall', 1600, 500],
+  ['E-LITE-CIRC', 'cable', 'Lighting circuits', 'soffit', 200, 40],
+  ['E-POWR-CIRC', 'cable', 'Power circuits', 'soffit', 150, 50],
+  ['E-GRND', 'cable', 'Earthing', 'floor', 50, 40],
+
+  // ── Controls ──────────────────────────────────────────────────────────
+  ['B-CTRL-DEVC', 'device', 'BMS field devices', 'ceiling', 40, 120],
+  ['B-CTRL-PANL', 'device', 'BMS controllers', 'wall', 1500, 400],
+  ['B-CTRL-WIRE', 'cable', 'BMS wiring', 'soffit', 100, 40],
+
+  // ── Mechanical and public health ──────────────────────────────────────
+  ['M-HVAC-EQPM', 'device', 'HVAC equipment / FCUs', 'soffit', 50, 700, 400],
+  ['M-CHIL', 'device', 'Chilled water plant', 'floor', 0, 1200, 1800],
+  ['M-HVAC-SUPP', 'cable', 'HVAC supply ductwork', 'soffit', 0, 400],
+  ['M-HVAC-RETN', 'cable', 'HVAC return ductwork', 'soffit', 0, 400],
+  ['P-DOMW', 'cable', 'Domestic water', 'soffit', 350, 80],
+  // Drainage genuinely runs BELOW the structural slab. Modelled in the floor
+  // build-up at 0 rather than at -150, because at -150 it sits entirely
+  // underneath a 150 mm slab and is invisible in every view — which reads as
+  // the layer having been dropped again.
+  ['P-SANR', 'cable', 'Sanitary drainage', 'floor', 0, 110],
 ];
 
-const SERVICE_RULES: LayerRule[] = SERVICE_LAYERS.map(([layer, role, description]) => ({
-  layer,
-  role,
-  solid: 'ignore' as SolidBehaviour,
-  description,
-  ignoreReason:
-    role === 'cable'
-      ? 'A cable or duct route — a line showing where a service runs, not a solid.'
-      : 'An equipment symbol. It is captured as a DEVICE PLACEMENT rather than ' +
-        'geometry, so it appears in the model as a device marker, not a block.',
-}));
+const SERVICE_RULES: LayerRule[] = [
+  ...SERVICE_LAYERS.map(
+    ([layer, role, description, mount, mountMm, sizeMm, heightMm]): LayerRule => ({
+      layer,
+      role,
+      solid: (role === 'cable' ? 'route' : 'marker') as SolidBehaviour,
+      description,
+      mount,
+      mountMm,
+      sizeMm,
+      ...(heightMm === undefined ? {} : { heightMm }),
+    }),
+  ),
+
+  // The one service layer that is genuinely not an object: a coverage cone
+  // is an analysis overlay, not something you could walk into.
+  {
+    layer: 'T-CCTV-FOVW',
+    role: 'annotation',
+    solid: 'ignore',
+    description: 'CCTV field of view — dotted coverage cones',
+    ignoreReason:
+      'A coverage cone showing what a camera can see. The camera itself is ' +
+      'built from T-CCTV; the cone is an analysis overlay with no physical ' +
+      'extent, so extruding it would fill the room with solid wedges.',
+  },
+];
 
 export const LAYER_RULES: LayerRule[] = [
   ...WALL_RULES,
@@ -501,9 +616,35 @@ export const LINETYPES = [
 ] as const;
 
 /** Linetype names that mean "drawn, but not solid at this level". */
-export const HIDDEN_LINETYPES: ReadonlySet<string> = new Set<string>(
-  LINETYPES.filter((l) => l.impliesHidden).map((l) => l.name as string),
-);
+/**
+ * The names real drawings actually use.
+ *
+ * `LINETYPES` above is the standard's own published table, and it names them
+ * ISO-DASHED, ISO-DASHDOT and so on. AutoCAD's stock linetypes — the ones
+ * that come out of acad.lin and appear in the overwhelming majority of real
+ * DXF files — are called DASHED, HIDDEN, CENTER, PHANTOM and DOT.
+ *
+ * Matching only the ISO names means the hidden-linetype rule silently never
+ * fires on a normal drawing, so dashed geometry above the cut plane is built
+ * as though it were solid. These aliases are kept separate from `LINETYPES`
+ * rather than added to it, because that array is published as the standard's
+ * reference table on the drawing-conventions screen and should show what the
+ * standard says, not what AutoCAD ships.
+ */
+const HIDDEN_LINETYPE_ALIASES = [
+  'DASHED', 'DASHED2', 'DASHEDX2',
+  'HIDDEN', 'HIDDEN2', 'HIDDENX2',
+  'CENTER', 'CENTER2', 'CENTERX2',
+  'PHANTOM', 'PHANTOM2', 'PHANTOMX2',
+  'DOT', 'DOT2', 'DOTX2',
+  'DASHDOT', 'DASHDOT2', 'DASHDOTX2',
+  'DIVIDE', 'DIVIDE2', 'DIVIDEX2',
+] as const;
+
+export const HIDDEN_LINETYPES: ReadonlySet<string> = new Set<string>([
+  ...LINETYPES.filter((l) => l.impliesHidden).map((l) => l.name as string),
+  ...HIDDEN_LINETYPE_ALIASES,
+]);
 
 // ════════════════════════════════════════════════════════════════════════════
 // PRACTICE RULES — master template section 11. Checked by the validator.

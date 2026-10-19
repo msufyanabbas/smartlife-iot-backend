@@ -15,6 +15,7 @@ import {
   STANDARD_UNITS,
   type CadRole,
   type LayerRule,
+  type MountPlane,
   type SolidBehaviour,
 } from './cad-standard.catalogue';
 import {
@@ -40,6 +41,10 @@ export interface LayerClassification {
   thicknessMm?: number;
   heightMm?: number;
   sillMm?: number;
+  /** Set for marker/route layers, and for build layers above the cut plane. */
+  mount?: MountPlane;
+  mountMm?: number;
+  sizeMm?: number;
   description: string;
   /** Present whenever solid === 'ignore'. */
   ignoreReason?: string;
@@ -61,6 +66,8 @@ export interface ComplianceReport {
     nonConformant: number;
     willBuild: number;
     willVoid: number;
+    willMarker: number;
+    willRoute: number;
     willIgnore: number;
     recognisedSymbols: number;
     unknownSymbols: number;
@@ -116,7 +123,10 @@ export class CadStandardsService {
       // once the works are done, and `A-WALL-FUTR` is one that does not
       // exist yet. Building either models a building that is never real at
       // any single moment in time.
-      if (solid !== 'ignore' && (parsed.status === 'DEMO' || parsed.status === 'FUTR')) {
+      if (
+        solid !== 'ignore' &&
+        (parsed.status === 'DEMO' || parsed.status === 'FUTR')
+      ) {
         solid = 'ignore';
         ignoreReason =
           parsed.status === 'DEMO'
@@ -129,11 +139,27 @@ export class CadStandardsService {
       // "Dashed 0.18 — Hidden / ABOVE cut (beams, stairs above, overhangs)".
       // A dashed line on a solid layer is something seen through or above
       // the cut plane, not a wall at this level.
-      if (solid === 'build' && linetype && HIDDEN_LINETYPES.has(linetype.toUpperCase())) {
+      //
+      // Unless the rule ALREADY KNOWS that. `S-BEAM` and `A-FLOR-STRS-ABOV`
+      // are specified dashed BY the standard precisely because they are above
+      // the cut — and they carry a `mount` saying what height to build them
+      // at. For those, a dashed linetype confirms what the catalogue already
+      // encodes; treating it as new information would discard the elevation
+      // and drop the geometry, which is the bug this whole pass is fixing.
+      //
+      // So the override applies only where the rule has no elevation of its
+      // own, i.e. where dashed genuinely means "we don't know where this is".
+      if (
+        solid === 'build' &&
+        rule.mount === undefined &&
+        linetype &&
+        HIDDEN_LINETYPES.has(linetype.toUpperCase())
+      ) {
         solid = 'ignore';
         ignoreReason =
           `Drawn with linetype ${linetype}, which the standard reserves for ` +
-          'hidden geometry or objects above the cut plane.';
+          'hidden geometry or objects above the cut plane, and the layer ' +
+          'carries no mounting height to build it at instead.';
       }
 
       return {
@@ -148,6 +174,9 @@ export class CadStandardsService {
         thicknessMm: rule.thicknessMm,
         heightMm: rule.heightMm,
         sillMm: rule.sillMm,
+        mount: rule.mount,
+        mountMm: rule.mountMm,
+        sizeMm: rule.sizeMm,
         description: rule.description,
         ignoreReason: solid === 'ignore' ? ignoreReason : undefined,
       };
@@ -239,7 +268,13 @@ export class CadStandardsService {
     const layers = (input.layers ?? []).filter((l) => l?.name);
     const classifications = layers.map((l) => this.classify(l.name, l.linetype));
 
-    const counts = { build: 0, void: 0, ignore: 0 };
+    const counts: Record<SolidBehaviour, number> = {
+      build: 0,
+      void: 0,
+      marker: 0,
+      route: 0,
+      ignore: 0,
+    };
     for (const c of classifications) counts[c.solid]++;
 
     const unrecognised = classifications
@@ -284,11 +319,23 @@ export class CadStandardsService {
       }
     }
 
-    if (counts.build === 0) {
+    // "Nothing will be built" is only alarming if nothing physical comes out
+    // at all. A services-only drawing that yields markers and routes is a
+    // perfectly good import, so it must not trigger the empty-model warning.
+    if (counts.build + counts.marker + counts.route === 0) {
       warnings.push(
-        'No layer in this drawing produces solid geometry, so the 3D model ' +
-          'would be empty. Check that walls are on A-WALL (or an A-3D-* layer) ' +
-          'rather than a custom layer name.',
+        'No layer in this drawing produces any physical geometry, so the 3D ' +
+          'model would be empty. Check that walls are on A-WALL (or an A-3D-* ' +
+          'layer) rather than a custom layer name.',
+      );
+    } else if (counts.build === 0) {
+      warnings.push(
+        `This drawing produces no building fabric — no walls, slabs or ` +
+          `columns — but does produce ${counts.marker} device layer(s) and ` +
+          `${counts.route} service route layer(s). That is expected for a ` +
+          `services-only drawing, and the model will have equipment floating ` +
+          `without a shell around it. Import the architectural plan for the ` +
+          `same level to give it context.`,
       );
     }
 
@@ -313,6 +360,8 @@ export class CadStandardsService {
         nonConformant,
         willBuild: counts.build,
         willVoid: counts.void,
+        willMarker: counts.marker,
+        willRoute: counts.route,
         willIgnore: counts.ignore,
         recognisedSymbols: symbols.length - unknownSymbols,
         unknownSymbols,

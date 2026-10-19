@@ -24,6 +24,13 @@ import {
   applyCadStandard,
   describeDropped,
 } from './cad-standard.filter';
+import { CadStandardsService } from '@modules/cad-standards/cad-standards.service';
+import {
+  assembleStairFlights,
+  type StairFlight,
+  type StairSegment,
+} from './stair-flight';
+import type { MountPlane } from '@modules/cad-standards/cad-standard.catalogue';
 import {
   cleanPolygon,
   lastUsedFanFallback,
@@ -32,6 +39,14 @@ import {
   triangulateWithHoles,
   type Vec2,
 } from './triangulate';
+
+/**
+ * A pure function over a constant table — no repositories, no config, no
+ * other services — so instantiating one here duplicates no state. Same
+ * reasoning as `cad-standard.bridge.ts`: the alternative is re-implementing
+ * the lookup, which is how two copies of a rule table drift apart.
+ */
+const standards = new CadStandardsService();
 
 /** Loose shape — works on freshly parsed and legacy stored geometry alike. */
 export interface SourceGeometry {
@@ -42,6 +57,8 @@ export interface SourceGeometry {
   columns?: Array<any>;
   stairs?: Array<any>;
   furniture?: Array<any>;
+  devices?: Array<any>;
+  routes?: Array<any>;
   building?: { floorHeight?: number };
   boundingBox?: { minX: number; minY: number; maxX: number; maxY: number };
   bounds?: { minX: number; minY: number; maxX: number; maxY: number };
@@ -61,6 +78,21 @@ export interface BuildOptions {
   includeWindows: boolean;
   includeStairs: boolean;
   includeFurniture: boolean;
+  /**
+   * Equipment from `marker` layers — luminaires, cameras, sockets, detectors,
+   * sprinkler heads, panels, racks.
+   *
+   * On by default. These are genuinely present in the building and the
+   * drawing says exactly where they are; leaving them out produces a bare
+   * shell from a plan that was full of information.
+   */
+  includeDevices: boolean;
+  /** Service runs from `route` layers — cable tray, conduit, duct, pipe. */
+  includeRoutes: boolean;
+  /** The ceiling plane from A-CLNG, built at ceiling height. */
+  includeCeilings: boolean;
+  /** Beams from S-BEAM, built at the soffit rather than on the floor. */
+  includeBeams: boolean;
   cutOpenings: boolean;
   centerOnOrigin: boolean;
   /**
@@ -87,6 +119,10 @@ export const DEFAULT_BUILD_OPTIONS: BuildOptions = {
   includeWindows: true,
   includeStairs: true,
   includeFurniture: false,
+  includeDevices: true,
+  includeRoutes: true,
+  includeCeilings: false, // hides the floor below it when viewed from above
+  includeBeams: true,
   cutOpenings: true,
   centerOnOrigin: true,
   enforceCadStandard: true,
@@ -103,7 +139,21 @@ export interface BuildResult {
     doors: number;
     windows: number;
     stairs: number;
+    /** Treads across all assembled flights — stairs counts the flights. */
+    stairTreads: number;
     furniture: number;
+    /** Equipment placements built from `marker` layers. */
+    devices: number;
+    /** Service runs built from `route` layers. */
+    routes: number;
+    beams: number;
+    ceilingMembers: number;
+    /**
+     * Elevated geometry that was neither beam nor ceiling. Should be 0; a
+     * non-zero value means a layer is arriving here unrecognised, which is
+     * how 65 stair treads were once silently counted as ceiling grid.
+     */
+    elevatedOther: number;
     openingsCut: number;
     openingsUnmatched: number;
     triangles: number;
@@ -130,6 +180,58 @@ interface WallOpening {
 const OPENING_SNAP_MARGIN = 0.35;
 
 export class FloorPlanMeshFactory {
+  /**
+   * Resolve a layer's mounting rule into a Z for the bottom of the solid.
+   *
+   * `mountMm` is an offset from a named plane rather than an absolute height,
+   * because the same rule has to work in a 3 m office and a 6 m warehouse. A
+   * ceiling camera is "150 below the ceiling" in both; stored as an absolute
+   * 2550 it would be stranded mid-air in the warehouse.
+   *
+   * `height` is needed for the ceiling case: a device hangs from the ceiling
+   * by its TOP, so the box's base sits a further `height` down. Without it
+   * every ceiling device would be embedded in the slab with its body poking
+   * up into the floor above.
+   */
+  private static mountHeight(
+    rule: { mount?: MountPlane; mountMm?: number },
+    ceilingHeight: number,
+    height: number,
+    /**
+     * Structural storey height. Given, the result is clamped so nothing is
+     * modelled through the floor above: the catalogue's offsets are budgeted
+     * for a 450 mm void, and a drawing with a 2.4 m storey has far less. The
+     * clamp squeezes the run into the void it actually has rather than
+     * letting a 400 mm duct emerge in the storey above.
+     */
+    storeyHeight?: number,
+  ): number {
+    const offset = (rule.mountMm ?? 0) / 1000;
+
+    let z: number;
+    switch (rule.mount) {
+      case 'ceiling':
+        z = ceilingHeight - offset - height;
+        break;
+      case 'soffit':
+        z = ceilingHeight + offset;
+        break;
+      case 'wall':
+      case 'floor':
+        z = offset;
+        break;
+      default:
+        // No rule: sit it on the floor. Visible and obviously wrong beats
+        // invisible and silently absent.
+        return 0;
+    }
+
+    if (storeyHeight !== undefined && height <= storeyHeight) {
+      z = Math.min(z, storeyHeight - height);
+    }
+    return Math.max(0, z);
+  }
+
   static build(
     geometry: SourceGeometry,
     options: Partial<BuildOptions> = {},
@@ -155,18 +257,53 @@ export class FloorPlanMeshFactory {
     geometry = filtered.geometry;
     warnings.push(...filtered.warnings, ...describeDropped(filtered.dropped));
 
-    const walls = Array.isArray(geometry.walls) ? geometry.walls : [];
+    // ── Split elevated linear geometry out of the wall list ───────────────
+    //
+    // The parser has no bucket for beams or ceiling grid members, so both
+    // arrive in `walls`. Building them there would lay a beam across the
+    // floor and drop the ceiling grid onto the slab — which is precisely why
+    // they used to be excluded outright.
+    //
+    // They are genuinely linear extrusions, exactly like a wall; the only
+    // difference is the height they start at and their section. So they are
+    // separated here and built with their own elevation, rather than being
+    // thrown away.
+    const allWalls = Array.isArray(geometry.walls) ? geometry.walls : [];
+    const walls: any[] = [];
+    const elevated: Array<{ item: any; rule: ReturnType<typeof standards.classify> }> = [];
+
+    for (const item of allWalls) {
+      const layer = String(item?.layer ?? item?.layerName ?? '').trim();
+      if (!layer) {
+        walls.push(item);
+        continue;
+      }
+      const rule = standards.classify(layer, item?.linetype);
+      if (rule.solid === 'build' && rule.mount !== undefined) {
+        elevated.push({ item, rule });
+      } else {
+        walls.push(item);
+      }
+    }
     const rooms = Array.isArray(geometry.rooms) ? geometry.rooms : [];
     const doors = Array.isArray(geometry.doors) ? geometry.doors : [];
     const windows = Array.isArray(geometry.windows) ? geometry.windows : [];
     const columns = Array.isArray(geometry.columns) ? geometry.columns : [];
     const stairs = Array.isArray(geometry.stairs) ? geometry.stairs : [];
     const furniture = Array.isArray(geometry.furniture) ? geometry.furniture : [];
+    const devices = Array.isArray(geometry.devices) ? geometry.devices : [];
+    const routes = Array.isArray(geometry.routes) ? geometry.routes : [];
 
     const wallHeight =
       Number(geometry.building?.floorHeight) > 0
         ? Number(geometry.building!.floorHeight)
         : opts.wallHeight;
+
+    // The ceiling is the plane every ceiling-mounted device hangs from, so it
+    // has to be derived once and shared rather than guessed per device.
+    // A suspended ceiling sits below the structural floor-to-floor; 450 mm of
+    // void is the usual allowance for ducts, tray and the grid itself.
+    const ceilingHeight = Math.max(2.1, wallHeight - 0.45);
 
     const offset = opts.centerOnOrigin
       ? this.computeCentreOffset(geometry, walls, rooms)
@@ -180,7 +317,13 @@ export class FloorPlanMeshFactory {
       doors: 0,
       windows: 0,
       stairs: 0,
+      stairTreads: 0,
       furniture: 0,
+      devices: 0,
+      routes: 0,
+      beams: 0,
+      ceilingMembers: 0,
+      elevatedOther: 0,
       openingsCut: 0,
       openingsUnmatched: 0,
       triangles: 0,
@@ -288,9 +431,32 @@ export class FloorPlanMeshFactory {
       }
     }
 
+    // ── Stairs ────────────────────────────────────────────────────────────
+    //
+    // A staircase is drawn as one line per tread, so the stair list holds
+    // nosings, not staircases. Building a flight from each line produced one
+    // complete staircase per tread — 154 of them, overlapping, in the
+    // reference drawing — which is what made imported stairs unreadable.
+    //
+    // The lines are assembled into flights first, then one staircase is
+    // built per flight with the step count the drawing actually shows.
     if (opts.includeStairs) {
-      for (const stair of stairs) {
-        if (this.buildStair(builder, stair, offset, wallHeight)) stats.stairs++;
+      const assembly = assembleStairFlights(
+        stairs
+          .map((s: any) => this.stairSegment(s))
+          .filter((s): s is StairSegment => s !== null),
+      );
+      warnings.push(...assembly.warnings);
+
+      for (const flight of assembly.flights) {
+        // A flight on a layer that starts above the cut plane rises from
+        // there to the floor above, not from the slab.
+        const rule = standards.classify(flight.layer);
+        const baseZ = this.mountHeight(rule, ceilingHeight, 0);
+        if (this.buildFlight(builder, flight, offset, wallHeight, baseZ)) {
+          stats.stairs++;
+          stats.stairTreads += flight.steps;
+        }
       }
     }
 
@@ -314,6 +480,130 @@ export class FloorPlanMeshFactory {
           height,
         );
         stats.furniture++;
+      }
+    }
+
+    // ── Beams and ceiling grid ────────────────────────────────────────────
+    //
+    // Linear members built at their own elevation. A beam hangs under the
+    // slab above at 300 x 400; a ceiling grid tee sits in the ceiling plane.
+    // Each is keyed by role so the viewer can toggle and colour them apart
+    // from the walls they would otherwise be indistinguishable from.
+    for (const { item, rule } of elevated) {
+      if (rule.role === 'beam' && !opts.includeBeams) continue;
+      if (rule.role === 'ceiling' && !opts.includeCeilings) continue;
+
+      const segment = this.wallSegment(item);
+      if (!segment) continue;
+
+      const thickness =
+        Number(item.thickness) > 0
+          ? Number(item.thickness)
+          : (rule.thicknessMm ?? 200) / 1000;
+      const depth = (rule.heightMm ?? 300) / 1000;
+      const z = this.mountHeight(rule, ceilingHeight, depth, wallHeight);
+
+      const dx = segment.end.x - segment.start.x;
+      const dy = segment.end.y - segment.start.y;
+      const length = Math.hypot(dx, dy);
+      if (length < 1e-6) continue;
+
+      builder.addBox(
+        `${rule.role}:${item.layer ?? 'unknown'}`,
+        {
+          x: (segment.start.x + segment.end.x) / 2 + offset.x,
+          y: (segment.start.y + segment.end.y) / 2 + offset.y,
+          z,
+        },
+        { x: dx, y: dy },
+        length,
+        thickness,
+        depth,
+      );
+
+      // Counted by explicit role rather than with an `else`, so a layer that
+      // starts arriving here unexpectedly shows up as uncounted instead of
+      // silently inflating the ceiling tally — which is how 65 stair treads
+      // first appeared to be ceiling grid.
+      if (rule.role === 'beam') stats.beams++;
+      else if (rule.role === 'ceiling') stats.ceilingMembers++;
+      else stats.elevatedOther++;
+    }
+
+    // ── Equipment ─────────────────────────────────────────────────────────
+    //
+    // Each placement becomes a small solid at the height its layer puts it:
+    // a camera under the ceiling, a socket at 300, a rack on the floor. The
+    // mesh key is the layer name so the viewer can colour, label and toggle
+    // each service independently instead of getting one undifferentiated
+    // blob of equipment.
+    if (opts.includeDevices) {
+      for (const device of devices) {
+        const position = this.point(device.position);
+        if (!position) continue;
+
+        const rule = standards.classify(String(device.layer ?? ''));
+        const size = (rule.sizeMm ?? 200) / 1000;
+        const height = (rule.heightMm ?? rule.sizeMm ?? 200) / 1000;
+        const z = this.mountHeight(rule, ceilingHeight, height, wallHeight);
+        const rotation = ((Number(device.rotation) || 0) * Math.PI) / 180;
+
+        builder.addBox(
+          `device:${device.layer ?? 'unknown'}`,
+          { x: position.x + offset.x, y: position.y + offset.y, z },
+          { x: Math.cos(rotation), y: Math.sin(rotation) },
+          size,
+          size,
+          height,
+        );
+        stats.devices++;
+      }
+    }
+
+    // ── Service runs ──────────────────────────────────────────────────────
+    //
+    // A run is swept segment by segment as a thin box along its own
+    // direction. Using addBox per segment rather than one extrusion means a
+    // tray that turns a corner stays continuous in plan without needing a
+    // mitre solver — at 100 mm wide the join is not visible, and the
+    // alternative (treating the polyline as a closed profile) would produce
+    // a filled slab where a cable should be.
+    if (opts.includeRoutes) {
+      for (const route of routes) {
+        const pts = Array.isArray(route.points) ? route.points : [];
+        if (pts.length < 2) continue;
+
+        const rule = standards.classify(String(route.layer ?? ''));
+        const size = (rule.sizeMm ?? 60) / 1000;
+        const z = this.mountHeight(rule, ceilingHeight, size, wallHeight);
+        let emitted = false;
+
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = this.point(pts[i]);
+          const b = this.point(pts[i + 1]);
+          if (!a || !b) continue;
+
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const length = Math.hypot(dx, dy);
+          if (length < 1e-6) continue;
+
+          builder.addBox(
+            `route:${route.layer ?? 'unknown'}`,
+            {
+              x: (a.x + b.x) / 2 + offset.x,
+              y: (a.y + b.y) / 2 + offset.y,
+              z,
+            },
+            { x: dx, y: dy },
+            length,
+            size,
+            size,
+          );
+          emitted = true;
+        }
+
+        if (emitted) stats.routes++;
       }
     }
 
@@ -682,56 +972,77 @@ export class FloorPlanMeshFactory {
   }
 
   /** A run of discrete steps rather than a ramp, so step count stays meaningful. */
-  private static buildStair(
-    builder: MeshBuilder,
-    stair: any,
-    offset: Vec2,
-    floorHeight: number,
-  ): boolean {
-    const points = Array.isArray(stair?.points)
+  /**
+   * Reduce a parsed stair entry to the one line it really is.
+   *
+   * The parser stores a tread as a two-point `points` array; older stored
+   * geometry may only carry `position` and `width`. Both are accepted so a
+   * re-render of an existing plan does not lose its stairs.
+   */
+  private static stairSegment(stair: any): StairSegment | null {
+    const pts = Array.isArray(stair?.points)
       ? stair.points
           .map((p: any) => this.point(p))
           .filter((p: Vec2 | null): p is Vec2 => p !== null)
       : [];
 
-    const start = points[0] ?? this.point(stair?.position);
-    const end = points[points.length - 1] ?? null;
-
-    if (!start) return false;
-
-    const steps = Math.max(2, Math.min(60, Number(stair?.steps) || 16));
-    const width = Number(stair?.width) > 0 ? Number(stair.width) : 1.2;
-
-    let ux = 1;
-    let uy = 0;
-    let run = steps * 0.28;
-
-    if (end) {
-      const dx = end.x - start.x;
-      const dy = end.y - start.y;
-      const length = Math.hypot(dx, dy);
-      if (length > 1e-6) {
-        ux = dx / length;
-        uy = dy / length;
-        run = length;
-      }
+    if (pts.length >= 2) {
+      return {
+        start: pts[0],
+        end: pts[pts.length - 1],
+        layer: String(stair?.layer ?? ''),
+      };
     }
 
-    const tread = run / steps;
-    const riser = floorHeight / steps;
+    // Legacy shape: a centre point plus a width, with no direction. Treat it
+    // as a tread running along X so it can still cluster with its neighbours.
+    const centre = this.point(stair?.position);
+    if (!centre) return null;
+    const half = (Number(stair?.width) > 0 ? Number(stair.width) : 1.2) / 2;
+    return {
+      start: { x: centre.x - half, y: centre.y },
+      end: { x: centre.x + half, y: centre.y },
+      layer: String(stair?.layer ?? ''),
+    };
+  }
+
+  /**
+   * Build one assembled flight.
+   *
+   * Each tread is a box whose top is at that tread's finished level, so the
+   * flight reads as a solid stair rather than as floating slabs. The rise is
+   * shared out over the treads the drawing actually contains, which is what
+   * makes the geometry match the plan instead of a 16-step assumption.
+   */
+  private static buildFlight(
+    builder: MeshBuilder,
+    flight: StairFlight,
+    offset: Vec2,
+    floorHeight: number,
+    baseZ: number,
+  ): boolean {
+    const steps = Math.max(1, Math.min(120, flight.steps));
+    const going = flight.runLength / steps;
+
+    // A flight above the cut plane climbs only the part of the storey that
+    // is left above it.
+    const rise = Math.max(0.1, floorHeight - baseZ);
+    const riser = rise / steps;
+
+    if (!Number.isFinite(going) || going <= 0) return false;
 
     for (let i = 0; i < steps; i++) {
-      const distance = tread * (i + 0.5);
+      const distance = going * (i + 0.5);
       builder.addBox(
         'stair',
         {
-          x: start.x + ux * distance + offset.x,
-          y: start.y + uy * distance + offset.y,
-          z: 0,
+          x: flight.origin.x + flight.run.x * distance + offset.x,
+          y: flight.origin.y + flight.run.y * distance + offset.y,
+          z: baseZ,
         },
-        { x: ux, y: uy },
-        tread,
-        width,
+        flight.run,
+        going,
+        flight.width,
         riser * (i + 1),
       );
     }

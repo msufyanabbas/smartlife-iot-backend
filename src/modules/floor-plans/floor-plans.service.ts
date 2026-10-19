@@ -1158,6 +1158,10 @@ export class FloorPlansService {
       includeWindows: dto.includeWindows ?? true,
       includeStairs: dto.includeStairs ?? true,
       includeFurniture: dto.includeFurniture ?? false,
+      includeDevices: dto.includeDevices ?? true,
+      includeRoutes: dto.includeRoutes ?? true,
+      includeBeams: dto.includeBeams ?? true,
+      includeCeilings: dto.includeCeilings ?? false,
       cutOpenings: dto.cutOpenings ?? true,
       centerOnOrigin: dto.centerOnOrigin ?? true,
     });
@@ -1268,6 +1272,10 @@ export class FloorPlansService {
       includeWindows: dto.includeWindows ?? true,
       includeStairs: dto.includeStairs ?? true,
       includeFurniture: dto.includeFurniture ?? false,
+      includeDevices: dto.includeDevices ?? true,
+      includeRoutes: dto.includeRoutes ?? true,
+      includeBeams: dto.includeBeams ?? true,
+      includeCeilings: dto.includeCeilings ?? false,
       cutOpenings: dto.cutOpenings ?? true,
       centerOnOrigin: dto.centerOnOrigin ?? true,
     });
@@ -1279,10 +1287,21 @@ export class FloorPlansService {
       stats: built.stats,
       warnings: built.warnings,
       boundingBox: built.boundingBox,
-      materials: built.builder.getGroups().map((group) => ({
-        name: group.material.name,
-        triangles: group.indices.length / 3,
-      })),
+      // `key` and `layer` are included alongside the material name because
+      // services are split one group per layer: seven separate camera,
+      // access-control and Wi-Fi groups all carry the material name
+      // "Telecoms equipment", so the name alone cannot drive a legend or a
+      // per-service visibility toggle.
+      materials: built.builder.getGroups().map((group) => {
+        const colon = group.key.indexOf(':');
+        return {
+          key: group.key,
+          name: group.material.name,
+          kind: colon === -1 ? group.key : group.key.slice(0, colon),
+          layer: colon === -1 ? null : group.key.slice(colon + 1),
+          triangles: group.indices.length / 3,
+        };
+      }),
       availableFormats: ['glb', 'gltf', 'obj', 'stl'],
     };
   }

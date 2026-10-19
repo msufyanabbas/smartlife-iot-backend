@@ -26,6 +26,7 @@
 
 import DxfParser from 'dxf-parser';
 import { CAD_STANDARD, registerPatternSets } from './cad-standard.bridge';
+import { SYMBOL_INDEX } from '@modules/cad-standards/cad-standard.catalogue';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OUTPUT TYPES
@@ -109,6 +110,41 @@ export interface ParsedStair {
   layer: string;
 }
 
+/**
+ * A piece of equipment: camera, luminaire, socket, detector, sprinkler head.
+ *
+ * Captured as a PLACEMENT rather than as the symbol's linework. A CCTV block
+ * is a couple of circles and a wedge drawn at 1:50 — extruding that gives a
+ * puddle of arcs on the floor, not a camera. One placement plus the layer's
+ * mounting height gives something that reads correctly at building scale and
+ * can carry a device binding.
+ */
+export interface ParsedDevice {
+  id: string;
+  /** Source layer, which is what resolves role and mounting height. */
+  layer: string;
+  /** Symbol block name, when it came from an INSERT. */
+  block?: string;
+  /** This platform's own device vocabulary, from the symbol catalogue. */
+  deviceHint?: string;
+  position: { x: number; y: number; z?: number };
+  /** Degrees. Orients directional equipment such as cameras. */
+  rotation: number;
+}
+
+/**
+ * A service run: cable tray, conduit, duct, pipe.
+ *
+ * Kept as the full polyline rather than split into segments, because a run is
+ * one object that happens to turn corners. Splitting it would make every bend
+ * a separate "wall" and lose which outlet the run actually feeds.
+ */
+export interface ParsedRoute {
+  id: string;
+  layer: string;
+  points: Array<{ x: number; y: number; z?: number }>;
+}
+
 export interface Parsed3DGeometry {
   walls: ParsedWall[];
   rooms: ParsedRoom[];
@@ -116,6 +152,10 @@ export interface Parsed3DGeometry {
   windows: ParsedWindow[];
   columns: ParsedColumn[];
   stairs: ParsedStair[];
+  /** Equipment placements from `marker` layers — lights, cameras, sockets. */
+  devices: ParsedDevice[];
+  /** Service runs from `route` layers — cables, ducts, pipes. */
+  routes: ParsedRoute[];
   furniture: Array<{
     id: string;
     type: string;
@@ -282,15 +322,31 @@ export class DxfFloorPlanParser {
   }
 
   /**
-   * Whether this layer contributes geometry to the 3D model at all.
+   * Whether this layer becomes BUILDING FABRIC — wall, slab, column, stair.
    *
    * The standard's central rule: a plan is full of things that are DRAWN but
-   * are not THERE — grid lines, dimensions, room tags, hatches, anything
-   * above the 1200 cut plane, anything marked for demolition. They must come
-   * out as empty space, not as walls.
+   * are not THERE — grid lines, dimensions, room tags, hatches, the title
+   * block, anything marked for demolition. They must come out as empty
+   * space, not as walls.
+   *
+   * Deliberately narrower than `isPhysical`. A light fitting IS present in
+   * the building but is not fabric, and feeding it to the wall solver would
+   * fuse a luminaire into the ceiling as a structural element.
    */
-  static isBuildable(layerName: string, linetype?: string): boolean {
-    return CAD_STANDARD.service.classify(layerName, linetype).solid !== 'ignore';
+  static isFabric(layerName: string, linetype?: string): boolean {
+    return CAD_STANDARD.service.classify(layerName, linetype).solid === 'build';
+  }
+
+  /**
+   * Whether this layer puts anything physical in the model, fabric or not.
+   *
+   * True for walls AND for devices and service routes — everything that
+   * genuinely occupies space in the finished building. False only for
+   * annotation, hatch, grid, viewports and demolished or future work.
+   */
+  static isPhysical(layerName: string, linetype?: string): boolean {
+    const solid = CAD_STANDARD.service.classify(layerName, linetype).solid;
+    return solid === 'build' || solid === 'marker' || solid === 'route';
   }
 
   // ── Entry point ───────────────────────────────────────────────────────────
@@ -326,6 +382,16 @@ export class DxfFloorPlanParser {
     // parser previously recorded only a COUNT of inserts, so the compliance
     // report's symbol section could never say anything.
     const usedBlocks = new Set<string>();
+    const devicePlacements: Array<{
+      block: string;
+      layer: string;
+      x: number;
+      y: number;
+      z: number;
+      rotation: number;
+    }> = [];
+    const devices: ParsedDevice[] = [];
+    const routes: ParsedRoute[] = [];
     const entityCounts: Record<string, number> = {};
 
     const metrics = {
@@ -364,7 +430,23 @@ export class DxfFloorPlanParser {
       0,
       undefined,
       usedBlocks,
+      devicePlacements,
     );
+
+    // Equipment captured during INSERT expansion. Scaled here rather than in
+    // the collector, because the collector works in raw drawing units and
+    // `scale` is resolved from the header above it.
+    for (const p of devicePlacements) {
+      devices.push({
+        id: nextId('device'),
+        layer: p.layer,
+        block: p.block,
+        deviceHint: SYMBOL_INDEX.get(p.block.toUpperCase())?.deviceHint,
+        position: { x: p.x * scale, y: p.y * scale, z: p.z * scale },
+        rotation: p.rotation,
+      });
+    }
+
     metrics.total = allEntities.length;
     metrics.expanded = Math.max(0, allEntities.length - rawEntities.length);
 
@@ -402,6 +484,14 @@ export class DxfFloorPlanParser {
       const isStair  = this.matchesLayer(layer, this.STAIR_LAYERS)  || this.blockHints(entity, 'stair');
       const isRoom   = this.matchesLayer(layer, this.ROOM_LAYERS);
 
+      // Equipment and services drawn WITHOUT a symbol block — a circle on
+      // E-LITE, a polyline on T-DATA-CABL. Blocks were already handled during
+      // expansion; this catches the hand-drawn case, which is common in
+      // as-built drawings and in anything exported from a non-CAD tool.
+      const behaviour = CAD_STANDARD.service.classify(layer, lt || undefined).solid;
+      const isDevice = behaviour === 'marker';
+      const isRoute  = behaviour === 'route';
+
       switch (entity.type) {
         // ── LINE ───────────────────────────────────────────────────────────
         case 'LINE': {
@@ -416,6 +506,23 @@ export class DxfFloorPlanParser {
           // absolute, so on a drawing whose units are unknown (a headerless
           // export, scale 1) it silently deletes a fifth of the linework.
           if (len < DEGENERATE) break;
+
+          // A line on a service layer is a RUN, not a wall. This is the
+          // single most important redirect in the loop: without it every
+          // cable and duct in the drawing becomes a 3 m wall.
+          if (isRoute) {
+            routes.push({ id: nextId('route'), layer, points: [start, end] });
+            break;
+          }
+          if (isDevice) {
+            devices.push({
+              id: nextId('device'),
+              layer,
+              position: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2, z: start.z },
+              rotation: (Math.atan2(end.y - start.y, end.x - start.x) * 180) / Math.PI,
+            });
+            break;
+          }
 
           if (isDoor) {
             doors.push({
@@ -463,6 +570,51 @@ export class DxfFloorPlanParser {
 
           const closed = entity.shape === true || entity.closed === true;
           const pts = verts.map((v: any) => S(v));
+
+          // The whole polyline is ONE run. Splitting it into segments here is
+          // what would turn a single cable tray with four bends into five
+          // disconnected walls.
+          if (isRoute) {
+            routes.push({ id: nextId('route'), layer, points: pts });
+            break;
+          }
+          // A closed shape on an equipment layer is the outline of a piece of
+          // kit — a rack footprint, a DB enclosure. Its centroid is the
+          // placement; its own linework is not geometry.
+          if (isDevice) {
+            const poly = pts.map((p: any) => ({ x: p.x, y: p.y }));
+            const c = this.calcPolygonCenter(poly);
+            devices.push({
+              id: nextId('device'),
+              layer,
+              position: { x: c.x, y: c.y, z: pts[0]?.z ?? 0 },
+              rotation: entity.rotation ?? 0,
+            });
+            break;
+          }
+
+          // Stair treads are very often polylines rather than lines — 65 of
+          // the 119 treads in the reference library drawing are. The polyline
+          // branch had no stair case at all, so every one of those treads
+          // fell through to the wall solver and became a wall lying across
+          // the staircase. Each segment is a tread; the flight assembler
+          // groups them downstream.
+          if (isStair) {
+            for (let i = 0; i < pts.length - 1; i++) {
+              const s = pts[i];
+              const e = pts[i + 1];
+              if (Math.hypot(e.x - s.x, e.y - s.y) <= DEGENERATE) continue;
+              stairs.push({
+                id: nextId('stair'),
+                points: [s, e],
+                position: { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2, z: s.z },
+                width: Math.hypot(e.x - s.x, e.y - s.y),
+                steps: 0,
+                layer,
+              });
+            }
+            break;
+          }
 
           if (isRoom && closed && pts.length >= 3) {
             const poly = pts.map((p: any) => ({ x: p.x, y: p.y }));
@@ -581,6 +733,28 @@ export class DxfFloorPlanParser {
                 endAngle: (ea * 180) / Math.PI,
               },
             });
+          } else if (isStair) {
+            // A curved nosing is ONE tread — a winder. Tessellating it into
+            // sixteen segments would present a single tread to the flight
+            // assembler as sixteen treads 30 mm apart, which both breaks the
+            // spacing test and is what left 64 arc fragments of a curved
+            // stair sitting in the wall list.
+            const pts = this.arcToPoints(c.x, c.y, r, sa, ea, 16);
+            const s = pts[0];
+            const e = pts[pts.length - 1];
+            if (s && e && Math.hypot(e.x - s.x, e.y - s.y) > DEGENERATE) {
+              stairs.push({
+                id: nextId('stair'),
+                points: [
+                  { x: s.x, y: s.y, z: c.z },
+                  { x: e.x, y: e.y, z: c.z },
+                ],
+                position: { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2, z: c.z },
+                width: Math.hypot(e.x - s.x, e.y - s.y),
+                steps: 0,
+                layer,
+              });
+            }
           } else {
             // A curved wall is still a wall — sample it rather than drop it.
             const pts = this.arcToPoints(c.x, c.y, r, sa, ea, 16);
@@ -603,6 +777,19 @@ export class DxfFloorPlanParser {
           const c = S(entity.center);
           const r = (entity.radius ?? 0) * scale;
           circles.push({ id: nextId('circle'), center: c, radius: r, layer });
+
+          // A circle is how a detector, sprinkler head, downlight or socket
+          // gets drawn when nobody used the symbol library. Its centre is the
+          // placement.
+          if (isDevice) {
+            devices.push({
+              id: nextId('device'),
+              layer,
+              position: { x: c.x, y: c.y, z: c.z },
+              rotation: 0,
+            });
+            break;
+          }
 
           if (isColumn) {
             columns.push({
@@ -755,7 +942,7 @@ export class DxfFloorPlanParser {
     });
 
     return {
-      walls, rooms, doors, windows, columns, stairs, furniture,
+      walls, rooms, doors, windows, columns, stairs, devices, routes, furniture,
       layers,
       layerNames: layers.map((l) => l.name),
       blocks: Array.from(usedBlocks).sort(),
@@ -802,6 +989,24 @@ export class DxfFloorPlanParser {
      * empty list and a permanently empty symbol legend.
      */
     usedBlocks?: Set<string>,
+    /**
+     * Equipment placements are gathered HERE for the same reason block names
+     * are: a resolvable INSERT is REPLACED by its expanded linework, so by
+     * the time the caller iterates, the fact that eleven circles and a wedge
+     * were once one CCTV camera is gone.
+     *
+     * Capturing at expansion time keeps the block name, the insertion point
+     * and the rotation together, which is exactly what a device placement
+     * needs and exactly what cannot be recovered downstream.
+     */
+    devicePlacements?: Array<{
+      block: string;
+      layer: string;
+      x: number;
+      y: number;
+      z: number;
+      rotation: number;
+    }>,
   ): any[] {
     const out: any[] = [];
 
@@ -825,6 +1030,36 @@ export class DxfFloorPlanParser {
         };
         const composed = this.composeTransform(parent, local);
 
+        // ── Equipment: record the placement, do NOT expand the symbol ──────
+        //
+        // A symbol block is a 2D legend glyph drawn at plot scale — concentric
+        // circles for a detector, a wedge for a camera. Expanding it would
+        // scatter that glyph's arcs across the floor as geometry, which is
+        // both wrong and the reason these layers were originally excluded
+        // wholesale.
+        //
+        // One placement at the insertion point replaces all of it, and the
+        // layer's mount/mountMm/sizeMm then draws something that reads as the
+        // actual piece of equipment at building scale.
+        const deviceLayer = entity.layer ?? inheritLayer;
+        if (
+          devicePlacements &&
+          blockName &&
+          !String(blockName).startsWith('*') &&
+          deviceLayer &&
+          CAD_STANDARD.service.classify(String(deviceLayer)).solid === 'marker'
+        ) {
+          devicePlacements.push({
+            block: String(blockName),
+            layer: String(deviceLayer),
+            x: composed.x,
+            y: composed.y,
+            z: composed.z,
+            rotation: composed.rotation,
+          });
+          continue;
+        }
+
         if (!def || depth >= MAX_BLOCK_DEPTH) {
           // Unresolvable or too deep — keep the INSERT itself, transformed, so
           // the entity loop can still emit a marker for it.
@@ -845,6 +1080,7 @@ export class DxfFloorPlanParser {
             depth + 1,
             entity.layer ?? inheritLayer,
             usedBlocks,
+            devicePlacements,
           ),
         );
       } else {
