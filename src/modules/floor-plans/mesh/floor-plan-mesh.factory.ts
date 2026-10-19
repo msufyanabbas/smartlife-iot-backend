@@ -21,6 +21,10 @@
 
 import { MeshBuilder, type Vec3 } from './mesh.builder';
 import {
+  applyCadStandard,
+  describeDropped,
+} from './cad-standard.filter';
+import {
   cleanPolygon,
   lastUsedFanFallback,
   polygonArea,
@@ -59,6 +63,14 @@ export interface BuildOptions {
   includeFurniture: boolean;
   cutOpenings: boolean;
   centerOnOrigin: boolean;
+  /**
+   * Classify every layer against the CAD drawing standard and exclude the
+   * geometry that is drawn but not built. On by default: a plan extruded
+   * without it grows walls where the grid and the dimension strings were.
+   */
+  enforceCadStandard: boolean;
+  /** Build geometry on layers the standard does not describe. */
+  keepUnrecognisedLayers: boolean;
 }
 
 export const DEFAULT_BUILD_OPTIONS: BuildOptions = {
@@ -77,6 +89,8 @@ export const DEFAULT_BUILD_OPTIONS: BuildOptions = {
   includeFurniture: false,
   cutOpenings: true,
   centerOnOrigin: true,
+  enforceCadStandard: true,
+  keepUnrecognisedLayers: false,
 };
 
 export interface BuildResult {
@@ -123,6 +137,23 @@ export class FloorPlanMeshFactory {
     const opts: BuildOptions = { ...DEFAULT_BUILD_OPTIONS, ...options };
     const builder = new MeshBuilder();
     const warnings: string[] = [];
+
+    // ── The drawing standard runs FIRST ───────────────────────────────────
+    //
+    // Grid lines, dimension strings, room tags, wall hatches, demolished
+    // walls and everything above the cut plane are geometry in the file and
+    // would extrude into solids here. The standard says which layers are
+    // real; this drops the rest before a single triangle is emitted, so the
+    // space they occupied stays empty.
+    //
+    // Set `enforceCadStandard: false` to build the raw file as it was
+    // imported before — useful for a drawing that follows no standard at all.
+    const filtered = applyCadStandard(geometry, {
+      enforce: opts.enforceCadStandard,
+      keepUnrecognised: opts.keepUnrecognisedLayers,
+    });
+    geometry = filtered.geometry;
+    warnings.push(...filtered.warnings, ...describeDropped(filtered.dropped));
 
     const walls = Array.isArray(geometry.walls) ? geometry.walls : [];
     const rooms = Array.isArray(geometry.rooms) ? geometry.rooms : [];

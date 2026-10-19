@@ -25,6 +25,7 @@
 // shrink header-less files by 1000×.
 
 import DxfParser from 'dxf-parser';
+import { CAD_STANDARD, registerPatternSets } from './cad-standard.bridge';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OUTPUT TYPES
@@ -123,7 +124,15 @@ export interface Parsed3DGeometry {
     dimensions: { width: number; height: number; depth: number };
   }>;
 
-  layers: Array<{ name: string; color: number; entityCount: number }>;
+  layers: Array<{
+    name: string;
+    color: number;
+    entityCount: number;
+    /** Dominant concrete linetype on the layer, if the entities declare one. */
+    linetype?: string;
+  }>;
+  /** Block names referenced by INSERT, for the CAD-standards symbol legend. */
+  blocks: string[];
   /** Plain layer names — the shape the previous output used. */
   layerNames: string[];
 
@@ -232,8 +241,56 @@ export class DxfFloorPlanParser {
     /غرفة/, /^rooms$/i,
   ];
 
+  // Hand the bridge the very arrays `matchesLayer` is called with, so it can
+  // answer "is this the WALL question or the DOOR question?" by identity
+  // instead of guessing from the caller.
+  private static readonly _registered = (() => {
+    registerPatternSets({
+      wall: DxfFloorPlanParser.WALL_LAYERS,
+      door: DxfFloorPlanParser.DOOR_LAYERS,
+      window: DxfFloorPlanParser.WINDOW_LAYERS,
+      column: DxfFloorPlanParser.COLUMN_LAYERS,
+      stair: DxfFloorPlanParser.STAIR_LAYERS,
+      room: DxfFloorPlanParser.ROOM_LAYERS,
+    });
+    return true;
+  })();
+
   static matchesLayer(layerName: string, patterns: RegExp[]): boolean {
+    // ── The STANDARD is consulted first ────────────────────────────────────
+    //
+    // When a layer name conforms to the NCS grammar the standard describes
+    // (`A-WALL-PRTN`, `A-FLOR-STRS-ABOV`, …) it states outright what the
+    // geometry is, and that beats pattern-matching every time. The regex
+    // lists below stay as the fallback for drawings that do not follow it —
+    // the Arabic and European layer names in particular.
+    //
+    // This ordering fixes a real misclassification: `/^a-flor/i` sits in
+    // ROOM_LAYERS, so `A-FLOR-STRS` (a stair) and `A-FLOR-HRAL` (a handrail)
+    // were both being read as ROOMS, while STAIR_LAYERS' `/^a-str/i` never
+    // matched them at all.
+    const ruled = CAD_STANDARD.classifyForParser(layerName);
+    if (ruled) {
+      // A layer the standard knows is answered by the standard, full stop —
+      // including a NEGATIVE answer. `A-WALL-PATT` is a hatch, and letting
+      // it fall through to `/^a-wall/i` would turn every wall's fill into a
+      // second wall.
+      return ruled.patternSet === patterns;
+    }
+
     return patterns.some((p) => p.test(layerName));
+  }
+
+  /**
+   * Whether this layer contributes geometry to the 3D model at all.
+   *
+   * The standard's central rule: a plan is full of things that are DRAWN but
+   * are not THERE — grid lines, dimensions, room tags, hatches, anything
+   * above the 1200 cut plane, anything marked for demolition. They must come
+   * out as empty space, not as walls.
+   */
+  static isBuildable(layerName: string, linetype?: string): boolean {
+    return CAD_STANDARD.service.classify(layerName, linetype).solid !== 'ignore';
   }
 
   // ── Entry point ───────────────────────────────────────────────────────────
@@ -261,7 +318,14 @@ export class DxfFloorPlanParser {
     const circles: Parsed3DGeometry['circles'] = [];
     const texts: Parsed3DGeometry['texts'] = [];
 
-    const layerMap = new Map<string, { color: number; count: number }>();
+    const layerMap = new Map<
+      string,
+      { color: number; count: number; linetypes: Map<string, number> }
+    >();
+    // Block names used by INSERT, for the CAD-standards symbol legend. The
+    // parser previously recorded only a COUNT of inserts, so the compliance
+    // report's symbol section could never say anything.
+    const usedBlocks = new Set<string>();
     const entityCounts: Record<string, number> = {};
 
     const metrics = {
@@ -293,7 +357,14 @@ export class DxfFloorPlanParser {
     }
 
     const rawEntities: any[] = dxf.entities ?? [];
-    const allEntities = this.collectAllEntities(rawEntities, blockDefs);
+    const allEntities = this.collectAllEntities(
+      rawEntities,
+      blockDefs,
+      undefined,
+      0,
+      undefined,
+      usedBlocks,
+    );
     metrics.total = allEntities.length;
     metrics.expanded = Math.max(0, allEntities.length - rawEntities.length);
 
@@ -302,9 +373,27 @@ export class DxfFloorPlanParser {
       const layer = entity.layer || '0';
 
       if (!layerMap.has(layer)) {
-        layerMap.set(layer, { color: entity.colorIndex ?? entity.color ?? 0, count: 0 });
+        layerMap.set(layer, {
+          color: entity.colorIndex ?? entity.color ?? 0,
+          count: 0,
+          linetypes: new Map(),
+        });
       }
-      layerMap.get(layer)!.count++;
+      const layerInfo = layerMap.get(layer)!;
+      layerInfo.count++;
+      // Linetype is a real signal in the standard: dashed means hidden or
+      // above the cut plane, so a dashed wall is not a wall at this level.
+      // DXF reports it per ENTITY and 'BYLAYER' when the layer decides, so
+      // the dominant concrete value is the layer's effective linetype.
+      const lt = String(entity.lineType ?? entity.linetype ?? '').trim();
+      if (lt && lt.toUpperCase() !== 'BYLAYER' && lt.toUpperCase() !== 'BYBLOCK') {
+        layerInfo.linetypes.set(lt, (layerInfo.linetypes.get(lt) ?? 0) + 1);
+      }
+      if (entity.type === 'INSERT') {
+        const bn = entity.name ?? entity.block;
+        // Anonymous blocks (*D1, *Model_Space) are AutoCAD bookkeeping.
+        if (bn && !String(bn).startsWith('*')) usedBlocks.add(String(bn));
+      }
       entityCounts[entity.type] = (entityCounts[entity.type] ?? 0) + 1;
 
       const isDoor   = this.matchesLayer(layer, this.DOOR_LAYERS)   || this.blockHints(entity, 'door');
@@ -654,14 +743,22 @@ export class DxfFloorPlanParser {
 
     const totalArea = r2(rooms.reduce((s, r) => s + r.area, 0));
 
-    const layers = Array.from(layerMap.entries()).map(([name, info]) => ({
-      name, color: info.color, entityCount: info.count,
-    }));
+    const layers = Array.from(layerMap.entries()).map(([name, info]) => {
+      // The most-used concrete linetype on the layer. Ties do not matter:
+      // the only question downstream is whether it is a hidden-family
+      // linetype, and a layer mixing dashed with continuous is ambiguous
+      // either way.
+      let linetype: string | undefined;
+      let best = 0;
+      for (const [lt, n] of info.linetypes) if (n > best) { best = n; linetype = lt; }
+      return { name, color: info.color, entityCount: info.count, linetype };
+    });
 
     return {
       walls, rooms, doors, windows, columns, stairs, furniture,
       layers,
       layerNames: layers.map((l) => l.name),
+      blocks: Array.from(usedBlocks).sort(),
       boundingBox,
       bounds: boundingBox,
       building: {
@@ -697,12 +794,24 @@ export class DxfFloorPlanParser {
     parent: Transform = IDENTITY,
     depth = 0,
     inheritLayer?: string,
+    /**
+     * Block names are gathered HERE, not in the entity loop. This function
+     * replaces every INSERT with the block's expanded geometry, so by the
+     * time the caller iterates there are no INSERT entities left to read a
+     * name from — an earlier attempt to collect them downstream produced an
+     * empty list and a permanently empty symbol legend.
+     */
+    usedBlocks?: Set<string>,
   ): any[] {
     const out: any[] = [];
 
     for (const entity of entities) {
       if (entity?.type === 'INSERT') {
         const blockName = entity.name ?? entity.block;
+        // Anonymous blocks (*D1, *Model_Space) are AutoCAD bookkeeping.
+        if (usedBlocks && blockName && !String(blockName).startsWith('*')) {
+          usedBlocks.add(String(blockName));
+        }
         const def = blockName ? blockDefs.get(blockName) : undefined;
 
         const local: Transform = {
@@ -735,6 +844,7 @@ export class DxfFloorPlanParser {
             composed,
             depth + 1,
             entity.layer ?? inheritLayer,
+            usedBlocks,
           ),
         );
       } else {

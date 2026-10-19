@@ -10,6 +10,7 @@ import { Telemetry } from '../telemetry/entities/telemetry.entity';
 import { Alarm } from '../alarms/entities/alarm.entity';
 import { Subscription } from '../subscriptions/entities/subscription.entity';
 import { DWGParserService } from './dwg-parser.service';
+import { CadStandardsModule } from '@modules/cad-standards/cad-standards.module';
 
 /**
  * Repositories are registered directly rather than importing TelemetryModule /
@@ -31,6 +32,7 @@ import { DWGParserService } from './dwg-parser.service';
  */
 @Module({
   imports: [
+    CadStandardsModule,
     TypeOrmModule.forFeature([
       FloorPlan,
       FloorPlanDevice,

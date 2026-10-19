@@ -84,7 +84,8 @@
     "verify:ai": "ts-node -T -r tsconfig-paths/register scripts/verify-ai.ts",
     "migration:ai-models": "ts-node -T -r tsconfig-paths/register scripts/run-ai-models-migration.ts",
     "check:ai-wiring": "ts-node -T -r tsconfig-paths/register scripts/check-ai-wiring.ts",
-    "check:permissions": "ts-node -T -r tsconfig-paths/register scripts/check-permission-strings.ts"
+    "check:permissions": "ts-node -T -r tsconfig-paths/register scripts/check-permission-strings.ts",
+    "verify:cad-standards": "ts-node -T -r tsconfig-paths/register scripts/verify-cad-standards.ts"
   },
   "dependencies": {
     "@aws-sdk/client-iot-data-plane": "^3.1106.0",

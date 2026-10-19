@@ -138,10 +138,13 @@ import { GroupsModule } from './groups/groups.module';
 import { QueuesModule } from './queues/queues.module';
 import { DefaultRuleChainsModule } from './default-rule-chains/default-rule-chains.module';
 import { AiModule } from './ai/ai.module';
+import { CadStandardsModule } from './cad-standards/cad-standards.module';
 
 export const featureModules = [
   // AI model registry + the ai_request rule node's dependency.
   AiModule,
+  // The CAD drawing standard the floor-plan importer classifies against.
+  CadStandardsModule,
   // RulesModule imports QueuesModule and DefaultRuleChainsModule directly for
   // the engine; listing them here is what makes their controllers reachable.
   ConvertersModule,

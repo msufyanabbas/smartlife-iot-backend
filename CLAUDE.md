@@ -1432,6 +1432,120 @@ npm run migration:ai-models <db> [up|down]
 
 ---
 
+## 4m. The CAD drawing standard, and what it does to the 3D model
+
+Transcribed from two reference DXFs the client supplied —
+`CAD_Standards_Master_Template.dxf` (sections 1-11: line weights, linetypes,
+text heights, sheet sizes, scales, layer naming, numbering, symbol legend,
+practice rules) and `CAD_Standards_Drawing_Library.dxf` (LIB-01..05: wall
+types, materials, columns, doors, windows, lifts, ramps, stairs in plan,
+stair design rules, 3D modelling rules).
+
+`src/modules/cad-standards/` holds it as a declarative catalogue, the same
+shape as `integration-catalogue.ts` and `rule-node-catalogue.ts`. The
+importer, the mesh builder, the compliance report and the frontend legend
+all read that one table.
+
+### The rule that drives everything
+
+Every layer declares a `solid` behaviour:
+
+| | meaning |
+|---|---|
+| `build` | becomes geometry |
+| `void` | becomes an **opening cut into the host wall** — doors, windows |
+| `ignore` | contributes nothing; **the space stays empty** |
+
+That is the generalisation of "if the standard says X is empty space, the 3D
+model must show empty space there". A plan is full of geometry that is DRAWN
+but is not THERE, and every bit of it extrudes perfectly happily:
+
+- `G-GRID` — setting-out lines spanning the whole plan
+- `G-ANNO-DIMS` — dimension strings and witness lines
+- `A-AREA-IDEN` — room tags (letterforms are closed polylines, so the word
+  "OFFICE" becomes a solid object)
+- `A-WALL-PATT` / `A-COLS-PATT` — the hatch *inside* an element drawn on
+  another layer, which would duplicate it as a second solid
+- `A-WALL-DEMO` — a wall being torn out
+- `A-FLOR-STRS-ABOV`, `S-BEAM`, `A-CLNG` — above the 1200 cut plane
+- `Defpoints`, `G-ANNO-NPLT` — never plot at all
+
+`scripts/verify-cad-standards.ts` proves the end-to-end effect: a plan of 11
+line segments — 4 real walls plus a grid line, a dimension string, a wall
+hatch, a demolished partition, a beam, a hidden line and an undocumented
+layer — builds **4 walls**, not 11. With `enforceCadStandard: false` it
+builds all 11, which is what the importer did before.
+
+### Layer names carry the answer
+
+NCS / ISO 13567 is `Discipline-Major-Minor-Status`, e.g. `E-LITE-CIRC-NEWW`.
+`ncs-layer.ts` parses it, and two details bite:
+
+- **`FA` must be tried before `F`**, or `FA-DEVC` parses as fire *protection*
+  discipline `F` with major `A`.
+- **A trailing status is not a minor group.** `A-WALL-DEMO` is a wall with
+  status DEMO, not a wall of type DEMO.
+
+Status overrides the catalogue: `-DEMO` and `-FUTR` are excluded even on a
+layer that normally builds, because each models a building that is never
+real at any single moment. `-EXST` still builds — it is staying.
+
+Linetype is a secondary signal: the standard reserves dashed for "hidden /
+ABOVE cut", so a dashed line on a solid layer is excluded.
+
+### Classification is a cascade, and unknown means excluded
+
+`exact` → `major-group` (so `A-WALL-ANYTHING` is still a wall) → `discipline`
+(an unrecognised `T-`/`E-`/`M-` layer is some service, and services are never
+building fabric) → `unknown`. An unknown layer is **excluded, not guessed**:
+a wrong solid is harder to notice than a missing one. `keepUnrecognisedLayers`
+overrides it.
+
+### What it fixed in the existing importer
+
+`DxfFloorPlanParser` matched layers with loose regexes. `/^a-flor/i` sat in
+`ROOM_LAYERS`, so **`A-FLOR-STRS` (a stair) and `A-FLOR-HRAL` (a handrail)
+were both being read as rooms**, while `STAIR_LAYERS`' `/^a-str/i` never
+matched either. The standard is now consulted first and the regexes remain
+as the fallback for drawings that follow no standard — the Arabic and
+European layer names in particular.
+
+### Routes
+
+| Route | Purpose |
+|---|---|
+| `GET /cad-standards` | The whole standard (`@Public` — a published convention, not tenant data) |
+| `GET /cad-standards/classify?layer=&linetype=` | One layer's verdict |
+| `POST /cad-standards/validate` | Compliance report for a drawing's layer list |
+| `POST /cad-standards/check-stair` | Riser/going/2R+G/pitch against LIB-04 |
+
+The compliance report scores by **entity count, not layer count** — a drawing
+with one unrecognised layer holding 90% of the geometry is not 95%
+compliant — and every unrecognised layer comes back with a suggested
+standard replacement.
+
+### Gotchas
+
+- `CadStandardsService` is instantiated directly in two places
+  (`parsers/cad-standard.bridge.ts`, `mesh/cad-standard.filter.ts`) rather
+  than injected. `DxfFloorPlanParser` is a static class with no DI and the
+  mesh factory is a pure function; the service is a pure function over a
+  constant table with no repositories and no state, so this duplicates
+  nothing. Re-implementing the matching in either place is how two copies
+  drift apart.
+- The `void` behaviour must NOT be dropped by the mesh pre-filter — the
+  factory is what turns a door into an opening. `CATEGORY_ACCEPTS` is what
+  keeps voids alive through the filter.
+- `VIEWPORTS` is not an NCS name but both reference drawings use it; it is
+  AutoCAD's own layout-viewport layer and is catalogued so it does not show
+  up as non-compliant in every single import.
+
+```bash
+npm run verify:cad-standards [library.dxf] [master.dxf]
+```
+
+---
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
