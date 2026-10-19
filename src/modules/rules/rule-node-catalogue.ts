@@ -531,6 +531,84 @@ export const RULE_NODE_CATALOGUE: Record<NodeType, RuleNodeManifest> = {
       },
     ],
   },
+
+  // ── AI ────────────────────────────────────────────────────────────────────
+  [NodeType.AI_REQUEST]: {
+    type: NodeType.AI_REQUEST,
+    label: 'AI request',
+    category: 'action',
+    description:
+      'Send the message to a registered AI model and continue with its reply.',
+    icon: 'Sparkles',
+    outputs: SUCCESS_FAILURE,
+    fields: [
+      {
+        key: 'modelId',
+        label: 'AI model',
+        type: 'text',
+        required: true,
+        help:
+          'A model registered under Settings → AI models. The credential ' +
+          'stays there, so an exported chain never carries an API key.',
+      },
+      {
+        key: 'systemPrompt',
+        label: 'System prompt',
+        type: 'textarea',
+        placeholder: 'You are an IoT analyst. Answer only with JSON.',
+        help: 'Sets the behaviour. Optional.',
+      },
+      {
+        key: 'userPrompt',
+        label: 'User prompt',
+        type: 'textarea',
+        required: true,
+        placeholder:
+          'Classify this reading as normal or anomalous:\n$[*]',
+        help:
+          'Templating: $[*] all message data, $[key] one field, ${*} all ' +
+          'metadata, ${key} one metadata field. A missing key renders empty.',
+      },
+      {
+        key: 'responseFormat',
+        label: 'Response format',
+        type: 'select',
+        default: 'TEXT',
+        options: [
+          { value: 'TEXT', label: 'Text' },
+          { value: 'JSON', label: 'JSON (schemaless)' },
+          { value: 'JSON_SCHEMA', label: 'JSON matching a schema' },
+        ],
+        help:
+          'Anthropic has no schemaless JSON mode — use JSON matching a ' +
+          'schema there.',
+      },
+      {
+        key: 'schema',
+        label: 'JSON schema',
+        type: 'json',
+        showIf: { key: 'responseFormat', equals: ['JSON_SCHEMA'] },
+        help: 'Draft 2020-12. A top-level "title" names the schema.',
+      },
+      {
+        key: 'outputKey',
+        label: 'Put the reply under this key',
+        type: 'text',
+        placeholder: 'aiResult',
+        help:
+          'Leave empty to REPLACE the message data with the reply. Setting ' +
+          'a key keeps the original reading, which the next node usually ' +
+          'still needs.',
+      },
+      {
+        key: 'timeoutSeconds',
+        label: 'Timeout (seconds)',
+        type: 'number',
+        default: 60,
+        help: '1 to 600. On expiry the message routes to failure; there is no retry.',
+      },
+    ],
+  },
 };
 
 /** Palette order: the types you reach for first, first. */
@@ -543,6 +621,7 @@ export const listRuleNodeCatalogue = (): RuleNodeManifest[] => {
     NodeType.SCRIPT,
     NodeType.ACTION,
     NodeType.EXTERNAL,
+    NodeType.AI_REQUEST,
     NodeType.FLOW,
   ];
   return order.map((t) => RULE_NODE_CATALOGUE[t]).filter(Boolean);

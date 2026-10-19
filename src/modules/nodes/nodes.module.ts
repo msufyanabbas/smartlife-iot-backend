@@ -11,6 +11,8 @@ import { ActionNodeProcessor } from './action-node';
 import { SwitchNodeProcessor } from './processors/switch-node';
 import { ScriptNodeProcessor } from './processors/script-node';
 import { ExternalNodeProcessor } from './processors/external-node';
+import { AiRequestNodeProcessor } from './processors/ai-request-node';
+import { AiModule } from '@modules/ai/ai.module';
 import { FlowNodeProcessor } from './processors/flow-node';
 import { NodeProcessorFactory } from './node-processor.factory';
 import { Telemetry } from '../telemetry/entities/telemetry.entity';
@@ -30,6 +32,9 @@ import { ScriptsModule } from '../scripts/scripts.module';
     ScriptsModule,
     // EXTERNAL node uses HttpService for outbound calls.
     HttpModule,
+    // AI_REQUEST resolves a registered model through AiService, so the
+    // credential never lives in the node's configuration.
+    AiModule,
     // NOTE: FlowNodeProcessor needs RuleEngineService (in RulesModule), but it is
     // resolved lazily via ModuleRef to avoid a circular module dependency, so
     // RulesModule is intentionally NOT imported here.
@@ -44,6 +49,7 @@ import { ScriptsModule } from '../scripts/scripts.module';
     SwitchNodeProcessor,
     ScriptNodeProcessor,
     ExternalNodeProcessor,
+    AiRequestNodeProcessor,
     FlowNodeProcessor,
     NodeProcessorFactory,
   ],

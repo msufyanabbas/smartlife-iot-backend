@@ -34,6 +34,7 @@ import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/users/entities/user.entity';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('alarms')
 @Controller('alarms')
@@ -43,6 +44,7 @@ export class AlarmsController {
   constructor(private readonly alarmsService: AlarmsService) {}
 
   @Post()
+  @RequirePermissions('alerts:create')
   @ApiOperation({ summary: 'Create new alarm rule' })
   @ApiResponse({ status: 201, description: 'Alarm rule created successfully' })
   create(@CurrentUser() user: User, @Body() createDto: CreateAlarmDto) {
@@ -50,6 +52,7 @@ export class AlarmsController {
   }
 
   @Get()
+  @RequirePermissions('alerts:list')
   @ApiOperation({ summary: 'Get all alarm rules' })
   @ApiResponse({ status: 200, description: 'List of alarm rules' })
   findAll(@CurrentUser() user: User, @Query() query: AlarmQueryDto) {
@@ -57,6 +60,7 @@ export class AlarmsController {
   }
 
   @Get('active')
+  @RequirePermissions('alerts:list')
   @ApiOperation({ summary: 'Get active alarms' })
   @ApiResponse({ status: 200, description: 'List of active alarms' })
   getActive(@CurrentUser() user: User) {
@@ -64,6 +68,7 @@ export class AlarmsController {
   }
 
   @Get('statistics')
+  @RequirePermissions('alerts:list')
   @ApiOperation({ summary: 'Get alarm statistics' })
   @ApiResponse({ status: 200, description: 'Alarm statistics' })
   getStatistics(@CurrentUser() user: User) {
@@ -71,6 +76,7 @@ export class AlarmsController {
   }
 
   @Get('critical')
+  @RequirePermissions('alerts:list')
   @ApiOperation({ summary: 'Get critical unacknowledged alarms' })
   @ApiResponse({ status: 200, description: 'Critical alarms' })
   getCritical(@CurrentUser() user: User) {
@@ -80,6 +86,7 @@ export class AlarmsController {
   // Declared before @Get(':id') — a literal segment must be registered ahead
   // of the param route or Nest matches 'counts' as an id.
   @Get('counts')
+  @RequirePermissions('alerts:list')
   @ApiOperation({
     summary: 'Alarm counts for a dashboard',
     description:
@@ -96,6 +103,7 @@ export class AlarmsController {
   }
 
   @Get('device/:deviceId')
+  @RequirePermissions('alerts:read')
   @ApiOperation({ summary: 'Get alarms for a specific device' })
   @ApiResponse({ status: 200, description: 'Device alarms' })
   getDeviceAlarms(
@@ -106,6 +114,7 @@ export class AlarmsController {
   }
 
   @Get('device/:deviceId/history')
+  @RequirePermissions('alerts:read')
   @ApiOperation({ summary: 'Get alarm history for device' })
   @ApiResponse({ status: 200, description: 'Alarm history' })
   getDeviceHistory(
@@ -121,6 +130,7 @@ export class AlarmsController {
   }
 
   @Get(':id')
+  @RequirePermissions('alerts:read')
   @ApiOperation({ summary: 'Get alarm by ID' })
   @ApiResponse({ status: 200, description: 'Alarm found' })
   @ApiResponse({ status: 404, description: 'Alarm not found' })
@@ -131,6 +141,7 @@ export class AlarmsController {
   // ':id/escalation-history' is a distinct path from ':id', so ordering
   // relative to it does not matter — but it stays next to it for readability.
   @Get(':id/escalation-history')
+  @RequirePermissions('alerts:read')
   @ApiOperation({
     summary: 'Get alarm escalation history',
     description:
@@ -148,6 +159,7 @@ export class AlarmsController {
   }
 
   @Patch(':id')
+  @RequirePermissions('alerts:update')
   @ApiOperation({ summary: 'Update alarm rule' })
   @ApiResponse({ status: 200, description: 'Alarm updated' })
   update(
@@ -159,6 +171,7 @@ export class AlarmsController {
   }
 
   @Delete(':id')
+  @RequirePermissions('alerts:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete alarm rule' })
   @ApiResponse({ status: 204, description: 'Alarm deleted' })
@@ -167,6 +180,7 @@ export class AlarmsController {
   }
 
   @Post(':id/acknowledge')
+  @RequirePermissions('alerts:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Acknowledge alarm' })
   @ApiResponse({ status: 200, description: 'Alarm acknowledged' })
@@ -179,6 +193,7 @@ export class AlarmsController {
   }
 
   @Post(':id/clear')
+  @RequirePermissions('alerts:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Clear alarm',
@@ -192,6 +207,7 @@ export class AlarmsController {
   }
 
   @Patch(':id/assign')
+  @RequirePermissions('alerts:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Assign an alarm to a user for handling',
@@ -211,6 +227,7 @@ export class AlarmsController {
   }
 
   @Post(':id/resolve')
+  @RequirePermissions('alerts:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Resolve alarm' })
   @ApiResponse({ status: 200, description: 'Alarm resolved' })
@@ -223,6 +240,7 @@ export class AlarmsController {
   }
 
   @Post(':id/enable')
+  @RequirePermissions('alerts:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Enable alarm rule' })
   @ApiResponse({ status: 200, description: 'Alarm enabled' })
@@ -231,6 +249,7 @@ export class AlarmsController {
   }
 
   @Post(':id/disable')
+  @RequirePermissions('alerts:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Disable alarm rule' })
   @ApiResponse({ status: 200, description: 'Alarm disabled' })
@@ -239,6 +258,7 @@ export class AlarmsController {
   }
 
   @Post(':id/test')
+  @RequirePermissions('alerts:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Test alarm rule with a value' })
   @ApiResponse({ status: 200, description: 'Test result' })
@@ -251,6 +271,7 @@ export class AlarmsController {
   }
 
   @Post('bulk/acknowledge')
+  @RequirePermissions('alerts:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Bulk acknowledge alarms' })
   @ApiResponse({ status: 200, description: 'Alarms acknowledged' })
@@ -262,6 +283,7 @@ export class AlarmsController {
   }
 
   @Post('bulk/clear')
+  @RequirePermissions('alerts:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Bulk clear alarms' })
   @ApiResponse({ status: 200, description: 'Alarms cleared' })
@@ -273,6 +295,7 @@ export class AlarmsController {
   }
 
   @Post('bulk/resolve')
+  @RequirePermissions('alerts:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Bulk resolve alarms' })
   @ApiResponse({ status: 200, description: 'Alarms resolved' })

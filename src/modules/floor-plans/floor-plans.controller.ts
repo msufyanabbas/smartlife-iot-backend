@@ -46,6 +46,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { UserRole } from '@common/enums/index.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /** 50 MB cap on uploads — previously there was no limit at all. */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -62,6 +63,7 @@ export class FloorPlansController {
   }
 
   @Post()
+  @RequirePermissions('floor_plans:create')
   @ApiOperation({
     summary: 'Create a new floor plan',
     description:
@@ -116,6 +118,7 @@ export class FloorPlansController {
   }
 
   @Get()
+  @RequirePermissions('floor_plans:list')
   @ApiOperation({ summary: 'Get all floor plans' })
   @ApiResponse({ status: 200, description: 'List of floor plans' })
   findAll(
@@ -126,12 +129,14 @@ export class FloorPlansController {
   }
 
   @Get('statistics')
+  @RequirePermissions('floor_plans:list')
   @ApiOperation({ summary: 'Get floor plan statistics' })
   getStatistics(@CurrentUser('tenantId') tenantId: string) {
     return this.floorPlansService.getStatistics(tenantId);
   }
 
   @Get('asset/:assetId')
+  @RequirePermissions('floor_plans:read')
   @ApiOperation({
     summary: 'Get all floor plans for an asset, ordered by floor number',
     description:
@@ -147,6 +152,7 @@ export class FloorPlansController {
   }
 
   @Get('asset/:assetId/3d-simulation')
+  @RequirePermissions('floor_plans:read')
   @ApiOperation({
     summary: 'Get 3D simulation data for entire building',
     description:
@@ -161,6 +167,7 @@ export class FloorPlansController {
   }
 
   @Get(':id')
+  @RequirePermissions('floor_plans:read')
   @ApiOperation({
     summary: 'Get floor plan by ID',
     description:
@@ -174,6 +181,7 @@ export class FloorPlansController {
   }
 
   @Get(':id/geometry')
+  @RequirePermissions('floor_plans:read')
   @ApiOperation({ summary: 'Get parsed DWG geometry' })
   getParsedGeometry(
     @CurrentUser('tenantId') tenantId: string,
@@ -183,6 +191,7 @@ export class FloorPlansController {
   }
 
   @Patch(':id')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({ summary: 'Update floor plan' })
   update(
     @CurrentUser('id') userId: string,
@@ -198,6 +207,7 @@ export class FloorPlansController {
   }
 
   @Delete(':id')
+  @RequirePermissions('floor_plans:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete floor plan' })
   remove(
@@ -211,6 +221,7 @@ export class FloorPlansController {
   // ============ DWG FILE UPLOAD ============
 
   @Post(':id/dwg-upload')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({
     summary: 'Upload DWG/DXF file for floor plan',
     description:
@@ -239,6 +250,7 @@ export class FloorPlansController {
   // ============ 3D MODEL FILE ============
 
   @Post(':id/model')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({
     summary: 'Upload a 3D model for the floor plan',
     description: 'Accepts .obj, .gltf, .glb or .fbx',
@@ -264,6 +276,7 @@ export class FloorPlansController {
   }
 
   @Post(':id/model/generate')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({
     summary: 'Generate a 3D model from the parsed DWG/DXF geometry',
     description:
@@ -286,6 +299,7 @@ export class FloorPlansController {
   }
 
   @Post(':id/model/preview')
+  @RequirePermissions('floor_plans:update')
   @HttpCode(200)
   @ApiOperation({
     summary: 'Preview what a generated model would contain',
@@ -303,6 +317,7 @@ export class FloorPlansController {
   }
 
   @Get(':id/model')
+  @RequirePermissions('floor_plans:read')
   @ApiOperation({ summary: 'Download the floor plan 3D model file' })
   async getModel(
     @CurrentUser('tenantId') tenantId: string,
@@ -324,6 +339,7 @@ export class FloorPlansController {
   // ============ DEVICE PLACEMENT ============
 
   @Get(':id/devices')
+  @RequirePermissions('floor_plans:read')
   @ApiOperation({
     summary: 'Get devices placed on this floor plan',
     description:
@@ -339,6 +355,7 @@ export class FloorPlansController {
   }
 
   @Get(':id/available-devices')
+  @RequirePermissions('floor_plans:read')
   @ApiOperation({
     summary: 'Device picker list for this floor plan',
     description:
@@ -354,6 +371,7 @@ export class FloorPlansController {
   }
 
   @Post(':id/devices')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({
     summary: 'Place a device on the floor plan',
     description:
@@ -381,6 +399,7 @@ export class FloorPlansController {
   }
 
   @Patch(':id/devices/:deviceId')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({ summary: 'Move / update a placed device' })
   updatePlacement(
     @CurrentUser('id') userId: string,
@@ -398,6 +417,7 @@ export class FloorPlansController {
   }
 
   @Delete(':id/devices/:deviceId')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({ summary: 'Remove device from floor plan' })
   removeDevice(
     @CurrentUser('id') userId: string,
@@ -415,6 +435,7 @@ export class FloorPlansController {
   // ── Back-compat aliases for the original position/animation routes ────────
 
   @Patch(':id/devices/:deviceId/position')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({ summary: 'Update device 3D position (legacy alias)' })
   updateDevicePosition(
     @CurrentUser('id') userId: string,
@@ -432,6 +453,7 @@ export class FloorPlansController {
   }
 
   @Patch(':id/devices/:deviceId/animation')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({ summary: 'Update device animation settings (legacy alias)' })
   updateDeviceAnimation(
     @CurrentUser('id') userId: string,
@@ -451,6 +473,7 @@ export class FloorPlansController {
   // ============ ZONE MANAGEMENT ============
 
   @Post(':id/clone')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({
     summary: 'Duplicate a floor plan',
     description:
@@ -475,6 +498,7 @@ export class FloorPlansController {
   }
 
   @Get(':id/zones')
+  @RequirePermissions('floor_plans:read')
   @ApiOperation({
     summary: 'List the zones of a floor plan',
     description:
@@ -491,6 +515,7 @@ export class FloorPlansController {
   }
 
   @Post(':id/zones')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({ summary: 'Add zone to floor plan' })
   addZone(
     @CurrentUser('id') userId: string,
@@ -506,6 +531,7 @@ export class FloorPlansController {
   }
 
   @Patch(':id/zones/:zoneId')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({ summary: 'Update zone on floor plan' })
   updateZone(
     @CurrentUser('id') userId: string,
@@ -523,6 +549,7 @@ export class FloorPlansController {
   }
 
   @Delete(':id/zones/:zoneId')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({ summary: 'Remove zone from floor plan' })
   removeZone(
     @CurrentUser('id') userId: string,
@@ -540,6 +567,7 @@ export class FloorPlansController {
   // ============ BUILDING 3D METADATA ============
 
   @Patch(':id/building-3d-metadata')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({ summary: 'Update building 3D metadata' })
   updateBuilding3DMetadata(
     @CurrentUser('id') userId: string,
@@ -557,6 +585,7 @@ export class FloorPlansController {
   // ============ SETTINGS ============
 
   @Get(':id/settings')
+  @RequirePermissions('floor_plans:read')
   @ApiOperation({ summary: 'Get floor plan settings' })
   getSettings(
     @CurrentUser('tenantId') tenantId: string,
@@ -566,6 +595,7 @@ export class FloorPlansController {
   }
 
   @Patch(':id/settings')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({ summary: 'Update floor plan settings' })
   updateSettings(
     @CurrentUser('id') userId: string,
@@ -581,6 +611,7 @@ export class FloorPlansController {
   }
 
   @Post(':id/settings/reset')
+  @RequirePermissions('floor_plans:update')
   @ApiOperation({ summary: 'Reset floor plan settings to default' })
   resetSettings(
     @CurrentUser('id') userId: string,

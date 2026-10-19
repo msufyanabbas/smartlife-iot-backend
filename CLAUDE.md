@@ -1253,6 +1253,185 @@ bypass for it, matching `RolesGuard` (§4g).
 
 ---
 
+## 4k. `@RequirePermissions` coverage — why grants used to do nothing
+
+The reported symptom was "permissions I assign to a customer or user don't
+apply". The cause is the §4g shape again, one guard along:
+
+> **`PermissionGuard` returns `true` when a handler has no `@RequirePermissions`
+> metadata**, and the metadata is read from the **handler only** —
+> `reflector.get(PERMISSIONS_KEY, context.getHandler())`. A class-level
+> decorator is silently ignored.
+
+Measured before the fix: **24 of 676 handlers** carried the decorator, in
+**2 of 50 controllers** (firmware and roles). So granting a customer
+`devices:read` changed nothing — no route ever asked. The permission table,
+the seeded roles, the customer-grant junction and the whole resolution
+pipeline were all correct and all unreachable.
+
+`scripts/add-require-permissions.py` added 150 decorators across the eight
+resource controllers a CUSTOMER or CUSTOMER_USER actually touches: devices,
+dashboards, assets, alarms (`alerts`), automation, floor-plans, reports,
+analytics. Re-runnable and idempotent — it skips a handler that already has
+one.
+
+Things the classifier has to get right, each of which was wrong on the first
+pass and visible only by reading the printed plan:
+
+| Route | Wrong | Right | Why |
+|---|---|---|---|
+| `GET /dashboards/shared` | `dashboards:share` | `dashboards:list` | `share` is the right to GRANT access; this is a list of what others shared with you |
+| `DELETE /:id/widgets/:widgetId` | `dashboards:delete` | `dashboards:update` | removing a widget edits the dashboard, it does not delete it |
+| `DELETE /assets/:id/devices/:deviceId` | `assets:delete` | `assets:update` | same shape |
+| `POST /devices/bulk/status` | `devices:create` | `devices:update` | a bulk state change creates nothing |
+
+Device actuation maps to **`devices:control`**, not `devices:update`: a viewer
+may legitimately read a device without being allowed to switch it on.
+
+Only strings the permission seeder actually creates are used. A permission
+string that is never seeded can never be granted, so it would be a permanent
+403 that looks like a bug in the guard. The seeded vocabulary is
+`devices {control,create,delete,list,read,update}`,
+`dashboards {…,share}`, `assets`, `alerts`, `automations`, `floor_plans`,
+`reports {create,export,list,read,schedule}`,
+`analytics {configure,create,export,read}`.
+
+**Effective permissions = (role ∪ direct) ∩ customer grants, minus anything
+the subscription plan disables.** It is an intersection, so a customer grant
+cannot widen a user's role and a role cannot exceed what the customer holds.
+`npm run verify:permissions <db>` asserts all three directions plus the
+admin bypasses.
+
+**Watch for this when enabling it on a fresh deployment:** TENANT_ADMIN and
+SUPER_ADMIN return early and are unaffected, but a CUSTOMER_USER whose
+customer has **no** `grantedPermissions` rows now gets 403 where they
+previously got everything. That is the intended behaviour and also a visible
+change — grant the customer its permissions before turning this loose on a
+live tenant.
+
+**A permission string that is not seeded is a permanent 403.** It can never
+be granted to anyone, and the failure looks like a bug in the guard rather
+than a typo in a decorator — `tsc` sees only a string literal.
+`npm run check:permissions` reads both sides from source and fails on any
+mismatch. It caught `analytics:create` on three routes within a minute of
+being written: `analytics` seeds only `read`, `export` and `configure`.
+
+Note `reports` has **no `update` action** in the seeder, so editing a report
+template is gated on `reports:create`. That is the codemod refusing to emit
+an unseeded string rather than a classification error — adding the action
+means a seeder change plus a backfill for existing databases.
+
+Coverage today is **174 of 680 handlers (25.6%)**, reported by the same
+script. The remaining controllers are undecorated and therefore still open to
+any authenticated account. That is the remaining work, and it is the reason
+this section exists rather than a line in §11.
+
+---
+
+## 4l. AI integration
+
+A registered-model registry plus an `ai_request` rule node, modelled on
+ThingsBoard 4.2's design because the mental model transfers.
+
+```
+ai_provider.catalogue.ts   (manifest per provider: label, fields[],
+     │                      supportsSchemalessJson)
+     ├── GET /ai/catalogue       → the settings form is GENERATED from this
+     └── assertRequiredFields()  → 400 naming every missing field at once
+
+AiModel (tenantId, provider, modelId, apiKeyEncrypted, generation params)
+     ↓ modelId (a uuid, NOT a credential)
+ai_request node  ──→ AiService.complete()  ──→ callProvider()
+AiInsightsService ──┘
+```
+
+### The credential never lives in the rule node
+
+A rule chain is exportable, importable into another tenant, and shareable as
+a template (§4f). An API key in the node's `configuration` jsonb would travel
+with every one of those. The node stores a uuid; `AiService` resolves it
+tenant-scoped at call time, so an exported chain carries a dangling reference
+rather than a live key. **The tenant comes from the message, never from the
+node configuration**, so a crafted chain cannot name another tenant's model.
+
+### Credentials at rest
+
+`@common/utils/secret-box.ts` — AES-256-**GCM**, format `v1:iv:tag:ciphertext`,
+version-prefixed so the scheme can rotate. GCM because it is authenticated: a
+tampered row fails to decrypt instead of yielding plausible garbage that gets
+sent to a provider as a key. Key from `CREDENTIALS_ENCRYPTION_KEY` (32 bytes
+hex/base64, or any passphrase, which is SHA-256'd).
+
+With **no key set** it degrades to a reversible marker and warns once, rather
+than refusing to boot — and `isEncrypted()` returns false for those values so
+a UI can be honest about it. Set the variable in production.
+
+This is the pattern `integrations.configuration` should adopt: that column
+holds cloud credentials in **plaintext jsonb** with only `select: false` in
+front of them.
+
+### Two traps this hit, both invisible to `tsc`
+
+1. **A value import of `TelemetryService` in `AiInsightsService` closed a
+   module-load cycle** back through `NotificationsService` — a TDZ error at
+   import time, which in a container is a crash-loop. `check:swagger` caught
+   it as "Cannot access 'NotificationsService' before initialization". Fixed
+   with a **type-only** import plus `ModuleRef` resolution in `onModuleInit`,
+   and `AiModule` does **not** import `TelemetryModule`. Reimplementing the
+   telemetry reads instead would have lost `resolveDeviceForUser`'s tenant
+   scoping — the mistake the Tuya path already made once (§4d).
+2. **`ModuleRef.get('TelemetryService')` needs that string token to exist.**
+   Providers are registered under the *class* by default, so the lookup
+   typechecks perfectly and throws at `onModuleInit`. `TelemetryModule` now
+   also registers `{ provide: 'TelemetryService', useExisting: TelemetryService }`
+   and exports it. `npm run check:ai-wiring` builds the real DI graph and
+   calls `init()` — this is the only guard that would have caught it.
+
+### Behaviour worth knowing
+
+- **No retries, deliberately.** A chain that silently retries an LLM call
+  three times is three times the bill for a message the operator believes
+  failed once. Timeout (1–600s) and every provider error route to `failure`;
+  put a retry on that edge if you want one.
+- **Response normalisation** follows ThingsBoard: a JSON **object** becomes
+  the message data; anything else — prose, or a valid non-object JSON value
+  such as an array — is wrapped as `{ response: … }`. Markdown fences are
+  stripped first, because models emit them even when told not to.
+  `outputKey` is an addition: replacing the data throws away the reading that
+  prompted the call, which is usually what the next node needs.
+- **Templating**: `$[*]` all data, `$[key]` one field, `${*}` all metadata,
+  `${key}` one metadata field. A **missing key renders empty**, never the
+  literal `$[foo]` — a placeholder that reaches a model as text is read as an
+  instruction, and models will invent a value for it.
+- **Anthropic has no schemaless JSON mode.** The catalogue flags it and the
+  service refuses `responseFormat: 'JSON'` for those providers up front
+  rather than letting it fail as apparent model misbehaviour.
+- `provider` is **varchar, not a PG enum** — see the integrations lesson in
+  §4e. Providers appear faster than migrations ship.
+
+### AI insights (`POST /ai/insights/device/:deviceId`)
+
+Descriptive statistics are computed **in code** — min/max/mean/stdDev/change,
+plus a 3σ outlier count — and the model is asked to interpret them. Handing an
+LLM 10,000 raw readings and asking for the mean is slow, expensive and wrong.
+
+**It does not forecast, on purpose.** Trendz does Prophet/ARIMA with models
+persisted and retrained per profile; this has none of that, and an LLM asked
+to predict a number will produce a confident one with nothing behind it. The
+system prompt forbids it and the response schema has no forecast field —
+giving it nowhere to put one is the reliable half of that.
+
+### Scripts
+
+```bash
+npm run verify:permissions  <db>   # grants actually decide access (§4k)
+npm run verify:ai           <db>   # crypto, templating, normalisation, scoping
+npm run check:ai-wiring            # the DI graph resolves — no database
+npm run migration:ai-models <db> [up|down]
+```
+
+---
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
@@ -1617,6 +1796,10 @@ npm run check:node-sandbox        # rule-node scripts cannot reach the host
 npm run check:swagger             # the Swagger document builds from dist (see §4h)
                                   #   — builds dist first; this is the only check
                                   #     that covers bootstrap()
+npm run check:permissions         # every @RequirePermissions string is seeded,
+                                  #   and reports decorator coverage (§4k)
+npm run check:ai-wiring           # the AI DI graph resolves; catches the
+                                  #   string-token and recursion traps (§4l)
 node scripts/check-exception-filter.js   # field-level errors reach the client
 
 # ── Verification: each needs its own empty database (createdb first) ────────
@@ -1636,6 +1819,9 @@ npm run verify:lwm2m               <db>
 npm run verify:rpc                 <db>
 npm run verify:resource-assignments <db>  # assignment reads — scoping + the
                                           #   two-tier customer→user bound (§4i)
+npm run verify:permissions         <db>   # grants/revocations decide access (§4k)
+npm run verify:ai                  <db>   # credential crypto, prompt templating,
+                                          #   response normalisation, scoping (§4l)
 
 # ── Migrations: `migration:run` is blocked by the drift in §11, so each new
 #    migration ships with a standalone runner that applies it in isolation ───
@@ -1644,6 +1830,7 @@ npm run migration:rule-chain-templates   <db> [up|down]
 npm run migration:data-converters        <db> [up|down]
 npm run migration:telemetry-rollups      <db> [up|down]
 npm run migration:reports-groups-queues  <db> [up|down]
+npm run migration:ai-models              <db> [up|down]
 ```
 
 ---

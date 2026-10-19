@@ -23,6 +23,7 @@ import {
 } from '@common/decorators/access-control.decorator';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { UserRole } from '@common/enums/index.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Automations')
 @Controller('automations')
@@ -32,6 +33,7 @@ export class AutomationController {
   // ── Create ────────────────────────────────────────────────────────────────
 
   @Post()
+  @RequirePermissions('automations:create')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Create a new automation', 'Automation created')
   @ApiResponse({ status: 409, description: 'Name already used in this tenant' })
@@ -47,6 +49,7 @@ export class AutomationController {
   // ── Read ──────────────────────────────────────────────────────────────────
 
   @Get()
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get all automations', 'List of automations')
   findAll(
@@ -59,6 +62,7 @@ export class AutomationController {
   }
 
   @Get('statistics')
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get automation statistics')
   getStatistics(
@@ -70,6 +74,7 @@ export class AutomationController {
   }
 
   @Get(':id')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get automation by ID')
   @ApiResponse({ status: 404, description: 'Automation not found' })
@@ -83,6 +88,7 @@ export class AutomationController {
   }
 
   @Get(':id/logs')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get automation execution history', 'Paginated execution logs')
   @ApiResponse({ status: 404, description: 'Automation not found' })
@@ -99,6 +105,7 @@ export class AutomationController {
   // ── Update ────────────────────────────────────────────────────────────────
 
   @Patch(':id')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Update automation', 'Automation updated')
   @ApiResponse({ status: 404, description: 'Automation not found' })
@@ -114,6 +121,7 @@ export class AutomationController {
   }
 
   @Post(':id/toggle')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Toggle automation on/off', 'Toggled successfully')
   @ApiResponse({ status: 404, description: 'Automation not found' })
@@ -129,6 +137,7 @@ export class AutomationController {
   // ── Delete ────────────────────────────────────────────────────────────────
 
   @Delete(':id')
+  @RequirePermissions('automations:delete')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.NO_CONTENT)
   @SwaggerAuth('Delete automation', 'Deleted successfully')
@@ -145,6 +154,7 @@ export class AutomationController {
   // ── Manual execution ──────────────────────────────────────────────────────
 
   @Post(':id/execute')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Manually execute an automation', 'Execution result')
   @ApiResponse({ status: 400, description: 'Conditions did not pass for the supplied context' })

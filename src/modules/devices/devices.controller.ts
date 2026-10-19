@@ -52,6 +52,7 @@ import {
   BulkUpdateDevicesDto,
 } from './dto/bulk-device.dto';
 import { BulkResultDto } from '@common/dto/bulk-operation.dto';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 // Device control endpoints (command, rpc, telemetry) live in GatewayController
 // at POST /gateway/devices/:deviceKey/command|rpc|telemetry.
 // Keeping them here would create a circular dependency:
@@ -78,6 +79,7 @@ export class DevicesController {
   // an unauthenticated endpoint that can create rows is a brute-force target.
 
   @Post('provision')
+  @RequirePermissions('devices:create')
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
@@ -103,6 +105,7 @@ export class DevicesController {
   // ── Device management ─────────────────────────────────────────────────────
 
   @Post()
+  @RequirePermissions('devices:create')
   @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
   @Audit({ action: AuditAction.CREATE, entityType: AuditEntityType.DEVICE })
   @Notify({
@@ -126,6 +129,7 @@ export class DevicesController {
   }
 
   @Get()
+  @RequirePermissions('devices:list')
   @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
   @ApiOperation({ summary: 'Get all devices with pagination' })
   @ApiResponse({ status: 200, description: 'List of devices' })
@@ -138,6 +142,7 @@ export class DevicesController {
   }
 
   @Get(':id/capabilities')
+  @RequirePermissions('devices:read')
 @ApiOperation({ summary: 'Get capabilities for a specific device' })
 async getDeviceCapabilities(
   @CurrentUser() user: User,
@@ -169,12 +174,14 @@ async getDeviceCapabilities(
 }
 
   @Get('statistics')
+  @RequirePermissions('devices:list')
   @ApiOperation({ summary: 'Get device statistics' })
   getStatistics(@CurrentUser() user: User) {
     return this.devicesService.getStatistics(user);
   }
 
   @Get(':id')
+  @RequirePermissions('devices:read')
   @ApiOperation({ summary: 'Get device by ID' })
   @ApiResponse({ status: 200, description: 'Device found' })
   @ApiResponse({ status: 404, description: 'Device not found' })
@@ -185,6 +192,7 @@ async getDeviceCapabilities(
   // ── Bulk operations (declared before ':id' so 'bulk' is not read as an id) ─
 
   @Post('bulk/delete')
+  @RequirePermissions('devices:delete')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -220,6 +228,7 @@ async getDeviceCapabilities(
   }
 
   @Patch('bulk')
+  @RequirePermissions('devices:update')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -251,6 +260,7 @@ async getDeviceCapabilities(
   }
 
   @Patch(':id')
+  @RequirePermissions('devices:update')
   @ApiOperation({ summary: 'Update device' })
   update(
     @CurrentUser() user: User,
@@ -261,6 +271,7 @@ async getDeviceCapabilities(
   }
 
   @Post(':id/activate')
+  @RequirePermissions('devices:control')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Activate device' })
   activate(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
@@ -268,6 +279,7 @@ async getDeviceCapabilities(
   }
 
   @Post(':id/deactivate')
+  @RequirePermissions('devices:control')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Deactivate device' })
   deactivate(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
@@ -275,6 +287,7 @@ async getDeviceCapabilities(
   }
 
   @Get(':id/credentials')
+  @RequirePermissions('devices:read')
   @ApiOperation({
     summary: 'Get device credentials (masked)',
     description:
@@ -289,6 +302,7 @@ async getDeviceCapabilities(
   }
 
   @Get(':id/connectivity')
+  @RequirePermissions('devices:read')
   @ApiOperation({
     summary: 'How to connect this device',
     description:
@@ -308,6 +322,7 @@ async getDeviceCapabilities(
   }
 
   @Post(':id/credentials/regenerate')
+  @RequirePermissions('devices:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Rotate device credentials',
@@ -323,6 +338,7 @@ async getDeviceCapabilities(
 
   /** @deprecated Use POST /devices/:id/credentials/regenerate. */
   @Post(':id/regenerate-credentials')
+  @RequirePermissions('devices:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: '[Deprecated] Regenerate device credentials',
@@ -337,6 +353,7 @@ async getDeviceCapabilities(
   }
 
   @Delete(':id')
+  @RequirePermissions('devices:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete device' })
   async remove(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
@@ -346,6 +363,7 @@ async getDeviceCapabilities(
   // ── Bulk operations ───────────────────────────────────────────────────────
 
   @Post('bulk/status')
+  @RequirePermissions('devices:update')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Bulk update device status (Professional plan required)' })
@@ -365,6 +383,7 @@ async getDeviceCapabilities(
   // ── Customer endpoints ────────────────────────────────────────────────────
 
   @Get('customer/:customerId')
+  @RequirePermissions('devices:read')
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({ summary: 'Get all devices for a specific customer' })
   async getDevicesByCustomer(
@@ -376,6 +395,7 @@ async getDeviceCapabilities(
   }
 
   @Post(':id/assign-customer')
+  @RequirePermissions('devices:update')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Assign device to a customer' })
@@ -389,6 +409,7 @@ async getDeviceCapabilities(
   }
 
   @Post(':id/unassign-customer')
+  @RequirePermissions('devices:update')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Unassign device from customer' })

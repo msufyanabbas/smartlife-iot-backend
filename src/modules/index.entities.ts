@@ -100,3 +100,6 @@ export { Group } from './groups/entities/group.entity';
 export { GroupMember } from './groups/entities/group-member.entity';
 export { Queue } from './queues/entities/queue.entity';
 export { DefaultRuleChain } from './default-rule-chains/entities/default-rule-chain.entity';
+
+// AI
+export { AiModel } from './ai/entities/ai-model.entity';

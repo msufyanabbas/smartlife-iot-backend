@@ -7,6 +7,7 @@ import { SwitchNodeProcessor } from './processors/switch-node';
 import { ScriptNodeProcessor } from './processors/script-node';
 import { ExternalNodeProcessor } from './processors/external-node';
 import { FlowNodeProcessor } from './processors/flow-node';
+import { AiRequestNodeProcessor } from './processors/ai-request-node';
 import { INodeProcessor } from './nodes-processor.interface';
 import { NodeType } from '@common/enums/index.enum';
 
@@ -21,6 +22,7 @@ export class NodeProcessorFactory {
     private readonly scriptProcessor: ScriptNodeProcessor,
     private readonly externalProcessor: ExternalNodeProcessor,
     private readonly flowProcessor: FlowNodeProcessor,
+    private readonly aiRequestProcessor: AiRequestNodeProcessor,
   ) {}
 
   getProcessor(nodeType: NodeType): INodeProcessor {
@@ -41,6 +43,8 @@ export class NodeProcessorFactory {
         return this.externalProcessor;
       case NodeType.FLOW:
         return this.flowProcessor;
+      case NodeType.AI_REQUEST:
+        return this.aiRequestProcessor;
       default:
         throw new Error(`No processor found for node type: ${nodeType}`);
     }

@@ -8,4 +8,5 @@ export enum NodeType {
   FLOW = 'flow',
   SCRIPT = 'script',
   SWITCH = 'switch',
+  AI_REQUEST = 'ai_request',
 }

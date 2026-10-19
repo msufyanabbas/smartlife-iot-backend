@@ -33,6 +33,7 @@ import { Roles } from '@common/decorators/roles.decorator';
 import { SwaggerAuth } from '@common/decorators/access-control.decorator';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { UserRole } from '@common/enums/index.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /**
  * Read access for every authenticated role.
@@ -58,6 +59,7 @@ export class AnalyticsController {
   // ── 1. Overview ───────────────────────────────────────────────────────────
 
   @Get('overview')
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @SwaggerAuth('Tenant dashboard summary', 'Overview retrieved')
   getOverview(
@@ -70,6 +72,7 @@ export class AnalyticsController {
   // ── 2. Device analytics list ──────────────────────────────────────────────
 
   @Get('devices')
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @SwaggerAuth('Per-device analytics', 'Device analytics retrieved')
   async getDeviceAnalytics(
@@ -87,6 +90,7 @@ export class AnalyticsController {
   // Declared after 'devices' so the literal segment wins the route match.
 
   @Get('devices/:id')
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @ApiParam({ name: 'id', description: 'Device UUID' })
   @SwaggerAuth('Single device deep analytics', 'Device detail retrieved')
@@ -102,6 +106,7 @@ export class AnalyticsController {
   // ── 4. Alarm analytics ────────────────────────────────────────────────────
 
   @Get('alarms')
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @SwaggerAuth('Alarm analytics', 'Alarm analytics retrieved')
   getAlarmAnalytics(
@@ -115,6 +120,7 @@ export class AnalyticsController {
   // ── 5. Data consumption ───────────────────────────────────────────────────
 
   @Get('data-consumption')
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @SwaggerAuth('Data consumption analytics', 'Data consumption retrieved')
   async getDataConsumption(
@@ -131,6 +137,7 @@ export class AnalyticsController {
   // ── 6. System performance ─────────────────────────────────────────────────
 
   @Get('system-performance')
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @SwaggerAuth('API and platform performance for this tenant', 'System performance retrieved')
   async getSystemPerformance(
@@ -146,6 +153,7 @@ export class AnalyticsController {
   // ── 7. Geo analytics ──────────────────────────────────────────────────────
 
   @Get('geo')
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @SwaggerAuth('Device distribution by location', 'Geo analytics retrieved')
   async getGeoAnalytics(
@@ -162,6 +170,7 @@ export class AnalyticsController {
   // ── 8. Asset analytics ────────────────────────────────────────────────────
 
   @Get('assets')
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @SwaggerAuth('Asset-level analytics', 'Asset analytics retrieved')
   async getAssetAnalytics(
@@ -178,6 +187,7 @@ export class AnalyticsController {
   // ── 9. Dashboard analytics ────────────────────────────────────────────────
 
   @Get('dashboards')
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @SwaggerAuth('Dashboard view and widget-load analytics', 'Dashboard analytics retrieved')
   getDashboardAnalytics(
@@ -188,6 +198,7 @@ export class AnalyticsController {
   }
 
   @Get('energy')
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @SwaggerAuth('Energy and environment analytics', 'Energy analytics retrieved')
   async getEnergyAnalytics(
@@ -202,6 +213,11 @@ export class AnalyticsController {
   }
 
   @Post('dashboards/:dashboardId/view')
+  // A view log is emitted while READING a dashboard, not by an author. There
+  // is no `analytics:create` in the seeder, and gating a side-effect of
+  // reading behind a stronger permission would stop view counts recording
+  // for exactly the users who generate them.
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @ApiParam({ name: 'dashboardId', description: 'Dashboard UUID' })
   @SwaggerAuth('Record a dashboard/widget view', 'View recorded')
@@ -217,6 +233,7 @@ export class AnalyticsController {
   // ── 10. Telemetry & users ─────────────────────────────────────────────────
 
   @Get('telemetry')
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @SwaggerAuth('Per-device telemetry record counts', 'Telemetry statistics retrieved')
   getTelemetryStats(
@@ -233,6 +250,7 @@ export class AnalyticsController {
   }
 
   @Get('users')
+  @RequirePermissions('analytics:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @SwaggerAuth('User activity analytics', 'User activity retrieved')
   getUserActivity(
@@ -249,6 +267,7 @@ export class AnalyticsController {
   // ── 11. Stored rollups ────────────────────────────────────────────────────
 
   @Get()
+  @RequirePermissions('analytics:read')
   @AnalyticsReader()
   @SwaggerAuth('Query stored analytics rollup records', 'Analytics retrieved')
   findAll(
@@ -260,6 +279,7 @@ export class AnalyticsController {
   }
 
   @Post()
+  @RequirePermissions('analytics:export')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @SwaggerAuth('Store an analytics rollup record', 'Analytics created')
   create(
@@ -271,6 +291,7 @@ export class AnalyticsController {
   }
 
   @Post('generate')
+  @RequirePermissions('analytics:export')
   @Roles(UserRole.SUPER_ADMIN)
   @SwaggerAuth('Run the nightly rollup now, for all tenants', 'Rollup triggered')
   async generateAnalytics() {

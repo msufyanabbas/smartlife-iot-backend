@@ -26,6 +26,7 @@ import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
 import { RolesGuard } from '@common/guards/index.guards';
 import { Roles } from '@/common/decorators/roles.decorator';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('dashboards')
 @Controller('dashboards')
@@ -35,6 +36,7 @@ export class DashboardsController {
   constructor(private readonly dashboardsService: DashboardsService) {}
 
   @Post()
+  @RequirePermissions('dashboards:create')
   @ApiOperation({ summary: 'Create new dashboard' })
   @ApiResponse({ status: 201, description: 'Dashboard created successfully' })
   create(@CurrentUser() user: User, @Body() createDto: CreateDashboardDto) {
@@ -42,6 +44,7 @@ export class DashboardsController {
   }
 
   @Get()
+  @RequirePermissions('dashboards:list')
   @ApiOperation({ summary: 'Get all dashboards' })
   @ApiResponse({ status: 200, description: 'List of dashboards' })
   findAll(@CurrentUser() user: User, @Query() query: DashboardQueryDto) {
@@ -49,6 +52,7 @@ export class DashboardsController {
   }
 
   @Get('default')
+  @RequirePermissions('dashboards:list')
   @ApiOperation({ summary: 'Get default dashboard' })
   @ApiResponse({ status: 200, description: 'Default dashboard' })
   getDefault(@CurrentUser() user: User) {
@@ -56,6 +60,7 @@ export class DashboardsController {
   }
 
   @Get('shared')
+  @RequirePermissions('dashboards:list')
   @ApiOperation({ summary: 'Get dashboards shared with me' })
   @ApiResponse({ status: 200, description: 'List of shared dashboards' })
   getShared(@CurrentUser() user: User) {
@@ -63,6 +68,7 @@ export class DashboardsController {
   }
 
   @Get('statistics')
+  @RequirePermissions('dashboards:list')
   @ApiOperation({ summary: 'Get dashboard statistics' })
   @ApiResponse({ status: 200, description: 'Dashboard statistics' })
   getStatistics(@CurrentUser() user: User) {
@@ -70,6 +76,7 @@ export class DashboardsController {
   }
 
   @Get(':id')
+  @RequirePermissions('dashboards:read')
   @ApiOperation({ summary: 'Get dashboard by ID' })
   @ApiResponse({ status: 200, description: 'Dashboard found' })
   @ApiResponse({ status: 404, description: 'Dashboard not found' })
@@ -78,6 +85,7 @@ export class DashboardsController {
   }
 
   @Patch(':id')
+  @RequirePermissions('dashboards:update')
   @ApiOperation({ summary: 'Update dashboard' })
   @ApiResponse({ status: 200, description: 'Dashboard updated' })
   update(
@@ -89,6 +97,7 @@ export class DashboardsController {
   }
 
   @Delete(':id')
+  @RequirePermissions('dashboards:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete dashboard' })
   @ApiResponse({ status: 204, description: 'Dashboard deleted' })
@@ -97,6 +106,7 @@ export class DashboardsController {
   }
 
   @Get(':id/widgets')
+  @RequirePermissions('dashboards:read')
   @ApiOperation({
     summary: 'Get dashboard widgets enriched with widget type and device',
   })
@@ -110,6 +120,7 @@ export class DashboardsController {
   }
 
   @Post(':id/widgets')
+  @RequirePermissions('dashboards:update')
   @ApiOperation({ summary: 'Add widget to dashboard' })
   @ApiResponse({ status: 201, description: 'Widget added' })
   @ApiResponse({ status: 400, description: 'Device not found in this tenant' })
@@ -125,6 +136,7 @@ export class DashboardsController {
   // Declared before ':id/widgets/:widgetId' so 'layout' is never parsed as a
   // widgetId — Nest matches routes in declaration order.
   @Patch(':id/layout')
+  @RequirePermissions('dashboards:update')
   @ApiOperation({ summary: 'Batch update widget positions (drag and drop)' })
   @ApiResponse({ status: 200, description: 'Updated widget list' })
   @ApiResponse({ status: 404, description: 'Dashboard or widget not found' })
@@ -137,6 +149,7 @@ export class DashboardsController {
   }
 
   @Patch(':id/widgets/:widgetId')
+  @RequirePermissions('dashboards:update')
   @ApiOperation({ summary: 'Update widget' })
   @ApiResponse({ status: 200, description: 'Widget updated' })
   @ApiResponse({ status: 404, description: 'Dashboard or widget not found' })
@@ -150,6 +163,7 @@ export class DashboardsController {
   }
 
   @Delete(':id/widgets/:widgetId')
+  @RequirePermissions('dashboards:update')
   @ApiOperation({ summary: 'Remove widget from dashboard' })
   @ApiResponse({ status: 200, description: 'Widget removed' })
   @ApiResponse({ status: 404, description: 'Dashboard or widget not found' })
@@ -162,6 +176,7 @@ export class DashboardsController {
   }
 
   @Post(':id/share')
+  @RequirePermissions('dashboards:share')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Share dashboard with users' })
   @ApiResponse({ status: 200, description: 'Dashboard shared' })
@@ -174,6 +189,7 @@ export class DashboardsController {
   }
 
   @Delete(':id/share/:userId')
+  @RequirePermissions('dashboards:share')
   @ApiOperation({ summary: 'Unshare dashboard with user' })
   @ApiResponse({ status: 200, description: 'Dashboard unshared' })
   unshare(
@@ -185,6 +201,7 @@ export class DashboardsController {
   }
 
   @Post(':id/clone')
+  @RequirePermissions('dashboards:update')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Clone dashboard' })
   @ApiResponse({ status: 201, description: 'Dashboard cloned' })
@@ -197,6 +214,7 @@ export class DashboardsController {
   }
 
   @Post(':id/favorite')
+  @RequirePermissions('dashboards:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Toggle dashboard favorite' })
   @ApiResponse({ status: 200, description: 'Favorite toggled' })
@@ -218,6 +236,7 @@ export class DashboardsController {
    * Customer users can only access their own customer
    */
   @Get('customer/:customerId')
+  @RequirePermissions('dashboards:read')
   @UseGuards(CustomerAccessGuard) // Validates customer access
   @ApiOperation({ summary: 'Get all dashboards for a specific customer' })
   @ApiResponse({ status: 200, description: 'Dashboards retrieved' })
@@ -240,6 +259,7 @@ export class DashboardsController {
    * Assign dashboard to customer (Owner or Admins only)
    */
   @Post(':id/assign-customer')
+  @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -269,6 +289,7 @@ export class DashboardsController {
    * Unassign dashboard from customer (Owner or Admins only)
    */
   @Post(':id/unassign-customer')
+  @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)

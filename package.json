@@ -79,7 +79,12 @@
     "verify:lwm2m": "ts-node --transpile-only -r tsconfig-paths/register scripts/verify-lwm2m.ts",
     "verify:rpc": "ts-node --transpile-only -r tsconfig-paths/register scripts/verify-device-rpc.ts",
     "check:swagger": "npm run build && ts-node -T -r tsconfig-paths/register scripts/check-swagger-document.ts",
-    "verify:resource-assignments": "ts-node -T -r tsconfig-paths/register scripts/verify-resource-assignments.ts"
+    "verify:resource-assignments": "ts-node -T -r tsconfig-paths/register scripts/verify-resource-assignments.ts",
+    "verify:permissions": "ts-node -T -r tsconfig-paths/register scripts/verify-permissions.ts",
+    "verify:ai": "ts-node -T -r tsconfig-paths/register scripts/verify-ai.ts",
+    "migration:ai-models": "ts-node -T -r tsconfig-paths/register scripts/run-ai-models-migration.ts",
+    "check:ai-wiring": "ts-node -T -r tsconfig-paths/register scripts/check-ai-wiring.ts",
+    "check:permissions": "ts-node -T -r tsconfig-paths/register scripts/check-permission-strings.ts"
   },
   "dependencies": {
     "@aws-sdk/client-iot-data-plane": "^3.1106.0",

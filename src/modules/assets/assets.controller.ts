@@ -38,6 +38,7 @@ import { UserRole } from '@common/enums/index.enum';
 import { AssetType } from '@common/enums/index.enum';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Assets')
 @Controller('assets')
@@ -47,6 +48,7 @@ export class AssetsController {
   constructor(private readonly assetsService: AssetsService) {}
 
   @Post()
+  @RequirePermissions('assets:create')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Create a new asset' })
@@ -60,6 +62,7 @@ export class AssetsController {
   }
 
 @Get()
+@RequirePermissions('assets:list')
 @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
 @ApiOperation({ summary: 'Get all assets with pagination' })
 @ApiResponse({ status: 200, description: 'Assets retrieved successfully' })
@@ -71,6 +74,7 @@ findAll(
 }
 
   @Get('statistics')
+  @RequirePermissions('assets:list')
   @ApiOperation({ summary: 'Get asset statistics' })
   @ApiResponse({
     status: 200,
@@ -85,6 +89,7 @@ findAll(
   }
 
   @Get('roots')
+  @RequirePermissions('assets:list')
   @ApiOperation({ summary: 'Get root assets (no parent)' })
   @ApiResponse({ status: 200, description: 'Root assets retrieved' })
   async getRootAssets(@CurrentUser() user: User) {
@@ -96,6 +101,7 @@ findAll(
   }
 
   @Get('search/location')
+  @RequirePermissions('assets:list')
   @ApiOperation({ summary: 'Search assets by location' })
   @ApiQuery({ name: 'latitude', type: Number })
   @ApiQuery({ name: 'longitude', type: Number })
@@ -132,6 +138,7 @@ findAll(
    * Customer users can only access their own customer
    */
   @Get('customer/:customerId')
+  @RequirePermissions('assets:read')
   @UseGuards(CustomerAccessGuard) // Validates customer access
   @ApiOperation({ summary: 'Get all assets for a specific customer' })
   @ApiResponse({ status: 200, description: 'Assets retrieved' })
@@ -151,6 +158,7 @@ findAll(
    * Assign asset to customer (Admins only)
    */
   @Post(':id/assign-customer')
+  @RequirePermissions('assets:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -180,6 +188,7 @@ findAll(
    * Unassign asset from customer (Admins only)
    */
   @Post(':id/unassign-customer')
+  @RequirePermissions('assets:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -197,6 +206,7 @@ findAll(
   }
 
   @Get(':id')
+  @RequirePermissions('assets:read')
   @UseGuards(CustomerAccessGuard) // Validates customer access
   @ApiOperation({ summary: 'Get asset by ID' })
   @ApiResponse({ status: 200, description: 'Asset retrieved successfully' })
@@ -210,6 +220,7 @@ findAll(
   }
 
   @Get(':id/hierarchy')
+  @RequirePermissions('assets:read')
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({ summary: 'Get asset hierarchy (children tree)' })
   @ApiQuery({ name: 'maxDepth', required: false, type: Number })
@@ -229,6 +240,7 @@ findAll(
   }
 
   @Get(':id/floors')
+  @RequirePermissions('assets:read')
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({
     summary: 'Get the asset floor list with floor-plan coverage',
@@ -249,6 +261,7 @@ findAll(
   }
 
   @Get(':id/path')
+  @RequirePermissions('assets:read')
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({ summary: 'Get asset path (from root to asset)' })
   @ApiResponse({ status: 200, description: 'Path retrieved' })
@@ -261,6 +274,7 @@ findAll(
   }
 
   @Get(':id/children')
+  @RequirePermissions('assets:read')
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({ summary: 'Get direct child assets' })
   @ApiResponse({ status: 200, description: 'Children retrieved' })
@@ -273,6 +287,7 @@ findAll(
   }
 
   @Get(':id/telemetry')
+  @RequirePermissions('assets:read')
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({
     summary: 'Get latest telemetry across every device on this asset',
@@ -292,6 +307,7 @@ findAll(
   }
 
   @Get(':id/alarms')
+  @RequirePermissions('assets:read')
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({
     summary: 'Get alarms across every device on this asset',
@@ -311,6 +327,7 @@ findAll(
   }
 
   @Get(':id/devices')
+  @RequirePermissions('assets:read')
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({ summary: 'Get devices assigned to asset' })
   @ApiResponse({ status: 200, description: 'Devices retrieved' })
@@ -323,6 +340,7 @@ findAll(
   }
 
   @Post(':id/devices')
+  @RequirePermissions('assets:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER)
   @ApiOperation({ summary: 'Assign device to asset' })
@@ -339,6 +357,7 @@ findAll(
   }
 
   @Post(':id/devices/bulk')
+  @RequirePermissions('assets:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER)
   @ApiOperation({ summary: 'Bulk assign devices to asset' })
@@ -355,6 +374,7 @@ findAll(
   }
 
   @Delete(':id/devices/:deviceId')
+  @RequirePermissions('assets:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER)
   @HttpCode(HttpStatus.OK)
@@ -372,6 +392,7 @@ findAll(
   }
 
   @Patch(':id')
+  @RequirePermissions('assets:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER)
   @ApiOperation({ summary: 'Update asset' })
@@ -389,6 +410,7 @@ findAll(
   }
 
   @Patch(':id/attributes')
+  @RequirePermissions('assets:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER)
   @ApiOperation({ summary: 'Update asset attributes' })
@@ -410,6 +432,7 @@ findAll(
   }
 
   @Delete(':id')
+  @RequirePermissions('assets:delete')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)

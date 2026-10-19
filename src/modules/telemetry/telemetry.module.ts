@@ -53,6 +53,7 @@ import { Device } from '../index.entities';
   controllers: [TelemetryController],
   providers: [
     TelemetryService,
+    { provide: 'TelemetryService', useExisting: TelemetryService },
     TelemetryConsumer,
     TelemetryProcessor,
     TelemetryRollupService,
@@ -66,6 +67,12 @@ import { Device } from '../index.entities';
     TelemetryService,
     TelemetryRollupService,
     TelemetryRetentionService,
+    // String alias. AiInsightsService resolves telemetry through ModuleRef
+    // rather than importing TelemetryModule, because the import closes a
+    // module-load cycle through NotificationsService that crashes
+    // bootstrap(). ModuleRef needs a token it can name WITHOUT importing the
+    // class, so the class is also registered under its own name.
+    'TelemetryService',
   ],
 })
 export class TelemetryModule {}

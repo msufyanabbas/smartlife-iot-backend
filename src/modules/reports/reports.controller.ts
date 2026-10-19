@@ -28,6 +28,7 @@ import {
   ReportTemplateQueryDto,
   UpdateReportTemplateDto,
 } from './dto/report.dto';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /**
  * Report templates and generation.
@@ -56,6 +57,7 @@ export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   @Get()
+  @RequirePermissions('reports:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'List report templates' })
   @SwaggerAuth('List report templates', 'Paginated templates')
@@ -68,6 +70,7 @@ export class ReportsController {
 
   // All of the literal paths must precede `:id`, or they are parsed as ids.
   @Get('sources')
+  @RequirePermissions('reports:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'The row sources a report can be built from',
@@ -83,6 +86,7 @@ export class ReportsController {
   }
 
   @Get('statistics')
+  @RequirePermissions('reports:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'Template counts, recent failures and the next scheduled run' })
   @SwaggerAuth('Report statistics', 'Counts')
@@ -91,6 +95,7 @@ export class ReportsController {
   }
 
   @Get('executions')
+  @RequirePermissions('reports:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Generated reports, newest first',
@@ -108,6 +113,7 @@ export class ReportsController {
   }
 
   @Get('executions/:executionId')
+  @RequirePermissions('reports:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'One generated report’s metadata' })
   @SwaggerAuth('Get a report execution', 'The execution')
@@ -126,6 +132,7 @@ export class ReportsController {
    * browser can save.
    */
   @Get('executions/:executionId/download')
+  @RequirePermissions('reports:export')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Download a generated report',
@@ -152,6 +159,7 @@ export class ReportsController {
   }
 
   @Get(':id')
+  @RequirePermissions('reports:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'One report template' })
   @SwaggerAuth('Get a report template', 'The template')
@@ -163,6 +171,7 @@ export class ReportsController {
   }
 
   @Post()
+  @RequirePermissions('reports:create')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Create a report template',
@@ -181,6 +190,7 @@ export class ReportsController {
   }
 
   @Post(':id/generate')
+  @RequirePermissions('reports:create')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Generate the report now',
@@ -202,6 +212,7 @@ export class ReportsController {
   }
 
   @Put(':id')
+  @RequirePermissions('reports:create')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Update a report template',
@@ -220,6 +231,7 @@ export class ReportsController {
   }
 
   @Patch(':id')
+  @RequirePermissions('reports:create')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Update a report template (alias of PUT)' })
   @SwaggerAuth('Update a report template', 'Template updated')
