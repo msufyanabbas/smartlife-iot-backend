@@ -245,6 +245,7 @@ export class ReportsController {
   }
 
   @Delete(':id')
+  @RequirePermissions('reports:delete')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Delete a report template',

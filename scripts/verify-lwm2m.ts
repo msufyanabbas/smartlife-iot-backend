@@ -31,8 +31,14 @@
  *   7. Unknown registration id → 4.04; a Send from an unregistered endpoint
  *      → 4.03; a non-JSON Send body → 4.00.
  *   8. The documented out-of-scope list is served over HTTP for the frontend.
+ *   9. Registrations are DURABLE: a brand-new service instance rehydrates them
+ *      from `lwm2m_registrations` and honours an Update, which is the whole
+ *      point of the table.
+ *  10. Registration is CREDENTIAL-CHECKED: a device key with no credential is
+ *      refused 4.03 and leaves no row. (No DTLS in this stack — the token is
+ *      in clear on the wire; see the Security row of lwm2m.scope.ts.)
  */
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 import * as coap from 'coap';
 import * as entities from '../src/modules/index.entities';
@@ -41,6 +47,12 @@ import { DeviceProfile } from '../src/modules/profiles/entities/device-profile.e
 import { DeviceListenerService } from '../src/modules/protocols/device-listener.service';
 import { CoAPAdapter } from '../src/modules/protocols/adapters/coap.adapter';
 import { Lwm2mService } from '../src/modules/protocols/lwm2m/lwm2m.service';
+import { Lwm2mRegistration } from '../src/modules/protocols/lwm2m/entities/lwm2m-registration.entity';
+import { DeviceAuthService } from '../src/modules/device-auth/device-auth.service';
+import {
+  DeviceCredentials,
+  CredentialsType,
+} from '../src/modules/devices/entities/device-credentials.entity';
 import { RpcCorrelatorService } from '../src/modules/protocols/rpc-correlator.service';
 import { CodecRegistryService } from '../src/modules/devices/codecs/codec-registry.service';
 import { LWM2M_CAPABILITIES, LWM2M_SCOPE_SUMMARY } from '../src/modules/protocols/lwm2m/lwm2m.scope';
@@ -150,7 +162,18 @@ function coapRequest(opts: {
     const deviceRepo: Repository<Device> = dataSource.getRepository(Device);
     const profileRepo: Repository<DeviceProfile> =
       dataSource.getRepository(DeviceProfile);
+    const credentialsRepo: Repository<DeviceCredentials> =
+      dataSource.getRepository(DeviceCredentials);
+    const registrationRepo: Repository<Lwm2mRegistration> =
+      dataSource.getRepository(Lwm2mRegistration);
 
+    // lwm2m_registrations first: it has an FK to devices, so deleting the
+    // fixture devices while a registration row survives from an earlier run
+    // fails the DELETE rather than the test.
+    await deviceRepo.query(`DELETE FROM lwm2m_registrations WHERE "tenantId" = $1`, [TENANT]);
+    await deviceRepo.query(
+      `DELETE FROM device_credentials WHERE "deviceId" IN (SELECT id FROM devices WHERE "deviceKey" LIKE 'lwm2mfix-%')`,
+    );
     await deviceRepo.query(`DELETE FROM devices WHERE "deviceKey" LIKE 'lwm2mfix-%'`);
     await deviceRepo.query(`DELETE FROM device_profiles WHERE name LIKE 'LwM2M fixture%'`);
     await deviceRepo.query(`DELETE FROM users WHERE id = $1`, [USER]);
@@ -197,6 +220,19 @@ function coapRequest(opts: {
         errorCount: 0,
       }),
     );
+    // The endpoint name is a CREDENTIAL now (DeviceAuthService), so the
+    // fixture issues an ACCESS_TOKEN. It is deliberately the same string as
+    // the deviceKey so the rest of this script reads unchanged — in a real
+    // deployment the token is a CSPRNG value that is NOT the device key.
+    await credentialsRepo.save(
+      credentialsRepo.create({
+        deviceId: device.id,
+        credentialsType: CredentialsType.ACCESS_TOKEN,
+        credentialsId: ENDPOINT,
+        isActive: true,
+      }),
+    );
+
     check('fixtures created', Boolean(device.id));
 
     const published: any[] = [];
@@ -221,7 +257,30 @@ function coapRequest(opts: {
         })[key],
     };
 
-    const lwm2m = new Lwm2mService(listener, deviceRepo, configStub);
+    // Redis only caches credential lookups; a stub that never hits makes every
+    // authenticate() call go to Postgres, which is what we want to exercise.
+    const redisStub: any = {
+      get: async () => null,
+      set: async () => undefined,
+      setex: async () => undefined,
+      del: async () => undefined,
+    };
+    const deviceAuth = new DeviceAuthService(
+      credentialsRepo,
+      deviceRepo,
+      redisStub,
+    );
+
+    const lwm2m = new Lwm2mService(
+      listener,
+      deviceRepo,
+      configStub,
+      registrationRepo,
+      deviceAuth,
+    );
+    // Rehydration is a no-op on a clean fixture, but calling it proves the
+    // boot path runs against a real table rather than throwing.
+    await lwm2m.onModuleInit();
     const correlator = new RpcCorrelatorService();
 
     adapter = new CoAPAdapter(
@@ -232,6 +291,7 @@ function coapRequest(opts: {
       correlator,
       deviceRepo,
       configStub,
+      deviceAuth,
     );
     await adapter.start();
     check(`CoAP server listening on UDP ${COAP_PORT}`, true);
@@ -257,7 +317,7 @@ function coapRequest(opts: {
       registerRes.locationPath,
     );
 
-    const registration = lwm2m.getRegistrationByEndpoint(ENDPOINT);
+    const registration = await lwm2m.getRegistrationByEndpoint(ENDPOINT);
     check(
       'the object links from the body were parsed',
       registration?.objectLinks.map((l) => l.path).join(',') ===
@@ -303,7 +363,8 @@ function coapRequest(opts: {
     );
     check(
       'and no registration was recorded for it',
-      lwm2m.getRegistrationByEndpoint('attacker-chosen-endpoint-name') === undefined,
+      (await lwm2m.getRegistrationByEndpoint('attacker-chosen-endpoint-name')) ===
+        undefined,
     );
 
     const missingEpRes = await coapRequest({
@@ -315,7 +376,7 @@ function coapRequest(opts: {
 
     // ── 3. Update ──────────────────────────────────────────────────────────
     section('3. Update (POST /rd/:id)');
-    const expiryBefore = lwm2m.getRegistration(registrationId)!.expiresAt.getTime();
+    const expiryBefore = (await lwm2m.getRegistration(registrationId))!.expiresAt.getTime();
     await new Promise((r) => setTimeout(r, 1100));
     const updateRes = await coapRequest({
       method: 'POST',
@@ -323,7 +384,7 @@ function coapRequest(opts: {
       query: 'lt=120',
     });
     check('→ 2.04 Changed', updateRes.code === '2.04', updateRes);
-    const updated = lwm2m.getRegistration(registrationId)!;
+    const updated = (await lwm2m.getRegistration(registrationId))!;
     check('the new lifetime was applied', updated.lifetime === 120, updated.lifetime);
     check(
       'the expiry moved forward',
@@ -448,21 +509,21 @@ function coapRequest(opts: {
       'the device is ACTIVE and registered before the expiry',
       (await deviceRepo.findOne({ where: { id: device.id } }))?.status ===
         DeviceStatus.ACTIVE &&
-        lwm2m.getRegistration(registrationId) !== undefined,
+        (await lwm2m.getRegistration(registrationId)) !== undefined,
     );
 
     // Force the registration past its lifetime instead of waiting 120s, then
     // run the same sweep the interval runs.
-    lwm2m.expireRegistrationNow(registrationId);
+    await lwm2m.expireRegistrationNow(registrationId);
     const expired = await lwm2m.expireStaleRegistrations();
     check('the sweep reported the endpoint as expired', expired.includes(ENDPOINT), expired);
     check(
       'the registration was dropped',
-      lwm2m.getRegistration(registrationId) === undefined,
+      (await lwm2m.getRegistration(registrationId)) === undefined,
     );
     check(
       'and the endpoint index was dropped with it (no leak)',
-      lwm2m.getRegistrationByEndpoint(ENDPOINT) === undefined,
+      (await lwm2m.getRegistrationByEndpoint(ENDPOINT)) === undefined,
     );
     const afterExpiry = await deviceRepo.findOne({ where: { id: device.id } });
     check(
@@ -495,8 +556,8 @@ function coapRequest(opts: {
     check('→ 2.02 Deleted', deregRes.code === '2.02', deregRes);
     check(
       'the registration is gone',
-      lwm2m.getRegistration(secondId) === undefined &&
-        lwm2m.getRegistrationByEndpoint(ENDPOINT) === undefined,
+      (await lwm2m.getRegistration(secondId)) === undefined &&
+        (await lwm2m.getRegistrationByEndpoint(ENDPOINT)) === undefined,
     );
     check(
       'the device was marked OFFLINE immediately',
@@ -508,7 +569,9 @@ function coapRequest(opts: {
       (await (async () => {
         await coapRequest({ method: 'POST', pathname: '/rd', query: `ep=${ENDPOINT}&lt=300` });
         await coapRequest({ method: 'POST', pathname: '/rd', query: `ep=${ENDPOINT}&lt=300` });
-        return lwm2m.listRegistrations().filter((r) => r.endpoint === ENDPOINT).length;
+        return (await lwm2m.listRegistrations()).filter(
+          (r) => r.endpoint === ENDPOINT,
+        ).length;
       })()) === 1,
     );
 
@@ -565,6 +628,99 @@ function coapRequest(opts: {
       'and it says so in prose too',
       LWM2M_SCOPE_SUMMARY.summary.includes('Nothing is ever sent'),
       LWM2M_SCOPE_SUMMARY.summary,
+    );
+
+    // ── 9. Registrations survive a restart ─────────────────────────────────
+    //
+    // The whole reason lwm2m_registrations exists. Registrations used to live
+    // in two in-process Maps, so a deploy silently dropped every one of them:
+    // a client with a long lifetime would not re-register for hours, and in
+    // the meantime its Update was answered 4.04 and its Send 4.03.
+    section('9. Registrations are durable (the point of the table)');
+    const liveBefore = await lwm2m.listRegistrations(TENANT);
+    check(
+      'the registration is a ROW, not just a Map entry',
+      (await registrationRepo.count({
+        where: { tenantId: TENANT, deletedAt: IsNull() },
+      })) === liveBefore.length && liveBefore.length === 1,
+      { rows: await registrationRepo.count(), listed: liveBefore.length },
+    );
+    check(
+      'the row records WHICH DEVICE authenticated, so later calls are bound to it',
+      liveBefore[0]?.deviceId === device.id && liveBefore[0]?.authenticated === true,
+      liveBefore[0],
+    );
+    check(
+      'the endpoint NAME (a credential) is not stored in the clear',
+      liveBefore[0]?.endpointHash !== ENDPOINT &&
+        liveBefore[0]?.endpointHash?.length === 64,
+      liveBefore[0]?.endpointHash,
+    );
+
+    // A brand-new service instance, exactly as a restarted process would be.
+    const restarted = new Lwm2mService(
+      listener,
+      deviceRepo,
+      configStub,
+      registrationRepo,
+      deviceAuth,
+    );
+    await restarted.onModuleInit();
+    const rehydrated = await restarted.getRegistrationByEndpoint(ENDPOINT);
+    check(
+      'a fresh service instance rehydrates the registration from the table',
+      rehydrated?.registrationId === liveBefore[0]?.registrationId,
+      { rehydrated: rehydrated?.registrationId, expected: liveBefore[0]?.registrationId },
+    );
+    check(
+      'and an Update against it is honoured, not answered 4.04',
+      (
+        await restarted.update(liveBefore[0].registrationId, { lifetime: 180 })
+      ).ok,
+    );
+
+    // ── 10. Registration requires a credential ─────────────────────────────
+    section('10. Registration is credential-checked');
+    check(
+      'DEVICE_AUTH_ENFORCED defaults to ON',
+      deviceAuth.isEnforced === true,
+    );
+    // The device key is a public identifier; it must NOT be accepted as a
+    // credential while enforcement is on.
+    const keyOnly = await deviceRepo.save(
+      deviceRepo.create({
+        deviceKey: 'lwm2mfix-nocreds-01',
+        name: 'lwm2mfix-nocreds-01',
+        type: DeviceType.SENSOR,
+        status: DeviceStatus.INACTIVE,
+        tenantId: TENANT,
+        userId: USER,
+        deviceProfileId: profile.id,
+        messageCount: 0,
+        errorCount: 0,
+      }),
+    );
+    const noCredRes = await coapRequest({
+      method: 'POST',
+      pathname: '/rd',
+      query: `ep=${keyOnly.deviceKey}&lt=60`,
+      payload: '</3/0>',
+    });
+    check(
+      'a device KEY with no credential is refused 4.03',
+      noCredRes.code === '4.03',
+      noCredRes,
+    );
+    check(
+      'and the refusal explains that the endpoint name must be the token',
+      noCredRes.body.includes('credential'),
+      noCredRes.body,
+    );
+    check(
+      'no registration row was created for it',
+      (await registrationRepo.count({
+        where: { deviceId: keyOnly.id, deletedAt: IsNull() },
+      })) === 0,
     );
   } finally {
     if (adapter) await adapter.stop();

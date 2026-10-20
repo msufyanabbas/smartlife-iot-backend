@@ -44,6 +44,7 @@ import {
 } from './dto/subscription-lifecycle.dto';
 import { Roles } from '@common/decorators/index.decorator';
 import { UserRole } from '@common/enums/index.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NOTE: All methods receive user.id from the JWT (@CurrentUser()).
@@ -78,6 +79,7 @@ export class SubscriptionsController {
   ) {}
 
   @Post()
+  @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Create a new subscription',
@@ -101,6 +103,7 @@ export class SubscriptionsController {
   }
 
   @Get()
+  @RequirePermissions('billing:read')
   // Every role: this is the endpoint the frontend's feature-flag store reads,
   // and an empty store hides the whole sidebar. SUPER_ADMIN is included because
   // RolesGuard has NO super-admin bypass — it compares user.role against the
@@ -118,6 +121,7 @@ export class SubscriptionsController {
   }
 
   @Get('plans')
+  @RequirePermissions('billing:read')
   @Roles(...BILLING_READERS, UserRole.SUPER_ADMIN, UserRole.USER)
   @ApiOperation({
     summary: 'Get all available subscription plans with pricing',
@@ -156,6 +160,7 @@ export class SubscriptionsController {
   }
 
   @Get('usage')
+  @RequirePermissions('billing:read')
   @Roles(...BILLING_READERS, UserRole.SUPER_ADMIN, UserRole.USER)
   @ApiOperation({ summary: 'Get current usage statistics vs limits' })
   @ApiResponse({
@@ -191,6 +196,7 @@ export class SubscriptionsController {
   }
 
   @Post('upgrade')
+  @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Initiate subscription upgrade (redirects to payment)',
@@ -223,6 +229,7 @@ export class SubscriptionsController {
   }
 
   @Post('downgrade/schedule')
+  @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -265,6 +272,7 @@ export class SubscriptionsController {
   }
 
   @Post('downgrade/cancel')
+  @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -282,6 +290,7 @@ export class SubscriptionsController {
   }
 
   @Post('cancel')
+  @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -305,6 +314,7 @@ export class SubscriptionsController {
   // ───────────────────────────────────────────────────────────────────────────
 
   @Get('lifecycle')
+  @RequirePermissions('billing:read')
   @Roles(...BILLING_READERS, UserRole.SUPER_ADMIN, UserRole.USER)
   @ApiOperation({
     summary: 'What happens to this subscription next',
@@ -348,6 +358,7 @@ export class SubscriptionsController {
   }
 
   @Post('trial')
+  @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -384,6 +395,7 @@ export class SubscriptionsController {
   }
 
   @Post('renew')
+  @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -424,6 +436,7 @@ export class SubscriptionsController {
   }
 
   @Post('auto-renew')
+  @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -449,6 +462,7 @@ export class SubscriptionsController {
   }
 
   @Get('invoices')
+  @RequirePermissions('billing:read')
   // Invoices are tenant-wide billing records, not per-user: the handler passes
   // user.tenantId straight through, so leaving this open let any CUSTOMER_USER
   // read the tenant's whole payment history.
@@ -470,6 +484,7 @@ export class SubscriptionsController {
   }
 
   @Get('invoices/:paymentId/pdf')
+  @RequirePermissions('billing:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Download invoice as PDF' })
   @ApiResponse({ status: 200, description: 'PDF file stream' })

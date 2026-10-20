@@ -1,3 +1,4 @@
+import { DeviceAuthModule } from '@modules/device-auth/device-auth.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { HTTPAdapter } from './adapters/http.adapter';
@@ -6,9 +7,25 @@ import { ModbusAdapter } from './adapters/modbus.adapter';
 import { BLEAdapter } from './adapters/ble.adapter';
 import { ZigbeeAdapter } from './adapters/zigbee.adapter';
 import { SnmpAdapter } from './adapters/snmp.adapter';
+import { OpcuaAdapter } from './adapters/opcua.adapter';
+import { BacnetAdapter } from './adapters/bacnet.adapter';
+import { OpcuaServer } from './opcua/entities/opcua-server.entity';
+import { OpcuaService } from './opcua/opcua.service';
+import { OpcuaController } from './opcua/opcua.controller';
+import { BacnetDevice } from './bacnet/entities/bacnet-device.entity';
+import { BacnetService } from './bacnet/bacnet.service';
+import { BacnetController } from './bacnet/bacnet.controller';
+import { NbIotDevice } from './nbiot/entities/nbiot-device.entity';
+import { NbIotService } from './nbiot/nbiot.service';
+import { NbIotController } from './nbiot/nbiot.controller';
+import { Integration } from '@modules/integrations/entities/integration.entity';
 import { DeviceListenerService } from './device-listener.service';
 import { Lwm2mService } from './lwm2m/lwm2m.service';
 import { Lwm2mController } from './lwm2m/lwm2m.controller';
+import { Lwm2mRegistration } from './lwm2m/entities/lwm2m-registration.entity';
+import { ModbusDevice } from './modbus/entities/modbus-device.entity';
+import { ModbusDevicesService } from './modbus/modbus-devices.service';
+import { ModbusDevicesController } from './modbus/modbus-devices.controller';
 import { RpcCorrelatorService } from './rpc-correlator.service';
 import { Device } from '@modules/devices/entities/device.entity';
 import { DeviceProfile } from '@modules/profiles/entities/device-profile.entity';
@@ -54,7 +71,30 @@ import { FirmwareModule } from '@modules/firmware/firmware.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Device, DeviceProfile]),
+    DeviceAuthModule,
+    // ModbusDevice: the poller's fleet, formerly a MODBUS_DEVICES env blob.
+    // Lwm2mRegistration: LwM2M registrations, formerly in-process Maps that
+    // were lost on every restart.
+    TypeOrmModule.forFeature([
+      Device,
+      DeviceProfile,
+      ModbusDevice,
+      Lwm2mRegistration,
+      // OpcuaServer / BacnetDevice / NbIotDevice: the three industrial and
+      // carrier transports' fleets. Database-driven like SnmpAdapter, so the
+      // adapters read these repositories on a refresh interval rather than
+      // taking their targets from env vars (which is ModbusAdapter's old,
+      // deliberately-not-copied shape).
+      //
+      // Integration is registered here — NOT owned here — because the NB-IoT
+      // carrier push authenticates against the integration row that names it.
+      // A second forFeature() on the same entity is only a repository
+      // registration; IntegrationsModule remains its owner.
+      OpcuaServer,
+      BacnetDevice,
+      NbIotDevice,
+      Integration,
+    ]),
     CodecModule, // provides CodecRegistryService for DeviceListenerService
     KafkaModule, // provides KafkaService for DeviceListenerService
     AttributesModule, // provides AttributesService for CoAPAdapter (get/set attributes)
@@ -68,13 +108,37 @@ import { FirmwareModule } from '@modules/firmware/firmware.module';
     HTTPAdapter,
     CoAPAdapter,
     ModbusAdapter,
+    // ModbusDevicesService → ModbusAdapter only (so a saved change reloads the
+    // poller). The adapter reads its repository directly, so there is no cycle.
+    ModbusDevicesService,
     BLEAdapter,
     ZigbeeAdapter,
     SnmpAdapter,
+    // OpcuaAdapter — subscription-first OPC-UA. Reads `opcua_servers` rows,
+    //   shares one session per endpoint, coalesces monitored-item
+    //   notifications, ends at DeviceListenerService. OPCUA_ENABLED=false to
+    //   switch off.
+    // BacnetAdapter — BACnet/IP Who-Is discovery and ReadPropertyMultiple
+    //   polling of `bacnet_devices`. OFF unless BACNET_ENABLED=true, because
+    //   it binds a host UDP port (47808).
+    // The services depend on their adapters (for test / browse / discover),
+    // never the reverse, so there is no cycle.
+    OpcuaAdapter,
+    OpcuaService,
+    BacnetAdapter,
+    BacnetService,
+    // NbIotService has no adapter: NB-IoT is a BEARER, not a wire protocol.
+    // It owns the SIM records and the carrier push endpoint, and hands uplinks
+    // to DeviceListenerService like every other inbound path.
+    NbIotService,
   ],
   controllers: [
     HTTPAdapter, // HTTPAdapter is both a provider (IProtocolAdapter) and a controller (@Controller)
     Lwm2mController,
+    ModbusDevicesController,
+    OpcuaController,
+    BacnetController,
+    NbIotController,
   ],
   exports: [
     DeviceListenerService,
@@ -82,6 +146,14 @@ import { FirmwareModule } from '@modules/firmware/firmware.module';
     RpcCorrelatorService, // GatewayService + RpcResponseListener correlate through this
     Lwm2mService,
     SnmpAdapter,
+    OpcuaAdapter,
+    BacnetAdapter,
+    // Exported for the eventual CoAP/MQTT canonicalisation hook
+    // (`applyToTelemetry()`), which NOTHING CALLS YET — wiring it in costs a
+    // nbiot_devices lookup on every CoAP and MQTT message platform-wide and
+    // needs a bounded device cache first. See that method's doc block. Direct
+    // CoAP and MQTT ingestion works today without it.
+    NbIotService,
     MQTTModule, // re-export so GatewayModule can reach MQTTService via ProtocolsModule
   ],
 })

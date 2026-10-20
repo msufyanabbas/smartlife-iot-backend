@@ -27,6 +27,7 @@ import {
   UpdateDefaultRuleChainDto,
 } from './dto/default-rule-chain.dto';
 import { DefaultRuleChainOriginatorType } from './default-rule-chain.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /**
  * Default rule chains — the mapping that decides which rule chain handles which
@@ -57,6 +58,7 @@ export class DefaultRuleChainsController {
   ) {}
 
   @Get()
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'List message-type → rule chain mappings' })
   @SwaggerAuth('List default rule chains', 'Paginated mappings')
@@ -69,6 +71,7 @@ export class DefaultRuleChainsController {
 
   // These three literals must precede `:id`, or they are parsed as ids.
   @Get('message-types')
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Suggested message types and the originator types available',
@@ -79,6 +82,7 @@ export class DefaultRuleChainsController {
   }
 
   @Get('statistics')
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Mapping counts and how often each has matched',
@@ -93,6 +97,7 @@ export class DefaultRuleChainsController {
   }
 
   @Get('resolve')
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Which chain would handle a message like this',
@@ -117,6 +122,7 @@ export class DefaultRuleChainsController {
   }
 
   @Get('type/:type')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'The catch-all mapping for an originator type',
@@ -133,6 +139,7 @@ export class DefaultRuleChainsController {
   }
 
   @Post('type/:type')
+  @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Create or repoint the catch-all mapping for an originator type',
@@ -148,6 +155,7 @@ export class DefaultRuleChainsController {
   }
 
   @Get(':id')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'One mapping' })
   @SwaggerAuth('Get a default rule chain mapping', 'The mapping')
@@ -159,6 +167,7 @@ export class DefaultRuleChainsController {
   }
 
   @Post()
+  @RequirePermissions('automations:create')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Create a mapping',
@@ -177,6 +186,7 @@ export class DefaultRuleChainsController {
   }
 
   @Put(':id')
+  @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Update a mapping' })
   @SwaggerAuth('Update a default rule chain mapping', 'Mapping updated')
@@ -191,6 +201,7 @@ export class DefaultRuleChainsController {
 
   // The shipped frontend client sends PATCH. Same handler.
   @Patch(':id')
+  @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Update a mapping (alias of PUT)' })
   @SwaggerAuth('Update a default rule chain mapping', 'Mapping updated')
@@ -204,6 +215,7 @@ export class DefaultRuleChainsController {
   }
 
   @Delete(':id')
+  @RequirePermissions('automations:delete')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Delete a mapping',

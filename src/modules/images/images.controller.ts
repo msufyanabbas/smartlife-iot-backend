@@ -34,6 +34,7 @@ import {
 } from '@common/decorators/access-control.decorator';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { PaginationDto } from '@common/dto/pagination.dto';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 // Rejected here as well as in the service so multer stops reading the stream
 // as soon as the part header shows an unsupported type.
@@ -61,6 +62,7 @@ export class ImagesController {
   constructor(private readonly imagesService: ImagesService) {}
 
   @Post()
+  @RequirePermissions('settings:create')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Upload a new image', 'Image uploaded')
   @ApiConsumes('multipart/form-data')
@@ -117,6 +119,7 @@ export class ImagesController {
   }
 
   @Get()
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get all images', 'List of images')
   findAll(
@@ -127,6 +130,7 @@ export class ImagesController {
   }
 
   @Get('statistics')
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get image statistics')
   getStatistics(@CurrentUser('tenantId') tenantId: string) {
@@ -161,6 +165,7 @@ export class ImagesController {
   }
 
   @Post('resolve')
+  @RequirePermissions('settings:create')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Resolve image references to URLs in one call',
@@ -177,6 +182,7 @@ export class ImagesController {
   }
 
   @Patch(':id/public')
+  @RequirePermissions('settings:update')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'Mark an image public or private' })
   setPublic(
@@ -188,6 +194,7 @@ export class ImagesController {
   }
 
   @Get(':id/download')
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Stream the stored image file', 'Image stream')
   @ApiResponse({ status: 404, description: 'Image or file not found' })
@@ -209,6 +216,7 @@ export class ImagesController {
   }
 
   @Get(':id')
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get image by ID')
   @ApiResponse({ status: 404, description: 'Image not found' })
@@ -220,6 +228,7 @@ export class ImagesController {
   }
 
   @Patch(':id')
+  @RequirePermissions('settings:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Update image metadata', 'Image updated')
   @ApiResponse({ status: 404, description: 'Image not found' })
@@ -233,6 +242,7 @@ export class ImagesController {
   }
 
   @Delete(':id')
+  @RequirePermissions('settings:delete')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.NO_CONTENT)
   @SwaggerAuth('Delete image')

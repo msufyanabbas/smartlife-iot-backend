@@ -38,6 +38,57 @@ CONTROLLERS = {
     'src/modules/floor-plans/floor-plans.controller.ts': 'floor_plans',
     'src/modules/reports/reports.controller.ts': 'reports',
     'src/modules/analytics/analytics.controller.ts': 'analytics',
+
+    # ── Second pass ─────────────────────────────────────────────────────
+    # The controllers above were the eight a CUSTOMER actually touches.
+    # These are the rest: 43 controllers had routes and NOT ONE permission
+    # decorator, and PermissionGuard returns true when a handler has none,
+    # so every one of those routes ignored permissions entirely.
+    #
+    # Resource choice is by what the route GOVERNS, not by module name:
+    # telemetry is its own resource because reading a device's readings is a
+    # different grant from editing the device; the rule-engine family
+    # (nodes, queues, scripts, schedules, default rule chains) all resolve to
+    # `automations` because they are one capability from an operator's view.
+    'src/modules/telemetry/telemetry.controller.ts': 'telemetry',
+    'src/modules/users/users.controller.ts': 'users',
+    'src/modules/customers/customers.controller.ts': 'customers',
+    'src/modules/customer-users/customer-users.controller.ts': 'users',
+    'src/modules/roles/roles.controller.ts': 'roles',
+    'src/modules/permissions/permissions.controller.ts': 'permissions',
+    'src/modules/audit/audit.controller.ts': 'audit',
+    'src/modules/edge/edge.controller.ts': 'edge',
+    'src/modules/notifications/notifications.controller.ts': 'notifications',
+    'src/modules/profiles/asset-profile.controller.ts': 'profiles',
+    'src/modules/profiles/device-profile.controller.ts': 'profiles',
+    'src/modules/nodes/nodes.controller.ts': 'automations',
+    'src/modules/queues/queues.controller.ts': 'automations',
+    'src/modules/scripts/scripts.controller.ts': 'automations',
+    'src/modules/schedules/schedule.controller.ts': 'automations',
+    'src/modules/default-rule-chains/default-rule-chains.controller.ts': 'automations',
+    'src/modules/email-templates/email-templates.controller.ts': 'settings',
+    'src/modules/user-settings/user-settings.controller.ts': 'settings',
+    'src/modules/images/images.controller.ts': 'settings',
+    'src/modules/solution-templates/solution-templates.controller.ts': 'settings',
+    'src/modules/gateway/gateway.controller.ts': 'devices',
+    'src/modules/widgets/widgets.controller.ts': 'dashboards',
+    'src/modules/widgets/widget-types.controller.ts': 'dashboards',
+    'src/modules/integrations/integrations.controller.ts': 'integrations',
+    'src/modules/converters/converters.controller.ts': 'integrations',
+    'src/modules/devices/codecs/codec.controller.ts': 'integrations',
+    'src/modules/rules/rules.controller.ts': 'automations',
+    'src/modules/rules/rule-chain-templates.controller.ts': 'automations',
+    'src/modules/subscriptions/subscriptions.controller.ts': 'billing',
+    'src/modules/payments/payments.controller.ts': 'billing',
+    'src/modules/assignments/assignment.controller.ts': 'customers',
+    'src/modules/api-monitoring/api-monitoring.controller.ts': 'audit',
+    'src/modules/groups/groups.controller.ts': 'groups',
+    'src/modules/tenants/tenants.controller.ts': 'tenants',
+    'src/modules/sharing/sharing.controller.ts': 'settings',
+    'src/modules/attributes/attributes.controller.ts': 'devices',
+    'src/modules/device-commands/device-commands.controller.ts': 'devices',
+    # AI models hold provider credentials, so they are tenant settings.
+    'src/modules/ai/ai.controller.ts': 'settings',
 }
 
 # Actions that actually exist per resource. A resource's set is the ceiling:
@@ -49,10 +100,32 @@ ACTIONS = {
     'alerts': {'create', 'delete', 'list', 'read', 'update'},
     'automations': {'create', 'delete', 'list', 'read', 'update'},
     'floor_plans': {'create', 'delete', 'list', 'read', 'update'},
-    'reports': {'create', 'export', 'list', 'read', 'schedule'},
+    'reports': {'create', 'delete', 'export', 'list', 'read', 'schedule'},
     # NOTE: analytics has NO 'create' in the seeder — only these three.
     'analytics': {'configure', 'export', 'read'},
+
+    # Second pass. Each set is exactly what permissions.seeder.ts creates for
+    # that resource; a string outside it can never be granted, so the codemod
+    # refuses to emit one rather than planting a permanent 403.
+    'telemetry': {'create', 'delete', 'export', 'read'},
+    'users': {'create', 'delete', 'list', 'read', 'update'},
+    'customers': {'create', 'delete', 'list', 'read', 'update'},
+    'roles': {'create', 'delete', 'list', 'read', 'update'},
+    'permissions': {'create', 'delete', 'list', 'read', 'update'},
+    'audit': {'create', 'delete', 'export', 'read'},
+    'edge': {'control', 'create', 'delete', 'list', 'read', 'update'},
+    'notifications': {'create', 'delete', 'list', 'read', 'update'},
+    'profiles': {'create', 'delete', 'list', 'read', 'update'},
+    'settings': {'create', 'delete', 'read', 'update'},
+    'integrations': {'create', 'delete', 'list', 'read', 'update'},
+    'groups': {'create', 'delete', 'list', 'read', 'update'},
+    'tenants': {'create', 'delete', 'list', 'read', 'update'},
+    # billing seeds only manage/read — every write maps to `manage`.
+    'billing': {'manage', 'read'},
 }
+
+# Resources whose writes all collapse to one action.
+COARSE_WRITE = {'billing': 'manage'}
 
 DECORATOR_RE = re.compile(r"^(\s*)@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?")
 
@@ -129,10 +202,29 @@ def process(rel: str, resource: str, dry: bool) -> int:
             if re.match(r"^\s*@(Get|Post|Put|Patch|Delete)\(", h):
                 break
             window.append(h)
-        if '@RequirePermissions' in '\n'.join(window):
+        joined = '\n'.join(window)
+        if '@RequirePermissions' in joined:
+            continue
+        # A @Public() route has no authenticated user to resolve permissions
+        # for. PermissionGuard returns early on it, so a decorator here would
+        # be dead code at best — and on an auth or device-uplink route it
+        # would read as though the route were protected when it is not.
+        if '@Public' in joined:
+            print(f'  -- {rel}: {verb} {route!r} is @Public, skipped')
             continue
 
         action = classify(verb, route, resource)
+
+        # Some resources have a coarser vocabulary than the verb-based
+        # classifier assumes. `billing` seeds only manage/read, so every
+        # write — create, update, delete — is a single `manage` grant.
+        # Remapping here beats widening the seeder: splitting billing into
+        # five actions would invent a permission model nobody asked for, and
+        # skipping these routes would leave subscription and payment writes
+        # ungated, which is the worst of the three outcomes.
+        if resource in COARSE_WRITE and action not in ('read', 'list'):
+            action = COARSE_WRITE[resource]
+
         perm = f'{resource}:{action}'
         if action not in ACTIONS[resource]:
             print(f'  !! {rel}: {verb} {route!r} -> {perm} NOT SEEDED, skipped')

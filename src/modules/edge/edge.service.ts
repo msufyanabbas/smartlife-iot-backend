@@ -537,6 +537,20 @@ export class EdgeService {
 
     const wasOffline = edge.status !== 'active';
 
+    // `bufferedMessages` has no column of its own and does not need one — it is
+    // a gauge, read alongside cpu/memory/disk, and `systemMetrics` is already a
+    // jsonb blob surfaced by GET :id/metrics. Folding it in here is what makes
+    // "how far behind is this edge?" answerable without a migration.
+    const systemMetrics =
+      data.systemMetrics || data.bufferedMessages !== undefined
+        ? {
+            ...(data.systemMetrics ?? edge.systemMetrics ?? {}),
+            ...(data.bufferedMessages !== undefined
+              ? { bufferedMessages: data.bufferedMessages }
+              : {}),
+          }
+        : edge.systemMetrics;
+
     await this.edgeRepository.update(
       { id: edge.id },
       {
@@ -546,7 +560,7 @@ export class EdgeService {
         firmwareVersion: data.firmwareVersion ?? edge.firmwareVersion,
         agentVersion: data.agentVersion ?? edge.agentVersion,
         osInfo: data.osInfo ?? edge.osInfo,
-        systemMetrics: data.systemMetrics ?? edge.systemMetrics,
+        systemMetrics,
         connectedDeviceCount:
           data.connectedDevices ?? edge.connectedDeviceCount,
         messagesPerMinute: data.messagesPerMinute ?? edge.messagesPerMinute,
@@ -654,6 +668,25 @@ export class EdgeService {
 
     const config = await this.getConfigBundle(edge.id, edge.tenantId);
     return { registered: true, edgeId: edge.id, config };
+  }
+
+  /**
+   * Agent-facing config pull, resolved from `edgeKey`.
+   *
+   * The agent needs the bundle on every `syncConfig.syncInterval`, and the only
+   * other ways to get it were `GET :id/config` (JWT — an agent has no user
+   * token) or re-running `selfRegister`, which writes a CONNECTED event and a
+   * "self-registered" log line each time. Same `edgeKey`-only authentication as
+   * `getPendingCommands`, and the bundle it returns is byte-for-byte the one
+   * `getConfigBundle` already produced.
+   */
+  async getAgentConfigBundle(edgeKey: string) {
+    if (!edgeKey) throw new UnauthorizedException('Invalid edge key');
+
+    const edge = await this.edgeRepository.findOne({ where: { edgeKey } });
+    if (!edge) throw new UnauthorizedException('Invalid edge key');
+
+    return this.getConfigBundle(edge.id, edge.tenantId);
   }
 
   // ══════════════════════════════════════════════════════════════════════════

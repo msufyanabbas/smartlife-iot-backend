@@ -31,6 +31,7 @@ import { JwtAuthGuard, RolesGuard } from '@common/guards/index.guards';
 import { Roles, CurrentUser } from '@common/decorators/index.decorator';
 import { User } from '@modules/index.entities';
 import { UserRole, AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Audit')
 @Controller('audit')
@@ -43,6 +44,7 @@ export class AuditController {
    * Create audit log entry (manual logging)
    */
   @Post()
+  @RequirePermissions('audit:create')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Create audit log entry' })
   @ApiResponse({ status: 201, description: 'Audit log created' })
@@ -62,6 +64,7 @@ export class AuditController {
    * No need to specify tenantId or customerId - it's automatic!
    */
   @Get()
+  @RequirePermissions('audit:read')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -115,6 +118,7 @@ export class AuditController {
    * Get audit logs for Users module
    */
   @Get('modules/users')
+  @RequirePermissions('audit:read')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -155,6 +159,7 @@ export class AuditController {
    * Get audit logs for Devices module
    */
   @Get('modules/devices')
+  @RequirePermissions('audit:read')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -195,6 +200,7 @@ export class AuditController {
    * Get audit logs for Alarms module
    */
   @Get('modules/alarms')
+  @RequirePermissions('audit:read')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -228,6 +234,7 @@ export class AuditController {
    * Get audit logs for Device Profiles module
    */
   @Get('modules/device-profiles')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Get audit logs for Device Profiles module (auto-filtered)',
@@ -260,6 +267,7 @@ export class AuditController {
    * Get audit logs for Assets module
    */
   @Get('modules/assets')
+  @RequirePermissions('audit:read')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -293,6 +301,7 @@ export class AuditController {
    * Get audit logs for Dashboards module
    */
   @Get('modules/dashboards')
+  @RequirePermissions('audit:read')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -326,6 +335,7 @@ export class AuditController {
    * Get audit logs for Customers module
    */
   @Get('modules/customers')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Get audit logs for Customers module (auto-filtered)',
@@ -359,6 +369,7 @@ export class AuditController {
    * Get audit statistics (auto-filtered by role)
    */
   @Get('statistics')
+  @RequirePermissions('audit:read')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -387,6 +398,7 @@ export class AuditController {
    * Get recent audit logs (auto-filtered)
    */
   @Get('recent')
+  @RequirePermissions('audit:read')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -416,6 +428,7 @@ export class AuditController {
    * Get failed actions (auto-filtered)
    */
   @Get('failed')
+  @RequirePermissions('audit:read')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -442,6 +455,7 @@ export class AuditController {
    * Export audit logs to CSV (auto-filtered)
    */
   @Get('export/csv')
+  @RequirePermissions('audit:export')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -469,6 +483,7 @@ export class AuditController {
    * Get audit log by ID (with automatic access control)
    */
   @Get(':id')
+  @RequirePermissions('audit:read')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -490,6 +505,7 @@ export class AuditController {
    * Delete old audit logs (Super admin only)
    */
   @Delete('cleanup/:daysOld')
+  @RequirePermissions('audit:delete')
   @Roles(UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete old audit logs (Super admin only)' })

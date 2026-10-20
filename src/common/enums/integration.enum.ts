@@ -42,6 +42,23 @@ export enum IntegrationType {
   AZURE_EVENT_HUB = 'azure_event_hub',
   IBM_WATSON = 'ibm_watson',
   COAP = 'coap',
+
+  // ── NB-IoT carrier bearers — INBOUND ONLY ─────────────────────────────────
+  // NB-IoT is a radio bearer, not an application protocol, so there is no
+  // "NB-IoT wire format" to implement. What a carrier platform actually gives
+  // you is one of two deliveries, and these two types model exactly those:
+  //
+  //  NBIOT_HTTP — the carrier's IoT platform (Zain/STC/Vodafone/Telefónica
+  //    Kite, Huawei OceanConnect, …) POSTs each uplink to a URL you register
+  //    with it. Served by POST /nbiot/uplink/:id, which resolves the device by
+  //    IMEI / IMSI / ICCID / MSISDN against `nbiot_devices`, lifts the radio
+  //    metrics out of the body and ends at DeviceListenerService.
+  //  NBIOT_COAP — the device talks straight to the platform's CoAP server on
+  //    UDP 5683 with its deviceKey as the URI token. No per-integration code
+  //    runs at all; the row exists so the endpoint and the PSK note have
+  //    somewhere to live and so the UI can tell an operator what to configure.
+  NBIOT_HTTP = 'nbiot_http',
+  NBIOT_COAP = 'nbiot_coap',
 }
 
 /**

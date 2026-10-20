@@ -53,6 +53,26 @@ export class User extends BaseEntity {
 
   status: UserStatus;
 
+  /**
+   * Subject this account to fine-grained permission checks even when its role
+   * would otherwise bypass them.
+   *
+   * TENANT_ADMIN has full access within its tenant by default. That bypass
+   * was unconditional, so permissions assigned to a tenant admin were
+   * silently discarded — the grant appeared to save and changed nothing.
+   *
+   * Setting this to true makes those grants real: the account resolves its
+   * effective permissions exactly like a customer user (role ∪ direct,
+   * filtered by subscription, intersected with customer grants).
+   *
+   * Defaults to false so enabling the feature cannot retroactively lock out
+   * existing administrators. SUPER_ADMIN ignores this flag entirely — an
+   * account able to remove its own access to the platform it administers has
+   * no way back in.
+   */
+  @Column({ default: false })
+  enforcePermissions: boolean;
+
   // ══════════════════════════════════════════════════════════════════════════
   // TENANT SCOPE
   // ══════════════════════════════════════════════════════════════════════════

@@ -37,6 +37,7 @@ import {
   IsString,
   IsUUID,
 } from 'class-validator';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 // ══════════════════════════════════════════════════════════════════════════
 // DTOs
@@ -126,6 +127,7 @@ export class AssignmentController {
    * POST /assignments/customer
    */
   @Post('customer')
+  @RequirePermissions('customers:create')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -157,6 +159,7 @@ export class AssignmentController {
    * DELETE /assignments/customer/:customerId/:resourceType/:resourceId
    */
   @Delete('customer/:customerId/:resourceType/:resourceId')
+  @RequirePermissions('customers:update')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -194,6 +197,7 @@ export class AssignmentController {
    * POST /assignments/user
    */
   @Post('user')
+  @RequirePermissions('customers:create')
   @CustomerAdminOnly()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -225,6 +229,7 @@ export class AssignmentController {
    * DELETE /assignments/user/:userId/:resourceType/:resourceId
    */
   @Delete('user/:userId/:resourceType/:resourceId')
+  @RequirePermissions('customers:update')
   @CustomerAdminOnly()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -262,6 +267,7 @@ export class AssignmentController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Get('customer/:customerId')
+  @RequirePermissions('customers:read')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Everything assigned to a customer',
@@ -281,6 +287,7 @@ export class AssignmentController {
   }
 
   @Get('user/:userId')
+  @RequirePermissions('customers:read')
   @CustomerAdminOnly()
   @ApiOperation({ summary: 'Everything assigned to one user' })
   @ApiResponse({ status: 200, description: 'Assignments grouped by type' })
@@ -292,6 +299,7 @@ export class AssignmentController {
   }
 
   @Get('assignable/:resourceType')
+  @RequirePermissions('customers:read')
   @CustomerAdminOnly()
   @ApiOperation({
     summary: 'Resources that could still be assigned',
@@ -330,6 +338,7 @@ export class AssignmentController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Get('resource/:resourceType/:resourceId')
+  @RequirePermissions('customers:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Who holds this resource',
@@ -349,6 +358,7 @@ export class AssignmentController {
   }
 
   @Post('holders/:resourceType')
+  @RequirePermissions('customers:update')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -380,6 +390,7 @@ export class AssignmentController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post('customer/bulk')
+  @RequirePermissions('customers:create')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Assign many resources to one customer' })
@@ -397,6 +408,7 @@ export class AssignmentController {
   }
 
   @Post('user/bulk')
+  @RequirePermissions('customers:create')
   @CustomerAdminOnly()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Assign many resources to one user' })
@@ -414,6 +426,7 @@ export class AssignmentController {
   }
 
   @Post('customer/bulk-unassign')
+  @RequirePermissions('customers:create')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Unassign many resources from one customer' })
@@ -431,6 +444,7 @@ export class AssignmentController {
   }
 
   @Post('user/bulk-unassign')
+  @RequirePermissions('customers:create')
   @CustomerAdminOnly()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Unassign many resources from one user' })

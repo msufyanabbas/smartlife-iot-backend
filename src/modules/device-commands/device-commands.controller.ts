@@ -24,6 +24,7 @@ import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/index.entities';
 import { TenantOrCustomerAdmin } from '@common/decorators/access-control.decorator';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Device Commands')
 @Controller('device-commands')
@@ -36,6 +37,7 @@ export class DeviceCommandsController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post()
+  @RequirePermissions('devices:create')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'Send command to device' })
   @ApiResponse({ status: 201, description: 'Command sent successfully' })
@@ -66,6 +68,7 @@ export class DeviceCommandsController {
   // rejected by ParseIdPipe with 400 — the route was unreachable.
 
   @Get('my-commands')
+  @RequirePermissions('devices:control')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'Get your command history' })
   @ApiResponse({ status: 200, description: 'Command history retrieved' })
@@ -91,6 +94,7 @@ export class DeviceCommandsController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Get('device/:deviceId')
+  @RequirePermissions('devices:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'Get device command history' })
   @ApiResponse({ status: 200, description: 'Command history retrieved' })
@@ -117,6 +121,7 @@ export class DeviceCommandsController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Get(':id')
+  @RequirePermissions('devices:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'Get command status' })
   @ApiResponse({ status: 200, description: 'Command status retrieved' })
@@ -141,6 +146,7 @@ export class DeviceCommandsController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Patch(':id/acknowledge')
+  @RequirePermissions('devices:update')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -180,6 +186,7 @@ export class DeviceCommandsController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Delete(':id')
+  @RequirePermissions('devices:delete')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cancel pending command' })

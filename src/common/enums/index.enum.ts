@@ -30,3 +30,4 @@ export * from './integration.enum';
 export * from './node.enum';
 export * from './rule-chain.enum';
 export * from './firmware.enum';
+export * from './relation.enum';

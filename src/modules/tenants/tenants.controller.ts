@@ -31,6 +31,7 @@ import { Roles } from '@/common/decorators/roles.decorator';
 import { UserRole } from '@/common/enums/user.enum';
 import { TenantListResponseDto, TenantMessageResponseDto } from './dto/tenant-response.dto';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('tenants')
 /**
@@ -59,6 +60,7 @@ export class TenantsController {
   ) {}
 
   @Post()
+  @RequirePermissions('tenants:create')
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Create a new tenant (platform operator only)' })
   @ApiResponse({ status: 201, description: 'Tenant created successfully', type: TenantMessageResponseDto })
@@ -68,6 +70,7 @@ export class TenantsController {
   }
 
   @Get()
+  @RequirePermissions('tenants:list')
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({
     summary: 'Get all tenants (platform operator only)',
@@ -81,6 +84,7 @@ export class TenantsController {
   }
 
   @Get('statistics')
+  @RequirePermissions('tenants:list')
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Get tenant statistics (platform operator only)' })
   getStatistics() {
@@ -91,6 +95,7 @@ export class TenantsController {
   // order, so a literal path registered after a parameterised one on the same
   // method would be shadowed by it.
   @Post('sync-usage')
+  @RequirePermissions('tenants:create')
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @ApiOperation({
@@ -107,6 +112,7 @@ export class TenantsController {
   }
 
   @Get(':id')
+  @RequirePermissions('tenants:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Get tenant by ID',
@@ -119,6 +125,7 @@ export class TenantsController {
   }
 
   @Get(':id/usage')
+  @RequirePermissions('tenants:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Get tenant usage statistics',
@@ -131,6 +138,7 @@ export class TenantsController {
   }
 
   @Patch(':id')
+  @RequirePermissions('tenants:update')
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Update tenant (platform operator only)' })
   update(
@@ -142,6 +150,7 @@ export class TenantsController {
   }
 
   @Delete(':id')
+  @RequirePermissions('tenants:delete')
   @Roles(UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete tenant (platform operator only)' })
@@ -150,6 +159,7 @@ export class TenantsController {
   }
 
   @Post(':id/activate')
+  @RequirePermissions('tenants:update')
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Activate tenant (platform operator only)' })
   activate(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
@@ -157,6 +167,7 @@ export class TenantsController {
   }
 
   @Post(':id/suspend')
+  @RequirePermissions('tenants:update')
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Suspend tenant (platform operator only)' })
   suspend(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {

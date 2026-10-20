@@ -39,6 +39,7 @@ import {
 } from '@common/decorators/access-control.decorator';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { UserRole } from '@common/enums/index.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Solution Templates')
 @Controller('solution-templates')
@@ -48,6 +49,7 @@ export class SolutionTemplatesController {
   ) {}
 
   @Post()
+  @RequirePermissions('settings:create')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Create a new solution template', 'Template created')
   create(
@@ -59,6 +61,7 @@ export class SolutionTemplatesController {
   }
 
   @Get()
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get all solution templates', 'List of templates')
   findAll(
@@ -70,6 +73,7 @@ export class SolutionTemplatesController {
 
   // NOTE: static routes must precede ':id' or Nest parses them as an id param
   @Get('categories')
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get all template categories', 'List of categories')
   getCategories(@CurrentUser('tenantId') tenantId: string) {
@@ -77,6 +81,7 @@ export class SolutionTemplatesController {
   }
 
   @Get('statistics')
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get template statistics', 'Template statistics')
   getStatistics(@CurrentUser('tenantId') tenantId: string) {
@@ -84,6 +89,7 @@ export class SolutionTemplatesController {
   }
 
   @Get('installations')
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth(
     'List every template installation for the current tenant',
@@ -101,6 +107,7 @@ export class SolutionTemplatesController {
   }
 
   @Delete('installations/:installationId')
+  @RequirePermissions('settings:delete')
   @TenantOrCustomerAdmin()
   @SwaggerAuth(
     'Uninstall a template installation',
@@ -118,6 +125,7 @@ export class SolutionTemplatesController {
   }
 
   @Get(':id/preview')
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth(
     'Preview template installation',
@@ -132,6 +140,7 @@ export class SolutionTemplatesController {
   }
 
   @Get(':id')
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get template by ID', 'Template details')
   @ApiResponse({ status: 404, description: 'Template not found' })
@@ -143,6 +152,7 @@ export class SolutionTemplatesController {
   }
 
   @Get(':id/installations')
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth(
     'List installations of a template for the current tenant',
@@ -157,6 +167,7 @@ export class SolutionTemplatesController {
   }
 
   @Patch(':id')
+  @RequirePermissions('settings:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Update template', 'Template updated')
   @ApiResponse({ status: 404, description: 'Template not found' })
@@ -177,6 +188,7 @@ export class SolutionTemplatesController {
   }
 
   @Delete(':id')
+  @RequirePermissions('settings:delete')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.NO_CONTENT)
   @SwaggerAuth('Delete template', 'Template deleted')
@@ -198,6 +210,7 @@ export class SolutionTemplatesController {
   // Roles(TENANT_ADMIN, CUSTOMER) and would otherwise block the super admin,
   // who is the only role allowed to replace a system template's image.
   @Post(':id/image')
+  @RequirePermissions('settings:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @SwaggerAuth('Upload a template image', 'Template updated with image')
   @ApiConsumes('multipart/form-data')
@@ -235,6 +248,7 @@ export class SolutionTemplatesController {
   }
 
   @Get(':id/image')
+  @RequirePermissions('settings:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @SwaggerAuth('Download the uploaded template image', 'Image stream')
   @ApiResponse({ status: 404, description: 'Template has no uploaded image' })
@@ -253,6 +267,7 @@ export class SolutionTemplatesController {
   }
 
   @Delete(':id/image')
+  @RequirePermissions('settings:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @SwaggerAuth('Remove the template image', 'Image removed')
   @ApiResponse({ status: 404, description: 'Template not found' })
@@ -271,6 +286,7 @@ export class SolutionTemplatesController {
   }
 
   @Post(':id/install')
+  @RequirePermissions('settings:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Install solution template', 'Template installed')
   @ApiResponse({ status: 400, description: 'No configuration, or quota exceeded' })
@@ -292,6 +308,7 @@ export class SolutionTemplatesController {
   }
 
   @Post(':id/rate')
+  @RequirePermissions('settings:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Rate a template', 'Template rated')
   @ApiResponse({ status: 400, description: 'Rating must be between 0 and 5' })

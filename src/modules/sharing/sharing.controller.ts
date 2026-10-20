@@ -9,6 +9,7 @@ import { User } from '../users/entities/user.entity';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { UsageTrackingInterceptor } from '@/common/interceptors/usage-tracking.interceptor';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('sharing')
 @Controller('sharing')
@@ -18,6 +19,7 @@ export class SharingController {
   constructor(private readonly sharingService: SharingService) {}
 
   @Post()
+  @RequirePermissions('settings:create')
   @ApiOperation({ summary: 'Create a new share' })
   @UseInterceptors(UsageTrackingInterceptor)
   // @TrackUsage({ resource: 'users', incrementBy: 1 })
@@ -27,6 +29,7 @@ export class SharingController {
   }
 
   @Get()
+  @RequirePermissions('settings:read')
   @ApiOperation({ summary: 'Get all shares created by user' })
   @ApiResponse({ status: 200, description: 'List of shares' })
   findAll(@CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
@@ -34,6 +37,7 @@ export class SharingController {
   }
 
   @Get('shared-with-me')
+  @RequirePermissions('settings:read')
   @ApiOperation({ summary: 'Get shares shared with current user' })
   @ApiResponse({ status: 200, description: 'List of shares' })
   getSharedWithMe(
@@ -48,6 +52,7 @@ export class SharingController {
   }
 
   @Get('statistics')
+  @RequirePermissions('settings:read')
   @ApiOperation({ summary: 'Get sharing statistics' })
   @ApiResponse({ status: 200, description: 'Sharing statistics' })
   getStatistics(@CurrentUser() user: User) {
@@ -55,6 +60,7 @@ export class SharingController {
   }
 
   @Get('link/:token')
+  @RequirePermissions('settings:read')
   @ApiOperation({ summary: 'Access shared resource via token' })
   @ApiResponse({ status: 200, description: 'Shared resource details' })
   @ApiResponse({ status: 404, description: 'Share not found' })
@@ -64,6 +70,7 @@ export class SharingController {
   }
 
   @Get(':id')
+  @RequirePermissions('settings:read')
   @ApiOperation({ summary: 'Get share by ID' })
   @ApiResponse({ status: 200, description: 'Share details' })
   @ApiResponse({ status: 404, description: 'Share not found' })
@@ -72,6 +79,7 @@ export class SharingController {
   }
 
   @Patch(':id')
+  @RequirePermissions('settings:update')
   @ApiOperation({ summary: 'Update share' })
   @ApiResponse({ status: 200, description: 'Share updated successfully' })
   update(
@@ -83,6 +91,7 @@ export class SharingController {
   }
 
   @Delete(':id')
+  @RequirePermissions('settings:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Revoke share' })
   @ApiResponse({ status: 204, description: 'Share revoked successfully' })
@@ -91,6 +100,7 @@ export class SharingController {
   }
 
   @Post(':token/track-view')
+  @RequirePermissions('settings:update')
   @ApiOperation({ summary: 'Track view on shared resource' })
   @ApiResponse({ status: 200, description: 'View tracked' })
   trackView(@Param('token') token: string) {
@@ -98,6 +108,7 @@ export class SharingController {
   }
 
   @Delete('resource/:resourceId')
+  @RequirePermissions('settings:delete')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Revoke all shares for a resource' })
   @ApiResponse({ status: 200, description: 'Shares revoked' })

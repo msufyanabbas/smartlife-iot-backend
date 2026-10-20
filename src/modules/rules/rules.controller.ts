@@ -28,6 +28,7 @@ import {
   TenantOrCustomerAdmin,
   SwaggerAuth,
 } from '@common/decorators/access-control.decorator';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Rule Chains')
 @Controller('rule-chains')
@@ -42,6 +43,7 @@ export class RulesController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post()
+  @RequirePermissions('automations:create')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Create a new rule chain', 'Rule chain created')
   create(
@@ -57,6 +59,7 @@ export class RulesController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Get()
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get all rule chains', 'List of rule chains')
   findAll(
@@ -67,6 +70,7 @@ export class RulesController {
   }
 
   @Get('statistics')
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get rule chain statistics')
   getStatistics(@CurrentUser('tenantId') tenantId: string) {
@@ -74,6 +78,7 @@ export class RulesController {
   }
 
   @Get('catalogue')
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'The rule-node palette',
@@ -93,6 +98,7 @@ export class RulesController {
   }
 
   @Post('import')
+  @RequirePermissions('automations:create')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Create a rule chain from an export',
@@ -116,6 +122,7 @@ export class RulesController {
   }
 
   @Get(':id')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get rule chain by ID')
   @ApiResponse({ status: 404, description: 'Rule chain not found' })
@@ -124,6 +131,7 @@ export class RulesController {
   }
 
   @Get(':id/nodes')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get all nodes in a rule chain')
   @ApiResponse({ status: 404, description: 'Rule chain not found' })
@@ -135,6 +143,7 @@ export class RulesController {
   }
 
   @Get(':id/metadata')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'The whole graph, for the editor',
@@ -159,6 +168,7 @@ export class RulesController {
   }
 
   @Put(':id/metadata')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Replace the whole graph, in one transaction',
@@ -191,6 +201,7 @@ export class RulesController {
   }
 
   @Post(':id/test')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -221,6 +232,7 @@ export class RulesController {
   }
 
   @Get(':id/export')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Export the chain as portable JSON',
@@ -240,6 +252,7 @@ export class RulesController {
   }
 
   @Post(':id/duplicate')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Copy a chain, graph and all',
@@ -261,6 +274,7 @@ export class RulesController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Patch(':id')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Update rule chain', 'Rule chain updated')
   @ApiResponse({ status: 404, description: 'Rule chain not found' })
@@ -274,6 +288,7 @@ export class RulesController {
   }
 
   @Post(':id/activate')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Activate a rule chain', 'Rule chain activated')
   @ApiResponse({ status: 404, description: 'Rule chain not found' })
@@ -286,6 +301,7 @@ export class RulesController {
   }
 
   @Post(':id/deactivate')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Deactivate a rule chain', 'Rule chain deactivated')
   @ApiResponse({ status: 404, description: 'Rule chain not found' })
@@ -298,6 +314,7 @@ export class RulesController {
   }
 
   @Post(':id/root')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -323,6 +340,7 @@ export class RulesController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Delete(':id')
+  @RequirePermissions('automations:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Delete rule chain', 'Deleted successfully')

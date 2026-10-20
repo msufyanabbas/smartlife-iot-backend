@@ -37,6 +37,7 @@ import {
   BulkDeleteNotificationsDto,
   BulkUpdateNotificationsDto,
 } from './dto/bulk-notification.dto';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('notifications')
 @Controller('notifications')
@@ -46,6 +47,7 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Post()
+  @RequirePermissions('notifications:create')
   @ApiOperation({ summary: 'Create new notification' })
   @ApiResponse({ status: 201, description: 'Notification created' })
   create(@Body() createDto: CreateNotificationDto) {
@@ -53,6 +55,7 @@ export class NotificationsController {
   }
 
   @Get()
+  @RequirePermissions('notifications:list')
   @ApiOperation({ summary: 'Get all notifications' })
   @ApiResponse({ status: 200, description: 'List of notifications' })
   findAll(@CurrentUser() user: User, @Query() query: NotificationQueryDto) {
@@ -60,6 +63,7 @@ export class NotificationsController {
   }
 
   @Get('unread-count')
+  @RequirePermissions('notifications:list')
   @ApiOperation({ summary: 'Get unread notification count' })
   @ApiResponse({ status: 200, description: 'Unread count' })
   getUnreadCount(@CurrentUser() user: User) {
@@ -67,6 +71,7 @@ export class NotificationsController {
   }
 
   @Get('statistics')
+  @RequirePermissions('notifications:list')
   @ApiOperation({ summary: 'Get notification statistics' })
   @ApiResponse({ status: 200, description: 'Notification statistics' })
   getStatistics(@CurrentUser() user: User) {
@@ -74,6 +79,7 @@ export class NotificationsController {
   }
 
   @Get(':id')
+  @RequirePermissions('notifications:read')
   @ApiOperation({ summary: 'Get notification by ID' })
   @ApiResponse({ status: 200, description: 'Notification found' })
   @ApiResponse({ status: 404, description: 'Notification not found' })
@@ -82,6 +88,7 @@ export class NotificationsController {
   }
 
   @Patch(':id/read')
+  @RequirePermissions('notifications:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark notification as read' })
   @ApiResponse({ status: 200, description: 'Notification marked as read' })
@@ -90,6 +97,7 @@ export class NotificationsController {
   }
 
   @Patch('read/multiple')
+  @RequirePermissions('notifications:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark multiple notifications as read' })
   @ApiResponse({ status: 200, description: 'Notifications marked as read' })
@@ -98,6 +106,7 @@ export class NotificationsController {
   }
 
   @Patch('read/all')
+  @RequirePermissions('notifications:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark all notifications as read' })
   @ApiResponse({ status: 200, description: 'All notifications marked as read' })
@@ -106,6 +115,7 @@ export class NotificationsController {
   }
 
   @Delete(':id')
+  @RequirePermissions('notifications:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete notification' })
   @ApiResponse({ status: 204, description: 'Notification deleted' })
@@ -122,6 +132,7 @@ export class NotificationsController {
   // NotificationsService.resolveForBulk(), not by the role list.
 
   @Post('bulk/delete')
+  @RequirePermissions('notifications:delete')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -154,6 +165,7 @@ export class NotificationsController {
   }
 
   @Patch('bulk')
+  @RequirePermissions('notifications:update')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -192,6 +204,7 @@ export class NotificationsController {
   }
 
   @Delete('read/all')
+  @RequirePermissions('notifications:delete')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete all read notifications' })
   @ApiResponse({ status: 200, description: 'Read notifications deleted' })
@@ -200,6 +213,7 @@ export class NotificationsController {
   }
 
   @Post('bulk')
+  @RequirePermissions('notifications:create')
 @HttpCode(HttpStatus.OK)
 @ApiOperation({ summary: 'Send bulk notifications' })
 @ApiResponse({ status: 200, description: 'Bulk notifications sent' })
@@ -222,6 +236,7 @@ sendBulk(@Body() dto: SendBulkNotificationDto, @CurrentUser() user: User) {
  * tenant.
  */
 @Post('bulk/tenant/:tenantId')
+@RequirePermissions('notifications:update')
 @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
 @HttpCode(HttpStatus.OK)
 @ApiOperation({
@@ -249,6 +264,7 @@ sendBulkToTenant(
  * before anything is sent.
  */
 @Post('bulk/customer/:customerId')
+@RequirePermissions('notifications:update')
 @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
 @HttpCode(HttpStatus.OK)
 @ApiOperation({
@@ -285,6 +301,7 @@ async sendBulkToCustomer(
 }
 
   @Post('retry-failed')
+  @RequirePermissions('notifications:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Retry failed notifications' })
   @ApiResponse({ status: 200, description: 'Failed notifications retried' })

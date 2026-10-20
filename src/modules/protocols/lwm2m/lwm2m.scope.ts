@@ -119,11 +119,25 @@ export const LWM2M_CAPABILITIES: Lwm2mCapability[] = [
     supported: false,
     note:
       'NOT IMPLEMENTED. The CoAP server listens on plaintext UDP 5683 only; ' +
-      'there is no coaps:// listener on 5684. Registration and Send are ' +
-      'therefore unauthenticated beyond the endpoint name matching a known ' +
-      'deviceKey, which an attacker on the path can observe and spoof. Run ' +
+      'there is no coaps:// listener on 5684. Registration IS now ' +
+      'credential-checked — the endpoint name must be a valid device ' +
+      'ACCESS_TOKEN, resolved through DeviceAuthService, and a bare deviceKey ' +
+      'is refused unless DEVICE_AUTH_ENFORCED=false — but the token travels ' +
+      'in CLEAR TEXT over UDP and is replayable by anyone on the path. Run ' +
       'this on a trusted network or behind a DTLS-terminating gateway; do not ' +
-      'treat LwM2M identity here as a security boundary.',
+      'treat LwM2M identity here as a transport security boundary.',
+  },
+  {
+    interface: 'Security',
+    operation: 'Registration credential check',
+    supported: true,
+    note:
+      'IMPLEMENTED. The LwM2M endpoint name (?ep=) is treated as a ' +
+      'credential and resolved through DeviceAuthService, the same verifier ' +
+      'the HTTP and CoAP ingest paths use. The resolved deviceId is persisted ' +
+      'on the registration, so Update / Send / De-register are bound to the ' +
+      'device that authenticated rather than re-trusting an endpoint name. ' +
+      'Without DTLS this is replay-protection-free: see the DTLS row.',
   },
   {
     interface: 'Client Registration',
@@ -140,11 +154,26 @@ export const LWM2M_CAPABILITIES: Lwm2mCapability[] = [
 export const LWM2M_SCOPE_SUMMARY = {
   transport: 'LWM2M' as const,
   serverVersion: LWM2M_SERVER_VERSION,
+  // False means TRANSPORT security: there is no DTLS. Registration is
+  // credential-checked (see `registrationAuthenticated`), but the credential
+  // is sent in clear over UDP, so this stays false.
   secure: false,
+  registrationAuthenticated: true,
   coapPort: 5683,
-  /** Registration state lives in the process that owns the UDP socket. */
-  registrationStorage: 'in-memory (single node)' as const,
-  supported: ['Register', 'Update', 'De-register', 'Send (SenML JSON)'],
+  /**
+   * Registrations are rows in `lwm2m_registrations`, so they survive a
+   * restart and are the same on every replica. They used to live in two
+   * in-process Maps, which meant a deploy silently dropped the whole fleet's
+   * registrations until each client's lifetime elapsed.
+   */
+  registrationStorage: 'database (lwm2m_registrations)' as const,
+  supported: [
+    'Register (credential-checked)',
+    'Update',
+    'De-register',
+    'Send (SenML JSON)',
+    'Durable registrations across restarts and replicas',
+  ],
   notSupported: [
     'Observe / Notify',
     'Server-initiated Read / Write / Execute',
@@ -155,5 +184,7 @@ export const LWM2M_SCOPE_SUMMARY = {
   ],
   summary:
     'Registration and client-initiated reporting only. Nothing is ever sent ' +
-    'down to an LwM2M client; it cannot be read, written or commanded.',
+    'down to an LwM2M client; it cannot be read, written or commanded. ' +
+    'Registration requires a device credential, but there is no DTLS, so the ' +
+    'credential is in clear on the wire — put this port on a trusted network.',
 };

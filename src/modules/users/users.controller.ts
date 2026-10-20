@@ -66,6 +66,7 @@ import {
 } from '@common/enums/index.enum';
 import { AuditInterceptor } from '@/common/interceptors/index.interceptor';
 import { User } from '../index.entities';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Users')
 @Controller('users')
@@ -78,6 +79,7 @@ export class UsersController {
    * Create a new user
    */
   @Post()
+  @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequireSubscriptionLimit({
@@ -106,6 +108,7 @@ export class UsersController {
    * Get all users with pagination and filters
    */
   @Get()
+  @RequirePermissions('users:list')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all users' })
   @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
@@ -126,6 +129,7 @@ export class UsersController {
    * Get current user profile
    */
   @Get('me')
+  @RequirePermissions('users:list')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user profile' })
@@ -142,6 +146,7 @@ export class UsersController {
    * Update current user profile
    */
   @Patch('me')
+  @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update current user profile' })
@@ -162,6 +167,7 @@ export class UsersController {
    * Change password
    */
   @Post('change-password')
+  @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -182,6 +188,7 @@ export class UsersController {
    * Forgot password
    */
   @Post('forgot-password')
+  @RequirePermissions('users:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Request password reset' })
   @ApiResponse({ status: 200, description: 'Password reset email sent' })
@@ -196,6 +203,7 @@ export class UsersController {
    * Reset password
    */
   @Post('reset-password')
+  @RequirePermissions('users:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reset password with token' })
   @ApiResponse({ status: 200, description: 'Password reset successfully' })
@@ -211,6 +219,7 @@ export class UsersController {
    * Verify email
    */
   @Post('verify-email')
+  @RequirePermissions('users:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify email with token' })
   @ApiResponse({ status: 200, description: 'Email verified successfully' })
@@ -226,6 +235,7 @@ export class UsersController {
    * Resend verification email
    */
   @Post('resend-verification')
+  @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -242,6 +252,7 @@ export class UsersController {
    * Update preferences
    */
   @Patch('me/preferences')
+  @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update user preferences' })
@@ -264,6 +275,7 @@ export class UsersController {
    * Get user statistics
    */
   @Get('statistics')
+  @RequirePermissions('users:list')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -284,6 +296,7 @@ export class UsersController {
    * Search users
    */
   @Get('search')
+  @RequirePermissions('users:list')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Search users' })
@@ -303,6 +316,7 @@ export class UsersController {
    * Invite user
    */
   @Post('invite')
+  @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -320,6 +334,7 @@ export class UsersController {
    * Bulk update status
    */
   @Patch('bulk/status')
+  @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -338,6 +353,7 @@ export class UsersController {
   // ── Bulk operations (declared before ':id' so 'bulk' is not read as an id) ─
 
   @Post('bulk/delete')
+  @RequirePermissions('users:delete')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -373,6 +389,7 @@ export class UsersController {
   }
 
   @Patch('bulk')
+  @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -413,6 +430,7 @@ export class UsersController {
    * Get users by tenant
    */
   @Get('tenant/:tenantId')
+  @RequirePermissions('users:read')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -430,6 +448,7 @@ export class UsersController {
    * Get admin users
    */
   @Get('admins/list')
+  @RequirePermissions('users:list')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN)
   @ApiBearerAuth()
@@ -444,6 +463,7 @@ export class UsersController {
   }
 
   @Delete('bulk')
+  @RequirePermissions('users:delete')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -467,6 +487,7 @@ export class UsersController {
   }
 
   @Patch('bulk/assign-role')
+  @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -478,6 +499,7 @@ export class UsersController {
   }
 
   @Patch('bulk/remove-role')
+  @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -489,6 +511,7 @@ export class UsersController {
   }
 
   @Patch('bulk/permissions')
+  @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -500,6 +523,7 @@ export class UsersController {
   }
 
   @Post('bulk/send-email')
+  @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -512,6 +536,7 @@ export class UsersController {
   }
 
   @Post('bulk/send-notification')
+  @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -527,6 +552,7 @@ export class UsersController {
    * Delete user
    */
   @Delete(':id')
+  @RequirePermissions('users:delete')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -542,6 +568,7 @@ export class UsersController {
    * Get user by ID
    */
   @Get(':id')
+  @RequirePermissions('users:read')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiBearerAuth()
   @ApiOperation({
@@ -569,6 +596,7 @@ export class UsersController {
    * Update user by ID
    */
   @Patch(':id')
+  @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -587,6 +615,7 @@ export class UsersController {
    * Update user status
    */
   @Patch(':id/status')
+  @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()

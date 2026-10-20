@@ -24,6 +24,7 @@ import {
   QueueQueryDto,
   UpdateQueueDto,
 } from './dto/queue.dto';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /**
  * Queue definitions — named processing lanes for the rule engine.
@@ -55,6 +56,7 @@ export class QueuesController {
   constructor(private readonly queuesService: QueuesService) {}
 
   @Get()
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'List queue definitions' })
   @SwaggerAuth('List queues', 'Paginated queues')
@@ -67,6 +69,7 @@ export class QueuesController {
 
   // Both of these must precede `:id`, or the literal is parsed as a queue id.
   @Get('capabilities')
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Which parts of a queue definition this platform honours',
@@ -80,6 +83,7 @@ export class QueuesController {
   }
 
   @Get('statistics')
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Per-queue counts and observed usage',
@@ -94,6 +98,7 @@ export class QueuesController {
   }
 
   @Get(':id')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'One queue definition' })
   @SwaggerAuth('Get a queue', 'The queue')
@@ -105,6 +110,7 @@ export class QueuesController {
   }
 
   @Get(':id/rule-chains')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Rule chains processed on this queue',
@@ -121,6 +127,7 @@ export class QueuesController {
   }
 
   @Post()
+  @RequirePermissions('automations:create')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Create a queue definition' })
   @SwaggerAuth('Create a queue', 'Queue created')
@@ -133,6 +140,7 @@ export class QueuesController {
   }
 
   @Post(':id/rule-chains')
+  @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Process a rule chain on this queue',
@@ -152,6 +160,7 @@ export class QueuesController {
   }
 
   @Put(':id')
+  @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Update a queue definition',
@@ -171,6 +180,7 @@ export class QueuesController {
 
   // The shipped frontend client (`queues.api.ts`) sends PATCH. Same handler.
   @Patch(':id')
+  @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Update a queue definition (alias of PUT)' })
   @SwaggerAuth('Update a queue', 'Queue updated')
@@ -184,6 +194,7 @@ export class QueuesController {
   }
 
   @Delete(':id/rule-chains/:ruleChainId')
+  @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Stop processing a rule chain on this queue' })
   @SwaggerAuth('Detach a rule chain', 'Rule chain detached')
@@ -196,6 +207,7 @@ export class QueuesController {
   }
 
   @Delete(':id')
+  @RequirePermissions('automations:delete')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Delete a queue definition',

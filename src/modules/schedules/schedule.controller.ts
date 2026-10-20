@@ -26,6 +26,7 @@ import { Roles } from '@common/decorators/roles.decorator';
 import { PaginationDto } from '@common/dto/pagination.dto';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { UserRole } from '@common/enums/index.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /**
  * `@CurrentUser()` yields the full User; only these two fields are used, and
@@ -51,6 +52,7 @@ export class SchedulesController {
   constructor(private readonly schedulesService: SchedulesService) {}
 
   @Post()
+  @RequirePermissions('automations:create')
   @ApiOperation({ summary: 'Create a new schedule' })
   @ApiResponse({ status: 201, description: 'Schedule created' })
   @ApiResponse({ status: 400, description: 'Invalid timing or actionConfig' })
@@ -66,6 +68,7 @@ export class SchedulesController {
   }
 
   @Get()
+  @RequirePermissions('automations:list')
   @ApiOperation({ summary: "List the current user's schedules" })
   findAll(
     @CurrentUser() user: AuthenticatedUser,
@@ -75,6 +78,7 @@ export class SchedulesController {
   }
 
   @Post('validate-cron')
+  @RequirePermissions('automations:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Validate a cron expression',
@@ -92,12 +96,14 @@ export class SchedulesController {
   }
 
   @Get('statistics')
+  @RequirePermissions('automations:list')
   @ApiOperation({ summary: 'Schedule counts, run totals and success rate' })
   getStatistics(@CurrentUser() user: AuthenticatedUser) {
     return this.schedulesService.getStatistics(user.id, user.tenantId);
   }
 
   @Get(':id')
+  @RequirePermissions('automations:read')
   @ApiOperation({ summary: 'Get a schedule by ID' })
   findOne(
     @CurrentUser() user: AuthenticatedUser,
@@ -109,6 +115,7 @@ export class SchedulesController {
   // ── Execution history ─────────────────────────────────────────────────────
 
   @Get(':id/executions')
+  @RequirePermissions('automations:read')
   @ApiOperation({ summary: 'Paginated execution history for a schedule' })
   @ApiResponse({ status: 200, description: 'Executions plus lifetime summary' })
   getExecutions(
@@ -125,6 +132,7 @@ export class SchedulesController {
   }
 
   @Get(':id/executions/latest')
+  @RequirePermissions('automations:read')
   @ApiOperation({
     summary: 'Most recent execution — did the last run succeed?',
   })
@@ -140,6 +148,7 @@ export class SchedulesController {
    * not 404 after the `schedule_execution_logs` table was replaced.
    */
   @Get(':id/history')
+  @RequirePermissions('automations:read')
   @ApiOperation({
     summary: 'DEPRECATED — use GET /schedules/:id/executions',
     deprecated: true,
@@ -160,6 +169,7 @@ export class SchedulesController {
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   @Patch(':id')
+  @RequirePermissions('automations:update')
   @ApiOperation({ summary: 'Update a schedule' })
   @ApiResponse({ status: 400, description: 'Merged schedule is invalid' })
   update(
@@ -176,6 +186,7 @@ export class SchedulesController {
   }
 
   @Delete(':id')
+  @RequirePermissions('automations:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Soft-delete a schedule and stop its timer' })
   remove(
@@ -186,6 +197,7 @@ export class SchedulesController {
   }
 
   @Post(':id/toggle')
+  @RequirePermissions('automations:update')
   @ApiOperation({ summary: 'Enable/disable a schedule' })
   toggle(
     @CurrentUser() user: AuthenticatedUser,
@@ -195,6 +207,7 @@ export class SchedulesController {
   }
 
   @Post(':id/run')
+  @RequirePermissions('automations:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Run a schedule immediately',
@@ -210,6 +223,7 @@ export class SchedulesController {
 
   /** @deprecated Alias for `POST :id/run`. */
   @Post(':id/execute')
+  @RequirePermissions('automations:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'DEPRECATED — use POST /schedules/:id/run',

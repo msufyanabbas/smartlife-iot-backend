@@ -40,6 +40,21 @@ export enum DeviceProtocol {
    * OpenAPI rather than the broker.
    */
   TUYA = 'tuya',
+  /**
+   * Device that reaches the platform over an NB-IoT (LTE Cat-NB) bearer.
+   *
+   * NB-IoT is not an application protocol — the device still speaks CoAP,
+   * MQTT-SN or HTTP on top of it — so this value records the BEARER, which is
+   * what an operator troubleshoots: coverage class, RSRP and which carrier's
+   * platform is forwarding the uplink. The application-layer details stay in
+   * `nbiot_devices` and the integration row that receives the push.
+   *
+   * `devices.protocol` is a Postgres ENUM, so this member needed
+   * `ALTER TYPE devices_protocol_enum ADD VALUE 'nb_iot'` —
+   * IndustrialProtocols1788100000000. A TypeScript member alone passes
+   * @IsEnum and then fails at INSERT (CLAUDE.md §4e).
+   */
+  NB_IOT = 'nb_iot',
 }
 
 @Entity('devices')

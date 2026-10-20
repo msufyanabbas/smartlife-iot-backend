@@ -46,6 +46,7 @@ import { IsArray } from 'class-validator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { TenantAdminOnly } from '../../common/decorators/access-control.decorator';
 import { UserRole } from '../../common/enums/index.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('telemetry')
 @Controller('telemetry')
@@ -55,6 +56,7 @@ export class TelemetryController {
   constructor(private readonly telemetryService: TelemetryService) {}
 
   @Post('devices/:deviceKey')
+  @RequirePermissions('telemetry:create')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create telemetry data for a device' })
   @ApiResponse({
@@ -71,6 +73,7 @@ export class TelemetryController {
   }
 
   @Post('devices/:deviceKey/batch')
+  @RequirePermissions('telemetry:create')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create multiple telemetry records (batch)' })
   @ApiResponse({
@@ -87,6 +90,7 @@ export class TelemetryController {
   }
 
   @Get('devices/:deviceId')
+  @RequirePermissions('telemetry:read')
   @ApiOperation({ summary: 'Query telemetry data for a device' })
   @ApiResponse({
     status: 200,
@@ -103,6 +107,7 @@ export class TelemetryController {
   }
 
   @Get('devices/:deviceId/latest')
+  @RequirePermissions('telemetry:read')
   @ApiOperation({ summary: 'Get latest telemetry for a device' })
   @ApiResponse({
     status: 200,
@@ -118,6 +123,7 @@ export class TelemetryController {
   }
 
   @Get('devices/:deviceId/statistics')
+  @RequirePermissions('telemetry:read')
   @ApiOperation({ summary: 'Get telemetry statistics for a device' })
   @ApiResponse({
     status: 200,
@@ -141,6 +147,7 @@ export class TelemetryController {
   }
 
   @Get('devices/:deviceId/aggregated')
+  @RequirePermissions('telemetry:read')
   @ApiOperation({ summary: 'Get aggregated telemetry data' })
   @ApiResponse({
     status: 200,
@@ -171,6 +178,7 @@ export class TelemetryController {
   }
 
   @Get('devices/:deviceId/timeseries')
+  @RequirePermissions('telemetry:read')
   @ApiOperation({ summary: 'Get time series data for a specific key' })
   @ApiResponse({
     status: 200,
@@ -200,6 +208,7 @@ export class TelemetryController {
   }
 
   @Get('devices/:deviceId/count')
+  @RequirePermissions('telemetry:read')
   @ApiOperation({ summary: 'Get telemetry record count for a device' })
   @ApiResponse({
     status: 200,
@@ -214,6 +223,7 @@ export class TelemetryController {
   }
 
   @Get('devices/:deviceId/export')
+  @RequirePermissions('telemetry:export')
   @Header('Content-Type', 'text/csv')
   @Header('Content-Disposition', 'attachment; filename="telemetry.csv"')
   @ApiOperation({ summary: 'Export telemetry data as CSV' })
@@ -250,6 +260,7 @@ export class TelemetryController {
    * that render device charts.
    */
   @Get('devices/:deviceId/rollups')
+  @RequirePermissions('telemetry:read')
   @Roles(UserRole.TENANT_ADMIN, UserRole.CUSTOMER, UserRole.CUSTOMER_USER)
   @ApiOperation({
     summary: 'Read pre-aggregated telemetry rollups for a device',
@@ -286,6 +297,7 @@ export class TelemetryController {
    * tenant is accumulating telemetry nothing will ever clean up.
    */
   @Get('maintenance/status')
+  @RequirePermissions('telemetry:read')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Telemetry retention and rollup status for the current tenant',
@@ -309,6 +321,7 @@ export class TelemetryController {
   }
 
   @Delete('devices/:deviceId')
+  @RequirePermissions('telemetry:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete all telemetry data for a device' })
   @ApiResponse({ status: 204, description: 'Telemetry deleted' })

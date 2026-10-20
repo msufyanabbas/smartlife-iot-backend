@@ -22,6 +22,7 @@ import { User } from '@modules/users/entities/user.entity';
 import { GatewayService } from './gateway.service';
 import { DevicesService } from '@modules/devices/devices.service';
 import { SendRpcDto } from './dto/send-rpc.dto';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 export interface DeviceCommandDto {
   method: string;
@@ -45,6 +46,7 @@ export class GatewayController {
   // carry @TenantOrCustomerAdmin() explicitly.
 
   @Get('status')
+  @RequirePermissions('devices:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Get MQTT gateway connection status',
@@ -62,6 +64,7 @@ export class GatewayController {
   // avoid a circular dependency between DevicesModule and GatewayModule.
 
   @Post('devices/:deviceKey/command')
+  @RequirePermissions('devices:control')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -85,6 +88,7 @@ export class GatewayController {
   }
 
   @Post('devices/:deviceKey/rpc')
+  @RequirePermissions('devices:control')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -133,6 +137,7 @@ export class GatewayController {
   }
 
   @Post('devices/:deviceKey/telemetry')
+  @RequirePermissions('devices:update')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Publish test telemetry (for testing/debugging)' })

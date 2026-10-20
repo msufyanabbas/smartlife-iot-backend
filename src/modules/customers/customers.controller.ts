@@ -43,6 +43,7 @@ import { Audit } from '@/common/decorators/audit.decorator';
 import { Notify } from '@/common/decorators/notify.decorator';
 import { RequireSubscriptionLimit } from '@/common/decorators/subscription.decorator';
 import { ResourceType } from '@/common/guards/subscription-limit.guard';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Customers')
 @Controller('customers')
@@ -52,6 +53,7 @@ export class CustomersController {
    * Create a new customer
    */
   @Post()
+  @RequirePermissions('customers:create')
   @Roles(UserRole.TENANT_ADMIN)
   @Audit({ action: AuditAction.CREATE, entityType: AuditEntityType.CUSTOMER })
   @Notify({
@@ -81,6 +83,7 @@ export class CustomersController {
   }
 
   @Post(':id/resend-invitation')
+  @RequirePermissions('customers:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @ApiBearerAuth()
@@ -98,6 +101,7 @@ export class CustomersController {
    * Get all customers with pagination and filters
    */
   @Get()
+  @RequirePermissions('customers:list')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @Roles(UserRole.TENANT_ADMIN)
@@ -133,6 +137,7 @@ export class CustomersController {
    * Get customer statistics
    */
   @Get('statistics')
+  @RequirePermissions('customers:list')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -154,6 +159,7 @@ export class CustomersController {
    * Search customers
    */
   @Get('search')
+  @RequirePermissions('customers:list')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Search customers' })
@@ -182,6 +188,7 @@ export class CustomersController {
    * Get public customers
    */
   @Get('public/:tenantId')
+  @RequirePermissions('customers:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get public customers for a tenant' })
@@ -198,6 +205,7 @@ export class CustomersController {
    * Bulk update customer status
    */
   @Patch('bulk/status')
+  @RequirePermissions('customers:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -216,6 +224,7 @@ export class CustomersController {
   // ── Bulk operations (declared before ':id' so 'bulk' is not read as an id) ─
 
   @Post('bulk/delete')
+  @RequirePermissions('customers:delete')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -252,6 +261,7 @@ export class CustomersController {
   }
 
   @Patch('bulk')
+  @RequirePermissions('customers:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -286,6 +296,7 @@ export class CustomersController {
    * Get customers by tenant
    */
   @Get('tenant/:tenantId')
+  @RequirePermissions('customers:read')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -303,6 +314,7 @@ export class CustomersController {
    * Get customers by tenant
    */
   @Get('tenant')
+  @RequirePermissions('customers:list')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -320,6 +332,7 @@ export class CustomersController {
    * Get customers by status
    */
   @Get('status/:status')
+  @RequirePermissions('customers:read')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -345,6 +358,7 @@ export class CustomersController {
    * Get customer by ID
    */
   @Get(':id')
+  @RequirePermissions('customers:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get customer by ID' })
@@ -362,6 +376,7 @@ export class CustomersController {
    * Update customer by ID
    */
   @Patch(':id')
+  @RequirePermissions('customers:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -384,6 +399,7 @@ export class CustomersController {
    * Update customer status
    */
   @Patch(':id/status')
+  @RequirePermissions('customers:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -405,6 +421,7 @@ export class CustomersController {
    * Delete customer
    */
   @Delete(':id')
+  @RequirePermissions('customers:delete')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)

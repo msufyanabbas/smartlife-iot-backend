@@ -5,6 +5,7 @@ import { WidgetTypesService } from './widget-types.service';
 import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /**
  * The widget catalogue, as the dashboard editor needs it.
@@ -21,6 +22,7 @@ export class WidgetTypesController {
   constructor(private readonly widgetTypesService: WidgetTypesService) {}
 
   @Get()
+  @RequirePermissions('dashboards:list')
   @ApiOperation({ summary: 'List widget types grouped by bundle' })
   @ApiResponse({ status: 200, description: 'Bundles with their widget types' })
   findAllGrouped(@CurrentUser('tenantId') tenantId?: string) {
@@ -28,6 +30,7 @@ export class WidgetTypesController {
   }
 
   @Get(':id')
+  @RequirePermissions('dashboards:read')
   @ApiOperation({ summary: 'Get a single widget type with its full descriptor' })
   @ApiResponse({ status: 200, description: 'Widget type' })
   @ApiResponse({ status: 404, description: 'Widget type not found' })

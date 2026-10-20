@@ -23,6 +23,7 @@ import {
   TenantOrCustomerAdmin,
   SwaggerAuth,
 } from '@common/decorators/access-control.decorator';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /**
  * Rule chain templates.
@@ -43,6 +44,7 @@ export class RuleChainTemplatesController {
   constructor(private readonly templatesService: RuleChainTemplatesService) {}
 
   @Get()
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'List rule chain templates',
@@ -59,6 +61,7 @@ export class RuleChainTemplatesController {
 
   // Before `:id`, or "categories" is parsed as a template id.
   @Get('categories')
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Template categories', 'Category names')
   getCategories(@CurrentUser('tenantId') tenantId: string) {
@@ -66,6 +69,7 @@ export class RuleChainTemplatesController {
   }
 
   @Get(':id')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'One template, with its full definition and static analysis',
@@ -79,6 +83,7 @@ export class RuleChainTemplatesController {
   }
 
   @Get(':id/export')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Download the definition',
@@ -94,6 +99,7 @@ export class RuleChainTemplatesController {
   }
 
   @Post()
+  @RequirePermissions('automations:create')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Create a template',
@@ -110,6 +116,7 @@ export class RuleChainTemplatesController {
   }
 
   @Post(':id/instantiate')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
@@ -128,6 +135,7 @@ export class RuleChainTemplatesController {
   }
 
   @Put(':id')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Update a template',
@@ -144,6 +152,7 @@ export class RuleChainTemplatesController {
   }
 
   @Delete(':id')
+  @RequirePermissions('automations:delete')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Delete a template',

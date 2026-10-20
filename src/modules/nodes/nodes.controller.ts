@@ -21,6 +21,7 @@ import {
   TenantOrCustomerAdmin,
   SwaggerAuth,
 } from '@common/decorators/access-control.decorator';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('nodes')
 @Controller('nodes')
@@ -28,6 +29,7 @@ export class NodesController {
   constructor(private readonly nodesService: NodesService) {}
 
   @Post()
+  @RequirePermissions('automations:create')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Create a new node', 'Node created successfully')
   create(
@@ -39,6 +41,7 @@ export class NodesController {
   }
 
   @Get()
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get all nodes', 'List of nodes')
   findAll(
@@ -49,6 +52,7 @@ export class NodesController {
   }
 
   @Get('statistics')
+  @RequirePermissions('automations:list')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get node statistics')
   getStatistics(@CurrentUser('tenantId') tenantId: string) {
@@ -56,6 +60,7 @@ export class NodesController {
   }
 
   @Get('rule-chain/:ruleChainId')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get nodes by rule chain')
   findByRuleChain(
@@ -66,6 +71,7 @@ export class NodesController {
   }
 
   @Get(':id')
+  @RequirePermissions('automations:read')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Get node by ID')
   @ApiResponse({ status: 404, description: 'Node not found' })
@@ -77,6 +83,7 @@ export class NodesController {
   }
 
   @Patch(':id')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Update node', 'Node updated successfully')
   @ApiResponse({ status: 404, description: 'Node not found' })
@@ -90,6 +97,7 @@ export class NodesController {
   }
 
   @Delete(':id')
+  @RequirePermissions('automations:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Delete node', 'Deleted successfully')
@@ -102,6 +110,7 @@ export class NodesController {
   }
 
   @Post(':id/toggle')
+  @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Toggle node enabled status', 'Toggled successfully')
   @ApiResponse({ status: 404, description: 'Node not found' })

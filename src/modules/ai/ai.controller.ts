@@ -108,6 +108,7 @@ export class AiController {
   }
 
   @Get('models')
+  @RequirePermissions('settings:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'Registered AI models for this tenant' })
   findAll(@CurrentUser() user: User) {
@@ -115,6 +116,7 @@ export class AiController {
   }
 
   @Get('models/:id')
+  @RequirePermissions('settings:read')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'One AI model (never includes the API key)' })
   findOne(@CurrentUser() user: User, @Param('id', ParseUUIDPipe) id: string) {
@@ -122,6 +124,7 @@ export class AiController {
   }
 
   @Post('models')
+  @RequirePermissions('settings:create')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Register an AI model' })
   @ApiResponse({ status: 201, description: 'Created' })
@@ -130,6 +133,7 @@ export class AiController {
   }
 
   @Patch('models/:id')
+  @RequirePermissions('settings:update')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Update an AI model',
@@ -146,6 +150,7 @@ export class AiController {
   }
 
   @Delete('models/:id')
+  @RequirePermissions('settings:delete')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete an AI model' })
@@ -158,6 +163,7 @@ export class AiController {
   }
 
   @Post('models/:id/check')
+  @RequirePermissions('settings:update')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

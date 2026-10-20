@@ -25,6 +25,7 @@ import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { EmailChannel } from './channels/email.channel';
 import { SmsChannel } from './channels/sms.channel';
 import { PushChannel } from './channels/push.channel';
+import { PushSubscriptionsService } from './push-subscriptions.service';
 import { WhatsappChannel } from './channels/whatsapp.channel';
 import { NotificationsRepository } from './repositories/notifications.repository';
 import { UserRole } from '@common/enums/index.enum';
@@ -58,6 +59,9 @@ export class NotificationsService {
     private userService: InstanceType<typeof UsersService>,
     private smsChannel: SmsChannel,
     private pushChannel: PushChannel,
+    // Resolves a user's registered devices when a push notification carries no
+    // explicit token — see sendPush().
+    private pushSubscriptions: PushSubscriptionsService,
     private whatsappChannel: WhatsappChannel,
     // Bulk operations commit one transaction per item — see bulkDelete.
     private readonly dataSource: DataSource,
@@ -201,10 +205,66 @@ export class NotificationsService {
   }
 
   /**
-   * Send push notification
+   * Send push notification.
+   *
+   * ─── Why this is not just `pushChannel.send()` ──────────────────────────
+   * `Notification.recipientDeviceToken` has to be supplied by whoever creates
+   * the notification, and nothing in the platform ever did — the alarm
+   * escalation path, for instance, fills `recipientEmail` and `recipientPhone`
+   * and has no token to give. So a PUSH notification could only ever fail with
+   * "Recipient device token is required", and the push channel was unreachable
+   * in practice even once its FCM calls were real.
+   *
+   * With `push_subscriptions` in place there is somewhere to look: when no
+   * explicit token is given, every device the recipient has registered is
+   * used. A person with a phone and a laptop browser gets both.
+   *
+   * Delivery is "at least one device accepted it". A single dead token among
+   * several must not mark the notification failed — the provider's own
+   * unregistered-token reporting prunes it, and the user did get the
+   * notification. Zero devices, or zero successes, is a failure and throws.
    */
   private async sendPush(notification: Notification): Promise<void> {
-    await this.pushChannel.send(notification);
+    if (notification.recipientDeviceToken) {
+      await this.pushChannel.send(notification);
+      notification.markAsSent();
+      notification.markAsDelivered();
+      await this.notificationRepository.save(notification);
+      return;
+    }
+
+    const subscriptions = await this.pushSubscriptions.findTokensForUsers(
+      notification.tenantId,
+      [notification.userId],
+    );
+
+    if (subscriptions.length === 0) {
+      throw new Error(
+        'No push subscription is registered for this user, so the ' +
+          'notification could not be delivered. The client registers one with ' +
+          'POST /push-subscriptions.',
+      );
+    }
+
+    const result = await this.pushChannel.sendToMultipleDevices(
+      subscriptions.map((subscription) => subscription.token),
+      notification,
+    );
+
+    if (result.success === 0) {
+      // Every device rejected it. The first provider message is carried
+      // through because "push failed" alone is not diagnosable.
+      const reason =
+        result.outcomes.find((outcome) => outcome.error)?.error ??
+        'every registered device rejected the message';
+      throw new Error(`Push delivery failed: ${reason}`);
+    }
+
+    this.logger.log(
+      `Push notification ${notification.id} delivered to ${result.success} of ` +
+        `${subscriptions.length} registered device(s)`,
+    );
+
     notification.markAsSent();
     notification.markAsDelivered();
     await this.notificationRepository.save(notification);

@@ -15,6 +15,26 @@ export enum DeviceTransportType {
   HTTP = 'HTTP',
   LWM2M = 'LWM2M',
   SNMP = 'SNMP',
+
+  // ── Industrial / carrier transports ────────────────────────────────────────
+  // All three are polling or carrier-borne rather than broker-push, and all
+  // three are varchar values, so no DB enum migration is needed for THESE
+  // (unlike `devices.protocol`, which is a real PG enum — see
+  // IndustrialProtocols1788100000000).
+  //
+  //  OPCUA  — the platform opens a session to an OPC-UA server and subscribes
+  //           to monitored items (OpcuaAdapter). Connection details live in
+  //           `opcua_servers`, not in the profile, because the endpoint and its
+  //           credentials are per-server, not per-profile.
+  //  BACNET — Who-Is / ReadPropertyMultiple against a BACnet/IP device
+  //           (BacnetAdapter). Object list lives in `bacnet_devices`.
+  //  NB_IOT — a carrier BEARER, not an application protocol. A device marked
+  //           NB_IOT still speaks CoAP, MQTT-SN or HTTP on the wire; the
+  //           transport type exists so the device can be MODELLED as NB-IoT and
+  //           carry its SIM identity and radio metrics (`nbiot_devices`).
+  OPCUA = 'OPCUA',
+  BACNET = 'BACNET',
+  NB_IOT = 'NB_IOT',
 }
 
 /**

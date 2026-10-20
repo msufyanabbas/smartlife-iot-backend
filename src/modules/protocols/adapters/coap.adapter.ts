@@ -1,3 +1,4 @@
+import { DeviceAuthService } from '@modules/device-auth/device-auth.service';
 // src/modules/protocols/adapters/coap.adapter.ts
 // CoAP Protocol Adapter — ThingsBoard-compatible device API over UDP.
 
@@ -86,6 +87,7 @@ export class CoAPAdapter
     @InjectRepository(Device)
     private readonly deviceRepository: Repository<Device>,
     private readonly configService: ConfigService,
+    private readonly deviceAuth: DeviceAuthService,
   ) {
     this.port = Number(this.configService.get<string>('COAP_PORT') ?? 5683);
     this.enabled = this.configService.get<string>('COAP_ENABLED') !== 'false';
@@ -601,11 +603,40 @@ export class CoAPAdapter
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   /** Device token == deviceKey (unique across the platform). */
+  /**
+   * Resolve the device from the token in the CoAP path.
+   *
+   * ThingsBoard's CoAP contract is `/api/v1/{accessToken}/telemetry` — the
+   * path segment is a CREDENTIAL, not an identifier. This adapter was
+   * treating it as a deviceKey, which meant the "token" was a public
+   * identifier and the route had no authentication at all.
+   *
+   * It now resolves through `DeviceAuthService`, so the segment must be a
+   * real access token. A deviceKey is only accepted when enforcement is
+   * explicitly disabled, and that path logs a warning every time.
+   *
+   * CoAP runs over UDP with no TLS here (no DTLS — see the adapter header),
+   * so the token travels in clear on the wire. That is a deployment concern:
+   * the port belongs on a private APN or behind a DTLS terminator, and the
+   * README says so. Authenticating is still strictly better than not.
+   */
   private async findDeviceByToken(token: string): Promise<Device | null> {
-    return this.deviceRepository.findOne({ where: { deviceKey: token } });
+    const authed = await this.deviceAuth.authenticate({ kind: 'token', token });
+    if (authed) return authed.device;
+
+    const fallback = await this.deviceAuth.authenticate({
+      kind: 'deviceKey',
+      deviceKey: token,
+    });
+    return fallback?.device ?? null;
   }
 
   private async getDeviceIp(deviceKey: string): Promise<string> {
+    // auth-safe: outbound only. The deviceKey has already been resolved from
+    // an authenticated credential by findDeviceByToken(); this is looking up
+    // where to SEND a downlink, not deciding who is allowed to talk to us.
+    // `check:device-auth` flags every other bare deviceKey lookup in an
+    // adapter, which is how the original authentication hole is kept closed.
     const device = await this.deviceRepository.findOne({
       where: { deviceKey },
       select: ['ipAddress'],

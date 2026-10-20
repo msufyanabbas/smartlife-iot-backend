@@ -70,4 +70,20 @@ export class AgentHeartbeatDto {
   @IsNumber()
   @Min(0)
   uptimeSeconds?: number;
+
+  /**
+   * Readings the agent has persisted locally but not yet delivered.
+   *
+   * Declared here because the pipe runs with `forbidNonWhitelisted` — an agent
+   * that reported this as an extra field would get a 400, not an ignored key —
+   * and because it is the single most useful number for telling "this edge is
+   * fine" from "this edge has been offline for six hours and is filling its
+   * disk". `handleHeartbeat` folds it into `systemMetrics`, which already has a
+   * jsonb column and a history table behind it.
+   */
+  @ApiPropertyOptional({ example: 1420, description: 'Undelivered readings held in the local buffer' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  bufferedMessages?: number;
 }

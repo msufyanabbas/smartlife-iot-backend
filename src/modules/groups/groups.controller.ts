@@ -27,6 +27,7 @@ import {
   UpdateGroupDto,
 } from './dto/group.dto';
 import { GroupEntityType } from './group.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /**
  * Entity groups — a named collection of devices, assets, customers or users.
@@ -49,6 +50,7 @@ export class GroupsController {
   constructor(private readonly groupsService: GroupsService) {}
 
   @Get()
+  @RequirePermissions('groups:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'List entity groups' })
   @SwaggerAuth('List groups', 'Paginated groups')
@@ -61,6 +63,7 @@ export class GroupsController {
 
   // Must precede `:id`, or the literal is parsed as a group id.
   @Get('statistics')
+  @RequirePermissions('groups:list')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'Group and membership counts per entity type' })
   @SwaggerAuth('Group statistics', 'Counts')
@@ -69,6 +72,7 @@ export class GroupsController {
   }
 
   @Get('for-entity/:entityType/:entityId')
+  @RequirePermissions('groups:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'Which groups is this entity in?',
@@ -114,6 +118,7 @@ export class GroupsController {
   }
 
   @Get(':id')
+  @RequirePermissions('groups:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'One group',
@@ -131,6 +136,7 @@ export class GroupsController {
   }
 
   @Get(':id/members')
+  @RequirePermissions('groups:read')
   @TenantOrCustomerAdmin()
   @ApiOperation({
     summary: 'One page of members, with each entity’s current name',
@@ -149,6 +155,7 @@ export class GroupsController {
   }
 
   @Post()
+  @RequirePermissions('groups:create')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Create a group',
@@ -167,6 +174,7 @@ export class GroupsController {
   }
 
   @Post(':id/members')
+  @RequirePermissions('groups:update')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Add members in bulk',
@@ -187,6 +195,7 @@ export class GroupsController {
   }
 
   @Put(':id')
+  @RequirePermissions('groups:update')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Update a group',
@@ -206,6 +215,7 @@ export class GroupsController {
   }
 
   @Patch(':id')
+  @RequirePermissions('groups:update')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Update a group (alias of PUT)' })
   @SwaggerAuth('Update a group', 'Group updated')
@@ -220,6 +230,7 @@ export class GroupsController {
 
   // Before `DELETE /:id/members`, or "missing" is taken as part of that route's body-less form.
   @Delete(':id/members/missing')
+  @RequirePermissions('groups:update')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Drop memberships whose entity no longer exists',
@@ -238,6 +249,7 @@ export class GroupsController {
   }
 
   @Delete(':id/members')
+  @RequirePermissions('groups:update')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Remove members in bulk',
@@ -256,6 +268,7 @@ export class GroupsController {
   }
 
   @Delete(':id')
+  @RequirePermissions('groups:delete')
   @TenantAdminOnly()
   @ApiOperation({
     summary: 'Delete a group',

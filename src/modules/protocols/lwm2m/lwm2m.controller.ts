@@ -15,6 +15,7 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { TenantOrCustomerAdmin } from '@common/decorators/access-control.decorator';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 import { User } from '@modules/users/entities/user.entity';
 import { UserRole } from '@common/enums/index.enum';
 import {
@@ -36,9 +37,11 @@ export class Lwm2mController {
   // ── Capability matrix ─────────────────────────────────────────────────────
 
   @Get('capabilities')
-  // RolesGuard returns true for a handler with no @Roles metadata, so every
-  // handler in this file carries an explicit decorator.
+  // RolesGuard returns true for a handler with no @Roles metadata, and
+  // PermissionGuard returns true for one with no @RequirePermissions, so every
+  // handler in this file carries both.
   @TenantOrCustomerAdmin()
+  @RequirePermissions('devices:read')
   @ApiOperation({
     summary: 'What this platform\'s LwM2M support does and does not do',
     description:
@@ -67,17 +70,23 @@ export class Lwm2mController {
 
   @Get('registrations')
   @TenantOrCustomerAdmin()
+  @RequirePermissions('devices:read')
   @ApiOperation({
     summary: 'Live LwM2M client registrations',
     description:
-      'Registrations are held in the process that owns the CoAP UDP socket, ' +
-      'so this reflects one node only and is empty after a restart until ' +
-      'clients re-register. `secondsUntilExpiry` counts down the registration ' +
-      'lifetime (plus LWM2M_LIFETIME_GRACE_SECONDS); when it reaches zero the ' +
-      'registration is dropped and the device is marked offline.',
+      'Read from `lwm2m_registrations`, which is authoritative — so this ' +
+      'survives a restart and is the same answer on every replica. (It used ' +
+      "to report one node's in-process memory, and was empty after a deploy " +
+      'while the registrations themselves were still live.) ' +
+      '`secondsUntilExpiry` counts down the registration lifetime plus ' +
+      'LWM2M_LIFETIME_GRACE_SECONDS; when it reaches zero the registration is ' +
+      'dropped and the device is marked offline. `endpoint` is the device ' +
+      'key — the endpoint NAME is a credential and is only stored hashed.',
   })
   @ApiResponse({ status: 200, description: 'Registrations for your tenant' })
-  listRegistrations(@CurrentUser() user: User): Lwm2mRegistrationView[] {
+  listRegistrations(
+    @CurrentUser() user: User,
+  ): Promise<Lwm2mRegistrationView[]> {
     // Tenant scoping comes from the caller's JWT, never from a query param.
     // SUPER_ADMIN is the only role that sees across tenants, matching how
     // DevicesService.applyAccessFilter() treats it.
@@ -88,20 +97,26 @@ export class Lwm2mController {
 
   @Get('registrations/:endpoint')
   @TenantOrCustomerAdmin()
+  @RequirePermissions('devices:read')
   @ApiOperation({
-    summary: 'One registration by LwM2M endpoint name (== deviceKey)',
+    summary: 'One registration by device key',
+    description:
+      'The path segment is the DEVICE KEY, not the raw LwM2M endpoint name — ' +
+      'the latter is the credential the client authenticates with and is ' +
+      'never accepted or returned here.',
   })
-  @ApiResponse({ status: 200, description: 'Registration, or null when the endpoint is not registered' })
-  getRegistration(
+  @ApiResponse({ status: 200, description: 'Registration, or null when the device is not registered' })
+  async getRegistration(
     @CurrentUser() user: User,
     @Param('endpoint') endpoint: string,
-  ): Lwm2mRegistrationView | null {
+  ): Promise<Lwm2mRegistrationView | null> {
+    // Filtered from the tenant-scoped list rather than looked up directly, so
+    // a caller cannot read another tenant's registration by naming its device
+    // key — and gets 200/null rather than a 403 that would confirm it exists
+    // (CLAUDE.md §4g).
     const tenantId =
       user.role === UserRole.SUPER_ADMIN ? undefined : user.tenantId;
-    return (
-      this.lwm2mService
-        .listRegistrations(tenantId)
-        .find((r) => r.endpoint === endpoint) ?? null
-    );
+    const registrations = await this.lwm2mService.listRegistrations(tenantId);
+    return registrations.find((r) => r.endpoint === endpoint) ?? null;
   }
 }

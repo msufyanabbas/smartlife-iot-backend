@@ -29,6 +29,7 @@ import { CreateCustomerUserRequestDto, SetCustomerUserPasswordDto } from './dto/
 import { User } from '../index.entities';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Notify } from '@/common/decorators/notify.decorator';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Customer Users')
 @Controller('customer-users')
@@ -55,6 +56,7 @@ export class CustomerUsersController {
   // ═══════════════════════════════════════════════════════════════════════════
 
   @Post()
+  @RequirePermissions('users:create')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a new customer user (sends invitation email)' })
@@ -88,6 +90,7 @@ export class CustomerUsersController {
   }
 
   @Get('hierarchy')
+  @RequirePermissions('users:list')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(
   UserRole.SUPER_ADMIN,
@@ -114,6 +117,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
   // ═══════════════════════════════════════════════════════════════════════════
 
   @Post(':id/resend-invitation')
+  @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @ApiBearerAuth()
@@ -131,6 +135,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Assign a user to a customer
    */
   @Post('assign')
+  @RequirePermissions('users:create')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Assign a user to a customer' })
@@ -152,6 +157,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Remove user from customer
    */
   @Delete('unassign/:userId')
+  @RequirePermissions('users:delete')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -169,6 +175,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Get all users for a specific customer
    */
   @Get('customer/:customerId')
+  @RequirePermissions('users:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all users for a customer' })
@@ -198,6 +205,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Get customer for a specific user
    */
   @Get('user/:userId/customer')
+  @RequirePermissions('users:read')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -217,6 +225,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Bulk assign users to a customer
    */
   @Post('bulk-assign')
+  @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -241,6 +250,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Transfer user from one customer to another
    */
   @Post('transfer')
+  @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -263,6 +273,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Get customers accessible by current user
    */
   @Get('accessible-customers')
+  @RequirePermissions('users:list')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get customers accessible by current user' })
@@ -281,6 +292,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Get customer user statistics
    */
   @Get('customer/:customerId/statistics')
+  @RequirePermissions('users:read')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiBearerAuth()
@@ -304,6 +316,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Search users within a customer
    */
   @Get('customer/:customerId/search')
+  @RequirePermissions('users:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Search users within a customer' })
@@ -336,6 +349,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
   }
 
   @Get(':id/details')
+  @RequirePermissions('users:read')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
 @ApiBearerAuth()
@@ -352,6 +366,7 @@ async getCustomerUserDetails(
    * Check if current user has access to a customer
    */
   @Get('check-access/:customerId')
+  @RequirePermissions('users:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Check if user has access to a customer' })

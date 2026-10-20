@@ -103,3 +103,31 @@ export { DefaultRuleChain } from './default-rule-chains/entities/default-rule-ch
 
 // AI
 export { AiModel } from './ai/entities/ai-model.entity';
+
+// The generic entity-relation graph (any entity → any entity, typed edges).
+export { EntityRelation } from './relations/entities/entity-relation.entity';
+
+// ── Delivery and protocol state that used to live only in memory or in env ──
+// Where a push notification can be delivered. PushChannel previously had no
+// device registry at all, so the channel was unreachable in practice.
+export { PushSubscription } from './notifications/entities/push-subscription.entity';
+// The Modbus fleet, moved out of the MODBUS_DEVICES environment blob.
+export { ModbusDevice } from './protocols/modbus/entities/modbus-device.entity';
+// LwM2M registrations, which used to be lost on every restart.
+export { Lwm2mRegistration } from './protocols/lwm2m/entities/lwm2m-registration.entity';
+
+// ── SCADA mimic diagrams ────────────────────────────────────────────────────
+// The diagram holds its geometry and bindings as jsonb (one atomic canvas
+// save); the binding table is a flattened MIRROR of those bindings, so
+// "which diagrams use this device" is an indexed query rather than a scan.
+export { ScadaDiagram } from './scada/entities/scada-diagram.entity';
+export { ScadaElementBinding } from './scada/entities/scada-element-binding.entity';
+
+// ── Industrial / carrier transports ─────────────────────────────────────────
+// AppModule boots TypeORM from AppDataSource.options, whose `entities` is
+// Object.values() of THIS barrel — `autoLoadEntities` is never applied — so an
+// entity missing from here has no metadata at runtime and every repository call
+// against it throws "No metadata for X was found".
+export { OpcuaServer } from './protocols/opcua/entities/opcua-server.entity';
+export { BacnetDevice } from './protocols/bacnet/entities/bacnet-device.entity';
+export { NbIotDevice } from './protocols/nbiot/entities/nbiot-device.entity';

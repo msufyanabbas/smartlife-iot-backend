@@ -28,6 +28,7 @@ import {
   UpdateWidgetPreferencesDto,
   SettingsMessageResponseDto,
 } from './dto/user-settings.dto';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('User Settings')
 @ApiBearerAuth()
@@ -39,6 +40,7 @@ export class UserSettingsController {
   // ==================== GET SETTINGS ====================
 
   @Get()
+  @RequirePermissions('settings:read')
   @ApiOperation({ summary: 'Get user settings' })
   @ApiResponse({
     status: 200,
@@ -52,6 +54,7 @@ export class UserSettingsController {
   // ==================== UPDATE GENERAL SETTINGS ====================
 
   @Put('general')
+  @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Update general settings',
@@ -72,6 +75,7 @@ export class UserSettingsController {
   // ==================== UPDATE NOTIFICATION SETTINGS ====================
 
   @Put('notifications')
+  @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Update notification preferences',
@@ -92,6 +96,7 @@ export class UserSettingsController {
   // ==================== UPDATE DISPLAY SETTINGS ====================
 
   @Put('display')
+  @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Update display settings',
@@ -112,6 +117,7 @@ export class UserSettingsController {
   // ==================== UPDATE ALL SETTINGS ====================
 
   @Put()
+  @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Update all settings at once',
@@ -132,6 +138,7 @@ export class UserSettingsController {
   // ==================== RESET TO DEFAULT ====================
 
   @Post('reset')
+  @RequirePermissions('settings:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Reset all settings to default',
@@ -149,6 +156,7 @@ export class UserSettingsController {
   // ==================== DASHBOARD LAYOUT ====================
 
   @Put('dashboard-layout')
+  @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Save custom dashboard layout',
@@ -169,6 +177,7 @@ export class UserSettingsController {
   // ==================== WIDGET PREFERENCES ====================
 
   @Put('widget-preferences')
+  @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Save widget preferences',

@@ -87,6 +87,74 @@ export interface SnmpTransportConfig {
 }
 
 /**
+ * OPC-UA defaults for a profile.
+ *
+ * Deliberately thin. An OPC-UA session is per-SERVER — one endpoint, one
+ * credential, many nodes — and several devices usually sit behind the same
+ * server, so the connection itself lives in the `opcua_servers` table and not
+ * here. What belongs on a profile is only the timing a device of this kind
+ * should be read at, which an `opcua_servers` row may override.
+ */
+export interface OpcuaTransportConfig {
+  /** `true` (default) uses a real OPC-UA subscription; `false` polls. */
+  useSubscription?: boolean;
+  /** Subscription publishing interval, or poll period when polling. */
+  publishingIntervalMs?: number;
+  /** Per-monitored-item sampling interval requested from the server. */
+  samplingIntervalMs?: number;
+  /** Seconds between reads when `useSubscription` is false. */
+  pollPeriodSeconds?: number;
+}
+
+/**
+ * BACnet/IP defaults for a profile.
+ *
+ * As with OPC-UA, the addressable facts (unicast address, device instance,
+ * object list) are per-DEVICE and live in `bacnet_devices`. A profile only
+ * carries the read style and cadence shared by devices of this type.
+ */
+export interface BacnetTransportConfig {
+  /** BACnet/IP UDP port. 47808 (0xBAC0) is the standard. */
+  port?: number;
+  /** Seconds between polls. */
+  pollPeriodSeconds?: number;
+  /**
+   * `true` (default) issues one ReadPropertyMultiple for all configured
+   * objects; `false` issues a ReadProperty per object. Some controllers
+   * advertise RPM and then answer it badly, which is why this is switchable.
+   */
+  useReadPropertyMultiple?: boolean;
+  /** APDU timeout in milliseconds. */
+  apduTimeoutMs?: number;
+}
+
+/**
+ * NB-IoT bearer settings for a profile.
+ *
+ * There is no NB-IoT wire format to configure: the device speaks CoAP, MQTT-SN
+ * or HTTP over the bearer. What this records is the bearer's shape — which
+ * application protocol to expect, the APN devices of this type use, and how
+ * long to wait before calling one offline, which for a PSM device is hours
+ * rather than minutes.
+ */
+export interface NbIotTransportConfig {
+  /** Which application protocol the device speaks over the bearer. */
+  appProtocol?: 'coap' | 'mqtt' | 'mqtt_sn' | 'http';
+  /** Carrier APN, e.g. `nbiot.zain.sa`. */
+  apn?: string;
+  /** Carrier / MNO name, for the operator's benefit. */
+  carrier?: string;
+  /**
+   * Expected reporting interval in seconds. An NB-IoT device in PSM may sleep
+   * for hours between uplinks, so the generic five-minute "offline" assumption
+   * is wrong for it.
+   */
+  expectedReportIntervalSeconds?: number;
+  /** Store RSRP/RSRQ/SINR/ECL from each uplink as telemetry. Default true. */
+  recordSignalMetrics?: boolean;
+}
+
+/**
  * Protocol-specific settings for a device profile. Only the sub-object
  * matching the profile's `transportType` is meaningful; the others are kept
  * so switching transport does not discard previously entered settings.
@@ -97,6 +165,9 @@ export interface DeviceTransportConfiguration {
   coap?: CoapTransportConfig;
   lwm2m?: Lwm2mTransportConfig;
   snmp?: SnmpTransportConfig;
+  opcua?: OpcuaTransportConfig;
+  bacnet?: BacnetTransportConfig;
+  nbIot?: NbIotTransportConfig;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -17,6 +17,7 @@ import { Roles } from '@common/decorators/roles.decorator';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/users/entities/user.entity';
 import { UserRole } from '@common/enums/index.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('api-monitoring')
 @Controller('api-monitoring')
@@ -39,6 +40,7 @@ export class ApiMonitoringController {
   // for CUSTOMER / CUSTOMER_USER. The per-caller "/my" variants below are.
 
   @Get('dashboard')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'API monitoring dashboard',
@@ -52,6 +54,7 @@ export class ApiMonitoringController {
   }
 
   @Get('stats')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Aggregate API statistics',
@@ -68,6 +71,7 @@ export class ApiMonitoringController {
   }
 
   @Get('logs')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Get API logs (paginated, filterable)' })
   getLogs(@CurrentUser() user: User, @Query() filters: APILogFilterDto) {
@@ -76,6 +80,7 @@ export class ApiMonitoringController {
   }
 
   @Get('export')
+  @RequirePermissions('audit:export')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Export API logs as CSV',
@@ -107,6 +112,7 @@ export class ApiMonitoringController {
   }
 
   @Get('metrics')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Get API metrics (last 24h)' })
   getMetrics(@CurrentUser() user: User) {
@@ -115,6 +121,7 @@ export class ApiMonitoringController {
   }
 
   @Get('statistics')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'All-time totals by status code' })
   getStatistics(@CurrentUser() user: User) {
@@ -123,6 +130,7 @@ export class ApiMonitoringController {
   }
 
   @Get('performance')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Per-minute performance for the last hour' })
   getPerformanceMetrics(@CurrentUser() user: User) {
@@ -131,6 +139,7 @@ export class ApiMonitoringController {
   }
 
   @Get('errors')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Get error logs (status >= 400)' })
   getErrors(@CurrentUser() user: User, @Query() filters: APILogFilterDto) {
@@ -139,6 +148,7 @@ export class ApiMonitoringController {
   }
 
   @Get('slow-requests')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Get slow requests',
@@ -150,6 +160,7 @@ export class ApiMonitoringController {
   }
 
   @Get('endpoints/top')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Top endpoints by usage (last 24h)' })
   getTopEndpoints(@CurrentUser() user: User) {
@@ -158,6 +169,7 @@ export class ApiMonitoringController {
   }
 
   @Get('health')
+  @RequirePermissions('audit:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Platform health',
@@ -170,12 +182,14 @@ export class ApiMonitoringController {
   // ── Per-caller views (any authenticated role) ──────────────────────────────
 
   @Get('logs/my')
+  @RequirePermissions('audit:read')
   @ApiOperation({ summary: 'Get my API logs' })
   getMyLogs(@CurrentUser() user: User, @Query() filters: APILogFilterDto) {
     return this.apiMonitoringService.getUserLogs(user.tenantId, user.id, filters);
   }
 
   @Get('metrics/my')
+  @RequirePermissions('audit:read')
   @ApiOperation({ summary: 'Get my API metrics (last 24h)' })
   getMyMetrics(@CurrentUser() user: User) {
     return this.apiMonitoringService.getUserMetrics(user.tenantId, user.id);

@@ -16,6 +16,7 @@ import { TwoFactorAuth } from './entities/two-factor-auth.entity';
 import { TwoFactorMethod } from '@/common/enums/index.enum';
 import { User } from '../users/entities/user.entity';
 import { MailService } from '../mail/mail.service';
+import { SmsChannel } from '../notifications/channels/sms.channel';
 import { ConfigService } from '@nestjs/config';
 
 @Injectable()
@@ -28,6 +29,7 @@ export class TwoFactorAuthService {
     @InjectRepository(User)
     private userRepository: Repository<User>,
     private mailService: MailService,
+    private smsChannel: SmsChannel,
     private configService: ConfigService,
   ) {}
 
@@ -205,7 +207,23 @@ export class TwoFactorAuthService {
   }
 
   /**
-   * Send SMS verification code
+   * Send SMS verification code.
+   *
+   * This method used to end in `logger.warn('SMS code for user …: 123456')`
+   * and nothing else. Two separate problems, both fixed here:
+   *
+   *   1. **The OTP was written to the server log.** Logs are shipped to
+   *      aggregators, read by operators and kept for weeks, so every second
+   *      factor the platform issued was recoverable by anyone with log access.
+   *      The code is now never logged — only the masked destination is.
+   *   2. **It reported success having sent nothing.** The caller
+   *      (`setPhoneNumber`, and the login path) then told the user "code sent"
+   *      and waited for a code that did not exist. A delivery failure now
+   *      surfaces as a 400 with the provider's reason.
+   *
+   * The code is persisted BEFORE the send so a provider timeout that in fact
+   * delivered the message still leaves a verifiable code. The row is left in
+   * place on failure for the same reason.
    */
   async sendSMSCode(userId: User): Promise<void> {
     const twoFactor = await this.getOrCreate(userId);
@@ -224,16 +242,32 @@ export class TwoFactorAuthService {
     twoFactor.tempCodeAttempts = 0;
     await this.twoFactorAuthRepository.save(twoFactor);
 
-    // TODO: Integrate with SMS provider (Twilio, AWS SNS, etc.)
-    // For now, log the code (REMOVE IN PRODUCTION)
-    this.logger.warn(`SMS code for user ${userId}: ${code}`);
-
-    // In production, send via SMS:
-    // await this.smsService.send(twoFactor.phoneNumber, `Your verification code is: ${code}`);
-
-    this.logger.log(
-      `SMS code sent to ${this.maskPhoneNumber(twoFactor.phoneNumber)}`,
+    const appName = this.configService.get<string>(
+      'APP_NAME',
+      'Smart Life IoT',
     );
+
+    try {
+      const reference = await this.smsChannel.sendText(
+        twoFactor.phoneNumber,
+        `${appName}: your verification code is ${code}. It expires in 10 minutes. Do not share it.`,
+      );
+      this.logger.log(
+        `SMS 2FA code sent to ${this.maskPhoneNumber(twoFactor.phoneNumber)} ` +
+          `(reference: ${reference})`,
+      );
+    } catch (error: any) {
+      // The provider's message is included because it is the only thing that
+      // distinguishes "SMS_ENABLED is false" from "that number is unreachable",
+      // and an operator reading a 400 needs to know which.
+      this.logger.error(
+        `Failed to send SMS 2FA code to ` +
+          `${this.maskPhoneNumber(twoFactor.phoneNumber)}: ${error.message}`,
+      );
+      throw new BadRequestException(
+        `Failed to send verification code: ${error.message}`,
+      );
+    }
   }
 
   /**

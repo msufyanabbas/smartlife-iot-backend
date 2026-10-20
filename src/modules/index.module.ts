@@ -31,6 +31,7 @@ export { TenantsModule } from './tenants/tenants.module';
 
 // Device & IoT modules
 export { DevicesModule } from './devices/devices.module';
+export { DeviceAuthModule } from './device-auth/device-auth.module';
 export { TelemetryModule } from './telemetry/telemetry.module';
 export { FirmwareModule } from './firmware/firmware.module';
 export { GatewayModule } from './gateway/gateway.module';
@@ -75,6 +76,7 @@ import { UsersModule } from './users/users.module';
 import { ProfilesModule } from './profiles/profiles.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { DevicesModule } from './devices/devices.module';
+import { DeviceAuthModule } from './device-auth/device-auth.module';
 import { TelemetryModule } from './telemetry/telemetry.module';
 import { FirmwareModule } from './firmware/firmware.module';
 import { GatewayModule } from './gateway/gateway.module';
@@ -140,11 +142,26 @@ import { DefaultRuleChainsModule } from './default-rule-chains/default-rule-chai
 import { AiModule } from './ai/ai.module';
 import { CadStandardsModule } from './cad-standards/cad-standards.module';
 
+// The generic entity-relation graph — the primitive behind "digital twins".
+export { RelationsModule } from './relations/relations.module';
+import { RelationsModule } from './relations/relations.module';
+
+// SCADA mimic diagrams: the symbol library, the diagram store and the
+// write-back route. Imports GatewayModule (via forwardRef) because an action
+// binding publishes a real command.
+export { ScadaModule } from './scada/scada.module';
+import { ScadaModule } from './scada/scada.module';
+
 export const featureModules = [
   // AI model registry + the ai_request rule node's dependency.
   AiModule,
   // The CAD drawing standard the floor-plan importer classifies against.
   CadStandardsModule,
+  // Typed any-entity-to-any-entity relations + the graph traversal.
+  RelationsModule,
+  // SCADA mimic diagrams — the symbol catalogue, the diagram store and the
+  // element write-back route.
+  ScadaModule,
   // RulesModule imports QueuesModule and DefaultRuleChainsModule directly for
   // the engine; listing them here is what makes their controllers reachable.
   ConvertersModule,
@@ -176,6 +193,7 @@ export const featureModules = [
 
   // Device & IoT
   DevicesModule,
+  DeviceAuthModule,
   TelemetryModule,
   FirmwareModule,
   GatewayModule,

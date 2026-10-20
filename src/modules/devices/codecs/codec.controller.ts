@@ -26,6 +26,7 @@ import { UserRole } from '@common/enums/index.enum';
 import { CodecRegistryService } from './codec-registry.service';
 import { SwaggerAuth } from '@/common/decorators/access-control.decorator';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Codecs')
 @Controller('codecs')
@@ -47,6 +48,7 @@ export class CodecController {
    *   { data: ["Milesight", "Dragino", ...] }
    */
   @Get('manufacturers')
+  @RequirePermissions('integrations:list')
   @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
   @ApiOperation({ summary: 'List all manufacturers that have registered codecs' })
   @ApiResponse({ status: 200, description: 'Manufacturer list' })
@@ -75,6 +77,7 @@ export class CodecController {
    *   }
    */
   @Get('manufacturers/:manufacturer/models')
+  @RequirePermissions('integrations:read')
   @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
   @ApiOperation({ summary: 'List models available for a manufacturer' })
   @ApiParam({ name: 'manufacturer', example: 'Milesight' })
@@ -93,6 +96,7 @@ export class CodecController {
    * pre-fetching everything in one call.
    */
   @Get('catalog')
+  @RequirePermissions('integrations:list')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Full codec catalog grouped by manufacturer' })
   getCatalog() {
@@ -102,6 +106,7 @@ export class CodecController {
   }
 
   @Get('capabilities')
+  @RequirePermissions('integrations:list')
 @ApiOperation({ summary: 'Get capabilities for all registered codecs' })
 getAllCapabilities() {
   return {
@@ -119,6 +124,7 @@ getAllCapabilities() {
  * Response: { manufacturer: "Milesight", data: ["Ambience Monitoring", "Light Control", ...] }
  */
 @Get('manufacturers/:manufacturer/categories')
+@RequirePermissions('integrations:read')
 @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
 @ApiOperation({ summary: 'List product categories available for a manufacturer' })
 @ApiParam({ name: 'manufacturer', example: 'Milesight' })
@@ -155,6 +161,7 @@ listCategoriesForManufacturer(@Param('manufacturer') manufacturer: string) {
  *   }
  */
 @Get('manufacturers/:manufacturer/families')
+@RequirePermissions('integrations:read')
 @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
 @ApiOperation({ summary: 'List model families with variants, optionally filtered by category' })
 @ApiParam({ name: 'manufacturer', example: 'Milesight' })
@@ -177,6 +184,7 @@ listModelFamiliesForManufacturer(
  * One call to prefetch everything for an "Add Device" wizard.
  */
 @Get('catalog/v2')
+@RequirePermissions('integrations:list')
 @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
 @ApiOperation({ summary: 'Full structured catalog grouped by manufacturer, category, and model family' })
 getStructuredCatalog() {
@@ -189,6 +197,7 @@ getStructuredCatalog() {
   // ── Admin / debug endpoints ───────────────────────────────────────────────
 
   @Get()
+  @RequirePermissions('integrations:list')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'List all registered codecs (raw)' })
   listCodecs() {
@@ -200,6 +209,7 @@ getStructuredCatalog() {
   }
 
   @Post('test-decode')
+  @RequirePermissions('integrations:create')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Test-decode a payload' })
@@ -223,6 +233,7 @@ getStructuredCatalog() {
   }
 
   @Post('test-encode')
+  @RequirePermissions('integrations:create')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Test-encode a command' })
@@ -238,6 +249,7 @@ getStructuredCatalog() {
   }
 
   @Post('auto-detect')
+  @RequirePermissions('integrations:create')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Auto-detect codec for a payload' })

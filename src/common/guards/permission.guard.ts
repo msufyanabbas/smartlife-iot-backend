@@ -49,9 +49,14 @@ export class PermissionGuard implements CanActivate {
   context.getClass(),
 ]);
 if (isPublic) return true;
-    const requiredPermissions = this.reflector.get<string[]>(
+    // Handler first, then class. The previous `reflector.get(..., getHandler())`
+    // read the HANDLER ONLY, so a class-level `@RequirePermissions()` — the
+    // natural way to protect a whole controller in one line — was silently
+    // ignored and every route in it stayed open. `RolesGuard` already used
+    // `getAllAndOverride`; this guard simply did not.
+    const requiredPermissions = this.reflector.getAllAndOverride<string[]>(
       PERMISSIONS_KEY,
-      context.getHandler(),
+      [context.getHandler(), context.getClass()],
     );
 
     // No @RequirePermissions() on this route
@@ -65,9 +70,29 @@ if (isPublic) return true;
     // Super admin has all permissions — no checks needed
     if (user.role === UserRole.SUPER_ADMIN) return true;
 
-    // Tenant admin has full access within their tenant
-    // Fine-grained permission checks only apply to customer-scoped users
-    if (user.role === UserRole.TENANT_ADMIN) return true;
+    // ── Tenant admin ──────────────────────────────────────────────────────
+    //
+    // A tenant admin has full access within their tenant by default, which is
+    // the ThingsBoard model and is what most deployments want.
+    //
+    // But it used to be unconditional, and that made a real feature a lie:
+    // permissions assigned to a user who happens to hold TENANT_ADMIN did
+    // nothing at all, with no indication anywhere that they had been ignored.
+    // Someone restricting an admin to `devices:read` got an admin who could
+    // still delete every tenant in the platform.
+    //
+    // `enforcePermissions` is the opt-in that makes the grant real. It is
+    // per-user and defaults to false, so existing admins are unaffected by
+    // this change — switching it on is a deliberate act that says "this
+    // account is restricted to what it has been granted". With it on, the
+    // account goes through exactly the same resolution as a customer user.
+    //
+    // SUPER_ADMIN above is deliberately NOT subject to this: an account that
+    // can lock itself out of the platform it administers is a footgun, and
+    // there would be no way back in.
+    if (user.role === UserRole.TENANT_ADMIN && !user.enforcePermissions) {
+      return true;
+    }
 
     // Subscription is cached by SubscriptionGuard (runs before this)
     const subscription: Subscription | undefined = request.subscription;

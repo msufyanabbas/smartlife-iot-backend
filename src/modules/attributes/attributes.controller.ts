@@ -29,6 +29,7 @@ import { JwtAuthGuard } from '@common/guards/jwt-auth.guard';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/users/entities/user.entity';
 import { AttributeScope } from '@common/enums/index.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('attributes')
 @Controller('attributes')
@@ -38,6 +39,7 @@ export class AttributesController {
   constructor(private readonly attributesService: AttributesService) {}
 
   @Post()
+  @RequirePermissions('devices:create')
   @ApiOperation({ summary: 'Create a single attribute' })
   @ApiResponse({ status: 201, description: 'Attribute created successfully' })
   create(@CurrentUser() user: User, @Body() createDto: CreateAttributeDto) {
@@ -45,6 +47,7 @@ export class AttributesController {
   }
 
   @Post(':entityType/:entityId/:scope')
+  @RequirePermissions('devices:update')
   @ApiOperation({ summary: 'Save multiple attributes for an entity' })
   @ApiResponse({ status: 201, description: 'Attributes saved successfully' })
   @ApiParam({ name: 'scope', type: String, enum: AttributeScope, enumName: 'AttributeScope' })
@@ -70,6 +73,7 @@ export class AttributesController {
   }
 
   @Get(':entityType/:entityId')
+  @RequirePermissions('devices:read')
   @ApiOperation({ summary: 'Get all attributes for an entity' })
   @ApiResponse({ status: 200, description: 'Entity attributes' })
   @ApiQuery({ name: 'scope', type: String, enum: AttributeScope, enumName: 'AttributeScope', required: false })
@@ -93,6 +97,7 @@ export class AttributesController {
   }
 
   @Get(':entityType/:entityId/keys')
+  @RequirePermissions('devices:read')
   @ApiOperation({ summary: 'Get specific attribute keys for an entity' })
   @ApiResponse({ status: 200, description: 'Attribute values' })
   @ApiQuery({ name: 'scope', type: String, enum: AttributeScope, enumName: 'AttributeScope', required: false })
@@ -119,6 +124,7 @@ export class AttributesController {
   }
 
   @Get(':entityType/:entityId/timeseries')
+  @RequirePermissions('devices:read')
   @ApiOperation({
     summary: 'Get historical time-series for an entity',
     description:
@@ -154,6 +160,7 @@ export class AttributesController {
   }
 
   @Get(':entityType/:entityId/latest')
+  @RequirePermissions('devices:read')
   @ApiOperation({ summary: 'Get latest values for specific keys' })
   @ApiResponse({ status: 200, description: 'Latest attribute values' })
   async getLatestValues(
@@ -177,6 +184,7 @@ export class AttributesController {
   }
 
   @Delete(':entityType/:entityId/:attributeKey')
+  @RequirePermissions('devices:update')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete an attribute' })
   @ApiResponse({ status: 204, description: 'Attribute deleted' })
@@ -198,6 +206,7 @@ export class AttributesController {
   }
 
   @Delete(':entityType/:entityId')
+  @RequirePermissions('devices:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete multiple attributes' })
   @ApiResponse({ status: 200, description: 'Attributes deleted' })

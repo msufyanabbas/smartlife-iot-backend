@@ -28,6 +28,7 @@ import { Roles } from '@common/decorators/roles.decorator';
 import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/users/entities/user.entity';
 import { EmailTemplateType, UserRole } from '@common/enums/index.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Email Templates')
 @ApiBearerAuth()
@@ -52,6 +53,7 @@ export class EmailTemplatesController {
   constructor(private readonly emailTemplatesService: EmailTemplatesService) { }
 
   @Post()
+  @RequirePermissions('settings:create')
   @ApiOperation({ summary: 'Create a new email template' })
   @ApiResponse({
     status: 201,
@@ -67,6 +69,7 @@ export class EmailTemplatesController {
   }
 
   @Get()
+  @RequirePermissions('settings:read')
   @ApiOperation({ summary: 'Get all email templates' })
   @ApiResponse({ status: 200, description: 'List of email templates' })
   findAll(@CurrentUser() user: User) {
@@ -74,6 +77,7 @@ export class EmailTemplatesController {
   }
 
   @Get('active')
+  @RequirePermissions('settings:read')
   @ApiOperation({ summary: 'Get all active email templates' })
   @ApiResponse({ status: 200, description: 'List of active templates' })
   findAllActive(@CurrentUser() user: User) {
@@ -81,6 +85,7 @@ export class EmailTemplatesController {
   }
 
   @Get('type/:type')
+  @RequirePermissions('settings:read')
   @ApiOperation({ summary: 'Get email template by type' })
   @ApiResponse({ status: 200, description: 'Email template found' })
   @ApiResponse({ status: 404, description: 'Template not found' })
@@ -95,6 +100,7 @@ export class EmailTemplatesController {
   }
 
   @Get(':id/preview')
+  @RequirePermissions('settings:read')
   @ApiOperation({
     summary: 'Preview email template with sample or provided variables',
   })
@@ -130,6 +136,7 @@ export class EmailTemplatesController {
   }
 
   @Post(':id/validate')
+  @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Validate template placeholders' })
   @ApiResponse({ status: 200, description: 'Validation results returned' })
@@ -168,6 +175,7 @@ export class EmailTemplatesController {
   }
 
   @Get(':id')
+  @RequirePermissions('settings:read')
   @ApiOperation({ summary: 'Get email template by ID' })
   @ApiResponse({ status: 200, description: 'Email template found' })
   @ApiResponse({ status: 404, description: 'Template not found' })
@@ -176,6 +184,7 @@ export class EmailTemplatesController {
   }
 
   @Patch(':id')
+  @RequirePermissions('settings:update')
   @ApiOperation({ summary: 'Update email template' })
   @ApiResponse({ status: 200, description: 'Template updated successfully' })
   @ApiResponse({ status: 404, description: 'Template not found' })
@@ -190,6 +199,7 @@ export class EmailTemplatesController {
   }
 
   @Delete(':id')
+  @RequirePermissions('settings:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete email template' })
   @ApiResponse({ status: 204, description: 'Template deleted successfully' })

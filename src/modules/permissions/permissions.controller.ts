@@ -26,6 +26,7 @@ import {
 } from './dto';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { User } from '../index.entities';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Permissions')
 @ApiBearerAuth()
@@ -34,6 +35,7 @@ export class PermissionsController {
   constructor(private readonly permissionsService: PermissionsService) { }
 
   @Post()
+  @RequirePermissions('permissions:create')
   @ApiOperation({ summary: 'Create a new permission' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -53,6 +55,7 @@ export class PermissionsController {
   }
 
   @Post('bulk')
+  @RequirePermissions('permissions:create')
   @ApiOperation({ summary: 'Create multiple permissions at once' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -68,6 +71,7 @@ export class PermissionsController {
   }
 
   @Get()
+  @RequirePermissions('permissions:list')
   @ApiOperation({ summary: 'Get all permissions' })
   @ApiQuery({
     name: 'resource',
@@ -88,6 +92,7 @@ export class PermissionsController {
   }
 
   @Get('resources')
+  @RequirePermissions('permissions:list')
   @ApiOperation({ summary: 'Get all unique resource names' })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -103,6 +108,7 @@ export class PermissionsController {
   }
 
   @Get(':id')
+  @RequirePermissions('permissions:read')
   @ApiOperation({ summary: 'Get a permission by ID' })
   @ApiParam({
     name: 'id',
@@ -123,6 +129,7 @@ export class PermissionsController {
   }
 
   @Get('search/:resource/:action')
+  @RequirePermissions('permissions:read')
   @ApiOperation({ summary: 'Find permission by resource and action' })
   @ApiParam({
     name: 'resource',
@@ -154,6 +161,7 @@ export class PermissionsController {
   }
 
   @Patch(':id')
+  @RequirePermissions('permissions:update')
   @ApiOperation({ summary: 'Update a permission' })
   @ApiParam({
     name: 'id',
@@ -181,6 +189,7 @@ export class PermissionsController {
   }
 
   @Delete(':id')
+  @RequirePermissions('permissions:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a permission' })
   @ApiParam({

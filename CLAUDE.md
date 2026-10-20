@@ -1321,10 +1321,55 @@ template is gated on `reports:create`. That is the codemod refusing to emit
 an unseeded string rather than a classification error — adding the action
 means a seeder change plus a backfill for existing databases.
 
-Coverage today is **174 of 680 handlers (25.6%)**, reported by the same
-script. The remaining controllers are undecorated and therefore still open to
-any authenticated account. That is the remaining work, and it is the reason
-this section exists rather than a line in §11.
+### Coverage, and the tenant-admin bypass
+
+Coverage is now **~89% of handlers**, up from 25.6%, via three codemod passes
+(`scripts/add-require-permissions.py`, re-runnable and idempotent) plus 37
+newly seeded permission strings across five new resources: `telemetry`,
+`audit`, `edge`, `notifications`, `profiles`, later joined by `integrations`
+and `groups`.
+
+What remains undecorated is `@Public` (auth, health, OTA, the EMQX webhooks)
+or self-service 2FA, where a permission grant is not the right gate.
+
+**Two guard defects were fixed at the same time, and both mattered more than
+coverage:**
+
+1. **Class-level metadata was ignored.** The guard read
+   `reflector.get(PERMISSIONS_KEY, context.getHandler())` — handler only — so
+   a class-level `@RequirePermissions()`, the natural way to protect a whole
+   controller in one line, silently did nothing. It now uses
+   `getAllAndOverride([handler, class])`, matching `RolesGuard`.
+
+2. **`TENANT_ADMIN` returned true unconditionally.** Permissions assigned to a
+   tenant admin were discarded with no indication anywhere: the grant saved,
+   the UI showed it, the guard never asked. Restricting an admin to
+   `devices:read` produced an admin who could still delete every tenant.
+
+   `users.enforcePermissions` (migration `1788200000000`) is the per-user
+   opt-in that makes such a grant real. It defaults to **false**, so enabling
+   the feature cannot retroactively lock out existing administrators;
+   switching it on routes the account through exactly the same resolution as
+   a customer user. **SUPER_ADMIN ignores it** — an account that can revoke
+   its own access to the platform it administers has no way back in.
+
+### A trap when changing this guard
+
+`scripts/verify-permissions.ts` builds a fake `Reflector`. It used to stub
+`getAllAndOverride = () => false`, which was correct while only `@Public` went
+through that method. Routing permissions through it too turned the stub into a
+mock answering "nothing required" for every route, so the guard allowed
+everything and all four denial assertions failed — a failure that looks exactly
+like a broken guard and is actually a stale test double. The mock is now
+key-aware and honours handler-over-class precedence.
+
+Run it against a real database; it is the only check that proves grants decide
+access:
+
+```bash
+createdb permcheck && npm run verify:permissions permcheck   # 15 checks
+npm run check:permissions                                    # no database
+```
 
 ---
 
@@ -1546,6 +1591,261 @@ npm run verify:cad-standards [library.dxf] [master.dxf]
 
 ---
 
+## 4n. SCADA mimic diagrams
+
+A symbol library, bindings from a symbol property to a live value, animation
+driven by that value, an editor, and write-back. Before this, the word "SCADA"
+appeared nowhere in either repo.
+
+```
+scada-symbol.catalogue.ts   (36 symbols: inline SVG body + named STATES +
+     │                       which data-part each state drives + which
+     │                       properties are bindable + connection PORTS)
+     ├── GET  /scada/symbols             → editor palette AND runtime renderer
+     ├── validateScadaBinding()          → refuses a binding the symbol cannot honour
+     └── applyScadaTransform()           → raw value → state / number / string
+
+ScadaDiagram   (elements jsonb, connections jsonb, published, revision)
+     ↓ element.bindings[]
+{ property, source, deviceId, key, transform }
+     ↓ mirrored on save
+ScadaElementBinding  (flat rows, real FK to devices — the index jsonb cannot be)
+```
+
+### What makes it a mimic diagram and not a drawing
+
+The floor-plan viewer colours device markers by online/offline. That is a map
+with status dots. A mimic diagram is a schematic of the PROCESS whose symbols
+are a FUNCTION of a live measurement: a pump impeller turns while its run
+feedback is true, a tank's fill tracks a level transmitter, a trip blinks red,
+flow animates along a pipe, and clicking an element can actuate plant.
+
+Every one of those is declared in the catalogue, not coded per symbol:
+
+| Field | What it buys |
+|---|---|
+| `svg` with `data-part="…"` | The parts a state may restyle, by id. |
+| `states[].parts[part]` | `fill`, `stroke`, `opacity`, `spin` (deg/sec), `blink` (ms), `flow` (dash speed), `rotation`. |
+| `level` / `levelSweep` | A 0–100 value either fills a rect or sweeps a needle. |
+| `ports` | Connection anchors in SYMBOL space, so an endpoint follows its element's rotation and scale. |
+| `bindable` | Which properties the editor may offer. |
+
+`npm run check:scada` fails when a state names a `data-part` the SVG does not
+contain, when `stateParts` and the states disagree, when a `level` band points
+at a missing rect, or when a transform's arithmetic regresses. All of those are
+symbols that save cleanly and then **sit still**, which on screen is
+indistinguishable from a device that never reports — `tsc` sees only strings.
+
+### Three things the diagram save has to get right
+
+1. **It is one atomic write.** `elements` and `connections` are jsonb, and
+   `PATCH /scada/diagrams/:id` REPLACES whichever of them it is sent (and
+   leaves out the one it is not). Element and connection tables would turn one
+   `UPDATE` into a transaction across three, where a partial failure leaves
+   runs pointing at elements that were never inserted. Same choice, same
+   reason, as `PUT /rule-chains/:id/metadata`.
+2. **Device scoping has no foreign key to lean on.** A binding's `deviceId`
+   lives inside jsonb, so nothing in the database stops a crafted payload
+   pointing an element at another tenant's device and reading its telemetry
+   through the runtime. `assertDevicesInTenant()` resolves the whole id set
+   once and fails the save on a single unknown id. This is the load-bearing
+   check in the module.
+3. **`revision` is optimistic concurrency.** The editor holds the canvas in
+   local state; `expectedRevision` turns a concurrent save into a 409 instead
+   of a silent overwrite. On the frontend, `useScadaDiagram` must keep
+   `refetchOnWindowFocus: false` and seed on `id + revision`, or tabbing away
+   and back replaces unsaved work — the trap `useRuleChainMetadata` documents.
+
+### Publishing refuses a diagram with errors
+
+`validateDiagram()` is returned with every read and save, and `published: true`
+is rejected while `errors` is non-empty. That is what the flag is for: an
+element whose binding cannot resolve renders its DEFAULT state, and a pump
+drawn stopped while it is running is the precise failure a mimic exists to
+prevent. Warnings ("has 3 states and nothing bound to drive them") do not
+block.
+
+### Write-back, and the interlock
+
+`POST /scada/diagrams/:id/elements/:elementId/action` names the DIAGRAM and the
+ELEMENT, never the command. Method, params and target device are read from the
+stored diagram, so the route cannot be used to send an arbitrary command to an
+arbitrary device — a body of `{ deviceId, method }` would have made it a
+general-purpose control endpoint wearing a diagram's name.
+
+`action.enabledStates` is enforced **on the server**: `resolveLiveState()`
+reads the element's own state binding against the latest telemetry and refuses
+with 409 when it does not match. A greyed-out button is a hint, and a direct
+request ignores hints. An unknown state counts as NOT enabled — an interlock
+that fails open is not an interlock.
+
+`CUSTOMER_USER` can reach this route on purpose: an operator is the person who
+presses Start. What protects the plant is that the command is fixed by the
+diagram, not that operators are locked out of their own HMI.
+
+### Stale is not the same as stopped
+
+Every binding may carry `staleAfterSeconds` and `staleState`. A reading older
+than the threshold resolves to the stale state and the element is flagged in
+the viewer. The transform returns `null` rather than a fallback for an
+unresolvable value, specifically so a dead transmitter never leaves a pump
+drawn green.
+
+### The evaluator exists twice, deliberately
+
+`applyScadaTransform()` (backend) and `applyTransform()` in
+`features/scada/lib/resolveBindings.ts` are the same function. The runtime has
+to resolve a value the instant a telemetry frame lands — a round trip per frame
+per element is a request storm — and the server needs the same answer for the
+interlock check. `POST /scada/symbols/evaluate` exposes the server's copy so
+the two can be diffed rather than assumed equal, and both sides pin the cases
+that are easy to get wrong: the STRINGS `'0'` and `'false'` are falsy, a
+missing value yields `null`, and a zero-width linear range yields `outMin`.
+
+### Frontend
+
+`features/scada/` — `ScadaDiagramsPage` (list), `ScadaEditorPage`
+(palette + canvas + properties + live preview), `ScadaViewerPage` (runtime),
+and a canvas built from **plain SVG** rather than a flow library, for the same
+reasons as the rule-chain canvas. The canvas is ONE component with
+`mode="edit" | "run"`: the whole value of a mimic editor is that what you draw
+is exactly what operators see, and a second renderer is a second set of
+transform and ordering decisions whose differences only surface in production.
+
+Animation is CSS, not React state. Spin, blink and dash-flow are continuous and
+must keep running between frames; driving them from state would be a re-render
+per element per frame. `transform-box: fill-box` is the load-bearing line —
+without it every rotation is about the SVG origin and an impeller swings around
+the corner of the sheet.
+
+Canvas colours are literal hex. `styles/globals.css` defines its tokens as bare
+HSL triplets with no `hsl()` wrapper, so `fill-background` emits
+`fill: 0 0% 100%`, the browser discards it, and SVG falls back to BLACK.
+
+### Routes
+
+| Route | Purpose |
+|---|---|
+| `GET /scada/symbols` | The library. Readable by `CUSTOMER_USER` — the runtime needs it to render at all. |
+| `POST /scada/symbols/evaluate` | Resolve a value through a transform. No write. |
+| `GET /scada/diagrams` · `:id` | Summaries (no geometry) · full read with `issues` and the server-derived `subscriptions` set. |
+| `POST` · `PATCH` · `DELETE /scada/diagrams[/:id]` | CRUD. |
+| `POST /scada/diagrams/:id/duplicate` · `/publish` | Copy (always lands unpublished) · publish gate. |
+| `GET /scada/diagrams/by-device/:deviceId` | Which diagrams reference a device — from the mirror table. Check before deleting a device. |
+| `POST /scada/diagrams/:id/elements/:elementId/action` | Write-back, interlocked. |
+
+```bash
+npm run check:scada                      # catalogue consistency + evaluator
+npm run migration:scada <database> [up|down]
+```
+
+The migration is `ScadaMimicDiagrams1788100000000`, applied with the standalone
+runner because `migration:run` is blocked (§11). `up()` is idempotent.
+
+---
+
+## 4o. Device authentication — modelled for a year, enforced since today
+
+`device_credentials` has supported ACCESS_TOKEN, MQTT_BASIC and
+X509_CERTIFICATE since the schema was written, and `credentialsId` carries a
+unique index the entity itself describes as "used for fast auth lookup".
+
+**Nothing ever looked anything up.** Every ingest path resolved the device
+with `findOne({ where: { deviceKey } })`. `DeviceCredentialsService.verify
+Credentials()` existed, was correct, and had no caller anywhere in the
+repository. The HTTP adapter stated the consequence in its own comment:
+"Anyone who learns a deviceKey can post telemetry as that device."
+
+A deviceKey is an IDENTIFIER. It is in URLs, MQTT topics, logs, the UI and
+support tickets. Treating it as a secret meant the platform had no device
+authentication at all while appearing to offer three kinds.
+
+### The rule
+
+> **Resolve the device FROM the credential. Never from the path, the topic or
+> the body.**
+
+That ordering is the whole defence. A valid token for device A must not become
+a way to write as device B by editing a URL segment.
+
+### Where it is enforced
+
+| Path | Credential |
+|---|---|
+| `POST /v1/ingestion/:deviceKey` | `Authorization: Bearer`, `x-device-token`, or the path segment as a token (ThingsBoard's convention) |
+| `POST /v1/ingestion/batch` | the CALLER authenticates; each entry carries its own token, or is bounded to the caller's tenant |
+| CoAP `/api/v1/{token}/…` | the path segment is a real access token, not a deviceKey |
+| MQTT | EMQX delegates authn **and** authz over HTTP — see below |
+| LwM2M registration | endpoint name resolved as a token; `deviceId` pinned on the row |
+
+`DeviceAuthService` (`src/modules/device-auth/`) is the single verifier. It
+depends on **no other feature module** — it registers the `Device` and
+`DeviceCredentials` repositories directly — because `DevicesModule` imports
+`ProtocolsModule`, so the adapters could not import `DevicesModule` back.
+
+Properties that are load bearing, each asserted by `npm run check:device-auth`:
+
+- **Constant-time comparison.** The old code used `!==`, which returns on the
+  first differing byte and leaks the matching prefix length. Both sides are
+  SHA-256'd first so lengths cannot leak either.
+- **Negative caching.** Telemetry is the highest-volume path here. Without
+  caching failures, a flood of bad tokens becomes a flood of queries and
+  authentication turns into an amplification vector.
+- **Fails closed.** Any error denies.
+- **Types are not interchangeable.** A valid MQTT_BASIC username is not a
+  valid bearer token.
+
+### MQTT: the delegation that pointed at nothing
+
+The codebase said "MQTT auth lives in EMQX" and shipped an EMQX configured
+with `EMQX_ALLOW_ANONYMOUS=false` and `EMQX_LOADED_PLUGINS=…`. **Both are
+EMQX 4.x variables and are no-ops on 5.3**, and EMQX 5 with no authentication
+chain allows everything. The variable read as a lockdown and set nothing.
+
+`docker/emqx/emqx.conf` now delegates both decisions to
+`/device-auth/mqtt/authn` and `/device-auth/mqtt/authz`, with
+`no_match = deny`. **Authorization matters as much as authentication**: without
+it, any device holding valid credentials could publish on every other device's
+topic — the same forgery one level up.
+
+One trap: `lib/mqtt/MQTTService` is the platform's own broker client. It is
+not a device and has no credentials row, so enabling authn would deny the
+platform its own connection and stop all MQTT ingestion. It is allowed
+explicitly in `mqttAuthn()` as a superuser, and a blank `MQTT_PASSWORD` does
+not become a bypass.
+
+### Route order is load bearing
+
+`@Post('batch')` MUST be declared before `@Post(':deviceId')`. Nest matches in
+declaration order, so with the parameterised route first every batch request
+was captured by the single-device handler with `deviceId: 'batch'` — the batch
+endpoint was unreachable dead code and the authorization on it was decorative.
+The guard asserts the ordering.
+
+### Rolling it out
+
+Enforcement defaults **ON** (`DEVICE_AUTH_ENFORCED`), which rejects any device
+with no credentials row — on an existing deployment, all of them.
+
+```bash
+npm run backfill:device-credentials <db>            # dry run
+npm run backfill:device-credentials <db> --apply    # issues + prints tokens ONCE
+npm run check:device-auth                           # 33 checks, no database
+```
+
+The backfill never rotates an existing credential. `DEVICE_AUTH_ENFORCED=false`
+is a documented migration aid that logs an error at boot and warns on every
+bypass; it is not a supported running state.
+
+### Still open
+
+No DTLS for CoAP or LwM2M, so those tokens travel in clear over UDP and are
+replayable by anyone on the path. That port belongs on a private APN or behind
+a DTLS terminator. There is also no gateway-to-child-device model, which is
+why batch falls back to a same-tenant bound rather than a per-device one.
+
+---
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
@@ -1715,7 +2015,7 @@ SUPER_ADMIN          ← no tenantId; accesses all tenants
 - Resources flow: Tenant owns devices/assets → assigns to Customers → Customer admins assign to Users
 
 ### 2FA
-Supports three methods (`TwoFactorMethod` enum): `authenticator` (TOTP via speakeasy), `sms` (stub — no SMS provider wired), `email` (sends OTP via MailService). When 2FA is enabled, login returns `{ requires2FA: true, userId, method }` instead of tokens. Client must call `POST /api/auth/oauth/verify-2fa` with the code to complete login.
+Supports three methods (`TwoFactorMethod` enum): `authenticator` (TOTP via speakeasy), `sms` (delivered through `SmsChannel` — Twilio or AWS SNS, selected by `SMS_PROVIDER`; it previously `logger.warn()`ed the OTP to the server log and reported success, so every second factor the platform issued was recoverable from logs and no message was ever sent), `email` (sends OTP via MailService). When 2FA is enabled, login returns `{ requires2FA: true, userId, method }` instead of tokens. Client must call `POST /api/auth/oauth/verify-2fa` with the code to complete login.
 
 ### Invitation Flow
 - Admin calls `POST /api/auth/invitations` → creates `Invitation` entity + sends email with token
@@ -1790,6 +2090,47 @@ MOYASAR_WEBHOOK_SECRET=
 
 # Integrations
 INTEGRATION_EVENT_RETENTION_DAYS=14   # How long integration_events rows are kept
+
+# SMS (NotificationChannel.SMS and `sms` 2FA both go through SmsChannel).
+# Nothing is sent unless SMS_ENABLED is true, and a disabled or misconfigured
+# channel THROWS — it never resolves successfully, which is what used to mark a
+# notification delivered while nothing left the host.
+SMS_ENABLED=false
+SMS_PROVIDER=twilio                   # twilio | aws_sns
+SMS_DEFAULT_REGION=SA                 # for libphonenumber-js; 0501234567 → +966501234567
+SMS_TIMEOUT_MS=10000
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_PHONE_NUMBER=                  # or TWILIO_MESSAGING_SERVICE_SID (preferred when both are set)
+TWILIO_MESSAGING_SERVICE_SID=
+AWS_SNS_REGION=                       # falls back to AWS_REGION
+AWS_SNS_SENDER_ID=                    # omit in countries that reject sender IDs (the US)
+AWS_SNS_SMS_TYPE=Transactional        # SNS defaults to Promotional, which carriers drop for OTPs
+
+# Push (FCM for Android/iOS, Web Push for browsers). There is NO direct APNs
+# transport — the `apn` package is not installed; iOS is relayed to APNs by
+# Firebase. Device tokens live in `push_subscriptions`.
+PUSH_ENABLED=false
+PUSH_TTL_SECONDS=3600
+FIREBASE_PROJECT_ID=
+FIREBASE_CLIENT_EMAIL=
+FIREBASE_PRIVATE_KEY=                 # literal \n sequences are unescaped before PEM parsing
+VAPID_PUBLIC_KEY=                     # npx web-push generate-vapid-keys
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=                        # mailto:… or https://… — browsers reject a JWT without it
+
+# Modbus TCP/RTU polling. ON by default; only an explicit false disables it.
+# Devices come from the `modbus_devices` table (Integrations → Modbus devices);
+# MODBUS_DEVICES is a compatibility fallback read only when that table has no
+# enabled rows. Polling is a per-process setInterval, so EVERY replica polls
+# every device — set MODBUS_ENABLED=false on all but one.
+MODBUS_ENABLED=true
+MODBUS_DEVICES=                       # legacy JSON blob; see modbus.adapter.ts
+
+# LwM2M registration lifetime tracking. Registrations are rows in
+# `lwm2m_registrations` and are rehydrated on boot.
+LWM2M_LIFETIME_GRACE_SECONDS=30
+LWM2M_EXPIRY_SWEEP_SECONDS=15
 
 # Telemetry lifecycle (see §4h). The defaults are deliberately conservative:
 # nothing is deleted for a tenant whose plan does not state a retention.
@@ -2038,7 +2379,10 @@ import { DevicesService } from '@modules/index.service';
 | ~~`src/modules/api-monitoring/api-monitoring.service.ts`~~ | **RESOLVED** — real health probes. |
 | ~~`src/modules/images/images.service.ts`~~ | **RESOLVED** — local-disk storage and delete are implemented. |
 | `src/modules/images/images.controller.ts` line 46 | File upload to persistent storage (S3/local) is TODO |
-| `src/modules/alarms/alarms.consumer.ts` line 359 | SMS notification integration (Twilio/AWS SNS) is a TODO stub |
+| ~~`src/modules/alarms/alarms.consumer.ts` line 359~~ | **RESOLVED** — it already routed SMS through `NotificationsService`; the gap was `SmsChannel`, every provider call in which was commented out and which then returned success, so the notification row was marked **sent and delivered** while nothing left the host. Twilio and AWS SNS are now both wired (`SMS_PROVIDER=twilio\|aws_sns`), numbers are normalised to E.164 with `libphonenumber-js`, and every failure path throws so `markAsFailed()` runs. |
+| ~~`src/modules/notifications/channels/push.channel.ts`~~ | **RESOLVED** — same silent-false-success shape (`sendToMultipleDevices()` set `success = deviceTokens.length` with no network call). FCM via `firebase-admin` (modular subpath imports; iOS is relayed to APNs by Firebase, as there is no `apn` package here) and Web Push via `web-push`. Device tokens live in the new `push_subscriptions` table, registered through `POST /push-subscriptions`; `NotificationsService.sendPush()` fans out to a user's devices when no token is given. |
+| ~~`MODBUS_ENABLED` / `MODBUS_DEVICES`~~ | **RESOLVED** — `ModbusAdapter` defaults to **ON** (`MODBUS_ENABLED=false` disables) and reads `modbus_devices` rather than an environment JSON blob. CRUD at `/modbus/devices` with a register-map editor at `/modbus` in the frontend. The env blob is still read, but only when the table has no enabled rows. **Polling is still a per-process `setInterval`, so every replica polls every device** — run it on one replica until leader election exists; `GET /modbus/devices/status` reports that caveat. |
+| ~~LwM2M registrations in memory~~ | **RESOLVED** — `lwm2m_registrations` is authoritative, rehydrated on boot, with the in-process maps kept only as a cache. `expireStaleRegistrations()` sweeps the table, so a registration made by another replica is expired too. Registration is also credential-checked through `DeviceAuthService`; there is still no DTLS, so the credential travels in clear over UDP. |
 | `src/modules/payments/payments.service.ts` | Stripe is installed as a dependency but Moyasar is the active provider; Stripe integration is not wired |
 | `src/modules/protocols/adapters/ble.adapter.ts` | BLE adapter has placeholder implementation |
 | `src/modules/protocols/adapters/coap.adapter.ts` | Implemented (ThingsBoard-style telemetry/attributes/rpc over UDP 5683). Remaining TODO: two-way server-side RPC dispatch (currently only acknowledges device-initiated RPC). |
@@ -2056,6 +2400,8 @@ import { DevicesService } from '@modules/index.service';
 | `TelemetryService.exportToCSV()` | Does not quote fields, so a device named `Lobby, North` shifts every later column on that row. |
 | `WidgetRenderer.tsx` (frontend) | Calls `useState` **inside** a conditional branch after early returns — a hooks-order violation that throws when a widget's classification changes. |
 | `src/services/api/analytics.api.ts` (frontend) | Declares six routes that do not exist on `AnalyticsController`; all 404 at runtime. |
+| ~~`src/services/api/devices.api.ts` — `sendCommand` (frontend)~~ | **RESOLVED** — posted to `/devices/:id/command`, which does not exist (the control routes moved to `GatewayController` to break a DevicesModule ↔ GatewayModule cycle). TWO things were wrong: the path AND the body — the DTO field is `method`, so `{ command }` would have been stripped by the global `ValidationPipe` and 400'd even once the path was right. Now `POST /gateway/devices/:deviceKey/command`, with `sendCommandByDeviceId()` resolving the key for the many call sites that hold only a uuid. Every dashboard Switch, Slider and action button 404'd behind a "Failed to send command" toast; the Slider and the action panel never called the API at all and only toasted success. |
+| ~~`src/services/websocket/wsClient.ts` (frontend)~~ | **RESOLVED** — the socket was broken end to end. It called `io(SOCKET_URL)` with **no namespace**, joining the Socket.IO default `/`, where none of the three gateways is registered (`/ws`, `/alarms`, `telemetry`); Socket.IO does not fall back, so every emit was dropped and no server event could arrive. The event names were wrong independently: it emitted `subscribe-telemetry` / `get-device-telemetry` / `subscribe-alarms` (no handler exists for any of them) and listened for `telemetry:update` / `alarm:update` (nothing emits either). Fixing one without the other would still have produced silence. Now `/ws` with `device:subscribe` / `device:telemetry`, plus a second socket on `/alarms` for the seven real lifecycle events — that namespace is also the only one that joins a `tenant:` room, which is why `WebsocketGateway`'s own `alarm:new` broadcast reaches nobody. `useLiveTelemetry` had been hiding all of it behind REST polling. |
 
 ### Structural Notes
 - The `src/migrations/` directory (at `src/` root, separate from `src/database/migrations/`) exists but is also empty

@@ -31,6 +31,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '@common/enums/index.enum';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { User } from '../index.entities';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Profiles')
 @Controller('profiles')
@@ -45,6 +46,7 @@ export class ProfilesController {
   // ==================== DEVICE PROFILES ====================
 
   @Post('device')
+  @RequirePermissions('profiles:create')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Create device profile' })
@@ -59,6 +61,7 @@ export class ProfilesController {
   }
 
   @Get('device')
+  @RequirePermissions('profiles:list')
   @ApiOperation({ summary: 'Get all device profiles' })
   @ApiResponse({ status: 200, description: 'Device profiles retrieved' })
   async findAllDeviceProfiles(@CurrentUser() user: User, @Query() queryDto: QueryProfilesDto) {
@@ -66,6 +69,7 @@ export class ProfilesController {
   }
 
   @Get('device/statistics')
+  @RequirePermissions('profiles:list')
   @ApiOperation({ summary: 'Get device profile statistics' })
   @ApiResponse({ status: 200, description: 'Statistics retrieved' })
   async getDeviceProfileStatistics() {
@@ -77,6 +81,7 @@ export class ProfilesController {
   }
 
   @Get('device/default')
+  @RequirePermissions('profiles:list')
   @ApiOperation({ summary: 'Get default device profile' })
   @ApiQuery({ name: 'tenantId', required: false })
   @ApiResponse({ status: 200, description: 'Default profile retrieved' })
@@ -89,6 +94,7 @@ export class ProfilesController {
   }
 
   @Get('device/:id')
+  @RequirePermissions('profiles:read')
   @ApiOperation({ summary: 'Get device profile by ID' })
   @ApiResponse({ status: 200, description: 'Device profile retrieved' })
   async findOneDeviceProfile(@Param('id') id: string) {
@@ -100,6 +106,7 @@ export class ProfilesController {
   }
 
   @Get('device/:id/devices')
+  @RequirePermissions('profiles:read')
   @ApiOperation({ summary: 'Get devices using this profile' })
   @ApiResponse({ status: 200, description: 'Devices retrieved' })
   async getDevicesUsingProfile(@Param('id') id: string) {
@@ -111,6 +118,7 @@ export class ProfilesController {
   }
 
   @Post('device/:id/validate')
+  @RequirePermissions('profiles:update')
   @ApiOperation({ summary: 'Validate telemetry data against profile' })
   @ApiResponse({ status: 200, description: 'Validation completed' })
   async validateTelemetry(
@@ -128,6 +136,7 @@ export class ProfilesController {
   }
 
   @Post('device/:id/clone')
+  @RequirePermissions('profiles:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Clone device profile' })
@@ -144,6 +153,7 @@ export class ProfilesController {
   }
 
   @Patch('device/:id')
+  @RequirePermissions('profiles:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Update device profile' })
@@ -160,6 +170,7 @@ export class ProfilesController {
   }
 
   @Patch('device/:id/default')
+  @RequirePermissions('profiles:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Set as default device profile' })
@@ -173,6 +184,7 @@ export class ProfilesController {
   }
 
   @Delete('device/:id')
+  @RequirePermissions('profiles:delete')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)

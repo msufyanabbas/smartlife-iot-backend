@@ -37,6 +37,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /**
  * RolesGuard is listed explicitly because it returns TRUE when a handler has no
@@ -61,6 +62,7 @@ export class IntegrationsController {
   ) {}
 
   @Post()
+  @RequirePermissions('integrations:create')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Create a new integration' })
   @ApiResponse({ status: 201, description: 'Integration created successfully' })
@@ -73,6 +75,7 @@ export class IntegrationsController {
   }
 
   @Get()
+  @RequirePermissions('integrations:list')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -86,6 +89,7 @@ export class IntegrationsController {
   }
 
   @Get('catalogue')
+  @RequirePermissions('integrations:list')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -109,6 +113,7 @@ export class IntegrationsController {
   }
 
   @Get('events')
+  @RequirePermissions('integrations:list')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @ApiOperation({
     summary: 'Tenant-wide integration event feed',
@@ -142,6 +147,7 @@ export class IntegrationsController {
   }
 
   @Get('inbound-status')
+  @RequirePermissions('integrations:list')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Live inbound MQTT subscriptions',
@@ -156,6 +162,7 @@ export class IntegrationsController {
   }
 
   @Get('statistics')
+  @RequirePermissions('integrations:list')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -169,6 +176,7 @@ export class IntegrationsController {
   }
 
   @Get('recent-activity')
+  @RequirePermissions('integrations:list')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -219,6 +227,7 @@ export class IntegrationsController {
   }
 
   @Get(':id')
+  @RequirePermissions('integrations:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Get integration by ID',
@@ -233,6 +242,7 @@ export class IntegrationsController {
   }
 
   @Get(':id/events')
+  @RequirePermissions('integrations:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Event feed for one integration',
@@ -262,6 +272,7 @@ export class IntegrationsController {
   }
 
   @Get(':id/summary')
+  @RequirePermissions('integrations:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Success/failure counts over a window',
@@ -283,6 +294,7 @@ export class IntegrationsController {
   }
 
   @Patch(':id')
+  @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Update integration' })
   @ApiResponse({ status: 200, description: 'Integration updated successfully' })
@@ -296,6 +308,7 @@ export class IntegrationsController {
   }
 
   @Delete(':id')
+  @RequirePermissions('integrations:delete')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete integration' })
@@ -306,6 +319,7 @@ export class IntegrationsController {
   }
 
   @Post(':id/toggle')
+  @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Toggle integration status' })
   @ApiResponse({ status: 200, description: 'Status toggled successfully' })
@@ -318,6 +332,7 @@ export class IntegrationsController {
   }
 
   @Post(':id/test')
+  @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Test integration connection',
@@ -537,6 +552,7 @@ export class IntegrationsController {
   }
 
   @Post(':id/tuya/sync')
+  @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -565,6 +581,7 @@ export class IntegrationsController {
   }
 
   @Get(':id/tuya/devices')
+  @RequirePermissions('integrations:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'List Tuya devices bound to this integration',
@@ -582,6 +599,7 @@ export class IntegrationsController {
   }
 
   @Post(':id/tuya/command')
+  @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -602,6 +620,7 @@ export class IntegrationsController {
   }
 
   @Get(':id/tuya/device/:tuyaDeviceId/status')
+  @RequirePermissions('integrations:read')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Get the current datapoint status of a Tuya device' })
   @ApiResponse({ status: 200, description: 'Tuya device status' })

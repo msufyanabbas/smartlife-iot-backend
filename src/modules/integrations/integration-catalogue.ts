@@ -803,6 +803,125 @@ export const INTEGRATION_CATALOGUE: Record<
     ],
   },
 
+  // ── NB-IoT carrier bearers ─────────────────────────────────────────────────
+  //
+  // Both are `inbound` and both are honestly `hasAdapter: false`: telemetry is
+  // never forwarded TO a carrier platform from here, so `isDispatchableType()`
+  // must exclude them. Setting hasAdapter true to make the tile look complete
+  // is exactly what quarantined working Tuya rows — a non-dispatchable row in
+  // the fan-out returns success:false on every ordinary reading, and ten of
+  // those flip it to ERROR with enabled=false.
+  //
+  // They are distinct types rather than one because the operator has to do
+  // completely different things: register a URL with the carrier, or point the
+  // device's firmware at a CoAP host. One tile covering both would describe
+  // neither.
+  [IntegrationType.NBIOT_HTTP]: {
+    type: IntegrationType.NBIOT_HTTP,
+    label: 'NB-IoT carrier push (HTTP)',
+    category: 'vendor',
+    direction: IntegrationDirection.INBOUND,
+    description:
+      'Receive NB-IoT uplinks pushed by a carrier IoT platform — Zain, STC, ' +
+      'Mobily, Vodafone or Telefónica Kite, Huawei OceanConnect. The device is ' +
+      'resolved by SIM identity (IMEI / IMSI / ICCID / MSISDN) against its ' +
+      'NB-IoT record, and RSRP, RSRQ, SINR and ECL are stored as telemetry.',
+    icon: 'Signal',
+    hasAdapter: false,
+    adapterNote:
+      'Inbound only. Register the URL below with your carrier platform as its ' +
+      'HTTP push / data-forwarding destination. Telemetry is not sent back to ' +
+      'the carrier. Unlike the generic HTTP uplink, this endpoint finds the ' +
+      'device by SIM identity, because a carrier platform knows the IMEI and ' +
+      'has never heard of this platform’s device key.',
+    inboundPath: '/nbiot/uplink/:id',
+    defaultProtocol: 'HTTPS',
+    fields: [
+      {
+        key: 'routingKey',
+        label: 'Routing key',
+        type: 'password',
+        required: true,
+        help: 'A shared secret that must appear in the x-routing-key header. This is what authenticates the uplink.',
+      },
+      {
+        key: 'identifierField',
+        label: 'Device identifier field',
+        type: 'text',
+        placeholder: 'imei',
+        help: 'Which property of the uplink holds the SIM identity. Leave blank to try imei, imsi, iccid and msisdn in turn.',
+      },
+      {
+        key: 'dataField',
+        label: 'Payload field',
+        type: 'text',
+        help: 'Which property holds the sensor payload — e.g. "data" or "services.0.data". Leave blank to detect it.',
+      },
+      {
+        key: 'carrier',
+        label: 'Carrier',
+        type: 'text',
+        group: 'Reference',
+        help: 'Recorded for your own reference; the device’s own record is what the uplink reads.',
+      },
+    ],
+  },
+
+  [IntegrationType.NBIOT_COAP]: {
+    type: IntegrationType.NBIOT_COAP,
+    label: 'NB-IoT direct CoAP/UDP',
+    category: 'vendor',
+    direction: IntegrationDirection.INBOUND,
+    description:
+      'NB-IoT devices that speak CoAP straight to the platform on UDP 5683, ' +
+      'with the device key as the URI token. Nothing per-integration runs: ' +
+      'this row exists so the endpoint details and the APN have somewhere to ' +
+      'live, and so the UI can tell an operator exactly what to flash.',
+    icon: 'Radio',
+    hasAdapter: false,
+    adapterNote:
+      'Inbound only, and handled entirely by the platform’s existing CoAP ' +
+      'server — no per-integration code runs. Point the device at ' +
+      'coap://<host>:5683/api/v1/{deviceKey}/telemetry. NB-IoT is a bearer, ' +
+      'not a protocol, so there is nothing further to connect.',
+    // Not a URL path: the CoAP server is a raw UDP socket, not an HTTP route,
+    // so there is no `:id` to substitute. Left undefined rather than filled
+    // with something that looks clickable and is not.
+    defaultProtocol: 'CoAP/UDP',
+    fields: [
+      {
+        key: 'coapHost',
+        label: 'CoAP host the devices reach',
+        type: 'text',
+        required: true,
+        placeholder: 'iot.example.com',
+        help: 'The hostname or public IP to flash into the device firmware.',
+      },
+      {
+        key: 'coapPort',
+        label: 'CoAP port',
+        type: 'number',
+        default: 5683,
+        min: 1,
+        max: 65535,
+        help: 'The platform listens on COAP_PORT, 5683 by default. DTLS (5684) is not implemented.',
+      },
+      {
+        key: 'apn',
+        label: 'APN',
+        type: 'text',
+        placeholder: 'nbiot.zain.sa',
+        group: 'Reference',
+      },
+      {
+        key: 'carrier',
+        label: 'Carrier',
+        type: 'text',
+        group: 'Reference',
+      },
+    ],
+  },
+
   // ── Generic buckets kept for backwards compatibility ───────────────────────
   [IntegrationType.CLOUD]: {
     type: IntegrationType.CLOUD,

@@ -26,6 +26,7 @@ import {
 import { User } from '../users/entities/user.entity';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('scripts')
 @Controller('scripts')
@@ -50,6 +51,7 @@ export class ScriptsController {
   }
 
   @Post()
+  @RequirePermissions('automations:create')
   @ApiOperation({ summary: 'Create a new script' })
   create(
     @CurrentUser('id') userId: string,
@@ -60,24 +62,28 @@ export class ScriptsController {
   }
 
   @Get()
+  @RequirePermissions('automations:list')
   @ApiOperation({ summary: 'Get all scripts' })
   findAll(@CurrentUser() user: User, @Query() paginationDto: PaginationDto) {
     return this.scriptsService.findAll(this.tenantOf(user), paginationDto);
   }
 
   @Get('statistics')
+  @RequirePermissions('automations:list')
   @ApiOperation({ summary: 'Get script statistics' })
   getStatistics(@CurrentUser() user: User) {
     return this.scriptsService.getStatistics(this.tenantOf(user));
   }
 
   @Get(':id')
+  @RequirePermissions('automations:read')
   @ApiOperation({ summary: 'Get script by ID' })
   findOne(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
     return this.scriptsService.findOne(id, this.tenantOf(user));
   }
 
   @Patch(':id')
+  @RequirePermissions('automations:update')
   @ApiOperation({ summary: 'Update script' })
   update(
     @CurrentUser() user: User,
@@ -93,6 +99,7 @@ export class ScriptsController {
   }
 
   @Delete(':id')
+  @RequirePermissions('automations:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete script' })
   remove(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
@@ -100,6 +107,7 @@ export class ScriptsController {
   }
 
   @Post(':id/execute')
+  @RequirePermissions('automations:update')
   @HttpCode(HttpStatus.OK)
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Execute script', 'Run a script with provided input data')
@@ -112,6 +120,7 @@ export class ScriptsController {
   }
 
   @Post(':id/test')
+  @RequirePermissions('automations:update')
   @HttpCode(HttpStatus.OK)
   @TenantOrCustomerAdmin()
   @SwaggerAuth(

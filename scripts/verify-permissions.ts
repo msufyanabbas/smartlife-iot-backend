@@ -65,10 +65,32 @@ const ctxFor = (user: any, required: string[] | undefined, subscription?: any) =
 
 const reflectorFor = () => {
   const r = new Reflector();
-  // getAllAndOverride is used for @Public; get() is used for @RequirePermissions
-  (r as any).getAllAndOverride = () => false;
+
+  // `getAllAndOverride` now serves BOTH @Public and @RequirePermissions.
+  //
+  // It used to be stubbed as `() => false` because only @Public went through
+  // it, while @RequirePermissions was read with `get()` from the handler
+  // alone. That handler-only read was the bug — a class-level decorator was
+  // silently ignored — and fixing the guard to use `getAllAndOverride` for
+  // permissions turned this stub into a mock that answered "no permissions
+  // required" for every route, so the guard allowed everything and all four
+  // denial assertions failed.
+  //
+  // The mock must therefore be key-aware, and must honour handler-over-class
+  // precedence exactly as the real Reflector does.
+  (r as any).getAllAndOverride = (key: any, targets: any[]) => {
+    if (key === PERMISSIONS_KEY) {
+      for (const t of targets ?? []) {
+        if (t?.__required !== undefined) return t.__required;
+      }
+      return undefined;
+    }
+    return false; // IS_PUBLIC_KEY and anything else
+  };
+
   (r as any).get = (key: any, handler: any) =>
     key === PERMISSIONS_KEY ? handler?.__required : undefined;
+
   return r;
 };
 
@@ -179,6 +201,69 @@ const reflectorFor = () => {
   section('4. Admin bypass');
   ok('tenant_admin passes without any grant', await can(tenantAdmin, ['devices:delete']));
   ok('super_admin passes without any grant', await can(superAdmin, ['devices:delete']));
+
+  // ── 4b. enforcePermissions ────────────────────────────────────────────
+  //
+  // The tenant-admin bypass used to be unconditional, which made assigning
+  // permissions to a tenant admin a no-op: the grant saved, the UI showed
+  // it, and the guard never looked. `users.enforcePermissions` is the
+  // per-user opt-in that makes it real.
+  //
+  // Four properties matter and all four are asserted: the flag is off by
+  // default (above), turning it on restricts, a grant then works, and
+  // SUPER_ADMIN ignores it — an account that can revoke its own access to
+  // the platform it administers has no way back in.
+  section('4b. enforcePermissions makes a grant real for a tenant admin');
+
+  await q('UPDATE users SET "enforcePermissions" = true WHERE id = $1', [
+    TENANT_ADMIN,
+  ]);
+  const restrictedAdmin = { ...tenantAdmin, enforcePermissions: true };
+
+  ok(
+    'with the flag on and NO grant, the tenant admin is denied',
+    !(await can(restrictedAdmin, ['devices:delete'])),
+  );
+
+  // Give the admin exactly one permission, via a role.
+  const ADMIN_ROLE = randomUUID();
+  await q(
+    `INSERT INTO roles (id, name, "tenantId") VALUES ($1, 'restricted-admin', $2)`,
+    [ADMIN_ROLE, TENANT],
+  );
+  await q(`INSERT INTO role_permissions ("roleId","permissionId") VALUES ($1,$2)`, [
+    ADMIN_ROLE,
+    perms['devices:read'],
+  ]);
+  await q(`INSERT INTO user_roles ("userId","roleId") VALUES ($1,$2)`, [
+    TENANT_ADMIN,
+    ADMIN_ROLE,
+  ]);
+
+  ok(
+    'the granted permission now applies',
+    await can(restrictedAdmin, ['devices:read']),
+  );
+  ok(
+    'an ungranted one is still refused',
+    !(await can(restrictedAdmin, ['devices:delete'])),
+  );
+  ok(
+    'super_admin ignores the flag and cannot lock itself out',
+    await can(
+      { ...superAdmin, enforcePermissions: true },
+      ['devices:delete'],
+    ),
+  );
+
+  // Restore, so later sections see the documented default.
+  await q('UPDATE users SET "enforcePermissions" = false WHERE id = $1', [
+    TENANT_ADMIN,
+  ]);
+  ok(
+    'with the flag off again the admin bypasses as before',
+    await can(tenantAdmin, ['devices:delete']),
+  );
 
   section('5. The default-open shape that caused the bug');
   ok('a handler with NO @RequirePermissions is open to a customer_user',

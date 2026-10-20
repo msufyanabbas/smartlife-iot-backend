@@ -39,6 +39,7 @@ import { UserRole } from '@common/enums/index.enum';
 // Use the same import path as widget-types.service.ts and widgets.dto.ts
 // to avoid a situation where two module objects exist for the same enum.
 import { WidgetTypeCategory } from '@common/enums/widget-type.enum';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Widgets')
 @Controller('widgets')
@@ -53,6 +54,7 @@ export class WidgetsController {
   // ── Widget types ──────────────────────────────────────────────────────────
 
   @Post('types')
+  @RequirePermissions('dashboards:create')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Create widget type' })
@@ -63,6 +65,7 @@ export class WidgetsController {
   }
 
   @Get('types')
+  @RequirePermissions('dashboards:list')
   @ApiOperation({ summary: 'Get all widget types' })
   async findAllWidgetTypes(@Query() queryDto: QueryWidgetTypesDto) {
     // Returned as-is: the service already produces the standard
@@ -71,6 +74,7 @@ export class WidgetsController {
   }
 
   @Get('types/statistics')
+  @RequirePermissions('dashboards:list')
   @ApiOperation({ summary: 'Get widget type statistics' })
   async getWidgetTypeStatistics() {
     const stats = await this.widgetTypesService.getStatistics();
@@ -78,6 +82,7 @@ export class WidgetsController {
   }
 
   @Get('types/category/:category')
+  @RequirePermissions('dashboards:read')
   @ApiOperation({ summary: 'Get widget types by category' })
   @ApiParam({ name: 'category', type: String, enum: WidgetTypeCategory, enumName: 'WidgetTypeCategory' })
   async findWidgetTypesByCategory(@Param('category') category: WidgetTypeCategory) {
@@ -86,6 +91,7 @@ export class WidgetsController {
   }
 
   @Get('types/bundle/:bundleFqn')
+  @RequirePermissions('dashboards:read')
   @ApiOperation({ summary: 'Get widget types by bundle' })
   async findWidgetTypesByBundle(@Param('bundleFqn') bundleFqn: string) {
     const widgetTypes = await this.widgetTypesService.findByBundle(bundleFqn);
@@ -93,6 +99,7 @@ export class WidgetsController {
   }
 
   @Post('types/import')
+  @RequirePermissions('dashboards:create')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Import widget type from JSON' })
@@ -102,6 +109,7 @@ export class WidgetsController {
   }
 
   @Post('types/:id/clone')
+  @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Clone widget type' })
@@ -111,6 +119,7 @@ export class WidgetsController {
   }
 
   @Get('types/:id/export')
+  @RequirePermissions('dashboards:read')
   @ApiOperation({ summary: 'Export widget type to JSON' })
   async exportWidgetType(@Param('id') id: string) {
     const exportData = await this.widgetTypesService.exportWidget(id);
@@ -118,6 +127,7 @@ export class WidgetsController {
   }
 
   @Get('types/:id')
+  @RequirePermissions('dashboards:read')
   @ApiOperation({ summary: 'Get widget type by ID' })
   async findOneWidgetType(@Param('id') id: string) {
     const widgetType = await this.widgetTypesService.findOne(id);
@@ -125,6 +135,7 @@ export class WidgetsController {
   }
 
   @Patch('types/:id')
+  @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Update widget type' })
@@ -134,6 +145,7 @@ export class WidgetsController {
   }
 
   @Delete('types/:id')
+  @RequirePermissions('dashboards:delete')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -145,6 +157,7 @@ export class WidgetsController {
   // ── Widget bundles ────────────────────────────────────────────────────────
 
   @Post('bundles')
+  @RequirePermissions('dashboards:create')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Create widget bundle' })
@@ -154,6 +167,7 @@ export class WidgetsController {
   }
 
   @Get('bundles')
+  @RequirePermissions('dashboards:list')
   @ApiOperation({ summary: 'Get all widget bundles' })
   async findAllWidgetBundles(@Query() queryDto: QueryWidgetBundlesDto) {
     // Returned as-is: the service already produces the standard
@@ -162,6 +176,7 @@ export class WidgetsController {
   }
 
   @Get('bundles/statistics')
+  @RequirePermissions('dashboards:list')
   @ApiOperation({ summary: 'Get widget bundle statistics' })
   async getWidgetBundleStatistics() {
     const stats = await this.widgetBundlesService.getStatistics();
@@ -169,6 +184,7 @@ export class WidgetsController {
   }
 
   @Get('bundles/:id/widgets')
+  @RequirePermissions('dashboards:read')
   @ApiOperation({ summary: 'Get widgets in bundle' })
   async getWidgetsInBundle(@Param('id') id: string) {
     const widgets = await this.widgetBundlesService.getWidgetsInBundle(id);
@@ -176,6 +192,7 @@ export class WidgetsController {
   }
 
   @Post('bundles/:id/widgets/:widgetId')
+  @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Add widget to bundle' })
@@ -185,6 +202,7 @@ export class WidgetsController {
   }
 
   @Delete('bundles/:id/widgets/:widgetId')
+  @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -195,6 +213,7 @@ export class WidgetsController {
   }
 
   @Get('bundles/:id/export')
+  @RequirePermissions('dashboards:read')
   @ApiOperation({
     summary: 'Export a widget bundle with all of its widgets as JSON',
     description:
@@ -207,6 +226,7 @@ export class WidgetsController {
   }
 
   @Post('bundles/import')
+  @RequirePermissions('dashboards:create')
   @ApiOperation({
     summary: 'Import a widget bundle and its widgets from JSON',
     description:
@@ -227,6 +247,7 @@ export class WidgetsController {
   }
 
   @Get('bundles/:id')
+  @RequirePermissions('dashboards:read')
   @ApiOperation({ summary: 'Get widget bundle by ID' })
   async findOneWidgetBundle(@Param('id') id: string) {
     const bundle = await this.widgetBundlesService.findOne(id);
@@ -234,6 +255,7 @@ export class WidgetsController {
   }
 
   @Patch('bundles/:id')
+  @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Update widget bundle' })
@@ -243,6 +265,7 @@ export class WidgetsController {
   }
 
   @Delete('bundles/:id')
+  @RequirePermissions('dashboards:delete')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)

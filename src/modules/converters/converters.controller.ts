@@ -29,6 +29,7 @@ import { CreateConverterDto } from './dto/create-converter.dto';
 import { UpdateConverterDto } from './dto/update-converter.dto';
 import { QueryConvertersDto } from './dto/query-converters.dto';
 import { TestConverterDto } from './dto/test-converter.dto';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ export class ConvertersController {
   // Declared before `:id` so "catalogue" is not parsed as a converter id.
 
   @Get('catalogue')
+  @RequirePermissions('integrations:list')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -89,6 +91,7 @@ export class ConvertersController {
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   @Get()
+  @RequirePermissions('integrations:list')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -109,6 +112,7 @@ export class ConvertersController {
   }
 
   @Get(':id')
+  @RequirePermissions('integrations:read')
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,
@@ -123,6 +127,7 @@ export class ConvertersController {
   }
 
   @Post()
+  @RequirePermissions('integrations:create')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Create a converter',
@@ -139,6 +144,7 @@ export class ConvertersController {
   }
 
   @Patch(':id')
+  @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Update a converter',
@@ -158,6 +164,7 @@ export class ConvertersController {
   }
 
   @Delete(':id')
+  @RequirePermissions('integrations:delete')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
     summary: 'Delete a converter (soft)',
@@ -173,6 +180,7 @@ export class ConvertersController {
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   @Post(':id/enable')
+  @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -185,6 +193,7 @@ export class ConvertersController {
   }
 
   @Post(':id/disable')
+  @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -201,6 +210,7 @@ export class ConvertersController {
   // ── Test ──────────────────────────────────────────────────────────────────
 
   @Post(':id/test')
+  @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

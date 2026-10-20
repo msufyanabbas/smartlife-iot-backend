@@ -35,3 +35,4 @@ export { TelemetryService } from './telemetry/telemetry.service';
 export { TwoFactorAuthService } from './two-factor/two-factor-auth.service';
 export { UserSettingsService } from './user-settings/user-settings.service';
 export { WidgetTypesService } from './widgets/widget-types.service';
+export { RelationsService } from './relations/relations.service';

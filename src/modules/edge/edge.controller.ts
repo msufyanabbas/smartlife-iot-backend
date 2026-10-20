@@ -30,6 +30,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { Public } from '@/common/decorators/public.decorator';
 import { User } from '../users/entities/user.entity';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('edge')
 @Controller('edge')
@@ -80,6 +81,23 @@ export class EdgeController {
     return this.edgeService.getPendingCommands(edgeKey);
   }
 
+  /**
+   * Re-pull the configuration bundle.
+   *
+   * `GET :id/config` is the same bundle but JWT-guarded, and `agent/register`
+   * returns it only on a first-boot handshake — so without this route an agent
+   * honouring `syncConfig.syncInterval` had to re-register every cycle, which
+   * re-runs the CONNECTED event and the "self-registered" log line on every
+   * sync. Authenticated by `edgeKey` alone, exactly like `agent/commands`.
+   */
+  @Get('agent/config')
+  @Public()
+  @ApiOperation({ summary: 'Configuration bundle for the agent, keyed by edgeKey' })
+  @ApiQuery({ name: 'edgeKey', required: true })
+  agentGetConfig(@Query('edgeKey') edgeKey: string) {
+    return this.edgeService.getAgentConfigBundle(edgeKey);
+  }
+
   @Post('agent/commands/:commandId/acknowledge')
   @Public()
   @HttpCode(HttpStatus.OK)
@@ -101,6 +119,7 @@ export class EdgeController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post()
+  @RequirePermissions('edge:create')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create an edge device' })
@@ -109,6 +128,7 @@ export class EdgeController {
   }
 
   @Get()
+  @RequirePermissions('edge:list')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List edge devices' })
@@ -117,6 +137,7 @@ export class EdgeController {
   }
 
   @Get(':id')
+  @RequirePermissions('edge:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get one edge device' })
@@ -125,6 +146,7 @@ export class EdgeController {
   }
 
   @Patch(':id')
+  @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update an edge device' })
@@ -137,6 +159,7 @@ export class EdgeController {
   }
 
   @Delete(':id')
+  @RequirePermissions('edge:delete')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -148,6 +171,7 @@ export class EdgeController {
   // ── Activation ─────────────────────────────────────────────────────────────
 
   @Post(':id/activate')
+  @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -159,6 +183,7 @@ export class EdgeController {
   // ── Devices ────────────────────────────────────────────────────────────────
 
   @Get(':id/devices')
+  @RequirePermissions('edge:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List devices assigned to this edge' })
@@ -167,6 +192,7 @@ export class EdgeController {
   }
 
   @Post(':id/devices')
+  @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -180,6 +206,7 @@ export class EdgeController {
   }
 
   @Delete(':id/devices/:deviceId')
+  @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -195,6 +222,7 @@ export class EdgeController {
   // ── Config & sync ──────────────────────────────────────────────────────────
 
   @Get(':id/config')
+  @RequirePermissions('edge:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Full configuration bundle for the agent' })
@@ -203,6 +231,7 @@ export class EdgeController {
   }
 
   @Post(':id/sync')
+  @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -212,6 +241,7 @@ export class EdgeController {
   }
 
   @Get(':id/sync-status')
+  @RequirePermissions('edge:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Sync state and assignment counts' })
@@ -222,6 +252,7 @@ export class EdgeController {
   // ── Commands ───────────────────────────────────────────────────────────────
 
   @Post(':id/commands')
+  @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Queue a command for the edge agent' })
@@ -234,6 +265,7 @@ export class EdgeController {
   }
 
   @Get(':id/commands')
+  @RequirePermissions('edge:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Command history (latest 50)' })
@@ -249,6 +281,7 @@ export class EdgeController {
   // ── Events & metrics ───────────────────────────────────────────────────────
 
   @Get(':id/events')
+  @RequirePermissions('edge:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Edge event log' })
@@ -261,6 +294,7 @@ export class EdgeController {
   }
 
   @Get(':id/metrics')
+  @RequirePermissions('edge:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Current status and metric summary' })
@@ -269,6 +303,7 @@ export class EdgeController {
   }
 
   @Get(':id/metrics/history')
+  @RequirePermissions('edge:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Metric time series from heartbeat snapshots' })
@@ -288,6 +323,7 @@ export class EdgeController {
   // ── Rule chain assignment ──────────────────────────────────────────────────
 
   @Post(':id/rule-chains/:ruleChainId')
+  @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -301,6 +337,7 @@ export class EdgeController {
   }
 
   @Delete(':id/rule-chains/:ruleChainId')
+  @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -316,6 +353,7 @@ export class EdgeController {
   // ── Dashboard assignment ───────────────────────────────────────────────────
 
   @Post(':id/dashboards/:dashboardId')
+  @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -329,6 +367,7 @@ export class EdgeController {
   }
 
   @Delete(':id/dashboards/:dashboardId')
+  @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)

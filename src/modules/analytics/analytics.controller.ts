@@ -299,7 +299,12 @@ export class AnalyticsController {
     return { triggered: true };
   }
 
+  // `analytics` seeds only read/export/configure — there is no
+  // `analytics:delete`. Purging aggregates is an administrative
+  // configuration action, so it is gated on `configure` rather than on
+  // a string that can never be granted to anyone.
   @Delete('cleanup/:days')
+  @RequirePermissions('analytics:configure')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiParam({ name: 'days', description: 'Delete rollup rows older than this many days' })
   @SwaggerAuth('Delete old rollup records for this tenant', 'Records deleted')

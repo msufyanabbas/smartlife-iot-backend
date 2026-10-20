@@ -7,6 +7,7 @@ import { CreateAssetProfileDto, UpdateAssetProfileDto } from './dto/asset-profil
 import { User } from '@modules/index.entities';
 import { PaginationDto } from '@common/dto/pagination.dto';
 import { AssetProfilesService } from './asset-profiles.service';
+import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 @ApiTags('Asset Profiles')
 @Controller('profiles/asset')
@@ -14,6 +15,7 @@ export class AssetProfilesController {
   constructor(private readonly assetProfilesService: AssetProfilesService) {}
 
   @Post()
+  @RequirePermissions('profiles:create')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Create asset profile' })
@@ -27,6 +29,7 @@ export class AssetProfilesController {
   }
 
   @Get()
+  @RequirePermissions('profiles:list')
   @ApiOperation({ summary: 'Get all asset profiles' })
   @ApiResponse({ status: 200, description: 'Asset profiles retrieved' })
   async findAll(@CurrentUser() user: User, @Query() queryDto: PaginationDto) {
@@ -34,6 +37,7 @@ export class AssetProfilesController {
   }
 
   @Get('statistics')
+  @RequirePermissions('profiles:list')
   @ApiOperation({ summary: 'Get asset profile statistics' })
   @ApiResponse({ status: 200, description: 'Statistics retrieved' })
   async getStatistics() {
@@ -45,6 +49,7 @@ export class AssetProfilesController {
   }
 
   @Get('default')
+  @RequirePermissions('profiles:list')
   @ApiOperation({ summary: 'Get default asset profile' })
   @ApiQuery({ name: 'tenantId', required: false })
   @ApiResponse({ status: 200, description: 'Default profile retrieved' })
@@ -57,6 +62,7 @@ export class AssetProfilesController {
   }
 
   @Get(':id')
+  @RequirePermissions('profiles:read')
   @ApiOperation({ summary: 'Get asset profile by ID' })
   @ApiResponse({ status: 200, description: 'Asset profile retrieved' })
   async findOne(@Param('id') id: string) {
@@ -68,6 +74,7 @@ export class AssetProfilesController {
   }
 
   @Get(':id/assets')
+  @RequirePermissions('profiles:read')
   @ApiOperation({ summary: 'Get assets using this profile' })
   @ApiResponse({ status: 200, description: 'Assets retrieved' })
   async getAssetsUsingProfile(@Param('id') id: string) {
@@ -79,6 +86,7 @@ export class AssetProfilesController {
   }
 
   @Get(':id/usage')
+  @RequirePermissions('profiles:read')
   @ApiOperation({ summary: 'Get detailed profile usage information' })
   @ApiResponse({ status: 200, description: 'Usage information retrieved' })
   async getUsage(@Param('id') id: string) {
@@ -90,6 +98,7 @@ export class AssetProfilesController {
   }
 
   @Get(':id/export')
+  @RequirePermissions('profiles:read')
   @ApiOperation({ summary: 'Export asset profile configuration' })
   @ApiResponse({ status: 200, description: 'Profile exported' })
   async exportProfile(@Param('id') id: string) {
@@ -101,6 +110,7 @@ export class AssetProfilesController {
   }
 
   @Post('import')
+  @RequirePermissions('profiles:create')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Import asset profile configuration' })
@@ -120,6 +130,7 @@ export class AssetProfilesController {
   }
 
   @Post(':id/validate')
+  @RequirePermissions('profiles:update')
   @ApiOperation({ summary: 'Validate asset data against profile' })
   @ApiResponse({ status: 200, description: 'Validation completed' })
   async validateAssetData(
@@ -137,6 +148,7 @@ export class AssetProfilesController {
   }
 
   @Post(':id/calculate')
+  @RequirePermissions('profiles:update')
   @ApiOperation({ summary: 'Calculate field values based on profile' })
   @ApiResponse({ status: 200, description: 'Calculation completed' })
   async calculateFields(
@@ -154,6 +166,7 @@ export class AssetProfilesController {
   }
 
   @Post(':id/clone')
+  @RequirePermissions('profiles:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Clone asset profile' })
@@ -167,6 +180,7 @@ export class AssetProfilesController {
   }
 
   @Patch(':id')
+  @RequirePermissions('profiles:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Update asset profile' })
@@ -183,6 +197,7 @@ export class AssetProfilesController {
   }
 
   @Patch(':id/default')
+  @RequirePermissions('profiles:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Set as default asset profile' })
@@ -196,6 +211,7 @@ export class AssetProfilesController {
   }
 
   @Delete(':id')
+  @RequirePermissions('profiles:delete')
   @UseGuards(RolesGuard)
   // Restored. With @Roles commented out, RolesGuard finds no metadata and
   // returns true — so this was the one write route on this controller that any

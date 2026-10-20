@@ -245,9 +245,13 @@ services:
       - EMQX_DASHBOARD__DEFAULT_USERNAME=${EMQX_DASHBOARD_USER:-admin}
       - EMQX_DASHBOARD__DEFAULT_PASSWORD=${EMQX_DASHBOARD_PASSWORD:-public}
       - EMQX_LOG__CONSOLE_HANDLER__LEVEL=warning
-      - EMQX_ALLOW_ANONYMOUS=false
-      - EMQX_LOADED_PLUGINS="emqx_recon,emqx_retainer,emqx_management,emqx_dashboard"
+      # NOTE: EMQX_ALLOW_ANONYMOUS and EMQX_LOADED_PLUGINS were EMQX 4.x
+      # variables and are NO-OPS on 5.3 — they were setting nothing, while
+      # reading as though the broker were locked down. Authentication and
+      # per-device topic authorization are now configured properly in
+      # docker/emqx/emqx.conf, which delegates both to the application.
     volumes:
+      - ./docker/emqx/emqx.conf:/opt/emqx/etc/emqx.conf:ro
       - emqx-data:/opt/emqx/data
       - emqx-log:/opt/emqx/log
     networks:

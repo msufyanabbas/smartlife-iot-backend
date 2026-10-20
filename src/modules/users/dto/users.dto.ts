@@ -197,6 +197,21 @@ export class UpdateUserDto {
   @IsEnum(UserStatus)
   status?: UserStatus;
 
+  @ApiPropertyOptional({
+    description:
+      'Subject this account to fine-grained permission checks even though ' +
+      'its role would normally bypass them. A TENANT_ADMIN has full access ' +
+      'within its tenant by default, which used to mean permissions ' +
+      'assigned to such an account were silently discarded. Setting this to ' +
+      'true makes those grants real — the account then resolves its ' +
+      'permissions exactly like a customer user. Ignored for SUPER_ADMIN, ' +
+      'which must not be able to lock itself out of the platform.',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  enforcePermissions?: boolean;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

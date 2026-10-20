@@ -166,6 +166,13 @@ export class Edge extends BaseEntity {
     networkIn?: number;
     networkOut?: number;
     temperature?: number;
+    /**
+     * Readings the agent is holding locally because the cloud was unreachable.
+     * Reported by the edge agent's heartbeat (`AgentHeartbeatDto`) and folded in
+     * here rather than given its own column — it is a gauge read alongside the
+     * others, and jsonb needs no migration for it.
+     */
+    bufferedMessages?: number;
   } | null;
 
   // ── Tags ───────────────────────────────────────────────────────────────────
