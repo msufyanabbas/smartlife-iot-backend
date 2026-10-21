@@ -47,6 +47,9 @@ import * as entities from '../src/modules/index.entities';
 const root = join(__dirname, '..');
 const database = process.argv[2] ?? 'bootcheck';
 const PORT = Number(process.env.BOOT_CHECK_PORT ?? 3399);
+// The Redis-down phase boots a second time, which roughly doubles the run.
+// `--no-redis-phase` skips it for a quick DI-only check.
+const skipRedisDownPhase = process.argv.includes('--no-redis-phase');
 
 let failures = 0;
 let checks = 0;
@@ -181,6 +184,76 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     process.exit(1);
   }
 
+  // ── 0b. The connection's time zone ──────────────────────────────────────
+  //
+  // Every timestamp column here is `timestamp WITHOUT time zone`, and several
+  // queries compare one against `NOW()` (a timestamptz). Postgres reads the
+  // naive side in the session time zone, so anything but UTC shifts those
+  // comparisons by the offset — a trial ending an hour from now reports as
+  // expired, scheduled notifications fire early, and nothing errors.
+  //
+  // The pool pins `-c timezone=UTC`. This asserts the pin actually reaches a
+  // connection, against a server deliberately set to a non-UTC zone — because
+  // a check that passes only because the server already runs UTC proves
+  // nothing about the deployment that does not.
+  {
+    // Apply the boot environment first, then load the application's own
+    // DataSource so its env-dependent module body can evaluate.
+    Object.assign(process.env, bootEnv());
+    // `require` rather than `await import(...)`: this file compiles under
+    // moduleResolution node16, where a relative dynamic import needs an
+    // explicit .js extension that does not exist in the TS source tree.
+    // ts-node runs this as CommonJS, so require is the honest spelling.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AppDataSource } = require('../src/database/data-source');
+    const appPoolExtra = (AppDataSource.options as any).extra;
+
+    const probe = new DataSource({
+      type: 'postgres',
+      host: PG.host,
+      port: Number(PG.port),
+      username: PG.user,
+      password: PG.password,
+      database,
+      entities: [],
+      synchronize: false,
+      logging: false,
+      // The APPLICATION'S OWN pool settings, not a hardcoded pin. Copying
+      // `options: '-c timezone=UTC'` in here would prove only that the
+      // technique works — it would pass just as happily if the application
+      // had no pin at all.
+      //
+      // Imported lazily: data-source.ts calls envRequired('DB_HOST') at module
+      // load, so importing it at the top of this file throws before the boot
+      // environment has been assembled.
+      extra: appPoolExtra,
+    } as any);
+    try {
+      await probe.initialize();
+      const [{ TimeZone }] = await probe.query('SHOW TimeZone');
+      ok(
+        'the pool pins the session time zone to UTC',
+        String(TimeZone).toUpperCase() === 'UTC',
+        `SHOW TimeZone returned "${TimeZone}" — naive timestamp vs NOW() comparisons will skew`,
+      );
+
+      // The discriminating case: a value one hour in the FUTURE must not read
+      // as past. Under a local-time session it does.
+      const [{ expired }] = await probe.query(
+        `SELECT (((now() AT TIME ZONE 'UTC') + interval '1 hour')::timestamp <= NOW()) AS expired`,
+      );
+      ok(
+        'a timestamp one hour in the future does not read as already past',
+        expired === false,
+        'this is exactly how trials expire early and schedules fire early',
+      );
+      await probe.destroy();
+    } catch (error) {
+      ok('the time-zone probe connects', false, (error as Error).message);
+      if (probe.isInitialized) await probe.destroy();
+    }
+  }
+
   // ── 1. Build ────────────────────────────────────────────────────────────
   const build = spawnSync('npm', ['run', 'build'], {
     cwd: root,
@@ -294,6 +367,61 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   child.kill('SIGTERM');
   await sleep(1500);
   if (exited === null) child.kill('SIGKILL');
+
+  // ── 3. The same boot, with Redis unreachable ────────────────────────────
+  //
+  // `CacheModule` did `store: await redisStore(...)`, and a rejected provider
+  // factory makes Nest abort the DI graph before `app.listen()`. So an
+  // unreachable Redis meant NO application — no HTTP server, no /health, just
+  // `connect ECONNREFUSED 127.0.0.1:6379` with nothing naming the cache as
+  // the cause. And `CACHE_MANAGER` has zero consumers: the platform refused
+  // to start over a cache no code reads.
+  //
+  // Redis is pointed at a port nothing listens on rather than stopping the
+  // real server, so running this guard cannot disrupt anything else.
+  if (!skipRedisDownPhase) {
+    const deadPort = String(Number(process.env.REDIS_PORT ?? 6379) + 2017);
+    const degraded = spawn('node', ['dist/main.js'], {
+      cwd: root,
+      env: { ...process.env, ...bootEnv(), REDIS_PORT: deadPort },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let degradedOut = '';
+    degraded.stdout.on('data', (c) => (degradedOut += c.toString()));
+    degraded.stderr.on('data', (c) => (degradedOut += c.toString()));
+    let degradedExited: number | null = null;
+    degraded.on('exit', (code) => (degradedExited = code ?? -1));
+
+    let degradedHealth: Awaited<ReturnType<typeof get>> = null;
+    const degradedDeadline = Date.now() + 90_000;
+    while (Date.now() < degradedDeadline) {
+      if (degradedExited !== null) break;
+      degradedHealth = await get('/health');
+      if (degradedHealth) break;
+      await sleep(1000);
+    }
+
+    ok(
+      'the boot survives Redis being unreachable, and still serves /health',
+      degradedHealth?.status === 200,
+      degradedExited !== null
+        ? `the process exited (${degradedExited}) — a cache with no consumers must not block the boot`
+        : 'no response within 90s',
+    );
+    ok(
+      'and it says so, rather than failing quietly',
+      /in-memory store|Could not reach Redis/.test(
+        degradedOut.replace(/\u001b\[[0-9;]*m/g, ''),
+      ),
+      'an operator needs to know the cache is now per-replica',
+    );
+
+    degraded.kill('SIGTERM');
+    await sleep(1500);
+    if (degradedExited === null) degraded.kill('SIGKILL');
+  }
+
   rmSync(envDir, { recursive: true, force: true });
 
   if (failures > 0) {

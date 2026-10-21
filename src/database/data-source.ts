@@ -73,5 +73,33 @@ export const AppDataSource = new DataSource({
     max: envNumber(process.env.DB_POOL_SIZE, 10),
     connectionTimeoutMillis: envNumber(process.env.DB_CONNECTION_TIMEOUT, 5000),
     idleTimeoutMillis: envNumber(process.env.DB_IDLE_TIMEOUT, 30000),
+    // ── Pin the session time zone to UTC ────────────────────────────────
+    //
+    // Every one of the 341 timestamp columns in this schema is `timestamp
+    // WITHOUT time zone`, and TypeORM writes a JS Date into one as the naive
+    // UTC instant. Several queries then compare such a column against
+    // `NOW()`, which is a `timestamptz`:
+    //
+    //   subscriptions:  s."trialEndsAt"        <= NOW()
+    //                   s."nextBillingDate"    <= NOW()
+    //   notifications:  notification."scheduledFor" <= NOW()
+    //                   notification."expiresAt"     > NOW()
+    //
+    // Postgres resolves `timestamp <= timestamptz` by reading the naive side
+    // in the SESSION time zone. On a session pinned to UTC that is correct.
+    // On one running local time — entirely plausible for a deployment in
+    // Riyadh, or a managed Postgres configured to the account's region — a
+    // naive UTC value is read as local, and every such comparison shifts by
+    // the UTC offset. Measured on this schema at Asia/Riyadh: a trial ending
+    // ONE HOUR FROM NOW reports as already expired.
+    //
+    // Nothing errors. Trials end early, billing runs early, scheduled
+    // notifications fire early, and all of it looks like application logic.
+    //
+    // `-c timezone=UTC` is a libpq startup parameter, so it applies to every
+    // connection the pool opens rather than to whichever one happened to run
+    // a `SET`. Fixing it here covers every existing query and every future
+    // one; `check:boot` asserts it holds at runtime.
+    options: '-c timezone=UTC',
   },
 } as any);

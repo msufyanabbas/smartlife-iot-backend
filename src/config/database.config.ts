@@ -62,6 +62,10 @@ export default registerAs(
           5000,
         ),
         idleTimeoutMillis: envNumber(process.env.DB_IDLE_TIMEOUT, 30000),
+        // Keep in step with data-source.ts, which carries the full reasoning:
+        // naive `timestamp` columns are compared against `NOW()`, so a session
+        // on anything but UTC shifts those comparisons by the UTC offset.
+        options: '-c timezone=UTC',
       },
     };
   },

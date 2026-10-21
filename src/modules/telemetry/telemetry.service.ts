@@ -443,7 +443,24 @@ export class TelemetryService {
           },
           signal: { avg: k('signalStrength')?.avg ?? null },
           timeRange: { first: rollup.firstRecord, last: rollup.lastRecord },
-          keys: rollup.keys,
+          // `keys` is the NAME LIST and `statistics` the per-key numbers.
+          //
+          // This branch used to return `keys: rollup.keys` — a Record, not an
+          // array — and the raw branch below returned neither field at all.
+          // AiInsightsService asks for the device's key list as
+          //
+          //   Array.isArray(stats?.keys) ? stats.keys
+          //                              : Object.keys(stats?.statistics ?? {})
+          //
+          // which was `[]` on every path, so `POST /ai/insights/device/:id`
+          // answered "this device has no telemetry in the selected window"
+          // for every device, always, however much telemetry it had.
+          //
+          // Splitting the two makes both branches answer the same question in
+          // the same shape. Nothing else in the repository or the frontend
+          // reads `keys`, so narrowing it to a string[] breaks no caller.
+          keys: Object.keys(rollup.keys ?? {}),
+          statistics: rollup.keys ?? {},
           source: 'rollup',
           granularity,
         };
@@ -479,7 +496,94 @@ export class TelemetryService {
       .addSelect('MAX(telemetry.timestamp)', 'lastRecord')
       .getRawOne();
 
+    // ── Per-key statistics over the actual payload ────────────────────────
+    //
+    // The aggregate above covers five DENORMALISED columns and nothing else.
+    // A device reporting `co2` — which lives only in the `data` jsonb — was
+    // invisible to it, so even once the key list existed, a payload-only key
+    // would still have been lost. `jsonb_each_text` expands the payload so
+    // every key the device actually sent is counted.
+    //
+    // Numeric aggregation is FILTERed rather than cast outright: a payload
+    // carrying `status: "online"` alongside its numbers would otherwise fail
+    // the whole statement with `invalid input syntax for type numeric`. A
+    // non-numeric key is still listed — it is part of the device's telemetry —
+    // it simply has no average.
+    const perKey: Array<{
+      key: string;
+      count: string;
+      avg: string | null;
+      min: string | null;
+      max: string | null;
+    }> = await this.telemetryRepository.query(
+      `SELECT kv.key                                           AS key,
+              COUNT(*)                                         AS count,
+              AVG(kv.value::numeric) FILTER (WHERE kv.value ~ $4) AS avg,
+              MIN(kv.value::numeric) FILTER (WHERE kv.value ~ $4) AS min,
+              MAX(kv.value::numeric) FILTER (WHERE kv.value ~ $4) AS max
+         FROM telemetry t
+         CROSS JOIN LATERAL jsonb_each_text(t.data) AS kv
+        WHERE t."deviceId" = $1
+          -- Cast to timestamp, NOT timestamptz: the column is "timestamp
+          -- without time zone", and mixing the two makes Postgres convert one
+          -- side using the session TimeZone. On a deployment at UTC+3 that
+          -- shifted the comparison by three hours and silently excluded the
+          -- most recent rows -- the window looked right and the result was
+          -- empty.
+          AND ($2::timestamp IS NULL OR t.timestamp >= $2::timestamp)
+          AND ($3::timestamp IS NULL OR t.timestamp <= $3::timestamp)
+          AND t.data IS NOT NULL
+        GROUP BY kv.key
+        ORDER BY kv.key`,
+      [
+        deviceId,
+        startDate ? new Date(startDate) : null,
+        endDate ? new Date(endDate) : null,
+        // Plain decimals only. A value in scientific notation is listed as a
+        // key but not averaged, which is the safe direction.
+        '^-?[0-9]+(\\.[0-9]+)?$',
+      ],
+    );
+
+    const statistics: Record<
+      string,
+      { avg: number | null; min: number | null; max: number | null; count: number }
+    > = {};
+    for (const row of perKey) {
+      statistics[row.key] = {
+        avg: row.avg === null ? null : Number(row.avg),
+        min: row.min === null ? null : Number(row.min),
+        max: row.max === null ? null : Number(row.max),
+        count: Number(row.count),
+      };
+    }
+
+    // A device that wrote a denormalised column without the matching payload
+    // key would otherwise vanish from the list. Added only when absent, so a
+    // key present in both (`temperature` usually is) is not duplicated.
+    const DENORMALISED: Array<[string, string, string, string]> = [
+      ['temperature', 'avgTemperature', 'minTemperature', 'maxTemperature'],
+      ['humidity', 'avgHumidity', 'minHumidity', 'maxHumidity'],
+      ['pressure', 'avgPressure', 'minPressure', 'maxPressure'],
+      ['batteryLevel', 'avgBatteryLevel', 'minBatteryLevel', 'minBatteryLevel'],
+      ['signalStrength', 'avgSignalStrength', 'avgSignalStrength', 'avgSignalStrength'],
+    ];
+    const totalRecords = parseInt(stats.totalRecords) || 0;
+    for (const [key, avgCol, minCol, maxCol] of DENORMALISED) {
+      if (statistics[key]) continue;
+      const avg = parseFloat(stats[avgCol]);
+      if (!Number.isFinite(avg)) continue;
+      statistics[key] = {
+        avg,
+        min: Number.isFinite(parseFloat(stats[minCol])) ? parseFloat(stats[minCol]) : null,
+        max: Number.isFinite(parseFloat(stats[maxCol])) ? parseFloat(stats[maxCol]) : null,
+        count: totalRecords,
+      };
+    }
+
     return {
+      keys: Object.keys(statistics),
+      statistics,
       totalRecords: parseInt(stats.totalRecords) || 0,
       temperature: {
         avg: parseFloat(stats.avgTemperature) || null,
@@ -712,7 +816,23 @@ export class TelemetryService {
     const results = await this.telemetryRepository
       .createQueryBuilder('telemetry')
       .select('telemetry.timestamp', 'timestamp')
-      .addSelect(`telemetry.data->>'${key}'`, 'value')
+      // ── Parameterised, not interpolated ────────────────────────────────
+      //
+      // This was `` `telemetry.data->>'${key}'` ``, and `key` arrives raw from
+      // `@Query('key')` on `GET /telemetry/devices/:deviceId/timeseries` —
+      // user input spliced into SQL.
+      //
+      // The `data ? :key` predicate below limits the blast radius but does not
+      // close it: it requires a stored row whose jsonb carries that exact key
+      // name, and a tenant can create one, because ingestion accepts arbitrary
+      // key names. Post a reading whose key IS the injected fragment and the
+      // predicate matches, putting the crafted expression in the SELECT list
+      // of a query that runs with the application's own database role.
+      //
+      // Parameterising removes the question. The value is now bound, so a key
+      // containing quotes is a key containing quotes.
+      .addSelect('telemetry.data ->> :key', 'value')
+      .setParameter('key', key)
       .where('telemetry.deviceId = :deviceId', { deviceId })
       .andWhere('telemetry.timestamp BETWEEN :startDate AND :endDate', {
         startDate: new Date(startDate),

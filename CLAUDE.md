@@ -2240,6 +2240,35 @@ synchronised scratch schema, and wait for `GET /health` to answer 200. It has
 been negative-tested — removing the fix reproduces the failure and the guard
 names it.
 
+### Redis was a hard boot dependency, because of a cache nothing uses
+
+Found by the same method, and the same shape as the Kafka fix in §11a.
+
+`CacheModule.registerAsync` did `store: await redisStore(...)`. A rejected
+provider factory makes Nest abort the DI graph **before** `app.listen()`, so an
+unreachable Redis meant no application at all: no HTTP server, no `/health`,
+and a bare `connect ECONNREFUSED 127.0.0.1:6379` that named nothing.
+
+The part that makes it indefensible: **`CACHE_MANAGER` has zero consumers.**
+Nothing in the application injects it. The platform refused to start over a
+cache no code reads.
+
+`buildRedisCacheStore()` now returns `undefined` instead of throwing, and the
+cache falls back to the in-memory store with a loud log line. That fallback is
+a real downgrade once `CacheInterceptor` is actually used — the cache becomes
+per-replica, so two replicas can serve different cached bodies — which is why
+it logs rather than passing over. It is still the right trade: a per-replica
+cache serves requests, and a failed boot serves none.
+
+`check:boot` asserts both directions, booting a second time with `REDIS_PORT`
+pointed at a dead port (never stopping the real server, so the guard cannot
+disrupt anything). Pass `--no-redis-phase` to skip that second boot.
+
+Note the asymmetry this leaves, and that it is deliberate:
+- Redis **unreachable at boot** → the app starts, degraded, and says so.
+- Redis **unreachable at runtime** → the nine locked crons stop silently. That
+  is what `GET /health/cluster` exists to surface (§12).
+
 Two things worth knowing if you run the app locally:
 
 - **`DB_SYNCHRONIZE=true` is not enough to create the schema.** It is gated on
@@ -2257,6 +2286,132 @@ Two things worth knowing if you run the app locally:
   the Google, GitHub and Apple passport strategies, which construct eagerly and
   throw without one. `bootEnv()` in `scripts/check-boot.ts` is the executable
   record of that set, and it fails the moment the set grows.
+
+---
+
+## 4t. AI insights could never have worked, and a time-zone landmine beside it
+
+Reported as: `POST /ai/insights/device/:id` answering 400
+
+> This device has no telemetry in the selected window, so there is nothing to
+> analyse.
+
+for a device whose telemetry was visible in the Telemetry tab, reported
+minutes earlier.
+
+The window was not the problem — insights defaults to seven days.
+`AiInsightsService.analyseDevice()` asks `TelemetryService.getStatistics()`
+for the device's key list:
+
+```ts
+const keys = Array.isArray(stats?.keys)
+  ? stats.keys
+  : Object.keys(stats?.statistics ?? {});
+```
+
+and `getStatistics()` returned **neither field usably**:
+
+- the **raw** branch returned no `keys` and no `statistics` at all. It
+  aggregates five hardcoded denormalised columns and never looks at `data`.
+- the **rollup** branch returned `keys` as a `Record`, not an array, so
+  `Array.isArray` was false there too, and the fallback found no `statistics`.
+
+So `keys` was `[]` on every path and the route **always** 400'd — for every
+device, however much telemetry it had. It typechecks because the consumer
+reads `any`.
+
+Both branches now return `keys: string[]` and `statistics: Record<string,
+{avg,min,max,count}>`. The raw branch computes them with `jsonb_each_text`
+over the real payload, which fixes the second half of the bug: the reporting
+device sent `co2`, which exists **only** in the `data` jsonb, so aggregating
+the five columns would still have lost it. Numeric aggregation is `FILTER`ed
+rather than cast outright — a payload carrying `status: "online"` beside its
+numbers would otherwise fail the statement with `invalid input syntax for type
+numeric`; a non-numeric key is listed but has no average.
+
+Nothing else in the repository or the frontend reads `keys`, so narrowing it
+from a Record to a string[] breaks no caller. `verify:ai-insights-keys` pins
+all of it, including that a genuinely empty window still yields no keys so the
+400 remains correct where it belongs.
+
+### SQL injection on the telemetry key, found on the next link of the chain
+
+Finding the keys is only the first gate. `analyseDevice()` then calls
+`getTimeSeries()` per key and throws `NO_NUMERIC_TELEMETRY` if every one comes
+back empty — so checking only that the key list is non-empty would have moved
+the 400 one line down. Following the chain turned up something else:
+
+```ts
+.addSelect(`telemetry.data->>'${key}'`, 'value')   // before
+```
+
+`key` arrives raw from `@Query('key')` on
+`GET /telemetry/devices/:deviceId/timeseries`, with no validation — user input
+spliced into SQL, executed with the application's own database role.
+
+The `data ? :key` predicate on the same query limits the blast radius but does
+**not** close it. It requires a stored row whose jsonb carries that exact key
+name — and **ingestion accepts arbitrary key names**, so a tenant can create
+one. Post a reading whose key *is* the injected fragment, then query for it:
+the predicate matches and the crafted expression sits in the SELECT list.
+
+Demonstrated rather than argued: with the interpolated form restored, a key of
+`x' AS v, (SELECT current_database()) AS "value" --` reaches the SQL parser
+(the query throws on it). That is the defining property of an injection point;
+this particular payload errors rather than exfiltrating, but the input is
+being parsed as SQL.
+
+It is bound now (`'telemetry.data ->> :key'` plus `setParameter`), and
+`verify:ai-insights-keys` §7 stores exactly such a row and asserts the query
+returns the stored value instead. Negative-tested: restoring the interpolated
+form fails those assertions.
+
+This was the only interpolated jsonb key access in the codebase —
+`telemetry-rollup.service.ts` interpolates a hardcoded constant list, which is
+fine — but it is the pattern to watch for whenever a jsonb path is built from
+a request.
+
+### The time-zone landmine found next to it
+
+Writing that jsonb query produced an empty result, and the reason generalises.
+
+**Every one of the 341 timestamp columns in this schema is `timestamp WITHOUT
+time zone`**, and TypeORM writes a JS Date into one as the naive UTC instant.
+Several queries compare such a column against `NOW()`, a `timestamptz`:
+
+```
+subscriptions:  s."trialEndsAt"              <= NOW()
+                s."nextBillingDate"          <= NOW()
+notifications:  notification."scheduledFor"  <= NOW()
+                notification."expiresAt"      > NOW()
+```
+
+Postgres resolves `timestamp <= timestamptz` by reading the naive side **in
+the session time zone**. On a session pinned to UTC that is correct. On one
+running local time — entirely plausible for a deployment in Riyadh, or a
+managed Postgres configured to the account's region — every such comparison
+shifts by the UTC offset. Measured on this schema:
+
+```
+server TimeZone = Etc/UTC       a value 1h in the future reads as expired: false
+server TimeZone = Asia/Riyadh   a value 1h in the future reads as expired: TRUE
+```
+
+Trials end three hours early, billing runs early, scheduled notifications fire
+early. Nothing errors, and all of it looks like application logic.
+
+The pool now pins `-c timezone=UTC` as a libpq startup parameter (in
+`data-source.ts` and `database.config.ts`), so it applies to every connection
+rather than to whichever one happened to run a `SET`. That covers every
+existing query and every future one.
+
+`check:boot` asserts it against the **application's own** `extra` — not a
+hardcoded pin, which would pass just as happily with no pin at all — and
+negative-testing confirms it: with the server on Asia/Riyadh, removing the pin
+fails both assertions and names the consequence.
+
+Note that `node-postgres` does **not** send the client's `TZ` (psql does), so
+this is driven by the server's configured default, not by the container's.
 
 ---
 

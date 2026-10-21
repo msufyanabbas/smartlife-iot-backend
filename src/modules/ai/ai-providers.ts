@@ -53,6 +53,88 @@ const compact = <T extends Record<string, unknown>>(o: T): T =>
     Object.entries(o).filter(([, v]) => v !== null && v !== undefined),
   ) as T;
 
+/**
+ * Turn a provider's error body into something an operator can act on.
+ *
+ * The raw pass-through is accurate and useless. Both of these, verbatim, are
+ * what someone configuring a model actually saw:
+ *
+ *   Provider returned 400: {"type":"error","error":{"type":"invalid_request_error",
+ *     "message":"This API key is not scoped to a workspace, so this request must
+ *     include the anthropic-workspace-id header..."}}
+ *
+ *   Provider returned 404: {"type":"error","error":{"type":"not_found_error",
+ *     "message":"model: claude-opus-4-20250514"}}
+ *
+ * Neither reads like a configuration problem, and the second reads like a bug
+ * in this platform. The returned string is a PREFIX — the original body still
+ * follows, because a guess that turns out wrong must not hide the evidence.
+ *
+ * Deliberately pattern-matched on the message text rather than on a status
+ * code alone: a 404 from a wrong `baseUrl` is a different problem from a 404
+ * naming a model, and telling someone to check model retirement when their
+ * URL is wrong wastes more time than saying nothing.
+ */
+function explainProviderError(status: number, raw: string): string {
+  const body = raw.toLowerCase();
+  const hint = (text: string) => `${text}\n\n`;
+
+  // A model that existed when the integration was configured and does not
+  // now. Anthropic publishes retirement dates ahead of time.
+  if (status === 404 && /not_found_error|model:/.test(body)) {
+    const named = raw.match(/model:\s*([\w.:-]+)/)?.[1];
+    return hint(
+      `The provider does not recognise ${
+        named ? `the model "${named}"` : 'the configured model'
+      }. The usual cause is a RETIRED model: a model id that worked when this ` +
+        `was configured stops being served on a published date. Check the ` +
+        `model id on the AI model's settings against the provider's current ` +
+        `list — for Anthropic, ` +
+        `https://platform.claude.com/docs/en/about-claude/model-deprecations ` +
+        `lists active models and retirement dates. A wrong Base URL produces ` +
+        `this too.`,
+    );
+  }
+
+  // Anthropic: an API key that belongs to no Workspace.
+  if (/anthropic-workspace-id/.test(body)) {
+    return hint(
+      'This Anthropic API key is not tied to a Workspace, so the API cannot ' +
+        'tell which Workspace to run the request under. Either create a new ' +
+        'key from inside a Workspace in the Console (keys belong to the ' +
+        'Workspace they are created in), or set a workspaceId in this model’s ' +
+        'settings so the anthropic-workspace-id header is sent.',
+    );
+  }
+
+  if (status === 401 || status === 403) {
+    return hint(
+      'The provider rejected the credential. The key is wrong, revoked, or ' +
+        'lacks access to this model. Re-enter it on the AI model — the stored ' +
+        'key is encrypted and never shown back, so a partial paste looks ' +
+        'identical to a correct one here.',
+    );
+  }
+
+  if (status === 429) {
+    return hint(
+      'Rate-limited or out of quota at the provider. This is the provider’s ' +
+        'limit, not a platform limit, so retrying immediately will fail the ' +
+        'same way.',
+    );
+  }
+
+  // 529 is Anthropic's "overloaded"; 5xx generally is worth retrying.
+  if (status >= 500) {
+    return hint(
+      'The provider failed, not the request. Worth retrying; if it persists, ' +
+        'check the provider’s status page before changing any configuration.',
+    );
+  }
+
+  return '';
+}
+
 async function postJson(
   url: string,
   headers: Record<string, string>,
@@ -78,9 +160,12 @@ async function postJson(
   const raw = await response.text();
   if (!response.ok) {
     // Provider error bodies carry the actionable part (bad key, unknown
-    // model, rate limit). Pass it through, truncated — some are enormous.
+    // model, rate limit). Pass it through, truncated — some are enormous —
+    // and prepend what to DO about the shapes we recognise.
     throw new Error(
-      `Provider returned ${response.status}: ${raw.slice(0, 400) || response.statusText}`,
+      `${explainProviderError(response.status, raw)}Provider returned ${response.status}: ${
+        raw.slice(0, 400) || response.statusText
+      }`,
     );
   }
   try {
@@ -150,6 +235,14 @@ async function callAnthropic(req: AiCallRequest): Promise<AiCallResult> {
   const version =
     (req.providerOptions?.anthropicVersion as string) || '2023-06-01';
 
+  // Optional. An Anthropic API key belongs to the Workspace it was created
+  // in; a key that belongs to none is refused with
+  // `This API key is not scoped to a workspace`, and the request has to name
+  // one. Left unset for the ordinary case of a workspace-scoped key, where
+  // sending the header is unnecessary — and per-model rather than global, so
+  // tenants can bill to different Workspaces.
+  const workspaceId = (req.providerOptions?.workspaceId as string)?.trim();
+
   // Anthropic has no response_format parameter. Structured output is steered
   // by the schema in the system prompt — which is exactly why the catalogue
   // marks the provider as not supporting schemaless JSON: without a schema
@@ -166,6 +259,7 @@ async function callAnthropic(req: AiCallRequest): Promise<AiCallResult> {
     {
       'x-api-key': req.apiKey ?? '',
       'anthropic-version': version,
+      ...(workspaceId ? { 'anthropic-workspace-id': workspaceId } : {}),
     },
     compact({
       model: req.modelId,

@@ -85,6 +85,11 @@ export const AI_PROVIDER_CATALOGUE: AiProviderManifest[] = [
       'GPT models via api.openai.com, or any OpenAI-compatible endpoint ' +
       '(vLLM, LM Studio, OpenRouter) by overriding the base URL.',
     icon: 'sparkles',
+    // ⚠️  UNVERIFIED AGAINST THE VENDOR. These were current when written and
+    // have not been rechecked. A retired id here produces the same 404 the
+    // Anthropic list produced — see the note on that provider's
+    // `exampleModels`. Anyone touching this should check OpenAI's current
+    // model list and deprecation page rather than trusting the array.
     exampleModels: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'o3-mini'],
     supportsSchemalessJson: true,
     fields: [
@@ -103,10 +108,26 @@ export const AI_PROVIDER_CATALOGUE: AiProviderManifest[] = [
     label: 'Anthropic',
     description: 'Claude models via api.anthropic.com.',
     icon: 'sparkles',
+    // One per tier: most capable, balanced, fastest.
+    //
+    // These are suggestions shown in the UI, so a stale entry is not a
+    // cosmetic problem — someone picks it and the request 404s with
+    // `model: claude-opus-4-20250514`, which reads like a platform bug rather
+    // than a retired model. The previous three were ALL retired:
+    //
+    //   claude-opus-4-20250514     retired 2026-06-15
+    //   claude-sonnet-4-20250514   retired 2026-06-15
+    //   claude-3-5-haiku-20241022  retired 2026-02-19
+    //
+    // Anthropic publishes retirement dates in advance at
+    // https://platform.claude.com/docs/en/about-claude/model-deprecations —
+    // worth a glance whenever this list is touched. Aliases without a date
+    // suffix (`claude-opus-5-5`) track the family and age better than a
+    // pinned snapshot.
     exampleModels: [
-      'claude-opus-4-20250514',
-      'claude-sonnet-4-20250514',
-      'claude-3-5-haiku-20241022',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
     ],
     // Anthropic has no schemaless JSON mode — a schema is required.
     supportsSchemalessJson: false,
@@ -125,6 +146,18 @@ export const AI_PROVIDER_CATALOGUE: AiProviderManifest[] = [
         scope: 'providerOptions',
         default: '2023-06-01',
         help: 'Sent as the anthropic-version header.',
+      },
+      {
+        key: 'workspaceId',
+        label: 'Workspace ID',
+        type: 'text',
+        scope: 'providerOptions',
+        placeholder: 'wrkspc_…',
+        help:
+          'Optional. Only needed when the API key is not tied to a Workspace — ' +
+          'the provider then refuses the request with "This API key is not ' +
+          'scoped to a workspace". Leave empty for a key created inside a ' +
+          'Workspace. Sent as the anthropic-workspace-id header.',
       },
     ],
   },
@@ -160,6 +193,8 @@ export const AI_PROVIDER_CATALOGUE: AiProviderManifest[] = [
     label: 'Google Gemini',
     description: 'Gemini models via the Google AI Studio API key flow.',
     icon: 'sparkles',
+    // ⚠️  UNVERIFIED AGAINST THE VENDOR — same caveat as the OpenAI list
+    // above. `gemini-1.5-pro` in particular is a pinned older generation.
     exampleModels: ['gemini-2.0-flash', 'gemini-1.5-pro'],
     supportsSchemalessJson: true,
     fields: [
@@ -177,6 +212,9 @@ export const AI_PROVIDER_CATALOGUE: AiProviderManifest[] = [
     label: 'Mistral AI',
     description: 'Mistral models via api.mistral.ai.',
     icon: 'sparkles',
+    // These use Mistral's `-latest` aliases, which follow the family instead
+    // of pinning a snapshot — the pattern the other lists should move toward,
+    // since it is the one that does not silently age into a 404.
     exampleModels: ['mistral-large-latest', 'mistral-small-latest'],
     supportsSchemalessJson: true,
     fields: [

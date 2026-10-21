@@ -90,6 +90,7 @@
     "verify:ws-authorization": "ts-node -T -r tsconfig-paths/register scripts/verify-ws-authorization.ts",
     "verify:ws-delivery": "ts-node -T -r tsconfig-paths/register scripts/verify-ws-telemetry-delivery.ts",
     "verify:ai": "ts-node -T -r tsconfig-paths/register scripts/verify-ai.ts",
+    "verify:ai-insights-keys": "ts-node -T -r tsconfig-paths/register scripts/verify-ai-insights-keys.ts",
     "migration:ai-models": "ts-node -T -r tsconfig-paths/register scripts/run-ai-models-migration.ts",
     "migration:industrial-protocols": "ts-node -T -r tsconfig-paths/register scripts/run-industrial-protocols-migration.ts",
     "verify:industrial-protocols": "ts-node -T -r tsconfig-paths/register scripts/verify-industrial-protocols.ts",
