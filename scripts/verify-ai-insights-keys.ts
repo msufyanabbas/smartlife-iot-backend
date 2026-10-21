@@ -46,6 +46,9 @@ import { Telemetry } from '../src/modules/telemetry/entities/telemetry.entity';
 import { Device } from '../src/modules/devices/entities/device.entity';
 import { TelemetryService } from '../src/modules/telemetry/telemetry.service';
 import { UserRole } from '../src/common/enums/user.enum';
+import { AiInsightsService } from '../src/modules/ai/ai-insights.service';
+import { BadRequestException } from '@nestjs/common';
+import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 
 const database = process.argv[2] ?? 'aiinsights';
 
@@ -380,8 +383,183 @@ const DEVICE_KEY = `key-${DEVICE.slice(0, 8)}`;
     injected,
   );
 
+  // ── analyseDevice itself, which is what the user actually calls ────────
+  section('8. The real analyseDevice, end to end');
+
+  // The earlier sections stop at getTimeSeries. That is one gate short:
+  // analyseDevice() then calls summarise() per key, which returns null for a
+  // series of fewer than MIN_POINTS_PER_SERIES readings — so a device with a
+  // single reading still 400s, now with NOT_ENOUGH_READINGS. Testing the
+  // pieces and not the whole is how that gate was missed the first time.
+  const insights = new AiInsightsService(
+    { resolveDefaultModel: async () => null, complete: async () => ({}) } as any,
+    { get: () => service } as any,
+  );
+  // AiInsightsService resolves TelemetryService in onModuleInit, not in its
+  // constructor, so a hand-built instance has `this.telemetry` undefined until
+  // the hook runs. Nest calls it; a script has to.
+  insights.onModuleInit();
+
+  const analyse = async (deviceId: string) => {
+    try {
+      await insights.analyseDevice({
+        deviceId,
+        userId: USER,
+        tenantId: TENANT,
+      } as any);
+      return { code: 'OK', message: '' };
+    } catch (error: any) {
+      const body = error?.response ?? error;
+      return { code: body?.code ?? error?.name, message: body?.message ?? '' };
+    }
+  };
+
+  // This device has 6+ readings for co2, so it must get PAST the telemetry
+  // gates. It stops at the model gate, which is the correct next failure for
+  // a tenant with no AI model configured.
+  const rich = await analyse(DEVICE);
+  ok(
+    'a device with real telemetry gets past the telemetry gates',
+    rich.code === 'NO_AI_MODEL_CONFIGURED',
+    rich,
+  );
+
+  // A device with exactly ONE reading — the reported case.
+  const THIN = randomUUID();
+  const THIN_KEY = `key-${THIN.slice(0, 8)}`;
+  await q(
+    `INSERT INTO devices (id, name, "deviceKey", "tenantId", "userId")
+     VALUES ($1, $2, $3, $4, $5)`,
+    [THIN, 'thin-device', THIN_KEY, TENANT, USER],
+  );
+  await q(
+    `INSERT INTO telemetry (id, "deviceId", "deviceKey", "tenantId", timestamp, data)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [randomUUID(), THIN, THIN_KEY, TENANT, new Date(now), JSON.stringify({ co2: 48 })],
+  );
+
+  const thin = await analyse(THIN);
+  ok(
+    'one reading is reported as NOT_ENOUGH_READINGS, not "no telemetry"',
+    thin.code === 'NOT_ENOUGH_READINGS',
+    thin,
+  );
+  ok(
+    'and the message says how many were found and how many are needed',
+    /only 1 reading/.test(thin.message) && /at least 2/.test(thin.message),
+    thin.message,
+  );
+  ok(
+    'it does not claim the device has no telemetry',
+    !/no telemetry/i.test(thin.message),
+    thin.message,
+  );
+
+  // A device whose only key is textual: a different problem, different answer.
+  const TEXT = randomUUID();
+  const TEXT_KEY = `key-${TEXT.slice(0, 8)}`;
+  await q(
+    `INSERT INTO devices (id, name, "deviceKey", "tenantId", "userId")
+     VALUES ($1, $2, $3, $4, $5)`,
+    [TEXT, 'text-device', TEXT_KEY, TENANT, USER],
+  );
+  for (let i = 0; i < 3; i++) {
+    await q(
+      `INSERT INTO telemetry (id, "deviceId", "deviceKey", "tenantId", timestamp, data)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        randomUUID(),
+        TEXT,
+        TEXT_KEY,
+        TENANT,
+        new Date(now - i * 60_000),
+        JSON.stringify({ state: 'online' }),
+      ],
+    );
+  }
+
+  const textual = await analyse(TEXT);
+  ok(
+    'a textual-only device is reported as NO_NUMERIC_TELEMETRY',
+    textual.code === 'NO_NUMERIC_TELEMETRY',
+    textual,
+  );
+  ok(
+    'and the message names the key it found',
+    /state/.test(textual.message),
+    textual.message,
+  );
+
+  // A device with genuinely nothing keeps the original answer.
+  const BARE = randomUUID();
+  await q(
+    `INSERT INTO devices (id, name, "deviceKey", "tenantId", "userId")
+     VALUES ($1, $2, $3, $4, $5)`,
+    [BARE, 'bare-device', `key-${BARE.slice(0, 8)}`, TENANT, USER],
+  );
+  const bare = await analyse(BARE);
+  ok(
+    'a device with no telemetry at all still reports NO_TELEMETRY_IN_WINDOW',
+    bare.code === 'NO_TELEMETRY_IN_WINDOW',
+    bare,
+  );
+
+  await q('DELETE FROM telemetry WHERE "deviceId" = ANY($1)', [[THIN, TEXT, BARE]]);
+  await q('DELETE FROM devices WHERE id = ANY($1)', [[THIN, TEXT, BARE]]);
+
+  // ── The wire format, which is what the UI switches on ──────────────────
+  section('9. The exception filter forwards the error code');
+
+  // Closing the loop: a service that throws a code is useless if the filter
+  // drops it. It did — which is why the UI had to substring-match English
+  // prose, and why rewording a message silently reclassified the error.
+  {
+    const captured: { status?: number; body?: any } = {};
+    const host: any = {
+      switchToHttp: () => ({
+        getResponse: () => ({
+          status(code: number) {
+            captured.status = code;
+            return this;
+          },
+          json(body: any) {
+            captured.body = body;
+          },
+        }),
+        getRequest: () => ({ url: '/ai/insights/device/x', method: 'POST' }),
+      }),
+    };
+
+    new HttpExceptionFilter().catch(
+      new BadRequestException({
+        code: 'NOT_ENOUGH_READINGS',
+        message: 'only 1 reading(s) ... at least 2 are needed',
+        details: { minimumReadings: 2, keys: [{ key: 'co2', readings: 1 }] },
+      }),
+      host,
+    );
+
+    ok('the response is a 400', captured.status === 400, captured.status);
+    ok(
+      'the machine-readable code survives the filter',
+      captured.body?.code === 'NOT_ENOUGH_READINGS',
+      captured.body,
+    );
+    ok(
+      'the structured details survive too',
+      captured.body?.details?.minimumReadings === 2,
+      captured.body?.details,
+    );
+    ok(
+      'and the human message is still there',
+      typeof captured.body?.message === 'string' &&
+        captured.body.message.includes('at least 2'),
+      captured.body?.message,
+    );
+  }
+
   // ── Tenancy is unchanged ────────────────────────────────────────────────
-  section('8. Scoping still applies');
+  section('10. Scoping still applies');
 
   let refused = false;
   try {

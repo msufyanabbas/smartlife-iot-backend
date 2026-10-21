@@ -2334,6 +2334,55 @@ from a Record to a string[] breaks no caller. `verify:ai-insights-keys` pins
 all of it, including that a genuinely empty window still yields no keys so the
 400 remains correct where it belongs.
 
+### Three failures wearing one message, and a filter that dropped the code
+
+Fixing the key list moved the 400 one gate down, to
+`NO_NUMERIC_TELEMETRY` — because `summarise()` needs
+`MIN_POINTS_PER_SERIES` (2) readings before `changePct`, `stdDev` and
+first/last mean anything. A device that has reported once is a legitimate
+refusal. "No numeric telemetry found" is not a legitimate way to say it: the
+owner is looking at a chart with a reading on it, and goes hunting for a
+telemetry problem that does not exist.
+
+Three different situations shared that sentence. They are now distinct:
+
+| Situation | code | told |
+|---|---|---|
+| never reported in the window | `NO_TELEMETRY_IN_WINDOW` | nothing in this window |
+| reports only textual keys | `NO_NUMERIC_TELEMETRY` | names the keys it found |
+| fewer than 2 readings | `NOT_ENOUGH_READINGS` | the key, the count, the minimum |
+
+The threshold is a named constant precisely because the message quotes it — a
+number the caller is told about must not be able to drift from the one
+enforced.
+
+**The wire format is the part worth remembering.** Services have always thrown
+`BadRequestException({ code, message })`, and `HttpExceptionFilter` copied a
+fixed set of fields and dropped `code` — the same defect its own comment
+describes for `errors`, one field over. So the AI insights tab classified
+failures by substring-matching the server's English, under a comment conceding
+there was "nothing machine-readable to switch on".
+
+That coupling is a trap: improving a message **breaks** the classification.
+Rewording alone would have turned a specific empty state into a generic error.
+
+The filter forwards `code` and `details` now, and the frontend switches on the
+code with text matching kept only as a fallback for older responses.
+
+**The convention for new code:** throw
+`BadRequestException({ code: 'SCREAMING_SNAKE', message, details })`. The
+client switches on `code`, renders `message`, and reads `details` for
+structure. At the time of writing `ai-insights.service.ts` is the only thrower
+using it — the filter made the pattern usable, it did not retroactively
+improve other endpoints.
+
+`verify:ai-insights-keys` covers the whole chain: the service throws the code,
+the filter forwards it, and each of the four cases resolves distinctly. It
+calls `analyseDevice()` itself rather than stopping at `getTimeSeries()` —
+testing the pieces and not the whole is how this gate was missed the first
+time. Note that `AiInsightsService` resolves `TelemetryService` in
+`onModuleInit`, so a hand-built instance must call that hook.
+
 ### SQL injection on the telemetry key, found on the next link of the chain
 
 Finding the keys is only the first gate. `analyseDevice()` then calls

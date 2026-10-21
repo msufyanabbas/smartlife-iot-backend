@@ -37,6 +37,24 @@ export class HttpExceptionFilter implements ExceptionFilter {
      * nothing to highlight and the user had nothing to fix.
      */
     let errors: string[] | null = null;
+    /**
+     * A machine-readable error code from a thrown
+     * `BadRequestException({ code, message, details })`.
+     *
+     * Dropped for the same reason `errors` was: the filter copied only a
+     * fixed set of fields off the exception response. Services already throw
+     * codes — NO_TELEMETRY_IN_WINDOW, NOT_ENOUGH_READINGS,
+     * NO_AI_MODEL_CONFIGURED — and every one of them arrived at the client as
+     * an English sentence and nothing else.
+     *
+     * The cost was not theoretical. The AI insights tab had to classify
+     * failures by substring-matching the server's prose, with a comment
+     * conceding there was "nothing machine-readable to switch on" — so
+     * rewording a message silently reclassified the error and showed the
+     * wrong empty state.
+     */
+    let code: string | null = null;
+    let details: unknown = null;
 
     // Handle different types of exceptions
     if (exception instanceof HttpException) {
@@ -52,6 +70,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
         error = responseObj.error || exception.name;
         validationErrors = responseObj.validationErrors || null;
         errors = Array.isArray(responseObj.errors) ? responseObj.errors : null;
+        code = typeof responseObj.code === 'string' ? responseObj.code : null;
+        details = responseObj.details ?? null;
       }
     } else if (exception instanceof QueryFailedError) {
       // Handle database errors
@@ -107,6 +127,16 @@ export class HttpExceptionFilter implements ExceptionFilter {
     // receives every problem at once instead of one per round trip.
     if (errors) {
       errorResponse.errors = errors;
+    }
+
+    // Machine-readable code and its structured context. A client should
+    // switch on `code` and render `message`; `details` carries whatever the
+    // thrower thought the caller would need (which keys, which window).
+    if (code) {
+      errorResponse.code = code;
+    }
+    if (details !== null && details !== undefined) {
+      errorResponse.details = details;
     }
 
     // Add stack trace in development

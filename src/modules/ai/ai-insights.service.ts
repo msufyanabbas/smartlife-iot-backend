@@ -166,6 +166,21 @@ export class AiInsightsService implements OnModuleInit {
     // prompt that costs real money and that the model reads less carefully
     // than it would read ten.
     const summaries: SeriesSummary[] = [];
+    // Why these are counted rather than discarded: "no numeric telemetry
+    // found" is the wrong thing to tell someone looking at a chart with a
+    // reading on it. The two reasons a key produces no summary are entirely
+    // different problems, and only one of them is about the data being
+    // non-numeric:
+    //
+    //   • the key is textual          → nothing to analyse, ever
+    //   • the key has ONE reading     → analysable as soon as a second arrives
+    //
+    // A device that has just been provisioned hits the second case, and the
+    // old message sent its owner looking for a telemetry problem that did not
+    // exist.
+    const tooShort: Array<{ key: string; readings: number }> = [];
+    const nonNumeric: string[] = [];
+
     for (const key of keys.slice(0, 12)) {
       const points = await this.telemetry.getTimeSeries(
         options.deviceId,
@@ -176,13 +191,48 @@ export class AiInsightsService implements OnModuleInit {
         2000,
       );
       const summary = summarise(key, points);
-      if (summary) summaries.push(summary);
+      if (summary) {
+        summaries.push(summary);
+        continue;
+      }
+
+      const numericCount = (points ?? []).filter((p: any) =>
+        Number.isFinite(Number(p?.value ?? p?.[key] ?? p?.data?.[key])),
+      ).length;
+
+      if (numericCount === 0) nonNumeric.push(key);
+      else tooShort.push({ key, readings: numericCount });
     }
 
     if (summaries.length === 0) {
+      // Ordered by what the reader can act on: a short series resolves itself,
+      // a non-numeric one never will.
+      if (tooShort.length > 0) {
+        const worst = tooShort.sort((a, b) => b.readings - a.readings)[0];
+        throw new BadRequestException({
+          code: 'NOT_ENOUGH_READINGS',
+          message:
+            `This device has only ${worst.readings} reading(s) for ` +
+            `"${worst.key}" in the selected window, and at least ${MIN_POINTS_PER_SERIES} ` +
+            'are needed to describe a trend. Widen the window, or wait for ' +
+            'the device to report again.',
+          details: {
+            minimumReadings: MIN_POINTS_PER_SERIES,
+            keys: tooShort,
+            window: { start, end },
+          },
+        });
+      }
+
       throw new BadRequestException({
         code: 'NO_NUMERIC_TELEMETRY',
-        message: 'No numeric telemetry found to analyse in this window.',
+        message:
+          nonNumeric.length > 0
+            ? `This device reports ${nonNumeric.length} key(s) in this window ` +
+              `(${nonNumeric.slice(0, 5).join(', ')}) but none of them are ` +
+              'numeric, so there is nothing to compute statistics over.'
+            : 'No numeric telemetry found to analyse in this window.',
+        details: { nonNumericKeys: nonNumeric, window: { start, end } },
       });
     }
 
@@ -223,12 +273,22 @@ export class AiInsightsService implements OnModuleInit {
   }
 }
 
+/**
+ * The fewest readings a series needs before it can be described.
+ *
+ * Two is the floor at which `changePct`, `stdDev` and first/last mean
+ * anything at all; one reading is a value, not a trend. Named rather than
+ * inlined because the error message quotes it — a threshold the caller is
+ * told about must not be able to drift away from the one enforced.
+ */
+const MIN_POINTS_PER_SERIES = 2;
+
 function summarise(key: string, points: any[]): SeriesSummary | null {
   const values = (points ?? [])
     .map((p) => Number(p?.value ?? p?.[key] ?? p?.data?.[key]))
     .filter((v) => Number.isFinite(v));
 
-  if (values.length < 2) return null;
+  if (values.length < MIN_POINTS_PER_SERIES) return null;
 
   const count = values.length;
   const min = Math.min(...values);
