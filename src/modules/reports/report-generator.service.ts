@@ -11,6 +11,11 @@ import { AuditService } from '@modules/audit/audit.service';
 import { AnalyticsTimeRange } from '@modules/analytics/dto/analytics.dto';
 import type { ReportDefinition } from './entities/report-template.entity';
 import {
+  XLSX_MIME_TYPE,
+  buildXlsxBuffer,
+  sanitiseSheetName,
+} from '@common/utils/xlsx.util';
+import {
   REPORT_SOURCES,
   ReportColumnManifest,
   ReportDateRangeMode,
@@ -708,6 +713,13 @@ export class ReportGeneratorService {
           extension: 'pdf',
         };
 
+      case ReportFormat.XLSX:
+        return {
+          content: await this.renderXlsx(rowSet, meta),
+          mimeType: XLSX_MIME_TYPE,
+          extension: 'xlsx',
+        };
+
       case ReportFormat.CSV:
       default:
         return {
@@ -746,6 +758,57 @@ export class ReportGeneratorService {
       rowSet.columns.map((c) => escape(row[c.key])).join(','),
     );
     return [header, ...body].join('\r\n') + '\r\n';
+  }
+
+  /**
+   * A real .xlsx workbook.
+   *
+   * Structured deliberately like `renderPdf()` below: the same cover block,
+   * then the same table, so the three binary-ish formats describe a run
+   * identically and a reader comparing a PDF against a spreadsheet of the same
+   * execution sees the same period, row count and truncation warning.
+   *
+   * Two things it does that the PDF cannot:
+   *
+   *  · **No column cap.** `MAX_PDF_COLUMNS` exists because an A4 landscape
+   *    cell is a few characters wide past twelve columns; a spreadsheet has no
+   *    such limit, so every column is written. A report that is unreadable as
+   *    a PDF is the reason to pick this format.
+   *  · **Typed cells.** Timestamps land as real date cells and numbers as
+   *    numbers, so the recipient can sort and pivot. That is the whole
+   *    difference from CSV, which Excel re-guesses per locale — the `"30.000"`
+   *    vs `30` problem that bites elsewhere in this codebase.
+   *
+   * The workbook builder lives in `@common/utils/xlsx.util` rather than here
+   * because `POST /analytics/export` renders the same way; see that file's
+   * header.
+   */
+  private renderXlsx(
+    rowSet: ReportRowSet,
+    meta: { name: string; generatedAt: Date },
+  ): Promise<Buffer> {
+    const notes = [
+      meta.name,
+      `Generated ${meta.generatedAt.toISOString()}`,
+      `Period ${rowSet.period.from.toISOString()} → ${rowSet.period.to.toISOString()}` +
+        (rowSet.period.snappedTo
+          ? ` (analytics window snapped to ${rowSet.period.snappedTo})`
+          : ''),
+      `${rowSet.rows.length} row(s)` +
+        (rowSet.truncated ? ' — TRUNCATED at the row limit' : ''),
+    ];
+
+    return buildXlsxBuffer([
+      {
+        // The report's own name, cleaned of the characters Excel refuses in a
+        // tab name and clipped to 31 — a longer or `/`-bearing name makes the
+        // workbook unopenable rather than oddly titled.
+        name: sanitiseSheetName(meta.name, 'Report'),
+        columns: rowSet.columns.map((c) => ({ key: c.key, label: c.label })),
+        rows: rowSet.rows,
+        notes,
+      },
+    ]);
   }
 
   /**

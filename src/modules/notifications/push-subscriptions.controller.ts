@@ -36,6 +36,8 @@ import {
   PUSH_PLATFORMS,
   type PushPlatform,
 } from './entities/push-subscription.entity';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 class WebPushKeysDto {
   @IsString() @MinLength(8) p256dh: string;
@@ -122,6 +124,11 @@ export class PushSubscriptionsController {
   }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.NOTIFICATION,
+    description: 'create push subscription',
+  })
   @Roles(...SELF_SERVICE_ROLES)
   @RequirePermissions('notifications:create')
   @ApiOperation({
@@ -139,6 +146,12 @@ export class PushSubscriptionsController {
   }
 
   @Delete()
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.NOTIFICATION,
+    description: 'delete push subscription',
+    severity: AuditSeverity.WARNING,
+  })
   @HttpCode(HttpStatus.OK)
   @Roles(...SELF_SERVICE_ROLES)
   @RequirePermissions('notifications:delete')
@@ -158,6 +171,12 @@ export class PushSubscriptionsController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.NOTIFICATION,
+    description: 'delete push subscription',
+    severity: AuditSeverity.WARNING,
+  })
   @HttpCode(HttpStatus.OK)
   @Roles(...SELF_SERVICE_ROLES)
   @RequirePermissions('notifications:delete')

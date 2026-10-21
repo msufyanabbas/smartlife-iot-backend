@@ -2,7 +2,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { Cron } from '@nestjs/schedule';
+import { DistributedCron } from '@/lib/cluster/distributed-cron.decorator';
 import * as crypto from 'crypto';
 import {
   Device,
@@ -623,15 +623,24 @@ export class TuyaSyncService {
    *
    * 10s is affordable because the state pull is a single request per
    * integration regardless of device count (and the access token is cached).
-   * Set TUYA_POLL_ENABLED=false to disable — do this on every replica but one,
-   * since two instances polling the same project double the API spend and
-   * race on the same rows.
+   * Set TUYA_POLL_ENABLED=false to disable.
+   *
+   * The tick is claimed with a Redis lock, so only one replica polls per
+   * interval. That was not cosmetic: at 6 polls a minute, three replicas made
+   * ~26k extra calls a day per integration against Tuya's quota, and the state
+   * diff is computed from the *stored* previous snapshot — so two instances
+   * diffing concurrently each saw the change, each wrote a telemetry row and
+   * each broadcast it. The lock TTL is short (20s) because a poll is one HTTP
+   * call per integration; a crashed holder costs at most two missed intervals.
    */
-  @Cron('*/10 * * * * *')
+  @DistributedCron('*/10 * * * * *', {
+    name: 'tuya-state-poll',
+    lockTtl: 20,
+  })
   async pollAllIntegrations(): Promise<void> {
     if (process.env.TUYA_POLL_ENABLED === 'false') return;
 
-    // A slow run must not stack ticks on top of each other.
+    // A slow run must not stack ticks on top of each other, even on one node.
     if (this.polling) {
       this.logger.debug('Tuya poll still running — skipping this tick');
       return;

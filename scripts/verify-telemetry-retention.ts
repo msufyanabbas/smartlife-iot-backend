@@ -1224,6 +1224,11 @@ const makeConfig = (overrides: Record<string, unknown> = {}) =>
     telemetryRepo,
     dataSource.getRepository(entities.Device as any) as any,
     noop, // RedisService
+    // TelemetryLatestCacheService — added when the latest-reading cache got a
+    // real reader. The noop Proxy answers undefined, i.e. a permanent cache
+    // miss, which is what this script wants: it is asserting what the rollup
+    // and retention paths read out of Postgres, not what a cache replays.
+    noop, // TelemetryLatestCacheService
     noop, // ProfileAlarmService
     noop, // IntegrationDispatchService
     noop, // AutomationService

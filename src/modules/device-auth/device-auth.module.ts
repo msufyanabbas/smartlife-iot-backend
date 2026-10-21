@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Device } from '@modules/devices/entities/device.entity';
 import { DeviceCredentials } from '@modules/devices/entities/device-credentials.entity';
+import { Edge } from '@modules/edge/entities/edge.entity';
 
 import { DeviceAuthService } from './device-auth.service';
 import { DeviceAuthController } from './device-auth.controller';
@@ -17,7 +18,7 @@ import { DeviceAuthController } from './device-auth.controller';
  * `FloorPlansModule` uses for its Subscription repository (CLAUDE.md §4a).
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Device, DeviceCredentials])],
+  imports: [TypeOrmModule.forFeature([Device, DeviceCredentials, Edge])],
   controllers: [DeviceAuthController],
   providers: [DeviceAuthService],
   exports: [DeviceAuthService],

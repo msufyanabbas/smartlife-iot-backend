@@ -157,6 +157,32 @@ export class DeviceListenerService {
 
       this.logger.log(`Published to Kafka — device: ${device.deviceKey}`);
     } catch (error) {
+      // ── Why a Kafka failure is reported separately ────────────────────────
+      //
+      // `KafkaService.sendMessage()` now THROWS when the broker is
+      // unreachable, instead of buffering into a producer that will never
+      // flush. That is the correct behaviour, but it has to be visible for
+      // what it is: this frame was decoded successfully, the device row was
+      // updated, and then the reading was dropped on the floor. No Telemetry
+      // row will ever exist for it.
+      //
+      // It is NOT rethrown. This method is the single entry point for ~20 call
+      // sites, several of which are polled adapters (Modbus, SNMP, OPC UA,
+      // BACnet) running on bare timers where a rejection becomes an unhandled
+      // rejection and takes the process down — the exact failure mode this
+      // round of work exists to remove. So the frame is dropped, loudly and
+      // countably, per message, and the platform keeps serving.
+      if ((error as Error).name === 'KafkaUnavailableError') {
+        this.logger.error(
+          `TELEMETRY DROPPED — device ${standardTelemetry.deviceKey}: ` +
+            `${(error as Error).message}. The frame was decoded and the device ` +
+            `row updated, but no Telemetry row will ever exist for it. ` +
+            `Running total is on GET /health/messaging ` +
+            `(kafka.refusedProduces).`,
+        );
+        return;
+      }
+
       this.logger.error(
         `Error handling telemetry for ${standardTelemetry.deviceKey}: ${(error as Error).message}`,
       );

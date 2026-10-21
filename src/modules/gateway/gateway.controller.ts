@@ -23,6 +23,8 @@ import { GatewayService } from './gateway.service';
 import { DevicesService } from '@modules/devices/devices.service';
 import { SendRpcDto } from './dto/send-rpc.dto';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 export interface DeviceCommandDto {
   method: string;
@@ -83,11 +85,20 @@ export class GatewayController {
     @Body() command: DeviceCommandDto,
   ) {
     await this.devicesService.findByDeviceKey(deviceKey, user); // access check
-    await this.gatewayService.sendCommand(deviceKey, command);
+    // The actor is passed through so the `device.command.sent` audit row names
+    // who sent it. No @Audit() on this route: that would be a second row for
+    // the same action, and the event's is the better one — it also covers the
+    // queued dispatch path, which never reaches a controller.
+    await this.gatewayService.sendCommand(deviceKey, command, user);
     return { success: true, message: 'Command sent to device', deviceKey, command: command.method };
   }
 
   @Post('devices/:deviceKey/rpc')
+  @Audit({
+    action: AuditAction.DEVICE_COMMAND,
+    entityType: AuditEntityType.DEVICE,
+    description: 'device command device control',
+  })
   @RequirePermissions('devices:control')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)

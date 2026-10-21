@@ -17,6 +17,7 @@ import { IntegrationStatus, IntegrationType } from '@common/enums/index.enum';
 import { DeviceListenerService } from '@modules/protocols/device-listener.service';
 import { IntegrationDispatchService } from './integration-dispatch.service';
 import { IntegrationEventType } from './entities/integration-event.entity';
+import { envBoolean, envString } from '@/config/env.utils';
 import type { StandardTelemetry } from '@common/interfaces/standard-telemetry.interface';
 
 interface InboundSubscription {
@@ -75,6 +76,34 @@ export class IntegrationMqttInboundService
     { deviceId: string; customerId?: string; expires: number }
   >();
   private static readonly DEVICE_CACHE_TTL_MS = 60_000;
+
+  /**
+   * Three base36 characters unique to this process, appended to every inbound
+   * client id so two replicas cannot claim the same MQTT session. Computed once
+   * — a value that changed per reconnect would leave a trail of ghost clients.
+   */
+  private static readonly NODE_SUFFIX = Math.random()
+    .toString(36)
+    .slice(2, 5)
+    .padEnd(3, '0');
+
+  /**
+   * `$share/<group>/<filter>` unless MQTT_SHARED_SUBSCRIPTION is off.
+   *
+   * Read from process.env rather than the `mqtt` config namespace on purpose:
+   * those settings describe the PLATFORM's own broker connection, while this
+   * service connects to whatever third-party broker each integration names. The
+   * two share only the share-group policy.
+   */
+  private static sharedFilter(topic: string): string {
+    if (!envBoolean(process.env.MQTT_SHARED_SUBSCRIPTION, true)) return topic;
+    if (topic.startsWith('$share/')) return topic;
+    const group = envString(
+      process.env.MQTT_SHARED_GROUP,
+      'smartlife-platform',
+    )!;
+    return `$share/${group}/${topic}`;
+  }
 
   /** Guards against two reconciles overlapping — each one does I/O. */
   private syncing = false;
@@ -243,10 +272,15 @@ export class IntegrationMqttInboundService
     const client = mqtt.connect(brokerUrl, {
       username: config.username,
       password: config.password,
-      // Scoped to the integration id, so a restart reclaims the same session
-      // instead of accumulating ghost clients on brokers that enforce a client
-      // limit. Truncated because some brokers cap the client id at 23 bytes.
-      clientId: `smartlife-in-${integration.id.replace(/-/g, '').slice(0, 10)}`,
+      // Scoped to the integration id so ghost clients do not accumulate on
+      // brokers that enforce a client limit, PLUS a per-process suffix.
+      //
+      // The suffix is not cosmetic: MQTT client ids must be unique, and a
+      // broker DISCONNECTS the existing session when a second client claims the
+      // same id. Two replicas therefore kicked each other off in a loop and the
+      // integration's uplinks arrived in bursts or not at all. Kept short
+      // because some brokers cap the client id at 23 bytes.
+      clientId: `sl-in-${integration.id.replace(/-/g, '').slice(0, 10)}-${IntegrationMqttInboundService.NODE_SUFFIX}`,
       connectTimeout: 10_000,
       // The opposite of MqttAdapter: this client is meant to live, so it backs
       // off and retries rather than giving up on the first refusal.
@@ -261,11 +295,19 @@ export class IntegrationMqttInboundService
     subscription.client = client;
     this.subscriptions.set(integration.id, subscription);
 
+    // Shared subscription, for the same reason MQTTService uses one: a plain
+    // wildcard subscription is fan-out, so every replica would receive — and
+    // persist — every uplink on this integration's topic. Honours
+    // MQTT_SHARED_SUBSCRIPTION so a broker without the extension still works.
+    // The broker delivers under the original topic, so the deviceKey topic-index
+    // lookup downstream is unaffected.
+    const filter = IntegrationMqttInboundService.sharedFilter(topic);
+
     client.on('connect', () => {
-      client.subscribe(topic, { qos: 1 }, (error) => {
+      client.subscribe(filter, { qos: 1 }, (error) => {
         if (error) {
           this.logger.error(
-            `Could not subscribe to "${topic}" for ${integration.name}: ${error.message}`,
+            `Could not subscribe to "${filter}" for ${integration.name}: ${error.message}`,
           );
           void this.dispatch.recordInbound({
             integrationId: integration.id,
@@ -277,7 +319,7 @@ export class IntegrationMqttInboundService
           return;
         }
         this.logger.log(
-          `Subscribed to "${topic}" on ${brokerUrl} for ${integration.name}`,
+          `Subscribed to "${filter}" on ${brokerUrl} for ${integration.name}`,
         );
       });
     });

@@ -27,6 +27,8 @@ import { User } from '../users/entities/user.entity';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('scripts')
 @Controller('scripts')
@@ -51,6 +53,11 @@ export class ScriptsController {
   }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'create script',
+  })
   @RequirePermissions('automations:create')
   @ApiOperation({ summary: 'Create a new script' })
   create(
@@ -83,6 +90,11 @@ export class ScriptsController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update script',
+  })
   @RequirePermissions('automations:update')
   @ApiOperation({ summary: 'Update script' })
   update(
@@ -99,6 +111,12 @@ export class ScriptsController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'delete script',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('automations:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete script' })
@@ -107,6 +125,11 @@ export class ScriptsController {
   }
 
   @Post(':id/execute')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update script',
+  })
   @RequirePermissions('automations:update')
   @HttpCode(HttpStatus.OK)
   @TenantOrCustomerAdmin()
@@ -120,6 +143,11 @@ export class ScriptsController {
   }
 
   @Post(':id/test')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update script',
+  })
   @RequirePermissions('automations:update')
   @HttpCode(HttpStatus.OK)
   @TenantOrCustomerAdmin()

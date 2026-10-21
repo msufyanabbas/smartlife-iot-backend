@@ -35,6 +35,8 @@ import {
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { PaginationDto } from '@common/dto/pagination.dto';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 // Rejected here as well as in the service so multer stops reading the stream
 // as soon as the part header shows an unsupported type.
@@ -62,6 +64,11 @@ export class ImagesController {
   constructor(private readonly imagesService: ImagesService) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.FILE,
+    description: 'create image',
+  })
   @RequirePermissions('settings:create')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Upload a new image', 'Image uploaded')
@@ -182,6 +189,11 @@ export class ImagesController {
   }
 
   @Patch(':id/public')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.FILE,
+    description: 'update image',
+  })
   @RequirePermissions('settings:update')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'Mark an image public or private' })
@@ -228,6 +240,11 @@ export class ImagesController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.FILE,
+    description: 'update image',
+  })
   @RequirePermissions('settings:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Update image metadata', 'Image updated')
@@ -242,6 +259,12 @@ export class ImagesController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.FILE,
+    description: 'delete image',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('settings:delete')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.NO_CONTENT)

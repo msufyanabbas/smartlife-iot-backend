@@ -14,6 +14,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { WsJwtGuard } from '@common/guards/ws-jwt.guard';
+import { WsSubscriptionAuthorizer } from '@common/websocket/ws-subscription-authorizer';
 import { Alarm } from '@modules/index.entities';
 
 @WebSocketGateway({
@@ -36,6 +37,7 @@ export class AlarmsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly authorizer: WsSubscriptionAuthorizer,
   ) {}
 
     afterInit(server: Server) {
@@ -139,7 +141,17 @@ export class AlarmsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
   @SubscribeMessage('subscribe:device')
   @UseGuards(WsJwtGuard)
-  handleSubscribeDevice(client: Socket, deviceId: string) {
+  async handleSubscribeDevice(client: Socket, deviceId: string) {
+    // Alarms carry more than telemetry does — severity, message, the rule
+    // that fired — so an unscoped join here leaked operational detail about
+    // another tenant's estate, not just readings.
+    if (!(await this.authorizer.canSubscribeToDevice(client, deviceId))) {
+      this.logger.warn(
+        `Client ${client.id} refused alarm subscription to device ${deviceId}`,
+      );
+      return { event: 'error', data: { deviceId, message: 'Device not found' } };
+    }
+
     client.join(`device:${deviceId}`);
     this.logger.log(`Client ${client.id} subscribed to device ${deviceId} alarms`);
     return { event: 'subscribed', data: { deviceId } };
@@ -156,6 +168,15 @@ export class AlarmsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
   @SubscribeMessage('subscribe:customer')
   @UseGuards(WsJwtGuard)
   handleSubscribeCustomer(client: Socket, customerId: string) {
+    // A customer-scoped account may only watch its own customer; a
+    // tenant-scoped one may watch customers of its tenant.
+    if (!this.authorizer.canSubscribeToCustomer(client, customerId)) {
+      this.logger.warn(
+        `Client ${client.id} refused alarm subscription to customer ${customerId}`,
+      );
+      return { event: 'error', data: { customerId, message: 'Customer not found' } };
+    }
+
     client.join(`customer:${customerId}`);
     this.logger.log(`Client ${client.id} subscribed to customer ${customerId} alarms`);
     return { event: 'subscribed', data: { customerId } };

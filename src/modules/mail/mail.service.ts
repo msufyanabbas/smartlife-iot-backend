@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { Transporter } from 'nodemailer';
-import { EmailOptions } from './interfaces/mail.interface';
+import { EmailAttachment, EmailOptions } from './interfaces/mail.interface';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { EmailTemplateType } from '@common/enums/index.enum';
 
@@ -132,6 +132,51 @@ export class MailService {
   }
 
   /**
+   * The largest total attachment payload this service will hand to the relay.
+   *
+   * ── Why there is a cap at all ─────────────────────────────────────────────
+   * The caller that needs attachments is the report scheduler, and a report is
+   * a tenant-defined query with a 50,000-row ceiling. A wide CSV at that limit
+   * is tens of megabytes; base64 transfer-encoding then inflates it by a
+   * further ~37%. Handing that to an SMTP relay has three outcomes, none good:
+   * the relay rejects it after transferring the whole thing (Gmail refuses
+   * over 25 MB, most providers between 10 and 35), the socket times out
+   * mid-transfer, or — with several recipients and a per-minute scheduler tick
+   * — the sends queue up behind each other and every other email on the
+   * platform (verification, password reset, alarm notification) waits behind a
+   * report nobody is watching.
+   *
+   * So the size is checked BEFORE the send, the caller is told, and it falls
+   * back to the download link. 10 MB default: comfortably under every common
+   * provider limit once encoded, and `MAIL_MAX_ATTACHMENT_BYTES` raises it for
+   * a relay known to accept more.
+   */
+  maxAttachmentBytes(): number {
+    const configured = Number(
+      this.configService.get<string>('MAIL_MAX_ATTACHMENT_BYTES'),
+    );
+    return Number.isFinite(configured) && configured > 0
+      ? configured
+      : 10 * 1024 * 1024;
+  }
+
+  /** Total bytes a set of attachments would add to the message. */
+  attachmentBytes(attachments?: EmailAttachment[]): number {
+    return (attachments ?? []).reduce(
+      (sum, attachment) => sum + (attachment?.content?.byteLength ?? 0),
+      0,
+    );
+  }
+
+  /**
+   * True when these attachments fit under the cap, so a caller can decide what
+   * to send instead BEFORE building an email that claims a file is attached.
+   */
+  canAttach(attachments?: EmailAttachment[]): boolean {
+    return this.attachmentBytes(attachments) <= this.maxAttachmentBytes();
+  }
+
+  /**
    * Send email
    */
   async sendEmail(options: EmailOptions): Promise<boolean> {
@@ -160,12 +205,44 @@ export class MailService {
         return false;
       }
 
+      // Attachments are rejected here rather than truncated or silently
+      // dropped: an email whose body says "the report is attached" and which
+      // arrives with nothing is worse than a refusal the caller can act on.
+      const attachments = (options.attachments ?? []).filter(
+        (attachment) =>
+          attachment?.filename && Buffer.isBuffer(attachment.content),
+      );
+      if (attachments.length > 0) {
+        const bytes = this.attachmentBytes(attachments);
+        const cap = this.maxAttachmentBytes();
+        if (bytes > cap) {
+          this.logger.error(
+            `❌ Refusing to send to ${options.to}: ${attachments.length} ` +
+              `attachment(s) total ${bytes} bytes, over the ${cap}-byte cap ` +
+              '(MAIL_MAX_ATTACHMENT_BYTES). Send a download link instead.',
+          );
+          return false;
+        }
+      }
+
       const mailOptions = {
         from: `"${appName}" <${smtpFrom}>`,
         to: options.to,
         subject: options.subject,
         html: options.html,
         text: options.text,
+        // Nodemailer handles MIME multipart and base64 encoding itself; only
+        // set the key when there is something to attach, so every other email
+        // this service sends keeps exactly the message structure it had.
+        ...(attachments.length > 0 && {
+          attachments: attachments.map((attachment) => ({
+            filename: attachment.filename,
+            content: attachment.content,
+            ...(attachment.contentType && {
+              contentType: attachment.contentType,
+            }),
+          })),
+        }),
       };
 
       const info = await this.transporter!.sendMail(mailOptions);

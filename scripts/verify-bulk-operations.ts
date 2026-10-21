@@ -75,6 +75,9 @@ import {
   UserRole,
   UserStatus,
 } from '../src/common/enums/index.enum';
+import { inMemoryRedis } from './support/in-memory-redis';
+import { SubscriptionCacheService } from '../src/lib/redis/subscription-cache.service';
+import { PermissionCacheService } from '../src/lib/redis/permission-cache.service';
 
 const database = process.argv[2] ?? 'bulkcheck';
 
@@ -385,6 +388,9 @@ const TENANT_B = randomUUID();
     repo(FloorPlan),
     repo(Automation),
     dataSource,
+    // SubscriptionCacheService — a real in-memory cache rather than a
+    // stub, so the invalidation path is exercised instead of skipped.
+    new SubscriptionCacheService(inMemoryRedis()),
   );
 
   const devicesService = new DevicesService(
@@ -411,6 +417,9 @@ const TENANT_B = randomUUID();
     subscriptionsService,
     stub, // ConfigService
     dataSource,
+    // PermissionCacheService — UsersService bumps the cache epoch when a
+    // role or grant changes. Real, so those bumps actually happen.
+    new PermissionCacheService(inMemoryRedis()),
   );
 
   const notificationsService = new NotificationsService(
@@ -421,6 +430,7 @@ const TENANT_B = randomUUID();
     stub, // UsersService
     stub, // SmsChannel
     stub, // PushChannel
+    stub, // PushSubscriptionsService — resolves a user's registered devices
     stub, // WhatsappChannel
     dataSource,
   );

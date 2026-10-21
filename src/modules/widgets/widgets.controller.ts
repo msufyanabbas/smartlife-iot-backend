@@ -40,6 +40,8 @@ import { UserRole } from '@common/enums/index.enum';
 // to avoid a situation where two module objects exist for the same enum.
 import { WidgetTypeCategory } from '@common/enums/widget-type.enum';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Widgets')
 @Controller('widgets')
@@ -54,6 +56,10 @@ export class WidgetsController {
   // ── Widget types ──────────────────────────────────────────────────────────
 
   @Post('types')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.WIDGET,
+  })
   @RequirePermissions('dashboards:create')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -99,6 +105,10 @@ export class WidgetsController {
   }
 
   @Post('types/import')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.WIDGET,
+  })
   @RequirePermissions('dashboards:create')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -109,6 +119,10 @@ export class WidgetsController {
   }
 
   @Post('types/:id/clone')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.WIDGET,
+  })
   @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -135,6 +149,10 @@ export class WidgetsController {
   }
 
   @Patch('types/:id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.WIDGET,
+  })
   @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -145,6 +163,11 @@ export class WidgetsController {
   }
 
   @Delete('types/:id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.WIDGET,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('dashboards:delete')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN)
@@ -157,6 +180,10 @@ export class WidgetsController {
   // ── Widget bundles ────────────────────────────────────────────────────────
 
   @Post('bundles')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.WIDGET,
+  })
   @RequirePermissions('dashboards:create')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -192,6 +219,10 @@ export class WidgetsController {
   }
 
   @Post('bundles/:id/widgets/:widgetId')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.WIDGET,
+  })
   @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -202,6 +233,11 @@ export class WidgetsController {
   }
 
   @Delete('bundles/:id/widgets/:widgetId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.WIDGET,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -226,6 +262,10 @@ export class WidgetsController {
   }
 
   @Post('bundles/import')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.WIDGET,
+  })
   @RequirePermissions('dashboards:create')
   @ApiOperation({
     summary: 'Import a widget bundle and its widgets from JSON',
@@ -255,6 +295,10 @@ export class WidgetsController {
   }
 
   @Patch('bundles/:id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.WIDGET,
+  })
   @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -265,6 +309,11 @@ export class WidgetsController {
   }
 
   @Delete('bundles/:id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.WIDGET,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('dashboards:delete')
   @UseGuards(RolesGuard)
   @Roles(UserRole.SUPER_ADMIN)

@@ -25,6 +25,8 @@ import {
   UpdateQueueDto,
 } from './dto/queue.dto';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * Queue definitions — named processing lanes for the rule engine.
@@ -127,6 +129,11 @@ export class QueuesController {
   }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'create queue',
+  })
   @RequirePermissions('automations:create')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Create a queue definition' })
@@ -140,6 +147,11 @@ export class QueuesController {
   }
 
   @Post(':id/rule-chains')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update queue',
+  })
   @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({
@@ -160,6 +172,11 @@ export class QueuesController {
   }
 
   @Put(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update queue',
+  })
   @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({
@@ -180,6 +197,11 @@ export class QueuesController {
 
   // The shipped frontend client (`queues.api.ts`) sends PATCH. Same handler.
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update queue',
+  })
   @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Update a queue definition (alias of PUT)' })
@@ -194,6 +216,12 @@ export class QueuesController {
   }
 
   @Delete(':id/rule-chains/:ruleChainId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'delete queue',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Stop processing a rule chain on this queue' })
@@ -207,6 +235,12 @@ export class QueuesController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'delete queue',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('automations:delete')
   @TenantAdminOnly()
   @ApiOperation({

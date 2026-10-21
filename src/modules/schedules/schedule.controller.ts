@@ -27,6 +27,8 @@ import { PaginationDto } from '@common/dto/pagination.dto';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { UserRole } from '@common/enums/index.enum';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * `@CurrentUser()` yields the full User; only these two fields are used, and
@@ -52,6 +54,11 @@ export class SchedulesController {
   constructor(private readonly schedulesService: SchedulesService) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'create schedule',
+  })
   @RequirePermissions('automations:create')
   @ApiOperation({ summary: 'Create a new schedule' })
   @ApiResponse({ status: 201, description: 'Schedule created' })
@@ -78,6 +85,11 @@ export class SchedulesController {
   }
 
   @Post('validate-cron')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'create schedule',
+  })
   @RequirePermissions('automations:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -169,6 +181,11 @@ export class SchedulesController {
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update schedule',
+  })
   @RequirePermissions('automations:update')
   @ApiOperation({ summary: 'Update a schedule' })
   @ApiResponse({ status: 400, description: 'Merged schedule is invalid' })
@@ -186,6 +203,12 @@ export class SchedulesController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'delete schedule',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('automations:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Soft-delete a schedule and stop its timer' })
@@ -197,6 +220,11 @@ export class SchedulesController {
   }
 
   @Post(':id/toggle')
+  @Audit({
+    action: AuditAction.DEVICE_COMMAND,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'device command schedule',
+  })
   @RequirePermissions('automations:update')
   @ApiOperation({ summary: 'Enable/disable a schedule' })
   toggle(
@@ -207,6 +235,11 @@ export class SchedulesController {
   }
 
   @Post(':id/run')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update schedule',
+  })
   @RequirePermissions('automations:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -223,6 +256,11 @@ export class SchedulesController {
 
   /** @deprecated Alias for `POST :id/run`. */
   @Post(':id/execute')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update schedule',
+  })
   @RequirePermissions('automations:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

@@ -30,6 +30,8 @@ import { UpdateConverterDto } from './dto/update-converter.dto';
 import { QueryConvertersDto } from './dto/query-converters.dto';
 import { TestConverterDto } from './dto/test-converter.dto';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -127,6 +129,11 @@ export class ConvertersController {
   }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.INTEGRATION,
+    description: 'create data converter',
+  })
   @RequirePermissions('integrations:create')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
@@ -144,6 +151,11 @@ export class ConvertersController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.INTEGRATION,
+    description: 'update data converter',
+  })
   @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
@@ -164,6 +176,12 @@ export class ConvertersController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.INTEGRATION,
+    description: 'delete data converter',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('integrations:delete')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
@@ -180,6 +198,11 @@ export class ConvertersController {
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   @Post(':id/enable')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.INTEGRATION,
+    description: 'activate data converter',
+  })
   @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -193,6 +216,12 @@ export class ConvertersController {
   }
 
   @Post(':id/disable')
+  @Audit({
+    action: AuditAction.DEACTIVATE,
+    entityType: AuditEntityType.INTEGRATION,
+    description: 'deactivate data converter',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -210,6 +239,11 @@ export class ConvertersController {
   // ── Test ──────────────────────────────────────────────────────────────────
 
   @Post(':id/test')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.INTEGRATION,
+    description: 'update data converter',
+  })
   @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)

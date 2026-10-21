@@ -29,7 +29,8 @@ import { PushSubscriptionsService } from './push-subscriptions.service';
 import { WhatsappChannel } from './channels/whatsapp.channel';
 import { NotificationsRepository } from './repositories/notifications.repository';
 import { UserRole } from '@common/enums/index.enum';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { CronExpression } from '@nestjs/schedule';
+import { DistributedCron } from '@/lib/cluster/distributed-cron.decorator';
 import { UsersService } from '@modules/users/users.service';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 import {
@@ -818,9 +819,19 @@ export class NotificationsService {
   }
 
   /**
-   * Process scheduled notifications (runs every minute)
+   * Process scheduled notifications (runs every minute).
+   *
+   * Locked across replicas: `findPendingToSend()` selects by status and
+   * scheduled time, and `sendNotification()` is what moves a row out of that
+   * set — so between the SELECT on replica A and the UPDATE on replica A,
+   * replicas B and C select the same rows and send the same in-app message,
+   * email, push and SMS. N replicas meant N copies of every scheduled
+   * notification, with the SMS ones billed N times.
    */
-  @Cron(CronExpression.EVERY_MINUTE)
+  @DistributedCron(CronExpression.EVERY_MINUTE, {
+    name: 'notifications-scheduled-tick',
+    lockTtl: 120,
+  })
   async processScheduledNotifications(): Promise<void> {
     try {
       const scheduled = await this.notificationsRepo.findPendingToSend();

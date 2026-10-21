@@ -44,6 +44,7 @@ import { Notify } from '@/common/decorators/notify.decorator';
 import { RequireSubscriptionLimit } from '@/common/decorators/subscription.decorator';
 import { ResourceType } from '@/common/guards/subscription-limit.guard';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Customers')
 @Controller('customers')
@@ -83,6 +84,10 @@ export class CustomersController {
   }
 
   @Post(':id/resend-invitation')
+  @Audit({
+    action: AuditAction.NOTIFICATION_SENT,
+    entityType: AuditEntityType.CUSTOMER,
+  })
   @RequirePermissions('customers:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
@@ -205,6 +210,10 @@ export class CustomersController {
    * Bulk update customer status
    */
   @Patch('bulk/status')
+  @Audit({
+    action: AuditAction.STATUS_CHANGE,
+    entityType: AuditEntityType.CUSTOMER,
+  })
   @RequirePermissions('customers:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -224,6 +233,11 @@ export class CustomersController {
   // ── Bulk operations (declared before ':id' so 'bulk' is not read as an id) ─
 
   @Post('bulk/delete')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.CUSTOMER,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('customers:delete')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -261,6 +275,10 @@ export class CustomersController {
   }
 
   @Patch('bulk')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.CUSTOMER,
+  })
   @RequirePermissions('customers:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -376,6 +394,10 @@ export class CustomersController {
    * Update customer by ID
    */
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.CUSTOMER,
+  })
   @RequirePermissions('customers:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -399,6 +421,10 @@ export class CustomersController {
    * Update customer status
    */
   @Patch(':id/status')
+  @Audit({
+    action: AuditAction.STATUS_CHANGE,
+    entityType: AuditEntityType.CUSTOMER,
+  })
   @RequirePermissions('customers:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -421,6 +447,11 @@ export class CustomersController {
    * Delete customer
    */
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.CUSTOMER,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('customers:delete')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)

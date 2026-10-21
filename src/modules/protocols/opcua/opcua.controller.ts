@@ -32,6 +32,8 @@ import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
 import { UserRole } from '@common/enums/index.enum';
 import { User } from '@modules/index.entities';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -132,6 +134,11 @@ export class OpcuaController {
   }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'create OPC UA server',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:create')
   @ApiOperation({ summary: 'Register an OPC-UA server' })
@@ -141,6 +148,11 @@ export class OpcuaController {
   }
 
   @Put(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update OPC UA server',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:update')
   @ApiOperation({
@@ -162,6 +174,11 @@ export class OpcuaController {
   // method that delegates. Both verbs exist because the shipped client sends
   // PATCH and Swagger consumers reach for PUT.
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update OPC UA server',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:update')
   @ApiOperation({ summary: 'Update an OPC-UA server (alias of PUT)' })
@@ -174,6 +191,11 @@ export class OpcuaController {
   }
 
   @Patch(':id/enabled')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'activate OPC UA server',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:update')
   @ApiOperation({ summary: 'Enable or disable polling of this server' })
@@ -186,6 +208,12 @@ export class OpcuaController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'delete OPC UA server',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:delete')
   @HttpCode(HttpStatus.OK)
@@ -203,6 +231,11 @@ export class OpcuaController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post(':id/test')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update OPC UA server',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:update')
   @HttpCode(HttpStatus.OK)
@@ -222,6 +255,11 @@ export class OpcuaController {
   }
 
   @Post('test')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'create OPC UA server',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:update')
   @HttpCode(HttpStatus.OK)

@@ -18,6 +18,12 @@ import { WebsocketModule } from '@modules/websocket/websocket.module';
 import { AlarmsModule } from '@modules/alarms/alarms.module';
 import { ProfilesModule } from '@modules/profiles/profiles.module';
 import { IntegrationsModule } from '@modules/integrations/integrations.module';
+import { WsAuthorizationModule } from '@common/websocket/ws-authorization.module';
+import { TelemetryGateway } from './telemetry.gateway';
+import { CalculatedFieldsService } from './calculated-fields.service';
+import { TelemetryLatestCacheService } from './telemetry-latest-cache.service';
+import { Asset } from '@modules/assets/entities/asset.entity';
+import { Attribute } from '@modules/attributes/entities/attribute.entity';
 import { Device } from '../index.entities';
 
 @Module({
@@ -26,11 +32,18 @@ import { Device } from '../index.entities';
     // SubscriptionsModule: TelemetryRetentionService only reads
     // `limits.dataRetentionDays`, and FloorPlansService already reads
     // subscription limits the same way to avoid a module cycle.
+    // Asset and Attribute are registered as repositories for the same reason
+    // Subscription is: CalculatedFieldsService only READS them (device → asset
+    // → assetProfile, plus the asset's attribute rows), and importing
+    // AssetsModule or AttributesModule would pull their whole graphs in —
+    // AssetsModule is also owned by a different change in flight.
     TypeOrmModule.forFeature([
       Telemetry,
       TelemetryRollup,
       Device,
       Subscription,
+      Asset,
+      Attribute,
     ]),
     KafkaModule,
     RedisModule,
@@ -40,11 +53,17 @@ import { Device } from '../index.entities';
     forwardRef(() => AutomationModule),
     WebsocketModule,
     AlarmsModule, // exports AlarmsService → needed by TelemetryProcessor
-    ProfilesModule, // exports ProfileAlarmService → device-profile alarm rules
+    // exports ProfileAlarmService → device-profile alarm rules, and
+    // AssetProfilesService → the calculated-field expression sandbox that
+    // CalculatedFieldsService calls rather than reimplementing.
+    ProfilesModule,
     // exports IntegrationDispatchService → outbound fan-out to external systems.
     // No forwardRef needed: IntegrationsModule imports only TypeOrmModule and
     // HttpModule, so there is no cycle back to TelemetryModule.
     IntegrationsModule,
+    // Carries WsSubscriptionAuthorizer to TelemetryGateway. Repository-only, so
+    // it adds no cycle — see the module's own comment.
+    WsAuthorizationModule,
     // The queue TelemetryProcessor consumes. It was already registered — what
     // was missing until TelemetryMaintenanceService was added is anything that
     // produces onto it.
@@ -62,11 +81,25 @@ import { Device } from '../index.entities';
     // its decorators live, exactly as for IntegrationEventsService.prune() and
     // DevicesService.checkOfflineDevices().
     TelemetryMaintenanceService,
+    // Was dead code: declared in no module, so the /telemetry namespace did not
+    // exist and its @OnEvent handlers never ran. Registered rather than deleted
+    // — see the note on the class. Cross-replica delivery for it comes from the
+    // Socket.IO Redis adapter in main.ts, which is set on the shared server and
+    // therefore covers every namespace.
+    TelemetryGateway,
+    // Evaluates an asset profile's calculated fields against each arriving
+    // reading and merges the results into the row before it is persisted.
+    CalculatedFieldsService,
+    // Sole owner of the `telemetry:latest:*` Redis key. Both ingest paths
+    // (TelemetryService for HTTP, TelemetryConsumer for Kafka) write it
+    // through this one class, which is what keeps the entries identical.
+    TelemetryLatestCacheService,
   ],
   exports: [
     TelemetryService,
     TelemetryRollupService,
     TelemetryRetentionService,
+    CalculatedFieldsService,
     // String alias. AiInsightsService resolves telemetry through ModuleRef
     // rather than importing TelemetryModule, because the import closes a
     // module-load cycle through NotificationsService that crashes

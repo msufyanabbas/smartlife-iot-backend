@@ -36,6 +36,8 @@ import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { UserRole } from '@common/enums/index.enum';
 import { COMMON_RELATION_TYPES, RelationEntityType } from '@common/enums/relation.enum';
 import { User } from '@modules/users/entities/user.entity';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * The entity-relation graph.
@@ -217,6 +219,11 @@ export class RelationsController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'create entity relation',
+  })
   @Roles(UserRole.TENANT_ADMIN)
   @RequirePermissions('assets:update')
   @ApiOperation({
@@ -238,6 +245,12 @@ export class RelationsController {
    * TENANT_ADMIN only: it is the one call here that can remove a hundred rows.
    */
   @Delete('entity')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete entity relation',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.TENANT_ADMIN)
   @RequirePermissions('assets:update')
   @HttpCode(HttpStatus.OK)
@@ -256,6 +269,12 @@ export class RelationsController {
 
   /** Delete one relation named by its 6-tuple (the ThingsBoard-shaped call). */
   @Delete()
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete entity relation',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.TENANT_ADMIN)
   @RequirePermissions('assets:update')
   @HttpCode(HttpStatus.OK)
@@ -270,6 +289,12 @@ export class RelationsController {
 
   /** Delete one relation by its own id — what a row's delete button calls. */
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete entity relation',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.TENANT_ADMIN)
   @RequirePermissions('assets:update')
   @HttpCode(HttpStatus.OK)

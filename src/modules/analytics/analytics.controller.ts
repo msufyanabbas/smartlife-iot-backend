@@ -15,11 +15,16 @@ import {
   Body, Query, Param, Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { ApiTags, ApiParam } from '@nestjs/swagger';
+import { ApiTags, ApiParam, ApiBody } from '@nestjs/swagger';
 
 import { AnalyticsService } from './analytics.service';
 import {
+  AnalyticsAggregation,
+  AnalyticsEntityType,
   CreateAnalyticsDto,
+  EntityAggregateQueryDto,
+  EntityTimeSeriesDto,
+  ExportAnalyticsDto,
   QueryAnalyticsDto,
   DeviceAnalyticsQueryDto,
   DeviceDetailQueryDto,
@@ -228,6 +233,129 @@ export class AnalyticsController {
     @Body() dto: RecordDashboardViewDto,
   ) {
     return this.analyticsService.recordDashboardView(dashboardId, tenantId, userId, dto);
+  }
+
+  // ── 9b. Entity time series / aggregate / export / realtime ───────────────
+  //
+  // The four routes the frontend's `analytics.api.ts` has always declared and
+  // this controller never had. `POST /analytics/timeseries` was not a dead
+  // declaration: `features/dashboard/services/dashboardService.ts` and
+  // `features/analytics/hooks/index.ts` both call it, so every timeseries
+  // dashboard widget was fetching a 404.
+  //
+  // Declared ABOVE `@Get()` and below the literal-segment routes so Nest's
+  // route table resolves them: `@Get()` on this controller would otherwise be
+  // matched first for nothing here (different paths), but `@Get('aggregate')`
+  // must precede any future `@Get(':something')`.
+
+  @Post('timeseries')
+  @RequirePermissions('analytics:read')
+  @AnalyticsReader()
+  @SwaggerAuth(
+    'Telemetry time series for a device or asset, several keys at once',
+    'Time series retrieved',
+  )
+  @ApiBody({ type: EntityTimeSeriesDto })
+  getTimeSeries(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @Body() dto: EntityTimeSeriesDto,
+  ) {
+    return this.analyticsService.getEntityTimeSeries(
+      tenantId,
+      userId,
+      dto,
+      customerId,
+    );
+  }
+
+  @Get('aggregate')
+  @RequirePermissions('analytics:read')
+  @AnalyticsReader()
+  @SwaggerAuth(
+    'Bucketed telemetry aggregate for a device or asset',
+    'Aggregate retrieved',
+  )
+  getAggregate(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @Query() query: EntityAggregateQueryDto,
+  ) {
+    // `keys` is comma-separated on this route because the client builds it
+    // with `keys.join(',')`. The POST route above takes a real array.
+    return this.analyticsService.getEntityTimeSeries(
+      tenantId,
+      userId,
+      {
+        entityId: query.entityId,
+        entityType: query.entityType ?? AnalyticsEntityType.DEVICE,
+        keys: query.keys
+          .split(',')
+          .map((key) => key.trim())
+          .filter(Boolean),
+        startTime: query.startTime,
+        endTime: query.endTime,
+        // An aggregate with no interval is a contradiction, so this route
+        // defaults to hourly buckets rather than silently returning raw
+        // samples under an `aggregation` the caller asked for.
+        interval: query.interval ?? 3_600_000,
+        aggregation: query.aggregation ?? AnalyticsAggregation.AVG,
+        limit: query.limit,
+      },
+      customerId,
+    );
+  }
+
+  @Post('export')
+  // `analytics` seeds read / export / configure. This one is genuinely an
+  // export, so it is the one route here that is not `analytics:read`.
+  @RequirePermissions('analytics:export')
+  @AnalyticsReader()
+  @SwaggerAuth(
+    'Export a telemetry time series as CSV, JSON or XLSX',
+    'Export generated',
+  )
+  @ApiBody({ type: ExportAnalyticsDto })
+  async exportData(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('customerId') customerId: string | null,
+    @Body() dto: ExportAnalyticsDto,
+    @Res() res: Response,
+  ) {
+    const file = await this.analyticsService.exportEntityTimeSeries(
+      tenantId,
+      userId,
+      dto,
+      customerId,
+    );
+    // `@Res()` WITHOUT `passthrough` on purpose: this route answers with file
+    // bytes, and TransformInterceptor would otherwise wrap a Buffer in
+    // `{success, data, timestamp}` and hand the client JSON-encoded binary.
+    // The client requests it with `responseType: 'blob'`.
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${file.fileName}"`,
+    );
+    res.setHeader('Content-Length', String(file.content.byteLength));
+    return res.send(file.content);
+  }
+
+  @Get('realtime')
+  @RequirePermissions('analytics:read')
+  @AnalyticsReader()
+  @SwaggerAuth(
+    'Live counters: messages per minute, devices reporting, active alarms',
+    'Realtime statistics retrieved',
+  )
+  getRealtimeStats(
+    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser('customerId') customerId: string | null,
+  ) {
+    return this.analyticsService.getRealtimeStats(tenantId, customerId);
   }
 
   // ── 10. Telemetry & users ─────────────────────────────────────────────────

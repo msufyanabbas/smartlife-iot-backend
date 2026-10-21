@@ -56,9 +56,15 @@ export class AutomationConsumer implements OnModuleInit {
         payload.data ?? {},
       );
     } catch (error) {
+      // Rethrow for the bounded retry + DLQ in KafkaService.runHandler().
+      // A swallowed failure here meant an automation simply did not run, with
+      // one log line and nothing to replay — and because the offset had
+      // already advanced, no way to find out afterwards which frames were
+      // affected. It now lands on `telemetry.device.validated.dlq`.
       this.logger.error(
         `Error processing automation message: ${(error as Error).message}`,
       );
+      throw error;
     }
   }
 }

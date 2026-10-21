@@ -32,6 +32,8 @@ import { UserRole } from '@/common/enums/user.enum';
 import { TenantListResponseDto, TenantMessageResponseDto } from './dto/tenant-response.dto';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('tenants')
 /**
@@ -60,6 +62,10 @@ export class TenantsController {
   ) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.TENANT,
+  })
   @RequirePermissions('tenants:create')
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Create a new tenant (platform operator only)' })
@@ -95,6 +101,10 @@ export class TenantsController {
   // order, so a literal path registered after a parameterised one on the same
   // method would be shadowed by it.
   @Post('sync-usage')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.TENANT,
+  })
   @RequirePermissions('tenants:create')
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
@@ -138,6 +148,10 @@ export class TenantsController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.TENANT,
+  })
   @RequirePermissions('tenants:update')
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Update tenant (platform operator only)' })
@@ -150,6 +164,11 @@ export class TenantsController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.TENANT,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('tenants:delete')
   @Roles(UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -159,6 +178,10 @@ export class TenantsController {
   }
 
   @Post(':id/activate')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.TENANT,
+  })
   @RequirePermissions('tenants:update')
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Activate tenant (platform operator only)' })
@@ -167,6 +190,11 @@ export class TenantsController {
   }
 
   @Post(':id/suspend')
+  @Audit({
+    action: AuditAction.DEACTIVATE,
+    entityType: AuditEntityType.TENANT,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('tenants:update')
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Suspend tenant (platform operator only)' })

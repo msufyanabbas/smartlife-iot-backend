@@ -12,6 +12,10 @@ import { RedisHealthIndicator } from './indicators/redis.health';
 import { KafkaHealthIndicator } from './indicators/kafka.health';
 import { MqttHealthIndicator } from './indicators/mqtt.health';
 import { Public } from '@/common/decorators/public.decorator';
+// Read through the static holder rather than injected, exactly as
+// @DistributedCron does: HealthModule must not depend on ClusterModule, and
+// the interesting failure to report IS "the holder is empty".
+import { DistributedLockService } from '@/lib/cluster/distributed-lock.service';
 
 @Controller('health')
 export class HealthController {
@@ -115,5 +119,49 @@ export class HealthController {
       () => this.kafkaHealth.isHealthy('kafka'),
       () => this.mqttHealth.isHealthy('mqtt'),
     ]);
+  }
+
+  /**
+   * Scheduled work: is this replica running its crons, or skipping them?
+   *
+   * Nine crons hold a distributed lock so that only one replica runs each
+   * tick. When Redis cannot be reached the lock cannot be claimed and the
+   * tick is skipped — correct, because a duplicated billing sweep is worse
+   * than a deferred one, but it means report delivery, scheduled
+   * notifications, subscription expiry and the device-offline sweep stop
+   * happening ANYWHERE, with nothing thrown and no other probe turning red.
+   *
+   * This is the probe that shows it. `skippedNotAcquired` is healthy on more
+   * than one replica — exactly one winner per tick means the losers count a
+   * skip. `skippedNoRedis` above zero means scheduled work is being dropped.
+   *
+   * Deliberately not a @HealthCheck(): a replica that is losing lock races is
+   * perfectly healthy, and reporting it as "down" would make an orchestrator
+   * restart the replicas that are behaving correctly. `degraded` carries the
+   * judgement; an alert should read that field.
+   */
+  @Get('cluster')
+  @Public()
+  checkCluster() {
+    const lock = DistributedLockService.instance;
+
+    if (!lock) {
+      // ClusterModule not registered: @DistributedCron has nothing to ask, so
+      // every locked cron is being skipped outright.
+      return {
+        status: 'error',
+        locksEnabled: null,
+        degraded: true,
+        message:
+          'ClusterModule is not registered, so every locked cron is skipped. ' +
+          'Add ClusterModule to featureModules.',
+      };
+    }
+
+    const stats = lock.stats();
+    return {
+      status: stats.degraded ? 'degraded' : 'ok',
+      ...stats,
+    };
   }
 }

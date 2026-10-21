@@ -9,6 +9,7 @@ import {
   DeviceCredentials,
   CredentialsType,
 } from '@modules/devices/entities/device-credentials.entity';
+import { Edge } from '@modules/edge/entities/edge.entity';
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -108,6 +109,8 @@ export class DeviceAuthService {
     private readonly credentialsRepository: Repository<DeviceCredentials>,
     @InjectRepository(Device)
     private readonly deviceRepository: Repository<Device>,
+    @InjectRepository(Edge)
+    private readonly edgeRepository: Repository<Edge>,
     private readonly redis: RedisService,
   ) {
     if (!this.enforced) {
@@ -321,6 +324,74 @@ export class DeviceAuthService {
       device: credentials.device,
       credentialsType: credentials.credentialsType,
     };
+  }
+
+  /**
+   * Authenticate an EDGE GATEWAY, and authorise it for one of its devices.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * WHY THIS EXISTS
+   *
+   * An edge agent legitimately speaks for many devices: it sits on a plant
+   * network, collects from Modbus panels and local MQTT, and forwards on
+   * their behalf. It cannot hold every device's access token, and it should
+   * not — a gateway compromised on one site would then hold credentials for
+   * every device it has ever seen.
+   *
+   * Before this, the agent forwarded with nothing but the platform-wide
+   * `x-api-key`, which identifies no one. With device authentication enforced
+   * that is simply rejected, so the agent could not deliver a single reading.
+   * The honest fix is not to weaken device auth; it is to give the gateway an
+   * identity of its own and bound what that identity may speak for.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * THE BOUND
+   *
+   * An edge may ingest for a device only when `device.edgeId` is this edge
+   * AND the tenants match. That is the gateway-to-child-device model this
+   * platform previously lacked — `POST /v1/ingestion/batch` had to fall back
+   * to a whole-tenant bound for want of it.
+   *
+   * The edge's secret is stored as a SHA-256 hash (`select: false`), so the
+   * comparison is hash-to-hash and constant time.
+   */
+  async authenticateEdgeForDevice(
+    edgeKey: string,
+    edgeSecret: string,
+    deviceKey: string,
+  ): Promise<Device | null> {
+    if (!edgeKey || !edgeSecret || !deviceKey) return null;
+
+    const edge = await this.edgeRepository
+      .createQueryBuilder('e')
+      .addSelect('e.edgeSecret')
+      .where('e.edgeKey = :edgeKey', { edgeKey })
+      .getOne();
+
+    if (!edge) return null;
+
+    const presented = crypto
+      .createHash('sha256')
+      .update(edgeSecret)
+      .digest('hex');
+
+    if (!DeviceAuthService.safeEqual(presented, (edge as any).edgeSecret)) {
+      return null;
+    }
+
+    const device = await this.deviceRepository.findOne({
+      where: { deviceKey },
+    });
+    if (!device) return null;
+
+    // Both predicates matter. The tenant check alone would let an edge speak
+    // for any device in its tenant; the edgeId check alone would be
+    // meaningless if edgeIds were ever reused across tenants.
+    if (device.edgeId !== edge.id || device.tenantId !== (edge as any).tenantId) {
+      return null;
+    }
+
+    return device;
   }
 
   /**

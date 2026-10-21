@@ -24,6 +24,8 @@ import {
   SwaggerAuth,
 } from '@common/decorators/access-control.decorator';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * Rule chain templates.
@@ -99,6 +101,11 @@ export class RuleChainTemplatesController {
   }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'create rule chain template',
+  })
   @RequirePermissions('automations:create')
   @TenantOrCustomerAdmin()
   @ApiOperation({
@@ -116,6 +123,11 @@ export class RuleChainTemplatesController {
   }
 
   @Post(':id/instantiate')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update rule chain template',
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.CREATED)
@@ -135,6 +147,11 @@ export class RuleChainTemplatesController {
   }
 
   @Put(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update rule chain template',
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @ApiOperation({
@@ -152,6 +169,12 @@ export class RuleChainTemplatesController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'delete rule chain template',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('automations:delete')
   @TenantOrCustomerAdmin()
   @ApiOperation({

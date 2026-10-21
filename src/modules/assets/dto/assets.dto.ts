@@ -13,7 +13,11 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { AlarmSeverity, AlarmStatus, AssetType } from '@common/enums/index.enum';
+import {
+  AlarmSeverity,
+  AlarmStatus,
+  AssetProfileType,
+} from '@common/enums/index.enum';
 import { SortOrder } from '@/common/dto/pagination.dto';
 
 class LocationDto {
@@ -85,9 +89,31 @@ export class CreateAssetDto {
   @IsString()
   label?: string;
 
-  @ApiProperty({ type: String, enum: AssetType, enumName: 'AssetType', default: AssetType.OTHER })
-  @IsEnum(AssetType)
-  type: AssetType;
+  /**
+   * @deprecated Ignored since `AssetTypeFromProfile1788700000000`. An asset's
+   * type is its profile's type — send `assetProfileId` instead.
+   *
+   * It stays declared, optional and permissive on purpose. The global
+   * `ValidationPipe` runs with `forbidNonWhitelisted: true`, so deleting the
+   * property outright would turn every request from an existing client into a
+   * 400 — including the mobile app, the Postman collection and the seeders.
+   * `AssetsService.stripDeprecatedType()` drops it and logs a warning, so the
+   * write is accepted and has no effect.
+   *
+   * `@IsString()` rather than `@IsEnum(AssetType)`: once the value is
+   * discarded there is nothing to gain from rejecting a client over the exact
+   * spelling of a field that does nothing.
+   */
+  @ApiPropertyOptional({
+    deprecated: true,
+    description:
+      'DEPRECATED and ignored. The asset type is inherited from its ' +
+      'AssetProfile (`assetProfileId`); sending this logs a warning and ' +
+      'changes nothing.',
+  })
+  @IsOptional()
+  @IsString()
+  type?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -205,10 +231,42 @@ export class QueryAssetsDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ type: String, enum: AssetType, enumName: 'AssetType' })
+  /**
+   * Filter by the asset's type — resolved through its PROFILE, not the
+   * deprecated `assets.type` column. `?type=warehouse` therefore means "every
+   * asset whose profile is a warehouse profile", which is what the filter
+   * always looked like it meant.
+   *
+   * The vocabulary changed with the source: `AssetProfileType`
+   * (building · vehicle · shop · farm · warehouse · hospital · hotel ·
+   * factory · custom), not the old `AssetType`
+   * (… floor · room · office · equipment · infrastructure · zone · other).
+   * `building` and `vehicle` are the only two values in both, so a client
+   * filtering on anything else now gets a 400 instead of a list that was
+   * keyed off a column nothing maintained.
+   */
+  @ApiPropertyOptional({
+    type: String,
+    enum: AssetProfileType,
+    enumName: 'AssetProfileType',
+    description:
+      "Filter by the asset's inherited type (AssetProfile.type).",
+  })
   @IsOptional()
-  @IsEnum(AssetType)
-  type?: AssetType;
+  @IsEnum(AssetProfileType)
+  type?: AssetProfileType;
+
+  /**
+   * `true` returns only assets with no profile — i.e. no resolvable type.
+   * Pairs with `type`: the two together are how an operator finds and fixes
+   * what the backfill could not classify.
+   */
+  @ApiPropertyOptional({
+    description: 'Only assets with no asset profile (and so no type).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  untyped?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()

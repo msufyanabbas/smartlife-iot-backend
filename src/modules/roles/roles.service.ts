@@ -17,6 +17,7 @@ import { AssignPermissionsDto } from './dto/assign-permissions.dto';
 import { User } from '../index.entities';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 import { UserRole } from '@common/enums/index.enum';
+import { PermissionCacheService } from '@lib/redis/permission-cache.service';
 
 @Injectable()
 export class RolesService {
@@ -27,7 +28,30 @@ export class RolesService {
     private readonly permissionRepository: Repository<Permission>,
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
+    // From the @Global RedisModule. PermissionGuard caches each user's
+    // resolved permission set, and a role's permission set is an input to
+    // every holder's resolution — so a role edit has to invalidate.
+    private readonly permissionCache: PermissionCacheService,
   ) {}
+
+  /**
+   * Invalidate the permission sets a change to this role can affect.
+   *
+   * A **system role** (`tenantId == null`) is held by users across every
+   * tenant, so nothing narrower than a global bump is correct for it. A
+   * tenant-owned role can only be held inside its own tenant, so a tenant
+   * bump suffices and is far cheaper.
+   */
+  private async invalidateForRole(role: {
+    tenantId?: string | null;
+    isSystem?: boolean;
+  }): Promise<void> {
+    if (!role.tenantId || role.isSystem) {
+      await this.permissionCache.bumpGlobal();
+      return;
+    }
+    await this.permissionCache.bumpTenant(role.tenantId);
+  }
 
   async create(createRoleDto: CreateRoleDto, user: User): Promise<Role> {
     const { permissionIds, ...roleData } = createRoleDto;
@@ -86,7 +110,13 @@ export class RolesService {
       role.permissions = permissions;
     }
 
-    return this.roleRepository.save(role);
+    const saved = await this.roleRepository.save(role);
+    // A brand-new role has no holders yet, so nothing is stale. Bumped anyway
+    // because a role can be created with an id a client already holds a cached
+    // assignment for (re-creation after a delete), and because an
+    // invalidate-on-every-write rule is one a reviewer can check at a glance.
+    await this.invalidateForRole(saved);
+    return saved;
   }
 
 async findAll(queryDto: QueryRoleDto, user: User) {
@@ -251,6 +281,10 @@ async findAll(queryDto: QueryRoleDto, user: User) {
 
     const { permissionIds, tenantId, ...roleData } = updateRoleDto;
 
+    // Captured before the assign: used after the save to invalidate the tenant
+    // the role is leaving, not just the one it lands in.
+    const previousTenantId = role.tenantId;
+
     // A tenant admin must not be able to move a role into another tenant, which
     // `tenantId` in the body would otherwise allow.
     if (
@@ -320,7 +354,17 @@ async findAll(queryDto: QueryRoleDto, user: User) {
       role.tenantId = tenantId;
     }
 
-    return this.roleRepository.save(role);
+    const saved = await this.roleRepository.save(role);
+    // The permission set may have been replaced wholesale a few lines up
+    // (`permissionIds: []` clears it), and `tenantId` may itself have moved —
+    // so invalidate against the role as saved, and against its previous
+    // tenant too when the move changed it. Missing the old tenant would leave
+    // its users holding a set derived from a role they no longer share.
+    await this.invalidateForRole(saved);
+    if (tenantId !== undefined && previousTenantId !== saved.tenantId) {
+      await this.invalidateForRole({ tenantId: previousTenantId });
+    }
+    return saved;
   }
 
   async remove(id: string, caller?: User): Promise<void> {
@@ -339,6 +383,11 @@ async findAll(queryDto: QueryRoleDto, user: User) {
     }
 
     await this.roleRepository.remove(role);
+    // `remove()` refuses a role that still has users, so in the normal case
+    // nothing holds it. The bump covers the race: a role assigned between the
+    // holder check and the delete would otherwise leave that user with a
+    // cached set derived from a role that no longer exists.
+    await this.invalidateForRole(role);
   }
 
   async assignPermissions(
@@ -357,7 +406,12 @@ async findAll(queryDto: QueryRoleDto, user: User) {
     }
 
     role.permissions = permissions;
-    return this.roleRepository.save(role);
+    const saved = await this.roleRepository.save(role);
+    // This is a wholesale REPLACE of the role's permission set despite the
+    // name, so it can narrow as well as widen — a revocation that must take
+    // effect now, not within the TTL.
+    await this.invalidateForRole(saved);
+    return saved;
   }
 
   async removePermissions(
@@ -376,7 +430,11 @@ async findAll(queryDto: QueryRoleDto, user: User) {
       permission => !permissionIds.includes(permission.id)
     );
 
-    return this.roleRepository.save(role);
+    const saved = await this.roleRepository.save(role);
+    // The purest revocation path on the platform. If any single invalidation
+    // in this service matters, it is this one.
+    await this.invalidateForRole(saved);
+    return saved;
   }
 
   async getSystemRoles(): Promise<Role[]> {

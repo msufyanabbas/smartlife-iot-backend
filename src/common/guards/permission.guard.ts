@@ -13,6 +13,7 @@ import { IS_PUBLIC_KEY, PERMISSIONS_KEY } from '@common/decorators/index.decorat
 import { User, Customer, Subscription } from '@modules/index.entities';
 import { SubscriptionFeatures } from '@common/interfaces/index.interface';
 import { UserRole } from '@common/enums/index.enum';
+import { PermissionCacheService } from '@lib/redis/permission-cache.service';
 
 // Maps permission resource strings to SubscriptionFeatures keys.
 // Resources not listed here have no feature gate — always available.
@@ -41,6 +42,8 @@ export class PermissionGuard implements CanActivate {
     private readonly customersRepo: Repository<Customer>,
     @InjectRepository(User)
     private readonly usersRepo: Repository<User>,
+    // Provided by the @Global RedisModule, so GuardsModule needs no new import.
+    private readonly permissionCache: PermissionCacheService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -98,7 +101,22 @@ if (isPublic) return true;
     const subscription: Subscription | undefined = request.subscription;
 
     // ── Resolve effective permissions ────────────────────────────────────────
-    const effectivePermissions = await this.resolveEffectivePermissions(user, subscription);
+    //
+    // Cached in Redis, keyed on (tenant, epoch, user) — see
+    // PermissionCacheService for what invalidates it and why invalidation is
+    // by tenant epoch rather than per user. A cache miss, a Redis outage or a
+    // corrupt entry all fall through to the two-join resolution below; the
+    // cache can only ever return a set that was previously computed from the
+    // database, so it cannot widen anyone's access.
+    //
+    // The cache key does NOT include the subscription, even though
+    // filterBySubscriptionFeatures() narrows the set by plan. It does not need
+    // to: a plan change is a subscription mutation, which the TTL bounds, and
+    // a tenant has exactly one subscription — so two requests from the same
+    // user in the same tenant always filter through the same features.
+    const effectivePermissions =
+      (await this.permissionCache.get(user.tenantId, user.id)) ??
+      (await this.resolveAndCache(user, subscription));
 
     // ── Check all required permissions are present ────────────────────────────
     const missing = requiredPermissions.filter((p) => !effectivePermissions.has(p));
@@ -126,6 +144,24 @@ if (isPublic) return true;
   //   filtered by subscription features
   //   intersected with customer.grantedPermissions (if customer-scoped user)
   // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Resolve from the database and populate the cache.
+   *
+   * Split out so the cache write happens in exactly one place. An empty set is
+   * cached too — a user with no permissions is a legitimate, common answer,
+   * and not caching it would leave the most expensive case (every denied
+   * request from an unprivileged account) uncached, which is precisely the
+   * traffic an attacker generates.
+   */
+  private async resolveAndCache(
+    user: User,
+    subscription: Subscription | undefined,
+  ): Promise<Set<string>> {
+    const resolved = await this.resolveEffectivePermissions(user, subscription);
+    await this.permissionCache.set(user.tenantId, user.id, resolved);
+    return resolved;
+  }
 
   private async resolveEffectivePermissions(
     user: User,

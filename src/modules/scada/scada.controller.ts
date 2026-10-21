@@ -44,6 +44,8 @@ import {
   ScadaDiagramQueryDto,
   UpdateScadaDiagramDto,
 } from './dto/scada-diagram.dto';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -123,6 +125,11 @@ export class ScadaController {
    * query string. It performs no write and touches no row.
    */
   @Post('symbols/evaluate')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.DASHBOARD,
+    description: 'create SCADA diagram',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -219,6 +226,11 @@ export class ScadaController {
   }
 
   @Post('diagrams')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.DASHBOARD,
+    description: 'create SCADA diagram',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @RequirePermissions('dashboards:create')
   @ApiOperation({
@@ -235,6 +247,11 @@ export class ScadaController {
   }
 
   @Patch('diagrams/:id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+    description: 'update SCADA diagram',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @RequirePermissions('dashboards:update')
   @ApiOperation({
@@ -255,6 +272,11 @@ export class ScadaController {
   }
 
   @Post('diagrams/:id/duplicate')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+    description: 'update SCADA diagram',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @RequirePermissions('dashboards:create')
   @HttpCode(HttpStatus.CREATED)
@@ -273,6 +295,11 @@ export class ScadaController {
   }
 
   @Post('diagrams/:id/publish')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.DASHBOARD,
+    description: 'activate SCADA diagram',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @RequirePermissions('dashboards:update')
   @HttpCode(HttpStatus.OK)
@@ -294,6 +321,12 @@ export class ScadaController {
   }
 
   @Delete('diagrams/:id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DASHBOARD,
+    description: 'delete SCADA diagram',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('dashboards:delete')
   @ApiOperation({ summary: 'Soft-delete a diagram' })
@@ -322,6 +355,11 @@ export class ScadaController {
    * operators are locked out of their own HMI.
    */
   @Post('diagrams/:id/elements/:elementId/action')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+    description: 'update SCADA diagram',
+  })
   @Roles(
     UserRole.SUPER_ADMIN,
     UserRole.TENANT_ADMIN,

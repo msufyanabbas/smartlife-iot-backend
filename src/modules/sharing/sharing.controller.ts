@@ -10,6 +10,8 @@ import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { UsageTrackingInterceptor } from '@/common/interceptors/usage-tracking.interceptor';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('sharing')
 @Controller('sharing')
@@ -19,6 +21,11 @@ export class SharingController {
   constructor(private readonly sharingService: SharingService) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'create resource share',
+  })
   @RequirePermissions('settings:create')
   @ApiOperation({ summary: 'Create a new share' })
   @UseInterceptors(UsageTrackingInterceptor)
@@ -79,6 +86,11 @@ export class SharingController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update resource share',
+  })
   @RequirePermissions('settings:update')
   @ApiOperation({ summary: 'Update share' })
   @ApiResponse({ status: 200, description: 'Share updated successfully' })
@@ -91,6 +103,12 @@ export class SharingController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete resource share',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('settings:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Revoke share' })
@@ -108,6 +126,12 @@ export class SharingController {
   }
 
   @Delete('resource/:resourceId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete resource share',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('settings:delete')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Revoke all shares for a resource' })

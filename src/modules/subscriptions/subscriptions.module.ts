@@ -16,6 +16,7 @@ import {
   Automation,
 } from '../index.entities';
 import { InvoicePdfService } from './invoice-pdf.service';
+import { SubscriptionCacheSubscriber } from './subscription-cache.subscriber';
 import { UsersModule } from '../users/users.module';
 import { MailModule } from '../mail/mail.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
@@ -45,6 +46,11 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
   providers: [
     SubscriptionsService,
     InvoicePdfService,
+    // Registered as a provider, not through the DataSource `subscribers`
+    // option: TypeORM constructs those itself and cannot inject
+    // SubscriptionCacheService into them. It attaches itself to the DataSource
+    // in its own constructor.
+    SubscriptionCacheSubscriber,
     // ← UsersService, MailService, EmailTemplatesService removed
   ],
   exports: [SubscriptionsService],

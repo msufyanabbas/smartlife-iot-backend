@@ -32,6 +32,8 @@ import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
 import { UserRole } from '@common/enums/index.enum';
 import { User } from '@modules/index.entities';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -118,6 +120,11 @@ export class BacnetController {
   }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'create BACnet device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:create')
   @ApiOperation({ summary: 'Register a BACnet device' })
@@ -127,6 +134,11 @@ export class BacnetController {
   }
 
   @Put(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update BACnet device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:update')
   @ApiOperation({ summary: 'Update a BACnet device' })
@@ -142,6 +154,11 @@ export class BacnetController {
   // RequestMapping overwrites the path/method metadata, so stacking @Put and
   // @Patch on one handler registers only one of them.
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update BACnet device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:update')
   @ApiOperation({ summary: 'Update a BACnet device (alias of PUT)' })
@@ -154,6 +171,11 @@ export class BacnetController {
   }
 
   @Patch(':id/enabled')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'activate BACnet device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:update')
   @ApiOperation({ summary: 'Enable or disable polling of this device' })
@@ -166,6 +188,12 @@ export class BacnetController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'delete BACnet device',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:delete')
   @HttpCode(HttpStatus.OK)
@@ -183,6 +211,11 @@ export class BacnetController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post('discover')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'create BACnet device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:create')
   @HttpCode(HttpStatus.OK)
@@ -209,6 +242,11 @@ export class BacnetController {
   }
 
   @Post(':id/test')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update BACnet device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:update')
   @HttpCode(HttpStatus.OK)

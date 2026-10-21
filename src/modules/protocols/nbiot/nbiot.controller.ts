@@ -36,6 +36,8 @@ import { RequirePermissions } from '@common/decorators/permission.decorator';
 import { UserRole } from '@common/enums/index.enum';
 import { User } from '@modules/index.entities';
 import { NBIOT_SIGNAL_KEYS } from './nbiot.service';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -202,6 +204,11 @@ export class NbIotController {
   }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'create NB-IoT device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:create')
   @ApiOperation({
@@ -216,6 +223,11 @@ export class NbIotController {
   }
 
   @Put(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update NB-IoT device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:update')
   @ApiOperation({ summary: 'Update an NB-IoT device record' })
@@ -228,6 +240,11 @@ export class NbIotController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update NB-IoT device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:update')
   @ApiOperation({ summary: 'Update an NB-IoT device record (alias of PUT)' })
@@ -240,6 +257,12 @@ export class NbIotController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'delete NB-IoT device',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('devices:delete')
   @HttpCode(HttpStatus.OK)

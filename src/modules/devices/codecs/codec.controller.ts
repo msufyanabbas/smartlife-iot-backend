@@ -27,6 +27,8 @@ import { CodecRegistryService } from './codec-registry.service';
 import { SwaggerAuth } from '@/common/decorators/access-control.decorator';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Codecs')
 @Controller('codecs')
@@ -209,6 +211,11 @@ getStructuredCatalog() {
   }
 
   @Post('test-decode')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.INTEGRATION,
+    description: 'create codec',
+  })
   @RequirePermissions('integrations:create')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -233,6 +240,11 @@ getStructuredCatalog() {
   }
 
   @Post('test-encode')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.INTEGRATION,
+    description: 'create codec',
+  })
   @RequirePermissions('integrations:create')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -249,6 +261,11 @@ getStructuredCatalog() {
   }
 
   @Post('auto-detect')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.INTEGRATION,
+    description: 'create codec',
+  })
   @RequirePermissions('integrations:create')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)

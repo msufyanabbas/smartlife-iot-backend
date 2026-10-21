@@ -292,7 +292,10 @@ export class LorawanService {
       )
       .getOne();
 
-    if (existing) return { device: existing, created: false };
+    if (existing) {
+      await this.backfillNetworkIdentity(existing, uplink, protocol, integration);
+      return { device: existing, created: false };
+    }
 
     const device = this.deviceRepository.create({
       tenantId: integration.tenantId,
@@ -315,6 +318,14 @@ export class LorawanService {
         ...(uplink.applicationId
           ? { lorawanApplicationId: uplink.applicationId }
           : {}),
+        // The network server's own id for this device, kept because DOWNLINK
+        // needs it: The Things Stack addresses `.../devices/{device_id}/down/push`
+        // by the console slug, not by DevEUI, and there is no API that maps one
+        // to the other. Without this a TTN device can be read from and never
+        // written to. See LorawanDownlinkService.resolveTtnDeviceId().
+        ...(protocol === DeviceProtocol.LORAWAN_TTN && uplink.deviceName
+          ? { lorawanDeviceId: uplink.deviceName }
+          : {}),
       },
     });
 
@@ -324,6 +335,66 @@ export class LorawanService {
     );
 
     return { device: saved, created: true };
+  }
+
+  /**
+   * Fill in the downlink identity on a device that predates it.
+   *
+   * Devices auto-provisioned before `LorawanDownlinkService` existed carry no
+   * `lorawanDeviceId` and no `integrationId`, so a downlink to them fails with
+   * "no TTN device id recorded" forever — the row is only written at creation
+   * and these devices already exist.
+   *
+   * This is deliberately a repair, not a refresh: it writes ONLY when a field
+   * is missing, so it costs one UPDATE once per device in its lifetime rather
+   * than one per uplink. A device reporting every minute would otherwise add
+   * 1,440 writes a day to say nothing had changed. Failures are swallowed — an
+   * uplink must not be lost because a metadata backfill could not be saved.
+   */
+  private async backfillNetworkIdentity(
+    device: Device,
+    uplink: NormalisedUplink,
+    protocol: DeviceProtocol,
+    integration: Integration,
+  ): Promise<void> {
+    const metadata = (device.metadata ?? {}) as Record<string, any>;
+    const patch: Record<string, any> = {};
+
+    // Which integration holds this device's network-server credentials. The
+    // downlink service can fall back to "the tenant's one active integration
+    // of this type", so this is an optimisation for the single-tenant case and
+    // a necessity for a tenant running two ChirpStack deployments.
+    if (!metadata.integrationId) patch.integrationId = integration.id;
+
+    if (
+      protocol === DeviceProtocol.LORAWAN_TTN &&
+      !metadata.lorawanDeviceId &&
+      uplink.deviceName
+    ) {
+      patch.lorawanDeviceId = uplink.deviceName;
+    }
+    if (!metadata.devEUI) patch.devEUI = uplink.devEUI.toLowerCase();
+    if (!metadata.lorawanApplicationId && uplink.applicationId) {
+      patch.lorawanApplicationId = uplink.applicationId;
+    }
+
+    if (Object.keys(patch).length === 0) return;
+
+    device.metadata = { ...metadata, ...patch };
+    try {
+      await this.deviceRepository.update(device.id, {
+        metadata: device.metadata,
+      });
+      this.logger.log(
+        `Backfilled LoRaWAN downlink identity on ${device.deviceKey}: ` +
+          Object.keys(patch).join(', '),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not backfill LoRaWAN metadata on ${device.deviceKey}: ` +
+          (error as Error).message,
+      );
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════

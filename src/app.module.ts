@@ -75,12 +75,33 @@ import { envNumber, envString } from './config/env.utils';
           },
           password: configService.get('REDIS_PASSWORD'),
           database: envNumber(configService.get<string>('REDIS_DB'), 0),
-          // Namespacing cache entries keeps them from colliding with the keys
-          // RedisService writes into the same database.
-          keyPrefix: envString(
-            configService.get<string>('REDIS_KEY_PREFIX'),
-            'smartlife:',
-          ),
+          // ── Namespaces, and why this one needed its own ──────────────────
+          //
+          // Three clients share this Redis deployment:
+          //
+          //   db 0, prefix `smartlife:`        RedisService (ioredis keyPrefix)
+          //   db 0, prefix `smartlife:cache:`  this cache-manager store
+          //   db 1, no prefix                  Bull (REDIS_QUEUE_DB)
+          //
+          // Bull is separated by database, which is what stops a cache flush
+          // from dropping queued jobs. The other two share db 0, and until
+          // now they shared `smartlife:` as well — so a cache-manager entry
+          // for the logical key `session:x` and the session RedisService
+          // writes at `session:x` were the SAME physical key. Nothing collided
+          // only because nothing injects CACHE_MANAGER today; the first route
+          // to add `@UseInterceptors(CacheInterceptor)` on a path whose key
+          // happened to match would have started overwriting live sessions
+          // with cached response bodies.
+          //
+          // `:cache:` makes the two disjoint by construction rather than by
+          // nobody having used one of them yet. RedisService's own prefix
+          // never contains `cache:` — `RedisService.keys()` is the only thing
+          // that enumerates, and it enumerates within its own prefix.
+          keyPrefix:
+            envString(
+              configService.get<string>('REDIS_KEY_PREFIX'),
+              'smartlife:',
+            ) + 'cache:',
           // REDIS_TTL is in seconds (as documented in the env file); the cache
           // store wants milliseconds. Hardcoding an hour here meant REDIS_TTL
           // had no effect on the HTTP cache at all.

@@ -31,6 +31,8 @@ import {
   SetModbusEnabledDto,
   UpdateModbusDeviceDto,
 } from './dto/modbus-device.dto';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * Modbus TCP/RTU fleet management.
@@ -121,6 +123,11 @@ export class ModbusDevicesController {
   }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'create Modbus device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('integrations:create')
   @ApiOperation({
@@ -136,6 +143,11 @@ export class ModbusDevicesController {
   }
 
   @Put(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update Modbus device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('integrations:update')
   @ApiOperation({ summary: 'Update a Modbus endpoint or its register map' })
@@ -150,6 +162,11 @@ export class ModbusDevicesController {
 
   /** PATCH is an alias of the same handler, for clients that prefer it. */
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update Modbus device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('integrations:update')
   @ApiOperation({ summary: 'Update a Modbus endpoint (alias of PUT)' })
@@ -163,6 +180,11 @@ export class ModbusDevicesController {
   }
 
   @Patch(':id/enabled')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'activate Modbus device',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('integrations:update')
   @ApiOperation({ summary: 'Start or stop polling this device' })
@@ -176,6 +198,11 @@ export class ModbusDevicesController {
   }
 
   @Post(':id/test-read')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update Modbus device',
+  })
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('integrations:update')
@@ -192,6 +219,12 @@ export class ModbusDevicesController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'delete Modbus device',
+    severity: AuditSeverity.WARNING,
+  })
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('integrations:delete')

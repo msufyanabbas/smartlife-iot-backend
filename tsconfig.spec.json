@@ -1,0 +1,29 @@
+{
+  // Typechecking for test files.
+  //
+  // tsconfig.json is the BUILD config: `declaration: true`, `removeComments`,
+  // and `types: ["node"]`. Test files were inside its `include`, so every
+  // `tsc --noEmit` reported ~98 errors — `Cannot find name 'describe'`,
+  // `'expect'`, `'it'` — because jest's globals are not in that `types` list
+  // and cannot be, since they must not leak into the emitted build.
+  //
+  // Those 98 errors were permanent and had to be filtered by eye on every
+  // run, which is exactly the condition under which a real error goes
+  // unnoticed. The build config now excludes tests; this config checks them,
+  // with jest's globals available and no emit.
+  //
+  //   npm run typecheck        → source only, must be zero
+  //   npm run typecheck:tests  → test files
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "jest"],
+    "noEmit": true,
+    "declaration": false
+  },
+  "include": [
+    "src/**/__tests__/**/*.ts",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "src/**/*"
+  ]
+}

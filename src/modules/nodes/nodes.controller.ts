@@ -22,6 +22,8 @@ import {
   SwaggerAuth,
 } from '@common/decorators/access-control.decorator';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('nodes')
 @Controller('nodes')
@@ -29,6 +31,10 @@ export class NodesController {
   constructor(private readonly nodesService: NodesService) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.RULE_NODE,
+  })
   @RequirePermissions('automations:create')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Create a new node', 'Node created successfully')
@@ -83,6 +89,10 @@ export class NodesController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_NODE,
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Update node', 'Node updated successfully')
@@ -97,6 +107,11 @@ export class NodesController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.RULE_NODE,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('automations:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @TenantOrCustomerAdmin()
@@ -110,6 +125,10 @@ export class NodesController {
   }
 
   @Post(':id/toggle')
+  @Audit({
+    action: AuditAction.DEVICE_COMMAND,
+    entityType: AuditEntityType.RULE_NODE,
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Toggle node enabled status', 'Toggled successfully')

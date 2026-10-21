@@ -27,6 +27,8 @@ import {
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { User } from '../index.entities';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Permissions')
 @ApiBearerAuth()
@@ -35,6 +37,11 @@ export class PermissionsController {
   constructor(private readonly permissionsService: PermissionsService) { }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'create permission',
+  })
   @RequirePermissions('permissions:create')
   @ApiOperation({ summary: 'Create a new permission' })
   @ApiResponse({
@@ -55,6 +62,11 @@ export class PermissionsController {
   }
 
   @Post('bulk')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'create permission',
+  })
   @RequirePermissions('permissions:create')
   @ApiOperation({ summary: 'Create multiple permissions at once' })
   @ApiResponse({
@@ -161,6 +173,11 @@ export class PermissionsController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update permission',
+  })
   @RequirePermissions('permissions:update')
   @ApiOperation({ summary: 'Update a permission' })
   @ApiParam({
@@ -189,6 +206,12 @@ export class PermissionsController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete permission',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('permissions:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a permission' })

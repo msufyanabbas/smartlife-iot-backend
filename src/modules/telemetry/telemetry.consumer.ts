@@ -9,6 +9,8 @@ import { AlarmsService } from '../index.service';
 import { AlarmStatus } from '@/common/enums/alarm.enum';
 import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
 import { IntegrationDispatchService } from '@modules/integrations/integration-dispatch.service';
+import { CalculatedFieldsService } from './calculated-fields.service';
+import { TelemetryLatestCacheService } from './telemetry-latest-cache.service';
 
 @Injectable()
 export class TelemetryConsumer implements OnModuleInit {
@@ -23,6 +25,12 @@ export class TelemetryConsumer implements OnModuleInit {
     private readonly alarmsService: AlarmsService, //
     private readonly profileAlarmService: ProfileAlarmService,
     private readonly integrationDispatch: IntegrationDispatchService,
+    // Asset-profile calculated fields, merged into the reading at step 0.
+    private readonly calculatedFields: CalculatedFieldsService,
+    // The other writer of `telemetry:latest:*`. Injected rather than reaching
+    // for TelemetryService, whose dependency graph this consumer has no need
+    // of — and whose own cache write covers only the HTTP path.
+    private readonly telemetryCache: TelemetryLatestCacheService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -85,8 +93,67 @@ export class TelemetryConsumer implements OnModuleInit {
       if (!payload.tenantId)
         throw new Error('Missing tenantId in telemetry payload');
 
+      // ── Step 0: Calculated fields ─────────────────────────────────────────
+      // An asset profile's calculated fields are evaluated against this
+      // reading (plus the device's and asset's attributes) and merged into
+      // `payload.data` BEFORE anything else happens to it.
+      //
+      // The position is the whole design. Everything after this line —
+      // persistence at step 1, both alarm evaluations at step 2, the WebSocket
+      // broadcast at step 3, the integration fan-out, the
+      // `telemetry.device.validated` topic that drives automations and
+      // `rules.input` — all read `payload.data`. Merging here means a derived
+      // value charts, alarms, triggers automations and reaches external systems
+      // exactly like a reported one, with no change to any of those paths. Do
+      // not move this below step 1.
+      //
+      // Non-fatal and silent on failure, like the alarm checks: a tenant's
+      // broken formula must not stop telemetry ingestion. The service already
+      // swallows its own errors; this guard is a backstop.
+      try {
+        const calculated =
+          await this.calculatedFields.computeForTelemetry(
+            payload.deviceId,
+            payload.tenantId,
+            payload.data ?? {},
+          );
+        if (Object.keys(calculated).length > 0) {
+          // Calculated values are applied UNDER the reading, never over it:
+          // the service already drops any name that collides, and the spread
+          // order makes that structurally true rather than only true by
+          // convention.
+          payload.data = { ...calculated, ...(payload.data ?? {}) };
+          this.logger.debug(
+            `Calculated ${Object.keys(calculated).length} field(s) for device ${payload.deviceId}`,
+          );
+        }
+      } catch (calcError) {
+        this.logger.error(
+          `Calculated field evaluation failed: ${(calcError as Error).message}`,
+        );
+      }
+
       // ── Step 1: Persist ────────────────────────────────────────────────────
       const telemetry = await this.storeTelemetry(payload);
+
+      // ── Step 1b: Write through the latest-reading cache ───────────────────
+      // `TelemetryService.getLatest()` reads this key, and it serves devices
+      // on BOTH ingest paths. Before this, only the HTTP path
+      // (TelemetryService.create) wrote it — so for every MQTT, CoAP, Modbus,
+      // SNMP, BACnet and LwM2M device, which is most of them, the cache would
+      // have held nothing or a stale HTTP reading while the dashboard showed
+      // it as current. A cache maintained by one of two writers is not a slow
+      // cache, it is a wrong answer; this is the other writer.
+      //
+      // Non-fatal: the row is already committed, and no Redis failure may
+      // dead-letter a reading that was persisted successfully.
+      await this.telemetryCache
+        .write(payload.deviceId, telemetry)
+        .catch((err) =>
+          this.logger.error(
+            `latest-telemetry cache write failed for ${payload.deviceId}: ${(err as Error).message}`,
+          ),
+        );
 
       // ── Step 2: Check alarms ───────────────────────────────────────────────
       // Two independent sources, both non-fatal:
@@ -174,22 +241,28 @@ export class TelemetryConsumer implements OnModuleInit {
 
       this.logger.log(`Telemetry persisted and forwarded: ${telemetry.id}`);
     } catch (error) {
+      // ── Rethrow. This is a change in behaviour and it is the point. ───────
+      //
+      // This handler used to catch everything, push the raw value straight to
+      // `telemetry.device.invalid` and return. Two things were wrong with that:
+      //
+      //   • There was no retry. A frame that failed because Postgres was
+      //     momentarily unavailable — a lock wait, a failover, a connection
+      //     pool exhaustion — was dead-lettered on its first failure and the
+      //     reading was gone, even though retrying it 250ms later would have
+      //     persisted it.
+      //   • The DLQ send happened while the producer might be the thing that
+      //     is broken, and its own failure was logged and dropped.
+      //
+      // `KafkaService.runHandler()` now retries this KAFKA_CONSUMER_MAX_ATTEMPTS
+      // times with backoff and only then dead-letters — to
+      // `telemetry.device.invalid`, which TOPIC_REGISTRY names as this
+      // stream's DLQ, so the destination has not changed. The offset still
+      // advances either way: a poison frame must not block its partition.
       this.logger.error(
         `Failed to process telemetry: ${(error as Error).message}`,
       );
-
-      // Send to dead-letter queue — do NOT rethrow so Kafka continues
-      try {
-        await this.kafka.sendMessage('telemetry.device.invalid', {
-          originalMessage: message.value.toString(),
-          error: (error as Error).message,
-          failedAt: Date.now(),
-        });
-      } catch (dlqError) {
-        this.logger.error(
-          `Failed to send to DLQ: ${(dlqError as Error).message}`,
-        );
-      }
+      throw error;
     }
   }
 

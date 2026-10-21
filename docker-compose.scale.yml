@@ -1,0 +1,151 @@
+# docker-compose.scale.yml
+#
+# The scalable application tier. `docker-compose.prod.yml` is UNCHANGED and is
+# still the single-node stack; this file replaces only its `app` service with a
+# scalable one plus an nginx load balancer.
+#
+# ── Why this is a separate file and not an override ────────────────────────
+# Compose merges a scalar in an override by REPLACING it, and there is no way
+# to UNSET one. `docker-compose.prod.yml` pins `container_name: smartlife-app`
+# and publishes `"5000:5000"`, and both are fatal to `--scale app=2`:
+#
+#   container_name → "Conflict. The container name /smartlife-app is already
+#                     in use" on the second replica.
+#   host port      → "Bind for 0.0.0.0:5000 failed: port is already allocated".
+#
+# An `-f prod.yml -f override.yml` chain inherits both, so the app service has
+# to be declared somewhere the prod file is not merged in. Hence a second
+# project, joined to the first one's network.
+#
+# ── How to run it ──────────────────────────────────────────────────────────
+#   # 1. Bring up the infrastructure from the production file, WITHOUT its app:
+#   docker compose -f docker-compose.prod.yml up -d \
+#       postgres redis kafka zookeeper emqx
+#
+#   # 2. Bring up N application replicas behind nginx:
+#   docker compose -f docker-compose.scale.yml up -d --scale app=3
+#
+#   # Scale up or down at any time:
+#   docker compose -f docker-compose.scale.yml up -d --scale app=5
+#
+# The API is then on :5000 of the host, served by nginx, exactly as before.
+#
+# ── What an operator MUST set before scaling ───────────────────────────────
+# All of it defaults correctly except uploads. See CLAUDE.md §8:
+#   • MQTT_SHARED_SUBSCRIPTION  defaults true  — leave it on, or telemetry
+#                                               duplicates per replica.
+#   • WS_REDIS_ADAPTER_ENABLED  defaults true  — leave it on, or WebSocket
+#                                               pushes stay replica-local.
+#   • CLUSTER_LOCKS_ENABLED     defaults true  — leave it on, or every cron
+#                                               runs on every replica.
+#   • REPORT_SCHEDULER_ENABLED / TUYA_POLL_ENABLED — no longer need to be
+#                                               pinned to one replica; the
+#                                               locks handle it.
+#   • MODBUS_ENABLED=false on all but one      — the Modbus poller is a
+#                                               per-process setInterval with
+#                                               no leader election (§11).
+#   • SNMP_ENABLED=false on all but one        — same shape.
+#   • STORAGE_LOCAL_SHARED=true                — ONLY if the `app-uploads`
+#                                               volume is genuinely shared.
+#                                               It is below, because every
+#                                               replica here is on one host.
+#                                               Across hosts it is not, and
+#                                               uploads need an object store.
+
+name: smartlife-scale
+
+services:
+  # No container_name: Docker names these smartlife-scale-app-1, -2, -3.
+  # No host port: nginx is the only thing published.
+  app:
+    image: ${SMARTLIFE_IMAGE:-msufyanabbas10/smartlife-iot-platform:latest}
+    restart: unless-stopped
+    expose:
+      - "5000"
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - KAFKA_BROKERS=kafka:9092
+      - MQTT_BROKER_URL=mqtt://emqx:1883
+      - MQTT_BROKER_HOST=emqx
+      - MQTT_BROKER_PORT=1883
+      # ── The multi-replica switches, stated explicitly rather than relying on
+      #    the code defaults, so `docker compose config` shows the posture.
+      - MQTT_SHARED_SUBSCRIPTION=true
+      - MQTT_SHARED_GROUP=${MQTT_SHARED_GROUP:-smartlife-platform}
+      - WS_REDIS_ADAPTER_ENABLED=true
+      - CLUSTER_LOCKS_ENABLED=true
+      # Every replica below shares the app-uploads volume on this one host, so
+      # the local storage driver IS shared here. Remove this the moment
+      # replicas are spread across hosts — a wrong `true` turns a 404 into
+      # silent data loss.
+      - STORAGE_DRIVER=local
+      - STORAGE_LOCAL_SHARED=true
+      # Per-process pollers with no leader election (CLAUDE.md §11). Left OFF
+      # on every scaled replica; run them on the single-node app service, or on
+      # a dedicated one-replica worker.
+      - MODBUS_ENABLED=false
+      - SNMP_ENABLED=false
+      # Behind nginx, so the real client IP is in x-forwarded-for.
+      - TRUST_PROXY=true
+    env_file:
+      - .env.production
+    networks:
+      - smartlife-network
+    volumes:
+      - app-logs:/app/logs
+      - app-uploads:/app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: smartlife-lb
+    restart: unless-stopped
+    ports:
+      # Same host port the single-node app used, so nothing downstream — the
+      # OAuth callback URLs, BACKEND_URL, the frontend — has to change.
+      - "5000:80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app
+    networks:
+      - smartlife-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  # Created by docker-compose.prod.yml, which prefixes them with its own
+  # project name. `external: true` + an explicit name is how this project
+  # attaches to the SAME volumes rather than silently creating empty ones —
+  # getting this wrong means uploads and logs land somewhere nothing serves.
+  app-logs:
+    external: true
+    name: ${PROD_VOLUME_PREFIX:-iot-platform-backend}_app-logs
+  app-uploads:
+    external: true
+    name: ${PROD_VOLUME_PREFIX:-iot-platform-backend}_app-uploads
+
+networks:
+  smartlife-network:
+    external: true
+    name: ${PROD_NETWORK:-iot-platform-backend_smartlife-network}

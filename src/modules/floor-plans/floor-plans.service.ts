@@ -46,6 +46,7 @@ import {
   PaginatedResponseDto,
 } from '../../common/dto/pagination.dto';
 import { DWGParserService } from './dwg-parser.service';
+import { StorageService } from '@/lib/storage/storage.service';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -78,22 +79,69 @@ const MODEL_CONTENT_TYPES: Record<string, string> = {
   fbx: 'application/octet-stream',
 };
 
+/**
+ * `StorageService` key prefixes for the three artefacts a floor plan owns.
+ *
+ * These are the first segment pair of every key this service writes, and they
+ * deliberately match the directory layout the local driver used to produce —
+ * `<UPLOAD_PATH>/floor-plans/dwg/…` — so switching to the seam is a no-op on a
+ * single instance and existing bytes stay reachable under their derived key.
+ */
+const DWG_KEY_PREFIX = 'floor-plans/dwg';
+const MODEL_KEY_PREFIX = 'floor-plans/models';
+const PREVIEW_KEY_PREFIX = 'floor-plans/previews';
+
+/**
+ * What a stored reference on a floor-plan row turns out to be.
+ *
+ * Rows predate the storage seam, so one column can hold three different kinds
+ * of value. `FloorPlansService.resolveRef()` classifies them; everything that
+ * reads or deletes a floor-plan file goes through it.
+ */
+interface StoredRef {
+  /** The driver-independent key, when the value is or implies one. */
+  key: string | null;
+  /**
+   * The absolute local path the value used to mean, for rows written before
+   * the seam. Tried only after the key misses.
+   */
+  legacyPath: string | null;
+  /** An absolute http(s) URL — someone else's file. Nothing to read or delete. */
+  external: boolean;
+}
+
 @Injectable()
 export class FloorPlansService {
   private readonly logger = new Logger(FloorPlansService.name);
-  // Bug: this was `process.env.UPLOAD_PATH || './uploads/floor-plans'`, so the
-  // fallback included the /floor-plans segment but the configured value did
-  // not. With UPLOAD_PATH=./uploads (as the env example sets), floor plans were
-  // written straight into ./uploads and their dwg/ and models/ subdirectories
-  // landed next to every other module's uploads instead of underneath
-  // floor-plans/ — which matches the stray uploads/dwg and uploads/models
-  // directories in this repo. The segment is now always appended.
-  private readonly uploadDir = path.join(
+  // `uploadDir` / `dwgDir` / `modelDir` are gone. They existed to build the
+  // absolute path of every write and read, which is precisely the coupling the
+  // storage seam removes — a key (`floor-plans/dwg/<uuid>.dwg`) now names the
+  // artefact and the driver decides where it lives. Keeping dead directory
+  // fields would have implied the bytes still land there.
+  //
+  // The bug they used to carry is worth remembering, because the key prefixes
+  // preserve the layout it produced: `uploadDir` was once
+  // `process.env.UPLOAD_PATH || './uploads/floor-plans'`, so the fallback
+  // included the /floor-plans segment and the configured value did not. With
+  // UPLOAD_PATH=./uploads, floor plans were written straight into ./uploads
+  // and their dwg/ and models/ subdirectories landed next to every other
+  // module's uploads — which is what the stray uploads/dwg and uploads/models
+  // directories in this repository are. `DWG_KEY_PREFIX` and friends always
+  // include the segment.
+
+  /**
+   * The absolute root the local driver writes under, and therefore the root a
+   * legacy absolute path has to sit inside to be expressible as a key.
+   */
+  private readonly storageRoot = path.resolve(
+    process.cwd(),
     process.env.UPLOAD_PATH || './uploads',
-    'floor-plans',
   );
-  private readonly dwgDir = path.join(this.uploadDir, 'dwg');
-  private readonly modelDir = path.join(this.uploadDir, 'models');
+
+  /** The public prefix `main.ts` serves the upload directory at. */
+  private readonly urlPrefix = (
+    process.env.UPLOAD_URL_PREFIX || '/uploads'
+  ).replace(/\/+$/, '');
 
   constructor(
     @InjectRepository(FloorPlan)
@@ -115,20 +163,14 @@ export class FloorPlansService {
     // check counts rows live, the counter feeds GET /tenants/:id/usage.
     private readonly subscriptionsService: SubscriptionsService,
     private readonly dwgParserService: DWGParserService,
-  ) {
-    this.ensureUploadDirectories();
-  }
+    // StorageModule is @Global, so FloorPlansModule needs no new import.
+    private readonly storage: StorageService,
+  ) {}
 
-  private async ensureUploadDirectories(): Promise<void> {
-    try {
-      await fs.mkdir(this.uploadDir, { recursive: true });
-      await fs.mkdir(this.dwgDir, { recursive: true });
-      await fs.mkdir(this.modelDir, { recursive: true });
-      this.logger.log('Upload directories initialized');
-    } catch (error) {
-      this.logger.error('Failed to create upload directories', error);
-    }
-  }
+  // The constructor used to mkdir uploadDir/dwgDir/modelDir eagerly. That is
+  // gone with the writes: `StorageService.put()` creates whatever the key
+  // needs, and on a remote driver there is no directory to create. Creating
+  // them here would also have been a lie about where the bytes now go.
 
   // ══════════════════════════════════════════════════════════════════════════
   // VALIDATION HELPERS
@@ -138,11 +180,47 @@ export class FloorPlansService {
   private async assertAsset(assetId: string, tenantId: string): Promise<Asset> {
     const asset = await this.assetRepository.findOne({
       where: { id: assetId, tenantId },
+      // The profile travels with the asset because the asset's TYPE lives on
+      // it, and a floor plan has no type of its own — it inherits the one its
+      // asset inherits. Without this relation `resolveAssetType()` would
+      // answer null for every plan whose asset does have a profile.
+      relations: ['assetProfile'],
     });
     if (!asset) {
       throw new NotFoundException('Asset not found');
     }
     return asset;
+  }
+
+  /**
+   * The asset a floor plan hangs off, as every floor-plan read projects it.
+   *
+   * One helper so the four read paths cannot drift: `type` used to be
+   * `Asset.type`, free text that the 3D viewer keyword-matched when the
+   * profile was missing. There is now exactly one answer and it comes from
+   * the profile.
+   *
+   * A plan whose asset has **no profile** (or a profile with no `type`) gets
+   * `assetType: null`. That is not an error and nothing is withheld: the plan
+   * lists, parses, exports and renders exactly as before — the 3D viewer's
+   * `resolveAssetSceneFamily()` resolves `null` to its `ground` family, the
+   * neutral ground plate that was the viewer's behaviour before asset context
+   * scenes existed. `assetProfileId: null` is in the payload so a UI can say
+   * "attach a profile to get a building" rather than silently showing a slab.
+   */
+  private projectAsset(asset: Asset | undefined | null) {
+    if (!asset) return null;
+    const assetType = asset.resolveAssetType();
+    return {
+      id: asset.id,
+      name: asset.name,
+      description: asset.description ?? null,
+      assetProfileId: asset.assetProfileId ?? null,
+      /** The inherited type — `AssetProfile.type`, the only source. */
+      assetType,
+      /** The same value under the name the 3D payloads already used. */
+      assetProfileType: assetType,
+    };
   }
 
   /** The device must exist AND belong to the caller's tenant. */
@@ -383,6 +461,12 @@ export class FloorPlansService {
     const qb = this.floorPlanRepository
       .createQueryBuilder('floorPlan')
       .leftJoinAndSelect('floorPlan.asset', 'asset')
+      // The asset's profile carries the type each listed plan inherits.
+      // Projected to three columns rather than `leftJoinAndSelect`: the
+      // profile's `schema` and `alarmRules` jsonb would otherwise be repeated
+      // on every row of every page.
+      .leftJoin('asset.assetProfile', 'assetProfile')
+      .addSelect(['assetProfile.id', 'assetProfile.name', 'assetProfile.type'])
       .where('floorPlan.tenantId = :tenantId', { tenantId });
 
     if (assetId) {
@@ -410,11 +494,14 @@ export class FloorPlansService {
     return PaginatedResponseDto.create(data, page, limit, total);
   }
 
-  /** Raw entity fetch, tenant-scoped, with the asset joined. */
+  /**
+   * Raw entity fetch, tenant-scoped, with the asset — and the asset's profile
+   * — joined. The profile is what carries the type the plan inherits.
+   */
   async findOne(id: string, tenantId: string): Promise<FloorPlan> {
     const floorPlan = await this.floorPlanRepository.findOne({
       where: { id, tenantId },
-      relations: ['asset'],
+      relations: ['asset', 'asset.assetProfile'],
     });
 
     if (!floorPlan) {
@@ -431,14 +518,10 @@ export class FloorPlansService {
 
     return {
       ...floorPlan,
-      asset: floorPlan.asset
-        ? {
-            id: (floorPlan.asset as any).id,
-            name: (floorPlan.asset as any).name,
-            type: (floorPlan.asset as any).type,
-            description: (floorPlan.asset as any).description,
-          }
-        : null,
+      // `type` is gone from this projection on purpose. It was `Asset.type`,
+      // and a consumer reading it was reading the duplicate: the same screen
+      // could get `building` here and `warehouse` from the asset's profile.
+      asset: this.projectAsset(floorPlan.asset as Asset | undefined),
       // Legacy shape, reconstructed from the relational placements so existing
       // 3D clients reading `devices[]` keep working.
       devices: placedDevices.map((p) => p.legacy),
@@ -452,7 +535,10 @@ export class FloorPlansService {
   async findByAsset(assetId: string, tenantId: string): Promise<FloorPlan[]> {
     return await this.floorPlanRepository.find({
       where: { assetId, tenantId },
-      relations: ['asset'],
+      // `asset.assetProfile` for the same reason as `findOne`: the plans of an
+      // asset inherit its type, and `get3DSimulationData` reads it off these
+      // rows.
+      relations: ['asset', 'asset.assetProfile'],
       order: { floorNumber: 'ASC' },
     });
   }
@@ -499,9 +585,13 @@ export class FloorPlansService {
   async remove(id: string, actor: Actor): Promise<void> {
     const floorPlan = await this.findOne(id, actor.tenantId);
 
-    if (floorPlan.dwgFileUrl) await this.deleteFile(floorPlan.dwgFileUrl);
-    if (floorPlan.thumbnailUrl) await this.deleteFile(floorPlan.thumbnailUrl);
-    if (floorPlan.modelFileUrl) await this.deleteFile(floorPlan.modelFileUrl);
+    // The key is preferred and the URL is the fallback, so a row written before
+    // the storage seam still has its bytes removed.
+    await this.deleteRef(floorPlan.dwgStorageKey ?? floorPlan.dwgFileUrl);
+    await this.deleteRef(
+      floorPlan.thumbnailStorageKey ?? floorPlan.thumbnailUrl,
+    );
+    await this.deleteRef(floorPlan.modelStorageKey ?? floorPlan.modelFileUrl);
 
     await this.floorPlanRepository.softRemove(floorPlan);
 
@@ -741,7 +831,8 @@ export class FloorPlansService {
    * summary of the parsed geometry.
    */
   async getAssetFloorPlansOverview(assetId: string, tenantId: string) {
-    await this.assertAsset(assetId, tenantId);
+    const asset = await this.assertAsset(assetId, tenantId);
+    const assetContext = this.projectAsset(asset);
 
     const floorPlans = await this.floorPlanRepository.find({
       where: { assetId, tenantId },
@@ -749,7 +840,10 @@ export class FloorPlansService {
     });
 
     if (floorPlans.length === 0) {
-      return { assetId, total: 0, floorPlans: [] };
+      // The type is reported even with no plans: this is the screen that
+      // decides what to offer, and "a warehouse with no floor plan yet" is a
+      // different thing to offer than "a building with no floor plan yet".
+      return { assetId, asset: assetContext, total: 0, floorPlans: [] };
     }
 
     const countRows: Array<{ floorPlanId: string; count: string }> =
@@ -770,6 +864,7 @@ export class FloorPlansService {
 
     return {
       assetId,
+      asset: assetContext,
       total: floorPlans.length,
       floorPlans: floorPlans.map((fp) => ({
         id: fp.id,
@@ -943,14 +1038,27 @@ export class FloorPlansService {
 
     const ext = this.assertDwgExtension(file);
 
+    if (!file.buffer?.length) {
+      throw new BadRequestException('Uploaded file is empty');
+    }
+
     try {
       // Never interpolate the client-supplied filename into a shell command or a
       // path: the parser shells out to dwg2dxf. Use a UUID and keep the extension.
       const fileName = `${uuidv4()}${ext}`;
-      const filePath = path.join(this.dwgDir, fileName);
-      await fs.writeFile(filePath, file.buffer);
+      const stored = await this.storage.put(
+        `${DWG_KEY_PREFIX}/${fileName}`,
+        file.buffer,
+        { contentType: 'application/octet-stream' },
+      );
 
-      floorPlan.dwgFileUrl = `/uploads/floor-plans/dwg/${fileName}`;
+      // The KEY is what every later read uses; the URL is what a browser gets.
+      // Previously only the URL was stored and the read paths rebuilt an
+      // absolute local path from it — correct on one container and a 404 on
+      // every other replica.
+      floorPlan.dwgStorageKey = stored.key;
+      floorPlan.dwgFileUrl = stored.url;
+      floorPlan.storageProvider = this.storage.name;
       floorPlan.dwgFileSizeBytes = file.size;
       floorPlan.dwgUploadedAt = new Date();
       floorPlan.status = FloorPlanStatus.PROCESSING;
@@ -958,7 +1066,10 @@ export class FloorPlansService {
 
       await this.floorPlanRepository.save(floorPlan);
 
-      void this.parseDWGFileAsync(id, actor, filePath).catch((err) =>
+      // The parse is handed the key and the extension, not a path: it reads the
+      // bytes back out of storage and stages its own scratch copy for the
+      // external converter.
+      void this.parseDWGFileAsync(id, actor, stored.key, ext).catch((err) =>
         this.logger.error(
           `Unhandled DWG parse failure: ${err?.message}`,
           err?.stack,
@@ -978,14 +1089,29 @@ export class FloorPlansService {
   private async parseDWGFileAsync(
     floorPlanId: string,
     actor: Actor,
-    filePath: string,
+    storageKey: string,
+    extension: string,
   ): Promise<void> {
     try {
       this.logger.log(
         `Starting async DWG parsing for floor plan: ${floorPlanId}`,
       );
 
-      const geometry = await this.dwgParserService.parseDWGFile(filePath);
+      // Read the bytes back through the seam rather than from the path the
+      // upload happened to write. On a shared or remote driver this is the only
+      // way the parse can run on a replica that did not handle the POST — and
+      // with the local driver it is the same bytes it just wrote.
+      const source = await this.readRef(storageKey);
+      if (!source) {
+        throw new Error(
+          `The uploaded drawing could not be read back from storage (key ${storageKey})`,
+        );
+      }
+
+      const geometry = await this.dwgParserService.parseDWGBuffer(
+        source,
+        extension,
+      );
 
       // A drawing fails only when it is unreadable. Missing walls or rooms are
       // warnings — the geometry that *was* found is saved either way.
@@ -999,24 +1125,39 @@ export class FloorPlansService {
         );
       }
 
-      // Thumbnail: previously generated but never persisted, leaving the PNG
-      // orphaned on disk and thumbnailUrl null.
-      const thumbName = `${path.parse(filePath).name}_thumb.png`;
-      const thumbPath = path.join(this.dwgDir, thumbName);
-      let thumbnailUrl: string | undefined;
+      // Thumbnail: the renderer returns PNG bytes and this stores them, so the
+      // preview is reachable from every replica. It used to be written to the
+      // dwg/ directory beside the source and keyed off the source filename;
+      // the key is now derived from the floor plan id, which also means a
+      // re-upload replaces the preview instead of orphaning the old one.
+      let preview: { key: string; url: string } | null = null;
       try {
-        await this.dwgParserService.generateThumbnail(geometry, thumbPath);
-        await fs.access(thumbPath);
-        thumbnailUrl = `/uploads/floor-plans/dwg/${thumbName}`;
-      } catch {
-        this.logger.warn(`Thumbnail generation failed for ${floorPlanId}`);
+        const png = await this.dwgParserService.renderThumbnail(geometry);
+        if (png?.length) {
+          const stored = await this.storage.put(
+            `${PREVIEW_KEY_PREFIX}/${floorPlanId}.png`,
+            png,
+            { contentType: 'image/png' },
+          );
+          preview = { key: stored.key, url: stored.url };
+        } else {
+          this.logger.warn(`Thumbnail generation failed for ${floorPlanId}`);
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Thumbnail storage failed for ${floorPlanId}: ${(error as Error).message}`,
+        );
       }
 
       const floorPlan = await this.findOne(floorPlanId, actor.tenantId);
       floorPlan.parsedGeometry = geometry;
       floorPlan.status = FloorPlanStatus.ACTIVE;
       floorPlan.parsingError = null as any;
-      if (thumbnailUrl) floorPlan.thumbnailUrl = thumbnailUrl;
+      if (preview) {
+        floorPlan.thumbnailStorageKey = preview.key;
+        floorPlan.thumbnailUrl = preview.url;
+        floorPlan.storageProvider = this.storage.name;
+      }
 
       // Extents come from the drawing's own bounding box (every entity type,
       // not just rooms), falling back to the wall/room point cloud.
@@ -1096,17 +1237,30 @@ export class FloorPlansService {
       );
     }
 
-    // Filename is derived from the floor plan id, never from client input.
-    const fileName = `${floorPlan.id}.${ext}`;
-    const filePath = path.join(this.modelDir, fileName);
-    await fs.writeFile(filePath, file.buffer);
-
-    // Remove a previously uploaded model with a different extension.
-    if (floorPlan.modelFileUrl && floorPlan.modelFileType !== ext) {
-      await this.deleteFile(floorPlan.modelFileUrl);
+    if (!file.buffer?.length) {
+      throw new BadRequestException('Uploaded file is empty');
     }
 
-    floorPlan.modelFileUrl = `/uploads/floor-plans/models/${fileName}`;
+    // Remove a previously stored model with a different extension BEFORE the
+    // new one lands: the key is derived from the floor plan id, so a same-
+    // extension re-upload overwrites in place and only a format change leaves
+    // an orphan. Doing it after the put would be a no-op risk if the delete
+    // resolved to the key just written.
+    if (floorPlan.modelFileType && floorPlan.modelFileType !== ext) {
+      await this.deleteRef(floorPlan.modelStorageKey ?? floorPlan.modelFileUrl);
+    }
+
+    // Filename is derived from the floor plan id, never from client input.
+    const fileName = `${floorPlan.id}.${ext}`;
+    const stored = await this.storage.put(
+      `${MODEL_KEY_PREFIX}/${fileName}`,
+      file.buffer,
+      { contentType: MODEL_CONTENT_TYPES[ext] ?? 'application/octet-stream' },
+    );
+
+    floorPlan.modelStorageKey = stored.key;
+    floorPlan.modelFileUrl = stored.url;
+    floorPlan.storageProvider = this.storage.name;
     floorPlan.modelFileType = ext;
     floorPlan.modelFileSize = file.size;
     floorPlan.updatedBy = actor.userId;
@@ -1114,7 +1268,6 @@ export class FloorPlansService {
     return await this.floorPlanRepository.save(floorPlan);
   }
 
-  /** Returns the absolute path + content type for streaming the model file. */
   // ══════════════════════════════════════════════════════════════════════════
   // 3D MODEL GENERATION
   // ══════════════════════════════════════════════════════════════════════════
@@ -1191,11 +1344,17 @@ export class FloorPlansService {
           upAxis,
           baseName: floorPlan.id,
         });
-        // The OBJ references the MTL by name, so both must land on disk or the
-        // model loads untextured.
+        // The OBJ references the MTL by name, so both must be stored or the
+        // model loads untextured. Through the seam for the same reason as the
+        // OBJ itself: a companion file on one replica's disk is a 404 for the
+        // viewer that fetched the OBJ from another.
         const mtlName = `${floorPlan.id}.mtl`;
-        await fs.writeFile(path.join(this.modelDir, mtlName), mtl);
-        companionFiles.push(`/uploads/floor-plans/models/${mtlName}`);
+        const storedMtl = await this.storage.put(
+          `${MODEL_KEY_PREFIX}/${mtlName}`,
+          mtl,
+          { contentType: 'model/mtl' },
+        );
+        companionFiles.push(storedMtl.url);
         payload = obj;
         break;
       }
@@ -1212,14 +1371,23 @@ export class FloorPlansService {
 
     // Remove the previous model when the extension changes, or it lingers as an
     // orphan getModelFile can no longer reach.
-    if (floorPlan.modelFileUrl && floorPlan.modelFileType !== format) {
-      await this.deleteFile(floorPlan.modelFileUrl);
+    if (floorPlan.modelFileType && floorPlan.modelFileType !== format) {
+      await this.deleteRef(floorPlan.modelStorageKey ?? floorPlan.modelFileUrl);
     }
 
     const fileName = `${floorPlan.id}.${format}`;
-    await fs.writeFile(path.join(this.modelDir, fileName), payload);
+    const stored = await this.storage.put(
+      `${MODEL_KEY_PREFIX}/${fileName}`,
+      payload,
+      {
+        contentType:
+          MODEL_CONTENT_TYPES[format] ?? 'application/octet-stream',
+      },
+    );
 
-    floorPlan.modelFileUrl = `/uploads/floor-plans/models/${fileName}`;
+    floorPlan.modelStorageKey = stored.key;
+    floorPlan.modelFileUrl = stored.url;
+    floorPlan.storageProvider = this.storage.name;
     floorPlan.modelFileType = format;
     floorPlan.modelFileSize = payload.length;
     floorPlan.updatedBy = actor.userId;
@@ -1306,31 +1474,130 @@ export class FloorPlansService {
     };
   }
 
-  async getModelFile(id: string, tenantId: string) {
+  // ══════════════════════════════════════════════════════════════════════════
+  // READ PATHS — every byte served back comes through StorageService
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // These three return BYTES, not a path. A converted write with an
+  // unconverted read is worse than not converting at all: it looks finished
+  // and 404s (N-1)/N of the time behind a balancer, because the GET lands on a
+  // replica where the path does not exist. `getModelFile()` was the clearest
+  // case — it ignored `modelFileUrl` entirely and rebuilt
+  // `<modelDir>/<id>.<type>`, which only the uploading replica has.
+  //
+  // The static `/uploads/**` mount in main.ts is still there and is still how
+  // a browser loads `thumbnailUrl` on the local driver. These routes are the
+  // driver-independent way to the same bytes, and the only way that keeps
+  // working when the driver is not local.
+
+  /** The uploaded DWG/DXF source, for download. */
+  async getDwgFile(
+    id: string,
+    tenantId: string,
+  ): Promise<{ buffer: Buffer; contentType: string; fileName: string }> {
     const floorPlan = await this.findOne(id, tenantId);
 
-    if (!floorPlan.modelFileUrl || !floorPlan.modelFileType) {
+    const ref = floorPlan.dwgStorageKey ?? floorPlan.dwgFileUrl;
+    if (!ref) {
+      throw new NotFoundException(
+        'No DWG or DXF file has been uploaded for this floor plan',
+      );
+    }
+
+    const buffer = await this.readRef(ref);
+    if (!buffer) {
+      throw new NotFoundException('The source drawing is missing from storage');
+    }
+
+    // The stored key keeps the validated extension, so the download name is
+    // honest about the format without trusting anything the client sent.
+    const extension = path.extname(ref).toLowerCase() || '.dxf';
+
+    return {
+      buffer,
+      contentType: 'application/octet-stream',
+      fileName: this.downloadName(floorPlan.name, extension),
+    };
+  }
+
+  /** The generated PNG preview. */
+  async getPreviewFile(
+    id: string,
+    tenantId: string,
+  ): Promise<{ buffer: Buffer; contentType: string; fileName: string }> {
+    const floorPlan = await this.findOne(id, tenantId);
+
+    const ref = floorPlan.thumbnailStorageKey ?? floorPlan.thumbnailUrl;
+    if (!ref) {
+      throw new NotFoundException(
+        'This floor plan has no preview image. Upload a DWG or DXF file and ' +
+          'wait for its status to become ACTIVE.',
+      );
+    }
+
+    const buffer = await this.readRef(ref);
+    if (!buffer) {
+      // An external `https://…` thumbnailUrl (the seeder writes those) lands
+      // here: it is a real URL the client should fetch itself, not bytes this
+      // platform holds.
+      throw new NotFoundException('The preview image is missing from storage');
+    }
+
+    return {
+      buffer,
+      contentType: 'image/png',
+      fileName: this.downloadName(floorPlan.name, '.png'),
+    };
+  }
+
+  /** The 3D model, uploaded or generated. */
+  async getModelFile(
+    id: string,
+    tenantId: string,
+  ): Promise<{ buffer: Buffer; contentType: string; fileName: string }> {
+    const floorPlan = await this.findOne(id, tenantId);
+
+    if (!floorPlan.modelFileType) {
       throw new NotFoundException('No 3D model uploaded for this floor plan');
     }
 
-    const absolutePath = path.join(
-      this.modelDir,
-      `${floorPlan.id}.${floorPlan.modelFileType}`,
-    );
+    // The key first, then the URL, and only then the path this used to build.
+    // `generateModel` writes `<id>.<format>` under the models prefix, so the
+    // derived fallback still finds a model stored before the key column
+    // existed even if the row's URL was never set.
+    const ref =
+      floorPlan.modelStorageKey ??
+      floorPlan.modelFileUrl ??
+      `${MODEL_KEY_PREFIX}/${floorPlan.id}.${floorPlan.modelFileType}`;
 
-    try {
-      await fs.access(absolutePath);
-    } catch {
+    const buffer = await this.readRef(ref);
+    if (!buffer) {
       throw new NotFoundException('Model file is missing from storage');
     }
 
     return {
-      path: absolutePath,
+      buffer,
       contentType:
         MODEL_CONTENT_TYPES[floorPlan.modelFileType] ??
         'application/octet-stream',
-      fileName: `${floorPlan.name}.${floorPlan.modelFileType}`,
+      fileName: this.downloadName(
+        floorPlan.name,
+        `.${floorPlan.modelFileType}`,
+      ),
     };
+  }
+
+  /**
+   * A Content-Disposition filename that cannot inject a header.
+   *
+   * `floorPlan.name` is free text a user typed, and it was previously
+   * interpolated straight into the header.
+   */
+  private downloadName(name: string, extension: string): string {
+    const base =
+      path.basename(name || '').replace(/["\r\n\\]/g, '').trim() ||
+      'floor-plan';
+    return `${base}${extension}`;
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1343,6 +1610,14 @@ export class FloorPlansService {
     if (floorPlans.length === 0) {
       throw new NotFoundException('No floor plans found for this asset');
     }
+
+    // Every plan of an asset shares that asset, so the first one's relation is
+    // the asset — no second query. The 3D route is the main consumer of the
+    // type (it picks the context scene from it), which is why it was the route
+    // where the old free-text fallback was most visible.
+    const assetContext = this.projectAsset(
+      floorPlans[0].asset as Asset | undefined,
+    );
 
     const building3DMetadata = floorPlans[0].building3DMetadata || {
       buildingName: floorPlans[0].building,
@@ -1375,6 +1650,9 @@ export class FloorPlansService {
 
     return {
       assetId,
+      asset: assetContext,
+      /** Inherited from the asset's profile; `null` → the `ground` scene. */
+      assetType: assetContext?.assetType ?? null,
       building: building3DMetadata,
       floors,
       totalDevices: floors.reduce((sum, f) => sum + f.devices.length, 0),
@@ -1664,12 +1942,154 @@ export class FloorPlansService {
     return { width: maxX - minX, height: maxY - minY };
   }
 
-  private async deleteFile(fileUrl: string): Promise<void> {
-    try {
-      const filePath = path.join(process.cwd(), fileUrl);
-      await fs.unlink(filePath);
-    } catch (error) {
-      this.logger.warn(`Failed to delete file ${fileUrl}: ${error.message}`);
+  // ══════════════════════════════════════════════════════════════════════════
+  // STORED REFERENCES — the legacy-path resolver
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  // Rows that already exist hold one of four things in `dwgFileUrl`,
+  // `thumbnailUrl` and `modelFileUrl`, and nothing in the schema distinguishes
+  // them:
+  //
+  //   1. `floor-plans/dwg/<uuid>.dwg`    — a storage key (written from now on)
+  //   2. `/uploads/floor-plans/dwg/…`    — a public URL (every pre-seam upload)
+  //   3. `/abs/path/uploads/floor-plans/…` — an absolute local path
+  //   4. `https://example.com/…`         — someone else's URL (the seeder)
+  //
+  // Deciding by shape rather than by a flag column is deliberate: a flag would
+  // have to be backfilled correctly for every row before any read worked,
+  // whereas the shapes are unambiguous and a row needs no migration to be
+  // readable. The `*StorageKey` columns the migration adds are the fast path,
+  // not a prerequisite.
+
+  /**
+   * Classify a stored reference. Never throws and never touches the
+   * filesystem — it is pure string work, so it is safe on a hot read path.
+   */
+  private resolveRef(value?: string | null): StoredRef {
+    const empty: StoredRef = { key: null, legacyPath: null, external: false };
+    if (!value) return empty;
+
+    const raw = String(value).trim();
+    if (!raw) return empty;
+
+    // (4) Not ours. Returning a key here would make `delete()` try to remove a
+    // path derived from someone else's hostname.
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
+      return { key: null, legacyPath: null, external: true };
+    }
+
+    const posix = raw.replace(/\\/g, '/');
+
+    // (2) A public URL. The segment after the prefix is exactly the key the
+    // local driver would have produced for those bytes — `/uploads/x/y` → `x/y`
+    // — so one value answers both questions, and that is what makes pre-seam
+    // rows readable through the seam with no migration at all.
+    if (posix === this.urlPrefix || posix.startsWith(`${this.urlPrefix}/`)) {
+      const key = posix.slice(this.urlPrefix.length).replace(/^\/+/, '');
+      return {
+        key: this.safeKey(key),
+        // What the old deleteFile() computed, kept as the fallback for a
+        // deployment whose UPLOAD_PATH no longer matches UPLOAD_URL_PREFIX.
+        legacyPath: path.join(process.cwd(), posix),
+        external: false,
+      };
+    }
+
+    // (3) An absolute path, including a Windows drive letter. Expressible as a
+    // key when it sits under the storage root; outside it, only the path.
+    if (path.isAbsolute(raw) || /^[A-Za-z]:[\\/]/.test(raw)) {
+      const absolute = path.resolve(raw);
+      const relative = path.relative(this.storageRoot, absolute);
+      const inRoot =
+        !!relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+      return {
+        key: inRoot ? this.safeKey(relative.split(path.sep).join('/')) : null,
+        legacyPath: absolute,
+        external: false,
+      };
+    }
+
+    // (1) Already a key.
+    return { key: this.safeKey(posix), legacyPath: null, external: false };
+  }
+
+  /**
+   * Refuse a key that walks out of its root.
+   *
+   * The local driver refuses one too — by throwing. These values come from the
+   * database rather than from a request, so a bad row should degrade to a 404
+   * on that one floor plan, not a 500 that takes out a list endpoint.
+   */
+  private safeKey(key: string): string | null {
+    const normalised = key.replace(/^\/+/, '');
+    if (!normalised) return null;
+    if (normalised.split('/').includes('..')) return null;
+    return normalised;
+  }
+
+  /**
+   * Read a stored reference, whatever shape it is in.
+   *
+   * The key is tried first and the legacy absolute path second. With the local
+   * driver both resolve to the same file, so the fallback costs nothing; with a
+   * remote driver the fallback is what still serves a file uploaded before the
+   * bytes were migrated into the bucket.
+   *
+   * Returns null rather than throwing: every caller turns a missing file into a
+   * 404, and an unreadable artefact must not fail the whole floor plan.
+   */
+  private async readRef(value?: string | null): Promise<Buffer | null> {
+    const ref = this.resolveRef(value);
+    if (ref.external) return null;
+
+    if (ref.key) {
+      try {
+        if (await this.storage.exists(ref.key)) {
+          return await this.storage.get(ref.key);
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Storage read failed for key ${ref.key}: ${(error as Error).message}`,
+        );
+      }
+    }
+
+    if (ref.legacyPath) {
+      try {
+        return await fs.readFile(ref.legacyPath);
+      } catch {
+        // Expected whenever the key above already answered, or the row is
+        // stale. Not worth a log line per read.
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Delete a stored reference. Replaces `deleteFile()`, which only ever knew
+   * how to `path.join(process.cwd(), fileUrl)`.
+   *
+   * Both the key and the legacy path are attempted, because a file uploaded
+   * before the seam may exist under only one of them. An already-absent file is
+   * a success — these run on cleanup paths where throwing would mask the
+   * original failure.
+   */
+  private async deleteRef(value?: string | null): Promise<void> {
+    const ref = this.resolveRef(value);
+    if (ref.external) return;
+
+    if (ref.key) {
+      await this.storage.delete(ref.key).catch((error) => {
+        this.logger.warn(
+          `Failed to delete storage key ${ref.key}: ${(error as Error).message}`,
+        );
+        return false;
+      });
+    }
+
+    if (ref.legacyPath) {
+      await fs.unlink(ref.legacyPath).catch(() => undefined);
     }
   }
 }

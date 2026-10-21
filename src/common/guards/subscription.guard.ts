@@ -7,10 +7,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { IS_PUBLIC_KEY, SUBSCRIPTION_KEY } from '@decorators/index.decorator';
+import {
+  IS_PUBLIC_KEY,
+  SUBSCRIPTION_KEY,
+  SUBSCRIPTION_LIMIT_KEY,
+} from '@decorators/index.decorator';
 import { SubscriptionPlan, UserRole } from '@common/enums/index.enum';
 import { SubscriptionsService } from '@modules/index.service';
 import { Subscription } from '@modules/index.entities';
+import { SubscriptionCacheService } from '@lib/redis/subscription-cache.service';
 
 const PLAN_HIERARCHY: Record<SubscriptionPlan, number> = {
   [SubscriptionPlan.FREE]: 0,
@@ -24,6 +29,8 @@ export class SubscriptionGuard implements CanActivate {
   constructor(
     private reflector: Reflector,
     private subscriptionsService: SubscriptionsService,
+    // From the @Global RedisModule.
+    private subscriptionCache: SubscriptionCacheService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -52,13 +59,46 @@ export class SubscriptionGuard implements CanActivate {
     let subscription: Subscription = request.subscription;
 
     if (!subscription) {
-      try {
-        subscription = await this.subscriptionsService.findByTenantId(user.tenantId);
-      } catch {
-        throw new ForbiddenException(
-          'No subscription found for this tenant. Please contact support.',
-        );
+      // ── Redis cache, EXCEPT on routes that enforce a usage quota ──────────
+      //
+      // A route carrying @RequireSubscriptionLimit() has SubscriptionLimitGuard
+      // downstream, which compares `subscription.usage[resource]` against the
+      // plan limit. Those counters are live, and serving them from a cache
+      // turns a hard quota into "whatever the tenant can create within the
+      // TTL" — see SubscriptionCacheService for the full reasoning. Those
+      // routes are creates, and they are a small minority of traffic; every
+      // read comes from the cache.
+      //
+      // `reflector.get(..., getHandler())` deliberately mirrors how
+      // SubscriptionLimitGuard reads the same key — if it looked at the class
+      // too, a route WITHOUT the decorator would bypass the cache whenever any
+      // sibling route in the controller had it, and the cache would silently
+      // stop working on whole controllers.
+      const enforcesQuota = !!this.reflector.get(
+        SUBSCRIPTION_LIMIT_KEY,
+        context.getHandler(),
+      );
+
+      if (!enforcesQuota) {
+        subscription = (await this.subscriptionCache.get(user.tenantId))!;
       }
+
+      if (!subscription) {
+        try {
+          subscription = await this.subscriptionsService.findByTenantId(user.tenantId);
+        } catch {
+          throw new ForbiddenException(
+            'No subscription found for this tenant. Please contact support.',
+          );
+        }
+        // Only populate the cache from a non-quota read. Writing it here from
+        // a quota route would be harmless (the row is fresh) but it would mean
+        // the quota path pays for a cache it is not allowed to use.
+        if (!enforcesQuota) {
+          await this.subscriptionCache.set(user.tenantId, subscription);
+        }
+      }
+
       // Cache on request — all downstream guards reuse this, zero extra DB calls
       request.subscription = subscription;
     }

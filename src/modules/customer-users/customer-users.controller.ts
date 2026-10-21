@@ -30,6 +30,8 @@ import { User } from '../index.entities';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Notify } from '@/common/decorators/notify.decorator';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Customer Users')
 @Controller('customer-users')
@@ -56,6 +58,11 @@ export class CustomerUsersController {
   // ═══════════════════════════════════════════════════════════════════════════
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.USER,
+    description: 'create customer user',
+  })
   @RequirePermissions('users:create')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @HttpCode(HttpStatus.CREATED)
@@ -117,6 +124,11 @@ async getHierarchy(@CurrentUser() currentUser: User) {
   // ═══════════════════════════════════════════════════════════════════════════
 
   @Post(':id/resend-invitation')
+  @Audit({
+    action: AuditAction.NOTIFICATION_SENT,
+    entityType: AuditEntityType.USER,
+    description: 'notification sent customer user',
+  })
   @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
@@ -135,6 +147,11 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Assign a user to a customer
    */
   @Post('assign')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.USER,
+    description: 'create customer user',
+  })
   @RequirePermissions('users:create')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @ApiBearerAuth()
@@ -157,6 +174,12 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Remove user from customer
    */
   @Delete('unassign/:userId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.USER,
+    description: 'delete customer user',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('users:delete')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -225,6 +248,11 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Bulk assign users to a customer
    */
   @Post('bulk-assign')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.USER,
+    description: 'create customer user',
+  })
   @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -250,6 +278,11 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Transfer user from one customer to another
    */
   @Post('transfer')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.USER,
+    description: 'create customer user',
+  })
   @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)

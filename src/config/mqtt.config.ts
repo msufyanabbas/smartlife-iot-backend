@@ -50,5 +50,25 @@ export default registerAs(
     // Features
     cleanSession: envBoolean(process.env.MQTT_CLEAN_SESSION, true),
     retainMessages: envBoolean(process.env.MQTT_RETAIN_MESSAGES, false),
+
+    // Shared subscriptions — see MQTTService.sharedTopic().
+    //
+    // DEFAULT ON. A plain wildcard subscription is fan-out: the broker gives
+    // every connected subscriber a copy of every uplink, so N replicas wrote N
+    // telemetry rows, produced N Kafka messages and evaluated every alarm rule
+    // N times for one physical reading. `$share/<group>/<topic>` makes the
+    // broker load-balance each message to exactly one member of the group.
+    //
+    // EMQX 5 (this deployment) supports it; it is an MQTT 5 feature that most
+    // MQTT 3.1.1 brokers also implement as an extension, but not all — hence
+    // the switch rather than hard-coding the prefix.
+    sharedSubscription: envBoolean(process.env.MQTT_SHARED_SUBSCRIPTION, true),
+    // The group name is the identity of this consumer pool. Two deployments
+    // pointed at one broker must use DIFFERENT groups, or they will steal each
+    // other's uplinks instead of each receiving them.
+    sharedGroup: envString(
+      process.env.MQTT_SHARED_GROUP,
+      'smartlife-platform',
+    )!,
   }),
 );

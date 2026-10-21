@@ -117,6 +117,20 @@ export class FloorPlan extends BaseEntity {
   @Column({ nullable: true })
   dwgFileUrl?: string; // "https://storage.../floor-plan.dwg"
 
+  /**
+   * `StorageService` key for the uploaded source — `floor-plans/dwg/<uuid>.dwg`.
+   *
+   * The driver-independent identity of the bytes, and the only value a read
+   * path should use. `dwgFileUrl` above is where a *browser* fetches it, which
+   * is a different question: with an object-store driver the URL may be signed
+   * or on another host, so the key cannot be recovered from it.
+   *
+   * Null on rows written before the storage seam. `FloorPlansService` derives
+   * the key from the legacy URL in that case — see `resolveRef()`.
+   */
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  dwgStorageKey?: string;
+
   @Column({ type: 'bigint', nullable: true })
   dwgFileSizeBytes?: number;
 
@@ -141,6 +155,10 @@ export class FloorPlan extends BaseEntity {
   @Column({ nullable: true })
   modelFileUrl?: string; // "/uploads/floor-plans/models/<id>.glb"
 
+  /** `StorageService` key for the model — `floor-plans/models/<id>.glb`. */
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  modelStorageKey?: string;
+
   @Column({ nullable: true })
   modelFileType?: string; // 'obj' | 'gltf' | 'glb' | 'fbx'
 
@@ -154,8 +172,19 @@ export class FloorPlan extends BaseEntity {
   @Column({ nullable: true })
   thumbnailUrl?: string; // Small preview (200x200)
 
+  /** `StorageService` key for the preview — `floor-plans/previews/<id>.png`. */
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  thumbnailStorageKey?: string;
+
   @Column({ nullable: true })
   imageUrl?: string; // Full-size 2D render
+
+  /**
+   * Which `StorageDriver` wrote this row's files (`local` | `s3`). Mirrors
+   * `images.storageProvider`. Null on rows written before the storage seam.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  storageProvider?: string;
 
   // ══════════════════════════════════════════════════════════════════════════
   // DIMENSIONS & SCALE

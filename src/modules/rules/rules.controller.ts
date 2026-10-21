@@ -29,6 +29,8 @@ import {
   SwaggerAuth,
 } from '@common/decorators/access-control.decorator';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Rule Chains')
 @Controller('rule-chains')
@@ -43,6 +45,10 @@ export class RulesController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+  })
   @RequirePermissions('automations:create')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Create a new rule chain', 'Rule chain created')
@@ -98,6 +104,10 @@ export class RulesController {
   }
 
   @Post('import')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+  })
   @RequirePermissions('automations:create')
   @TenantOrCustomerAdmin()
   @ApiOperation({
@@ -168,6 +178,10 @@ export class RulesController {
   }
 
   @Put(':id/metadata')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @ApiOperation({
@@ -201,6 +215,10 @@ export class RulesController {
   }
 
   @Post(':id/test')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
@@ -252,6 +270,10 @@ export class RulesController {
   }
 
   @Post(':id/duplicate')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @ApiOperation({
@@ -274,6 +296,10 @@ export class RulesController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Update rule chain', 'Rule chain updated')
@@ -288,6 +314,10 @@ export class RulesController {
   }
 
   @Post(':id/activate')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Activate a rule chain', 'Rule chain activated')
@@ -301,6 +331,11 @@ export class RulesController {
   }
 
   @Post(':id/deactivate')
+  @Audit({
+    action: AuditAction.DEACTIVATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Deactivate a rule chain', 'Rule chain deactivated')
@@ -314,6 +349,10 @@ export class RulesController {
   }
 
   @Post(':id/root')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
@@ -340,6 +379,11 @@ export class RulesController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('automations:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @TenantOrCustomerAdmin()

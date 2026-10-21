@@ -31,6 +31,8 @@ import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { Public } from '@/common/decorators/public.decorator';
 import { User } from '../users/entities/user.entity';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('edge')
 @Controller('edge')
@@ -119,6 +121,11 @@ export class EdgeController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'create edge instance',
+  })
   @RequirePermissions('edge:create')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -146,6 +153,11 @@ export class EdgeController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update edge instance',
+  })
   @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -159,6 +171,12 @@ export class EdgeController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete edge instance',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('edge:delete')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -171,6 +189,11 @@ export class EdgeController {
   // ── Activation ─────────────────────────────────────────────────────────────
 
   @Post(':id/activate')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'activate edge instance',
+  })
   @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -192,6 +215,11 @@ export class EdgeController {
   }
 
   @Post(':id/devices')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update edge instance',
+  })
   @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -206,6 +234,12 @@ export class EdgeController {
   }
 
   @Delete(':id/devices/:deviceId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete edge instance',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -231,6 +265,11 @@ export class EdgeController {
   }
 
   @Post(':id/sync')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update edge instance',
+  })
   @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -252,6 +291,11 @@ export class EdgeController {
   // ── Commands ───────────────────────────────────────────────────────────────
 
   @Post(':id/commands')
+  @Audit({
+    action: AuditAction.DEVICE_COMMAND,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'device command edge instance',
+  })
   @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -323,6 +367,11 @@ export class EdgeController {
   // ── Rule chain assignment ──────────────────────────────────────────────────
 
   @Post(':id/rule-chains/:ruleChainId')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update edge instance',
+  })
   @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -337,6 +386,12 @@ export class EdgeController {
   }
 
   @Delete(':id/rule-chains/:ruleChainId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete edge instance',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -353,6 +408,11 @@ export class EdgeController {
   // ── Dashboard assignment ───────────────────────────────────────────────────
 
   @Post(':id/dashboards/:dashboardId')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update edge instance',
+  })
   @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -367,6 +427,12 @@ export class EdgeController {
   }
 
   @Delete(':id/dashboards/:dashboardId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete edge instance',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('edge:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

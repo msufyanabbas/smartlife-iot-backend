@@ -38,6 +38,8 @@ import {
   BulkUpdateNotificationsDto,
 } from './dto/bulk-notification.dto';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('notifications')
 @Controller('notifications')
@@ -47,6 +49,10 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.NOTIFICATION,
+  })
   @RequirePermissions('notifications:create')
   @ApiOperation({ summary: 'Create new notification' })
   @ApiResponse({ status: 201, description: 'Notification created' })
@@ -88,6 +94,10 @@ export class NotificationsController {
   }
 
   @Patch(':id/read')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.NOTIFICATION,
+  })
   @RequirePermissions('notifications:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark notification as read' })
@@ -97,6 +107,10 @@ export class NotificationsController {
   }
 
   @Patch('read/multiple')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.NOTIFICATION,
+  })
   @RequirePermissions('notifications:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark multiple notifications as read' })
@@ -106,6 +120,10 @@ export class NotificationsController {
   }
 
   @Patch('read/all')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.NOTIFICATION,
+  })
   @RequirePermissions('notifications:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark all notifications as read' })
@@ -115,6 +133,11 @@ export class NotificationsController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.NOTIFICATION,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('notifications:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete notification' })
@@ -132,6 +155,11 @@ export class NotificationsController {
   // NotificationsService.resolveForBulk(), not by the role list.
 
   @Post('bulk/delete')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.NOTIFICATION,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('notifications:delete')
   @Roles(
     UserRole.SUPER_ADMIN,
@@ -165,6 +193,10 @@ export class NotificationsController {
   }
 
   @Patch('bulk')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.NOTIFICATION,
+  })
   @RequirePermissions('notifications:update')
   @Roles(
     UserRole.SUPER_ADMIN,
@@ -204,6 +236,11 @@ export class NotificationsController {
   }
 
   @Delete('read/all')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.NOTIFICATION,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('notifications:delete')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete all read notifications' })
@@ -213,6 +250,10 @@ export class NotificationsController {
   }
 
   @Post('bulk')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.NOTIFICATION,
+  })
   @RequirePermissions('notifications:create')
 @HttpCode(HttpStatus.OK)
 @ApiOperation({ summary: 'Send bulk notifications' })
@@ -236,6 +277,10 @@ sendBulk(@Body() dto: SendBulkNotificationDto, @CurrentUser() user: User) {
  * tenant.
  */
 @Post('bulk/tenant/:tenantId')
+@Audit({
+  action: AuditAction.UPDATE,
+  entityType: AuditEntityType.NOTIFICATION,
+})
 @RequirePermissions('notifications:update')
 @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
 @HttpCode(HttpStatus.OK)
@@ -264,6 +309,10 @@ sendBulkToTenant(
  * before anything is sent.
  */
 @Post('bulk/customer/:customerId')
+@Audit({
+  action: AuditAction.UPDATE,
+  entityType: AuditEntityType.NOTIFICATION,
+})
 @RequirePermissions('notifications:update')
 @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
 @HttpCode(HttpStatus.OK)
@@ -301,6 +350,10 @@ async sendBulkToCustomer(
 }
 
   @Post('retry-failed')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.NOTIFICATION,
+  })
   @RequirePermissions('notifications:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Retry failed notifications' })

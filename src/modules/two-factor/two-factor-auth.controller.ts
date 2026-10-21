@@ -26,6 +26,8 @@ import {
   TwoFactorSettingsResponseDto,
   VerifyCodeDto,
 } from './dto/two-factor-challenge.dto';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Two-Factor Authentication')
 @ApiBearerAuth()
@@ -59,6 +61,11 @@ export class TwoFactorAuthController {
   // ==================== AUTHENTICATOR SETUP ====================
 
   @Post('authenticator/generate')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.USER,
+    description: 'create two-factor setting',
+  })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Generate authenticator secret and QR code' })
   @ApiResponse({
@@ -80,6 +87,11 @@ export class TwoFactorAuthController {
   }
 
   @Post('authenticator/enable')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.USER,
+    description: 'activate two-factor setting',
+  })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Enable authenticator 2FA' })
   @ApiResponse({
@@ -110,6 +122,11 @@ export class TwoFactorAuthController {
   // ==================== SMS SETUP ====================
 
   @Post('sms/setup')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.USER,
+    description: 'create two-factor setting',
+  })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Setup SMS 2FA with phone number' })
   @ApiResponse({
@@ -134,6 +151,11 @@ export class TwoFactorAuthController {
   }
 
   @Post('sms/resend')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.USER,
+    description: 'create two-factor setting',
+  })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Resend SMS verification code' })
   @ApiResponse({
@@ -147,6 +169,11 @@ export class TwoFactorAuthController {
   }
 
   @Post('sms/enable')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.USER,
+    description: 'activate two-factor setting',
+  })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Enable SMS 2FA' })
   @ApiResponse({
@@ -174,6 +201,11 @@ export class TwoFactorAuthController {
   // ==================== EMAIL SETUP ====================
 
   @Post('email/send')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.USER,
+    description: 'create two-factor setting',
+  })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Send email verification code' })
   @ApiResponse({
@@ -186,6 +218,11 @@ export class TwoFactorAuthController {
   }
 
   @Post('email/enable')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.USER,
+    description: 'activate two-factor setting',
+  })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Enable email 2FA' })
   @ApiResponse({
@@ -215,6 +252,12 @@ export class TwoFactorAuthController {
   // ==================== DISABLE 2FA ====================
 
   @Post('disable')
+  @Audit({
+    action: AuditAction.DEACTIVATE,
+    entityType: AuditEntityType.USER,
+    description: 'deactivate two-factor setting',
+    severity: AuditSeverity.WARNING,
+  })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Disable 2FA' })
   @ApiResponse({
@@ -241,6 +284,11 @@ export class TwoFactorAuthController {
   // ==================== BACKUP CODES ====================
 
   @Post('backup-codes/regenerate')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.USER,
+    description: 'create two-factor setting',
+  })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Regenerate backup codes' })
   @ApiResponse({

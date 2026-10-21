@@ -8,7 +8,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, QueryRunner, DataSource } from 'typeorm';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { CronExpression } from '@nestjs/schedule';
+import { DistributedCron } from '@/lib/cluster/distributed-cron.decorator';
 import {
   SubscriptionPlan,
   SubscriptionStatus,
@@ -44,6 +45,7 @@ import {
   UpgradeSubscriptionDto,
 } from './dto/create-subscription.dto';
 import { UsersService } from '@modules/index.service';
+import { SubscriptionCacheService } from '@lib/redis/subscription-cache.service';
 import {
   PaginatedResponseDto,
   PaginationDto,
@@ -231,6 +233,10 @@ export class SubscriptionsService {
     @InjectRepository(Automation)
     private readonly automationRepository: Repository<Automation>,
     private readonly dataSource: DataSource,
+    // From the @Global RedisModule. Only the three write paths that bypass the
+    // ORM (two raw-SQL usage counters and the QueryBuilder reconciliation)
+    // need it — every `save()` is covered by SubscriptionCacheSubscriber.
+    private readonly subscriptionCache: SubscriptionCacheService,
   ) {}
 
   /**
@@ -1614,7 +1620,15 @@ export class SubscriptionsService {
    * one narrow query, a per-row try/catch so one bad row cannot abort the
    * sweep, and a single summary log line.
    */
-  @Cron(CronExpression.EVERY_HOUR)
+  // Locked across replicas: every branch of this sweep is a state transition on
+  // billing state — expiring a trial, completing a cancellation, starting a
+  // grace period, downgrading after it. Two replicas sweeping the same row
+  // concurrently can both read it as ACTIVE and both act, so a tenant gets two
+  // grace periods started, or a downgrade applied on top of a downgrade.
+  @DistributedCron(CronExpression.EVERY_HOUR, {
+    name: 'subscriptions-expiry-sweep',
+    lockTtl: 600,
+  })
   async sweepExpiredSubscriptions(): Promise<{
     trialsExpired: number;
     cancellationsCompleted: number;
@@ -1928,6 +1942,13 @@ export class SubscriptionsService {
        WHERE "tenantId" = $2`,
       [amount, tenantId],
     );
+
+    // Raw SQL fires no ORM events, so SubscriptionCacheSubscriber cannot see
+    // this write. Without this line the cached row keeps its pre-increment
+    // counters for the whole TTL — harmless for quota enforcement (those
+    // routes bypass the cache by design) but visibly wrong on any dashboard
+    // that shows "3 of 5 devices used".
+    await this.subscriptionCache.invalidate(tenantId);
   }
 
   /**
@@ -1948,6 +1969,9 @@ export class SubscriptionsService {
        WHERE "tenantId" = $2`,
       [amount, tenantId],
     );
+
+    // See incrementTenantUsage — raw SQL is invisible to the ORM subscriber.
+    await this.subscriptionCache.invalidate(tenantId);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2015,6 +2039,12 @@ export class SubscriptionsService {
     const updated: SubscriptionUsage =
       result.raw?.[0]?.usage ?? { ...EMPTY_USAGE, ...recomputed };
 
+    // A QueryBuilder `.update()` bypasses the ORM's entity events exactly as
+    // raw SQL does, so SubscriptionCacheSubscriber does not see this either.
+    // Reconciliation is the one write whose whole purpose is to correct drift;
+    // leaving a cached copy of the wrong numbers behind it would be absurd.
+    await this.subscriptionCache.invalidate(tenantId);
+
     this.logger.log(
       `Usage synced for tenant ${tenantId}: ` +
         Object.entries(recomputed)
@@ -2032,7 +2062,15 @@ export class SubscriptionsService {
    * deadline on a 2 AM job — a burst of parallel COUNTs across seven tables
    * per tenant is a worse trade than taking a few extra seconds.
    */
-  @Cron('0 2 * * *')
+  // Locked across replicas. The recomputation itself is idempotent (it
+  // overwrites counters from COUNTs), but it walks every tenant across seven
+  // tables, so N replicas is N× that load at 02:00 for an identical result —
+  // and two concurrent writers can interleave so that a counter is overwritten
+  // with a value read before the other's write.
+  @DistributedCron('0 2 * * *', {
+    name: 'subscriptions-usage-sync',
+    lockTtl: 1800,
+  })
   async syncAllTenantsUsage(): Promise<void> {
     this.logger.log('Running daily usage sync for all tenants...');
 
@@ -2140,7 +2178,14 @@ export class SubscriptionsService {
    * Runs at midnight on the 1st of every month.
    * Uses a single bulk SQL UPDATE instead of loading + looping in JS.
    */
-  @Cron(CronExpression.EVERY_1ST_DAY_OF_MONTH_AT_MIDNIGHT)
+  // Locked across replicas. The UPDATE sets constants, so re-running it is
+  // "idempotent" in the narrow sense — but it is a *reset*, and any apiCalls or
+  // smsNotifications counted between replica A's run and replica B's run are
+  // zeroed a second time and lost. That is metered usage being given away.
+  @DistributedCron(CronExpression.EVERY_1ST_DAY_OF_MONTH_AT_MIDNIGHT, {
+    name: 'subscriptions-monthly-usage-reset',
+    lockTtl: 300,
+  })
   async resetMonthlyUsage(): Promise<void> {
     this.logger.log('🔄 Starting monthly usage reset...');
 
@@ -2168,7 +2213,14 @@ export class SubscriptionsService {
    * Execute scheduled downgrades when their effective date has passed.
    * Runs every day at midnight.
    */
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  // Locked across replicas: this rewrites plan, price, limits and features from
+  // a jsonb instruction it then clears. Two replicas reading the row before
+  // either clears it both apply the downgrade and both write a plan-change
+  // record.
+  @DistributedCron(CronExpression.EVERY_DAY_AT_MIDNIGHT, {
+    name: 'subscriptions-scheduled-downgrades',
+    lockTtl: 600,
+  })
   async processScheduledDowngrades(): Promise<void> {
     this.logger.log('Processing scheduled downgrades...');
 

@@ -156,6 +156,10 @@ const OTHER_CUSTOMER_A = randomUUID();
     telemetryRepo,
     deviceRepo,
     noop, // redis
+    // TelemetryLatestCacheService — a permanent miss here is what this script
+    // wants: it asserts tenant scoping of reads from Postgres, not what a
+    // cache replays.
+    noop, // latest-reading cache
     noop, // profile alarms
     noop, // integration dispatch
     noop, // automation

@@ -40,6 +40,8 @@ import {
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { UserRole } from '@common/enums/index.enum';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Solution Templates')
 @Controller('solution-templates')
@@ -49,6 +51,11 @@ export class SolutionTemplatesController {
   ) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'create solution template',
+  })
   @RequirePermissions('settings:create')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Create a new solution template', 'Template created')
@@ -107,6 +114,12 @@ export class SolutionTemplatesController {
   }
 
   @Delete('installations/:installationId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete solution template',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('settings:delete')
   @TenantOrCustomerAdmin()
   @SwaggerAuth(
@@ -167,6 +180,11 @@ export class SolutionTemplatesController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update solution template',
+  })
   @RequirePermissions('settings:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Update template', 'Template updated')
@@ -188,6 +206,12 @@ export class SolutionTemplatesController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete solution template',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('settings:delete')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -210,6 +234,11 @@ export class SolutionTemplatesController {
   // Roles(TENANT_ADMIN, CUSTOMER) and would otherwise block the super admin,
   // who is the only role allowed to replace a system template's image.
   @Post(':id/image')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update solution template',
+  })
   @RequirePermissions('settings:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @SwaggerAuth('Upload a template image', 'Template updated with image')
@@ -267,6 +296,12 @@ export class SolutionTemplatesController {
   }
 
   @Delete(':id/image')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete solution template',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('settings:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @SwaggerAuth('Remove the template image', 'Image removed')
@@ -286,6 +321,11 @@ export class SolutionTemplatesController {
   }
 
   @Post(':id/install')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update solution template',
+  })
   @RequirePermissions('settings:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Install solution template', 'Template installed')
@@ -308,6 +348,11 @@ export class SolutionTemplatesController {
   }
 
   @Post(':id/rate')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update solution template',
+  })
   @RequirePermissions('settings:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Rate a template', 'Template rated')

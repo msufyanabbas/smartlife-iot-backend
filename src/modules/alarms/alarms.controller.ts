@@ -35,6 +35,8 @@ import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/users/entities/user.entity';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('alarms')
 @Controller('alarms')
@@ -159,6 +161,10 @@ export class AlarmsController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.ALARM,
+  })
   @RequirePermissions('alerts:update')
   @ApiOperation({ summary: 'Update alarm rule' })
   @ApiResponse({ status: 200, description: 'Alarm updated' })
@@ -171,6 +177,11 @@ export class AlarmsController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.ALARM,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('alerts:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete alarm rule' })
@@ -207,6 +218,10 @@ export class AlarmsController {
   }
 
   @Patch(':id/assign')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.ALARM,
+  })
   @RequirePermissions('alerts:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -240,6 +255,10 @@ export class AlarmsController {
   }
 
   @Post(':id/enable')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.ALARM,
+  })
   @RequirePermissions('alerts:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Enable alarm rule' })
@@ -249,6 +268,11 @@ export class AlarmsController {
   }
 
   @Post(':id/disable')
+  @Audit({
+    action: AuditAction.DEACTIVATE,
+    entityType: AuditEntityType.ALARM,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('alerts:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Disable alarm rule' })
@@ -258,6 +282,10 @@ export class AlarmsController {
   }
 
   @Post(':id/test')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.ALARM,
+  })
   @RequirePermissions('alerts:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Test alarm rule with a value' })

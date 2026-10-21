@@ -20,6 +20,7 @@ import {
   TransformInterceptor,
 } from '@common/interceptors/index.interceptor';
 import { envBoolean, envList, envNumber, envString } from '@/config/env.utils';
+import { RedisIoAdapter } from '@/lib/websocket/redis-io.adapter';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -245,11 +246,33 @@ async function bootstrap() {
     });
   }
 
+  // ── WebSocket adapter ──────────────────────────────────────────────────────
+  // Socket.IO's default adapter holds room membership in process memory, so
+  // `server.to(room).emit()` reaches only the sockets on the replica that
+  // called it. With two replicas behind a load balancer, a browser connected to
+  // A never receives a telemetry or alarm push produced on B. The Redis adapter
+  // makes every room emit cross replicas; see lib/websocket/redis-io.adapter.ts.
+  //
+  // Must be registered BEFORE app.listen(), which is when Nest creates the
+  // Socket.IO server the three gateways (/ws, /alarms, /telemetry) attach to.
+  // connect() never throws: a Redis failure here logs and falls back to the
+  // in-memory adapter rather than preventing boot.
+  const ioAdapter = new RedisIoAdapter(app);
+  await ioAdapter.connect();
+  app.useWebSocketAdapter(ioAdapter);
+
   // ── Shutdown ───────────────────────────────────────────────────────────────
   // Without this, OnApplicationShutdown never fires — Redis, Kafka and MQTT
   // connections are torn down by process exit rather than closed, which on a
   // rolling deploy drops in-flight messages.
   app.enableShutdownHooks();
+  // The adapter's two pub/sub duplicates are not owned by a provider, so they
+  // are closed from the signal handler rather than a lifecycle hook.
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(signal, () => {
+      void ioAdapter.close();
+    });
+  }
 
   // ── Start ──────────────────────────────────────────────────────────────────
   const port = envNumber(process.env.PORT, 5000);

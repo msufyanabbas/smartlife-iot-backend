@@ -46,6 +46,7 @@ import {
   GitHubProfile,
 } from './strategies/oauth/index.strategy';
 import { Cron } from '@nestjs/schedule';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SessionService } from './session/session.service';
 import { CreateInvitationDto } from './dto/invitation.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -80,6 +81,11 @@ export class AuthService {
     private mailService: MailService,
     private sessionService: SessionService,
     private twoFactorAuthService: TwoFactorAuthService,
+    // Authentication was the one thing the audit log did not record. The
+    // handlers existed in `AuditEventsService` (`user.login`,
+    // `user.login.failed`, `user.logout`) and nothing emitted them, so the
+    // security log could not answer "who logged in". See §4p.
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -250,6 +256,18 @@ export class AuthService {
     }
 
     this.logger.log(`New user registered: ${email}`);
+
+    // Self-registration writes its user row through this repository rather
+    // than `UsersService.create()`, so it never emitted `user.created` and an
+    // account appearing on the platform left no audit trail at all. `POST
+    // /auth/register` is @Public, so the interceptor cannot cover it either —
+    // this emit is the only way the row exists. `createdBy` is deliberately
+    // absent: nobody created this account but its owner.
+    this.eventEmitter.emit('user.created', {
+      user: savedUser,
+      tenantId: savedUser.tenantId,
+      customerId: savedUser.customerId,
+    });
 
     try {
       await this.mailService.sendVerificationEmail(
@@ -555,13 +573,40 @@ export class AuthService {
   ): Promise<AuthResponseDto | TwoFactorChallengeDto> {
     const { email, password, twoFactorCode } = loginDto;
 
-    const user = await this.validateUser(email, password);
+    let user: User | null;
+    try {
+      user = await this.validateUser(email, password);
+    } catch (error) {
+      // validateUser throws for an inactive account. A locked-out account
+      // being hammered is exactly what a security log is for, so record it
+      // before rethrowing.
+      await this.emitLoginFailed(
+        email,
+        error instanceof Error ? error.message : 'Account not active',
+        ipAddress,
+        userAgent,
+      );
+      throw error;
+    }
 
     if (!user) {
+      await this.emitLoginFailed(
+        email,
+        'Invalid credentials',
+        ipAddress,
+        userAgent,
+      );
       throw new UnauthorizedException('Invalid credentials');
     }
 
     if (!user.emailVerified) {
+      await this.emitLoginFailed(
+        email,
+        'Email not verified',
+        ipAddress,
+        userAgent,
+        user,
+      );
       throw new UnauthorizedException(
         'Please verify your email before logging in. Check your inbox for the verification link.',
       );
@@ -596,6 +641,13 @@ export class AuthService {
       );
 
       if (!isValid) {
+        await this.emitLoginFailed(
+          email,
+          'Invalid 2FA code',
+          ipAddress,
+          userAgent,
+          user,
+        );
         throw new UnauthorizedException('Invalid 2FA code');
       }
     }
@@ -606,6 +658,48 @@ export class AuthService {
     this.logger.log(`User logged in: ${email}`);
 
     return this.generateAuthResponse(user, ipAddress, userAgent, 'local');
+  }
+
+  /**
+   * Record a failed authentication attempt.
+   *
+   * `AuditEventsService.handleUserLoginFailed()` needs a tenant to scope the
+   * row to (`audit_logs.tenantId` is NOT NULL and relates to `tenants`), and
+   * the caller does not always have the user row — a wrong password is
+   * indistinguishable from an unknown email at the `validateUser()` boundary.
+   * So the user is resolved here, on the failure path only, where one extra
+   * query is irrelevant. An email matching no account yields no tenant and the
+   * handler drops the row with a warning; the attempt is still in `api_logs`.
+   *
+   * Never throws: a failed login must return its 401, not a 500.
+   */
+  private async emitLoginFailed(
+    email: string,
+    reason: string,
+    ipAddress?: string,
+    userAgent?: string,
+    known?: User,
+  ): Promise<void> {
+    try {
+      const user =
+        known ??
+        (await this.userRepository.findOne({
+          where: { email },
+          select: ['id', 'tenantId', 'customerId'],
+        }));
+
+      this.eventEmitter.emit('user.login.failed', {
+        email,
+        userId: user?.id,
+        tenantId: user?.tenantId,
+        customerId: user?.customerId,
+        ipAddress,
+        userAgent,
+        reason,
+      });
+    } catch (error) {
+      this.logger.error('Failed to emit user.login.failed', error);
+    }
   }
 
   /**
@@ -879,6 +973,13 @@ export class AuthService {
     }
 
     if (!user.isActive()) {
+      await this.emitLoginFailed(
+        user.email,
+        'Account not active',
+        ipAddress,
+        userAgent,
+        user,
+      );
       throw new UnauthorizedException('User account is not active');
     }
 
@@ -889,6 +990,13 @@ export class AuthService {
     );
 
     if (!isValid) {
+      await this.emitLoginFailed(
+        user.email,
+        'Invalid 2FA code (OAuth)',
+        ipAddress,
+        userAgent,
+        user,
+      );
       throw new UnauthorizedException('Invalid 2FA code');
     }
 
@@ -1100,6 +1208,7 @@ export class AuthService {
       if (accessToken) await this.blacklistToken(accessToken, userId);
       await this.sessionService.deleteSession(userId);
       this.logger.log(`User ${userId} logged out`);
+      await this.emitLogout(userId, 'session');
     }
   }
 
@@ -1116,6 +1225,36 @@ export class AuthService {
     if (accessToken) await this.blacklistToken(accessToken, userId);
     await this.sessionService.deleteSession(userId);
     this.logger.log(`User ${userId} logged out from all devices`);
+    await this.emitLogout(userId, 'all-devices');
+  }
+
+  /**
+   * Record a logout. The controller passes only a user id (it comes from
+   * `@CurrentUser()`), and the audit row needs a tenant, so the user is
+   * resolved here. Never throws — a logout that 500s leaves the caller holding
+   * a token it believes is live.
+   */
+  private async emitLogout(
+    userId: string,
+    scope: 'session' | 'all-devices',
+  ): Promise<void> {
+    try {
+      const user = await this.userRepository.findOne({
+        where: { id: userId },
+        select: ['id', 'name', 'email', 'tenantId', 'customerId'],
+      });
+
+      this.eventEmitter.emit('user.logout', {
+        userId,
+        userName: user?.name,
+        email: user?.email,
+        tenantId: user?.tenantId,
+        customerId: user?.customerId,
+        scope,
+      });
+    } catch (error) {
+      this.logger.error('Failed to emit user.logout', error);
+    }
   }
 
   /**
@@ -1268,6 +1407,23 @@ export class AuthService {
       userAgent,
       loginMethod,
     });
+
+    // `user.login` is emitted HERE, not in `generateAuthResponseWithSessionId`,
+    // because that method is also the token-refresh path (`refreshTokens()`)
+    // and a refresh is not a login. This method is reached by exactly the three
+    // ways a NEW session is created — local login, OAuth, and 2FA verification
+    // — so one emit covers all of them without counting refreshes as logins.
+    this.eventEmitter.emit('user.login', {
+      userId: user.id,
+      userName: user.name,
+      email: user.email,
+      tenantId: user.tenantId,
+      customerId: user.customerId,
+      ipAddress,
+      userAgent,
+      loginMethod: loginMethod ?? 'two-factor',
+    });
+
     return this.generateAuthResponseWithSessionId(
       user,
       sessionId,

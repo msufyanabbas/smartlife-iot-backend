@@ -29,6 +29,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ModuleRef } from '@nestjs/core';
 import { Repository, In, Between, MoreThanOrEqual, SelectQueryBuilder } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { promises as fs } from 'fs';
@@ -54,7 +55,12 @@ import { KafkaService } from '@lib/kafka/kafka.service';
 
 import {
   AnalyticsTimeRange,
+  AnalyticsAggregation,
+  AnalyticsEntityType,
+  AnalyticsExportFormat,
   CreateAnalyticsDto,
+  EntityTimeSeriesDto,
+  ExportAnalyticsDto,
   QueryAnalyticsDto,
   DeviceAnalyticsQueryDto,
   DeviceDetailQueryDto,
@@ -63,6 +69,7 @@ import {
   RecordDashboardViewDto,
 } from './dto/analytics.dto';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
+import { XLSX_MIME_TYPE, buildXlsxBuffer } from '@common/utils/xlsx.util';
 
 // ── Alarm status groupings ──────────────────────────────────────────────────
 // This platform stores a flat 5-value AlarmStatus; ThingsBoard's ACTIVE_UNACK /
@@ -74,6 +81,38 @@ const CLOSED_ALARM_STATUSES = [AlarmStatus.CLEARED, AlarmStatus.RESOLVED];
 
 /** Matches an integer or decimal, optionally signed — used to skip string values in `data`. */
 const NUMERIC_JSON_VALUE = String.raw`^-?[0-9]+(\.[0-9]+)?$`;
+
+/**
+ * Stands in for an empty id list.
+ *
+ * `IN ()` is invalid SQL, so a customer with zero devices needs a predicate
+ * that matches nothing rather than one that is simply omitted — omitting it
+ * leaves the query scoped to the whole tenant, which is the §4g shape.
+ */
+const IMPOSSIBLE_UUID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * The slice of `TelemetryService` this module uses.
+ *
+ * Declared structurally rather than imported: `AnalyticsModule` imports no
+ * sibling feature module (see its own comment), and importing the class for
+ * its type alone would pull `TelemetryModule`'s file graph in — which is what
+ * the `ModuleRef` lookup in `resolveTelemetry()` exists to avoid.
+ */
+interface TelemetryReadPort {
+  getMultiKeySeries(
+    deviceId: string,
+    userId: string,
+    keys: string[],
+    startDate: string,
+    endDate: string,
+    options?: {
+      bucketMs?: number;
+      aggregation?: 'AVG' | 'MIN' | 'MAX' | 'SUM' | 'COUNT';
+      limit?: number;
+    },
+  ): Promise<Record<string, Array<Record<string, any>>>>;
+}
 
 const BYTES_PER_MB = 1_048_576;
 
@@ -123,6 +162,9 @@ export class AnalyticsService {
     // Both are @Global() providers; no module import needed.
     private readonly redis: RedisService,
     private readonly kafka: KafkaService,
+    // Used only to resolve TelemetryService by its string token, so this
+    // module keeps importing no sibling feature module — see §9b below.
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1721,6 +1763,464 @@ export class AnalyticsService {
       })),
       optimizationSuggestions: suggestions,
       period: { since, until },
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 9b. ENTITY TIME SERIES, AGGREGATE, EXPORT AND REALTIME
+  //
+  // The four routes `src/services/api/analytics.api.ts` has always declared
+  // and `AnalyticsController` never had. `POST /analytics/timeseries` was the
+  // live one: `features/dashboard/services/dashboardService.ts` and
+  // `features/analytics/hooks/index.ts` both call it, so every timeseries
+  // dashboard widget was fetching a 404.
+  //
+  // ── Why these delegate to TelemetryService ─────────────────────────────────
+  // `TelemetryService` already owns rollup-aware reads AND the tenancy gate
+  // (`resolveDeviceForUser`, the fix for the broadest data exposure in this
+  // codebase — §4g). Rewriting the read here would mean a second place that
+  // resolves a device for a caller, and the §4g table is a list of what
+  // happens when two code paths disagree about that.
+  //
+  // ── Why ModuleRef and not an import ───────────────────────────────────────
+  // `AnalyticsModule` imports repositories and NO sibling feature module, by
+  // design, "so this module can never participate in a dependency cycle" — and
+  // `ReportsModule` and `SchedulesModule` both import it. `TelemetryModule`
+  // pulls in 27 other modules transitively, so importing it here would stake
+  // that invariant on all of them. `TelemetryModule` already exports its
+  // service under the string token `'TelemetryService'` for exactly this
+  // pattern (AiInsightsService does the same), so the token can be named
+  // without the import.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** Memoised ModuleRef lookup. `null` = resolved and absent; do not retry. */
+  private telemetryPort?: TelemetryReadPort | null;
+
+  private resolveTelemetry(): TelemetryReadPort {
+    if (this.telemetryPort === undefined) {
+      try {
+        this.telemetryPort = this.moduleRef.get<TelemetryReadPort>(
+          'TelemetryService',
+          { strict: false },
+        );
+      } catch (error) {
+        this.logger.error(
+          `Could not resolve TelemetryService: ${(error as Error).message}`,
+        );
+        this.telemetryPort = null;
+      }
+    }
+    if (!this.telemetryPort) {
+      throw new BadRequestException(
+        'Telemetry reads are unavailable on this instance.',
+      );
+    }
+    return this.telemetryPort;
+  }
+
+  /**
+   * Which devices a time-series read covers, and the access check in front of
+   * them.
+   *
+   * A DEVICE request is one device, confirmed to belong to this tenant (and
+   * this customer, when the caller is customer-scoped) before its id is passed
+   * down. An ASSET request fans out to the devices linked to that asset.
+   *
+   * **404, not 403** for anything outside scope — a 403 confirms the id exists
+   * and turns the route into an enumeration oracle (§4g).
+   */
+  private async resolveSeriesDevices(
+    tenantId: string,
+    entityId: string,
+    entityType: AnalyticsEntityType,
+    customerId?: string | null,
+  ): Promise<Device[]> {
+    if (entityType === AnalyticsEntityType.ASSET) {
+      const asset = await this.assetRepo.findOne({
+        where: customerId
+          ? { id: entityId, tenantId, customerId }
+          : { id: entityId, tenantId },
+      });
+      if (!asset) throw new NotFoundException('Asset not found');
+
+      const devices = await this.deviceRepo.find({
+        where: customerId
+          ? { assetId: entityId, tenantId, customerId }
+          : { assetId: entityId, tenantId },
+      });
+      if (devices.length === 0) {
+        throw new NotFoundException(
+          'That asset has no devices linked to it, so it has no telemetry. ' +
+            'Link one with POST /assets/:id/devices.',
+        );
+      }
+      return devices;
+    }
+
+    const device = await this.deviceRepo.findOne({
+      where: customerId
+        ? { id: entityId, tenantId, customerId }
+        : { id: entityId, tenantId },
+    });
+    if (!device) throw new NotFoundException('Device not found');
+    return [device];
+  }
+
+  /**
+   * `POST /analytics/timeseries` and `GET /analytics/aggregate`.
+   *
+   * Returns `{ [key]: point[] }` — the shape the client's
+   * `Record<string, TimeSeriesData[]>` already expects, so no caller changes.
+   *
+   * ── ASSET entities are a UNION, not a roll-up ─────────────────────────────
+   * An asset request reads every device on the asset and merges the points for
+   * each key, tagging each with its `deviceId`. It deliberately does NOT
+   * average across devices: "the mean of four rooms' temperatures" is a
+   * different quantity from "this room's temperature", the caller did not ask
+   * for it, and a silent cross-device mean is the kind of number that ends up
+   * on a dashboard being trusted. Points are ordered by timestamp so a chart
+   * can still draw them, and the `deviceId` on each is what lets it split them
+   * into one line per device.
+   */
+  async getEntityTimeSeries(
+    tenantIdRaw: string,
+    userId: string,
+    dto: EntityTimeSeriesDto,
+    customerId?: string | null,
+  ): Promise<{
+    entityId: string;
+    entityType: AnalyticsEntityType;
+    period: { from: string; to: string };
+    deviceIds: string[];
+    aggregation: AnalyticsAggregation;
+    intervalMs: number;
+    series: Record<string, Array<Record<string, any>>>;
+  }> {
+    const tenantId = this.assertTenant(tenantIdRaw);
+
+    if (dto.endTime <= dto.startTime) {
+      throw new BadRequestException(
+        '`endTime` must be after `startTime` (both are epoch milliseconds).',
+      );
+    }
+
+    const devices = await this.resolveSeriesDevices(
+      tenantId,
+      dto.entityId,
+      dto.entityType,
+      customerId,
+    );
+
+    const telemetry = this.resolveTelemetry();
+    const from = new Date(dto.startTime).toISOString();
+    const to = new Date(dto.endTime).toISOString();
+    const aggregation = dto.aggregation ?? AnalyticsAggregation.NONE;
+    const intervalMs = Number(dto.interval ?? 0);
+    const bucketMs =
+      aggregation === AnalyticsAggregation.NONE ? 0 : intervalMs;
+
+    const perDevice = await Promise.all(
+      devices.map(async (device) => ({
+        deviceId: device.id,
+        deviceName: device.name,
+        series: await telemetry.getMultiKeySeries(
+          device.id,
+          userId,
+          dto.keys,
+          from,
+          to,
+          {
+            bucketMs,
+            aggregation:
+              aggregation === AnalyticsAggregation.NONE
+                ? undefined
+                : (aggregation as 'AVG' | 'MIN' | 'MAX' | 'SUM' | 'COUNT'),
+            limit: dto.limit,
+          },
+        ),
+      })),
+    );
+
+    const series: Record<string, Array<Record<string, any>>> =
+      Object.fromEntries(dto.keys.map((key) => [key, []]));
+
+    for (const entry of perDevice) {
+      for (const key of dto.keys) {
+        const points = entry.series[key] ?? [];
+        series[key].push(
+          ...points.map((point) => ({
+            ...point,
+            // Only tagged for a multi-device read: adding it to every
+            // single-device point would change the payload shape every
+            // existing widget already parses.
+            ...(devices.length > 1 && {
+              deviceId: entry.deviceId,
+              deviceName: entry.deviceName,
+            }),
+          })),
+        );
+      }
+    }
+
+    if (devices.length > 1) {
+      for (const key of dto.keys) {
+        series[key].sort(
+          (a, b) =>
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+        );
+      }
+    }
+
+    return {
+      entityId: dto.entityId,
+      entityType: dto.entityType,
+      period: { from, to },
+      deviceIds: devices.map((device) => device.id),
+      aggregation,
+      intervalMs: bucketMs,
+      series,
+    };
+  }
+
+  /**
+   * `POST /analytics/export` — the same read, rendered to a file.
+   *
+   * One row per (timestamp, key), rather than a column per key: the keys come
+   * from the request, points for different keys do not share timestamps unless
+   * the read was bucketed, and pivoting unaligned series into columns invents
+   * alignment that is not in the data. CSV quoting is RFC 4180 (every field
+   * quoted, embedded quotes doubled) — `TelemetryService.exportToCSV()` does
+   * not do this and a device named `Lobby, North` shifts every later column
+   * there (§11).
+   */
+  async exportEntityTimeSeries(
+    tenantIdRaw: string,
+    userId: string,
+    dto: ExportAnalyticsDto,
+    customerId?: string | null,
+  ): Promise<{ content: Buffer; mimeType: string; fileName: string }> {
+    const result = await this.getEntityTimeSeries(
+      tenantIdRaw,
+      userId,
+      dto.query,
+      customerId,
+    );
+
+    const multiDevice = result.deviceIds.length > 1;
+    const columns = [
+      { key: 'timestamp', label: 'Timestamp' },
+      ...(multiDevice
+        ? [
+            { key: 'deviceId', label: 'Device ID' },
+            { key: 'deviceName', label: 'Device' },
+          ]
+        : []),
+      { key: 'key', label: 'Key' },
+      { key: 'value', label: 'Value' },
+      { key: 'min', label: 'Min' },
+      { key: 'max', label: 'Max' },
+      { key: 'count', label: 'Samples' },
+    ];
+
+    const rows: Array<Record<string, unknown>> = [];
+    for (const [key, points] of Object.entries(result.series)) {
+      for (const point of points) {
+        rows.push({
+          timestamp: point.timestamp,
+          deviceId: point.deviceId ?? result.deviceIds[0],
+          deviceName: point.deviceName ?? null,
+          key,
+          value: point.value,
+          min: point.min ?? null,
+          max: point.max ?? null,
+          count: point.count ?? null,
+        });
+      }
+    }
+    rows.sort(
+      (a, b) =>
+        new Date(String(a.timestamp)).getTime() -
+        new Date(String(b.timestamp)).getTime(),
+    );
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const format = dto.format ?? AnalyticsExportFormat.CSV;
+
+    if (format === AnalyticsExportFormat.JSON) {
+      return {
+        content: Buffer.from(
+          JSON.stringify({ ...result, rowCount: rows.length, rows }, null, 2),
+          'utf8',
+        ),
+        mimeType: 'application/json',
+        fileName: `analytics-${stamp}.json`,
+      };
+    }
+
+    if (format === AnalyticsExportFormat.XLSX) {
+      return {
+        content: await buildXlsxBuffer([
+          {
+            name: 'Telemetry',
+            columns,
+            rows,
+            notes: [
+              `Entity ${result.entityType} ${result.entityId}`,
+              `Period ${result.period.from} → ${result.period.to}`,
+              `Aggregation ${result.aggregation}` +
+                (result.intervalMs ? ` over ${result.intervalMs} ms buckets` : ' (raw samples)'),
+              `${rows.length} row(s) across ${result.deviceIds.length} device(s)`,
+            ],
+          },
+        ]),
+        mimeType: XLSX_MIME_TYPE,
+        fileName: `analytics-${stamp}.xlsx`,
+      };
+    }
+
+    const escape = (value: unknown): string => {
+      if (value === null || value === undefined) return '""';
+      const text =
+        value instanceof Date
+          ? value.toISOString()
+          : typeof value === 'object'
+            ? JSON.stringify(value)
+            : String(value);
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+    const csv = [
+      columns.map((column) => escape(column.label)).join(','),
+      ...rows.map((row) =>
+        columns.map((column) => escape(row[column.key])).join(','),
+      ),
+    ].join('\r\n');
+
+    return {
+      content: Buffer.from(csv + '\r\n', 'utf8'),
+      mimeType: 'text/csv; charset=utf-8',
+      fileName: `analytics-${stamp}.csv`,
+    };
+  }
+
+  /**
+   * `GET /analytics/realtime` — what is happening right now.
+   *
+   * Distinct from `/overview`, which answers "today, this week, this month".
+   * This is the strip at the top of a live dashboard: messages in the last
+   * minute and the last five, how many devices have reported recently, and the
+   * current alarm counts.
+   *
+   * ── Two honest limitations, both stated in the payload ────────────────────
+   *  · `devicesReportingNow` counts devices whose last telemetry row is inside
+   *    the window — it is NOT a broker connection count. The platform has no
+   *    live connection registry outside `GatewayService`'s in-process map, so
+   *    a device that is connected and silent is indistinguishable from one that
+   *    is unplugged, and `DevicesService.checkOfflineDevices()` only sweeps
+   *    every five minutes.
+   *  · `messagesPerMinute` is measured over the last five minutes rather than
+   *    the last sixty seconds. A one-minute sample on a fleet reporting every
+   *    15 minutes reads zero most of the time, which looks like an outage.
+   */
+  async getRealtimeStats(tenantIdRaw: string, customerId?: string | null) {
+    const tenantId = this.assertTenant(tenantIdRaw);
+    const deviceIds = await this.visibleDeviceIds(tenantId, customerId);
+    const scopedIds = deviceIds?.length
+      ? deviceIds
+      : deviceIds
+        ? [IMPOSSIBLE_UUID]
+        : null;
+
+    const now = Date.now();
+    const oneMinuteAgo = new Date(now - 60_000);
+    const fiveMinutesAgo = new Date(now - 5 * 60_000);
+
+    const countSince = (since: Date) => {
+      const qb = this.telemetryRepo
+        .createQueryBuilder('t')
+        .where('t.tenantId = :tenantId', { tenantId })
+        .andWhere('t.timestamp >= :since', { since });
+      if (scopedIds) qb.andWhere('t.deviceId IN (:...scopedIds)', { scopedIds });
+      return qb.getCount();
+    };
+
+    const deviceWhere: any = { tenantId };
+    if (customerId) deviceWhere.customerId = customerId;
+
+    const alarmWhere: any = { tenantId };
+    if (customerId) alarmWhere.customerId = customerId;
+
+    const reportingQb = this.telemetryRepo
+      .createQueryBuilder('t')
+      .select('COUNT(DISTINCT t.deviceId)', 'count')
+      .where('t.tenantId = :tenantId', { tenantId })
+      .andWhere('t.timestamp >= :since', { since: fiveMinutesAgo });
+    if (scopedIds) {
+      reportingQb.andWhere('t.deviceId IN (:...scopedIds)', { scopedIds });
+    }
+
+    const [
+      messagesLastMinute,
+      messagesLastFive,
+      reportingRow,
+      totalDevices,
+      onlineDevices,
+      activeAlarms,
+      criticalAlarms,
+      latestRow,
+    ] = await Promise.all([
+      countSince(oneMinuteAgo),
+      countSince(fiveMinutesAgo),
+      reportingQb.getRawOne(),
+      this.deviceRepo.count({ where: deviceWhere }),
+      this.deviceRepo.count({
+        where: { ...deviceWhere, status: DeviceStatus.ACTIVE },
+      }),
+      this.alarmRepo.count({
+        where: { ...alarmWhere, status: In(ACTIVE_ALARM_STATUSES) },
+      }),
+      this.alarmRepo.count({
+        where: {
+          ...alarmWhere,
+          severity: AlarmSeverity.CRITICAL,
+          status: In(ACTIVE_ALARM_STATUSES),
+        },
+      }),
+      (() => {
+        const qb = this.telemetryRepo
+          .createQueryBuilder('t')
+          .select('MAX(t.timestamp)', 'latest')
+          .where('t.tenantId = :tenantId', { tenantId });
+        if (scopedIds) {
+          qb.andWhere('t.deviceId IN (:...scopedIds)', { scopedIds });
+        }
+        return qb.getRawOne();
+      })(),
+    ]);
+
+    return {
+      asOf: new Date(now).toISOString(),
+      telemetry: {
+        messagesLastMinute,
+        messagesLastFiveMinutes: messagesLastFive,
+        messagesPerMinute: Math.round((messagesLastFive / 5) * 10) / 10,
+        lastMessageAt: latestRow?.latest ?? null,
+      },
+      devices: {
+        total: totalDevices,
+        statusActive: onlineDevices,
+        devicesReportingNow: Number(reportingRow?.count ?? 0),
+      },
+      alarms: { active: activeAlarms, critical: criticalAlarms },
+      windowSeconds: 300,
+      notes: [
+        'devicesReportingNow counts devices with telemetry in the last 5 ' +
+          'minutes. It is not a broker connection count — this platform holds ' +
+          'no cross-process connection registry, so a connected but silent ' +
+          'device is indistinguishable from a disconnected one.',
+        'messagesPerMinute is the 5-minute rate, not a 60-second sample: a ' +
+          'fleet reporting every 15 minutes reads zero on most single-minute ' +
+          'samples, which looks like an outage.',
+      ],
     };
   }
 

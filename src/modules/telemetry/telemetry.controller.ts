@@ -47,6 +47,8 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { TenantAdminOnly } from '../../common/decorators/access-control.decorator';
 import { UserRole } from '../../common/enums/index.enum';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('telemetry')
 @Controller('telemetry')
@@ -56,6 +58,10 @@ export class TelemetryController {
   constructor(private readonly telemetryService: TelemetryService) {}
 
   @Post('devices/:deviceKey')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.TELEMETRY,
+  })
   @RequirePermissions('telemetry:create')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create telemetry data for a device' })
@@ -73,6 +79,10 @@ export class TelemetryController {
   }
 
   @Post('devices/:deviceKey/batch')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.TELEMETRY,
+  })
   @RequirePermissions('telemetry:create')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create multiple telemetry records (batch)' })
@@ -321,6 +331,11 @@ export class TelemetryController {
   }
 
   @Delete('devices/:deviceId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.TELEMETRY,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('telemetry:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete all telemetry data for a device' })

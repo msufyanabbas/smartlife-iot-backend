@@ -45,6 +45,8 @@ import {
 import { Roles } from '@common/decorators/index.decorator';
 import { UserRole } from '@common/enums/index.enum';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NOTE: All methods receive user.id from the JWT (@CurrentUser()).
@@ -79,6 +81,10 @@ export class SubscriptionsController {
   ) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SUBSCRIPTION,
+  })
   @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
@@ -196,6 +202,10 @@ export class SubscriptionsController {
   }
 
   @Post('upgrade')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SUBSCRIPTION,
+  })
   @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
@@ -229,6 +239,10 @@ export class SubscriptionsController {
   }
 
   @Post('downgrade/schedule')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SUBSCRIPTION,
+  })
   @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -272,6 +286,11 @@ export class SubscriptionsController {
   }
 
   @Post('downgrade/cancel')
+  @Audit({
+    action: AuditAction.DEACTIVATE,
+    entityType: AuditEntityType.SUBSCRIPTION,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -290,6 +309,11 @@ export class SubscriptionsController {
   }
 
   @Post('cancel')
+  @Audit({
+    action: AuditAction.DEACTIVATE,
+    entityType: AuditEntityType.SUBSCRIPTION,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -358,6 +382,10 @@ export class SubscriptionsController {
   }
 
   @Post('trial')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SUBSCRIPTION,
+  })
   @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -395,6 +423,10 @@ export class SubscriptionsController {
   }
 
   @Post('renew')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SUBSCRIPTION,
+  })
   @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -436,6 +468,10 @@ export class SubscriptionsController {
   }
 
   @Post('auto-renew')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SUBSCRIPTION,
+  })
   @RequirePermissions('billing:manage')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)

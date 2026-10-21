@@ -9,6 +9,7 @@ import { Telemetry } from '../entities/telemetry.entity';
 import { Device } from '../../devices/entities/device.entity';
 import { NotFoundException } from '@nestjs/common';
 import { RedisService } from '@/lib/redis/redis.service';
+import { TelemetryLatestCacheService } from '../telemetry-latest-cache.service';
 import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
 import { IntegrationDispatchService } from '@modules/integrations/integration-dispatch.service';
 import { AutomationService } from '@modules/automation/automation.service';
@@ -47,13 +48,23 @@ describe('TelemetryService', () => {
     update: jest.fn(),
   };
 
-  // Only the methods TelemetryService.cacheLatest() actually calls
+  // RedisService is still injected by TelemetryService, but the latest-reading
+  // cache now belongs to TelemetryLatestCacheService (see that class — it has
+  // to be shared with TelemetryConsumer, the other writer).
   const mockRedisService = {
-    hmset: jest.fn().mockResolvedValue(undefined),
-    lpush: jest.fn().mockResolvedValue(undefined),
-    ltrim: jest.fn().mockResolvedValue(undefined),
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue(undefined),
+    del: jest.fn().mockResolvedValue(undefined),
     expire: jest.fn().mockResolvedValue(undefined),
-    hgetall: jest.fn().mockResolvedValue({}),
+  };
+
+  // `read` returns null so every test stays on the database path, which is
+  // what they assert. A mock that returned a row would make getLatest() tests
+  // pass without touching the repository at all.
+  const mockLatestCacheService = {
+    read: jest.fn().mockResolvedValue(null),
+    write: jest.fn().mockResolvedValue(undefined),
+    getTtlSeconds: jest.fn().mockReturnValue(300),
   };
 
   // The HTTP ingestion path evaluates device-profile alarm rules directly
@@ -108,6 +119,10 @@ describe('TelemetryService', () => {
         {
           provide: RedisService,
           useValue: mockRedisService,
+        },
+        {
+          provide: TelemetryLatestCacheService,
+          useValue: mockLatestCacheService,
         },
         {
           provide: ProfileAlarmService,

@@ -39,7 +39,8 @@ import { PaginationDto, PaginatedResponseDto } from '@/common/dto/pagination.dto
 import { UserRole } from '@common/enums/index.enum';
 import { DeviceCredentialsService } from './device-credentials.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { CronExpression } from '@nestjs/schedule';
+import { DistributedCron } from '@/lib/cluster/distributed-cron.decorator';
 import { UsersService } from '@modules/users/users.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as crypto from 'crypto';
@@ -204,6 +205,18 @@ export class DevicesService {
       user, // full User entity — not a partial object
     );
 
+    // `device.created` has an audit handler in AuditEventsService and, until
+    // this change, no emitter anywhere — so device creation was not recorded.
+    // The flat `tenantId`/`customerId` are supplied explicitly rather than
+    // left to the handler's fallback, so the row is scoped even if the device
+    // row's own columns are later reshaped.
+    this.eventEmitter.emit('device.created', {
+      device: savedDevice,
+      createdBy: user,
+      tenantId: savedDevice.tenantId,
+      customerId: savedDevice.customerId,
+    });
+
     return { device: savedDevice, credentials };
   }
 
@@ -308,8 +321,26 @@ export class DevicesService {
       await this.assertAssetInTenant(dto.assetId, device.tenantId);
     }
 
+    // Captured BEFORE the assign, and only for the keys the DTO actually
+    // carries — a diff of the whole entity would put the device's jsonb
+    // configuration into every audit row.
+    const before: Record<string, any> = {};
+    for (const key of Object.keys(dto)) {
+      before[key] = (device as any)[key];
+    }
+
     Object.assign(device, dto);
-    return this.deviceRepository.save(device);
+    const saved = await this.deviceRepository.save(device);
+
+    this.eventEmitter.emit('device.updated', {
+      device: saved,
+      updatedBy: user,
+      tenantId: saved.tenantId,
+      customerId: saved.customerId,
+      changes: { before, after: { ...dto } },
+    });
+
+    return saved;
   }
 
   // ── Activate / deactivate ─────────────────────────────────────────────────
@@ -364,6 +395,14 @@ export class DevicesService {
         err,
       );
     }
+
+    this.eventEmitter.emit('device.deleted', {
+      deviceId: device.id,
+      deviceName: device.name,
+      deletedBy: user,
+      tenantId: device.tenantId,
+      customerId: device.customerId,
+    });
   }
 
   // ── Credentials passthrough ───────────────────────────────────────────────
@@ -1034,7 +1073,25 @@ export class DevicesService {
 
   // ── Offline cron ──────────────────────────────────────────────────────────
 
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  /**
+   * ── Why this one IS locked, despite being a bulk UPDATE ──────────────────
+   * The UPDATE on its own is idempotent — ACTIVE+stale → OFFLINE converges,
+   * and a second replica finds nothing left to flip. What is not idempotent is
+   * the loop underneath it: `handleDeviceOffline()` emits `device.offline` and
+   * `device.disconnected`, and `AutomationListener` turns the first into a
+   * DEVICE_STATUS automation run while the audit handler turns the second into
+   * a log row.
+   *
+   * Both replicas SELECT before either UPDATEs, so both see the same stale
+   * rows and both emit. On three replicas a device going quiet fired every
+   * "device went offline" automation three times — including its actions — and
+   * wrote three disconnect rows. The read-then-emit is what makes the lock
+   * necessary; it would be safe to leave unlocked if it were only the UPDATE.
+   */
+  @DistributedCron(CronExpression.EVERY_5_MINUTES, {
+    name: 'devices-offline-sweep',
+    lockTtl: 120,
+  })
   async checkOfflineDevices(): Promise<void> {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
 
@@ -1126,11 +1183,32 @@ export class DevicesService {
 
   private handleDeviceOffline(device: Device, user?: User): void {
     this.eventEmitter.emit('device.offline', { device, user });
+    // `device.offline` is what AutomationListener and the gateway listen for.
+    // The audit handler is named `device.disconnected` and had no emitter at
+    // all, so a device dropping off was never recorded. Both names are emitted
+    // rather than renaming either: the automation side is a published contract
+    // and the audit side is the one with the handler.
+    this.eventEmitter.emit('device.disconnected', {
+      deviceId: device.id,
+      deviceName: device.name,
+      tenantId: device.tenantId,
+      customerId: device.customerId,
+      reason: 'lastSeenAt stale — marked offline by checkOfflineDevices()',
+    });
     this.logger.warn(`Device offline: ${device.name} (${device.id})`);
   }
 
   private handleDeviceOnline(device: Device, user: User): void {
-    this.eventEmitter.emit('device.connected', { device, user });
+    // The audit handler reads a flat shape; `{ device, user }` alone left
+    // `tenantId` undefined, which is a NOT NULL violation on audit_logs.
+    this.eventEmitter.emit('device.connected', {
+      device,
+      user,
+      deviceId: device.id,
+      deviceName: device.name,
+      tenantId: device.tenantId,
+      customerId: device.customerId,
+    });
     this.logger.log(`Device online: ${device.name} (${device.id})`);
   }
 }

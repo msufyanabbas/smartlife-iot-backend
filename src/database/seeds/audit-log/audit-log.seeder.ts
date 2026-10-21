@@ -22,7 +22,36 @@ export class AuditLogSeeder implements ISeeder {
   ) {}
 
   async seed(): Promise<void> {
-    console.log('📋 Seeding audit logs...');
+    // ── Off by default ──────────────────────────────────────────────────────
+    //
+    // This seeder writes FABRICATED audit rows: logins that never happened,
+    // deletions nobody performed, attributed to real seeded users with real
+    // timestamps and IP addresses. In any other table demo data is a
+    // convenience; in an audit log it is worse than an empty table, because
+    // the whole value of the table is that a row means the thing happened.
+    // A reviewer cannot tell a seeded row from a real one, and the first
+    // question anyone asks of an audit log — "did this actually happen?" —
+    // becomes unanswerable for the entire table.
+    //
+    // Gated rather than deleted so a UI demo can still populate the audit
+    // screens, but it must be asked for explicitly:
+    //
+    //     SEED_DEMO_AUDIT_LOGS=true npm run seed
+    //
+    // The gate lives here rather than in `index.seeder.ts` so the registration
+    // list stays untouched and the reason travels with the code it guards.
+    if (process.env.SEED_DEMO_AUDIT_LOGS !== 'true') {
+      console.log(
+        '⏭️  Skipping audit logs — fabricated audit entries are off by default. ' +
+          'Set SEED_DEMO_AUDIT_LOGS=true to seed demo audit activity.',
+      );
+      return;
+    }
+
+    console.log(
+      '📋 Seeding DEMO audit logs (SEED_DEMO_AUDIT_LOGS=true) — these rows ' +
+        'describe events that never happened.',
+    );
 
     // Get first tenant
     const tenant = await this.tenantRepository.findOne({

@@ -53,7 +53,14 @@ export interface DeviceInsightOptions {
   context?: string;
 }
 
-interface SeriesSummary {
+/**
+ * Exported because it appears in the inferred return type of a public
+ * controller method, and `tsconfig.json` sets `declaration: true`: tsc has to
+ * name the type in the emitted .d.ts and cannot name one that is private to
+ * its module (TS4053). `npm run build` uses SWC, which does not typecheck, so
+ * this surfaced only under `tsc --noEmit`.
+ */
+export interface SeriesSummary {
   key: string;
   count: number;
   min: number;

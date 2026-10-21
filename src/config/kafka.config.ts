@@ -13,9 +13,10 @@
 //     diagnostics impossible to attribute to a replica.
 
 import { registerAs } from '@nestjs/config';
-import { envList, envNumber, envString } from './env.utils';
+import { envBoolean, envList, envNumber, envString } from './env.utils';
 
 export interface KafkaConfig {
+  enabled: boolean;
   clientId: string;
   brokers: string[];
   ssl: boolean;
@@ -29,6 +30,16 @@ export interface KafkaConfig {
   heartbeatInterval: number;
   topicPartitions: number;
   topicReplicationFactor: number;
+  /** Ceiling on the background reconnect backoff, in ms. */
+  bootstrapMaxBackoffMs: number;
+  /** In-process attempts per message before it is dead-lettered. */
+  consumerMaxAttempts: number;
+  /** Base delay between those attempts, in ms (doubled each attempt). */
+  consumerRetryBackoffMs: number;
+  /** Suffix appended to a topic name to form its dead-letter topic. */
+  dlqSuffix: string;
+  /** How long a consumer-lag snapshot is reused before it is recomputed. */
+  lagCacheSeconds: number;
 }
 
 export default registerAs('kafka', (): KafkaConfig => {
@@ -36,6 +47,12 @@ export default registerAs('kafka', (): KafkaConfig => {
   const password = envString(process.env.KAFKA_SASL_PASSWORD);
 
   return {
+    // ON by default — only an explicit false disables it, so a production
+    // deploy that forgets the variable still gets the ingestion pipeline.
+    // KAFKA_ENABLED=false is the supported local-development mode: no client
+    // is constructed, no connection is attempted, and every produce is a
+    // logged no-op. See §11.
+    enabled: envBoolean(process.env.KAFKA_ENABLED, true),
     clientId: envString(process.env.KAFKA_CLIENT_ID, 'smartlife-iot-platform')!,
     brokers: envList(process.env.KAFKA_BROKERS, ['localhost:9093']),
 
@@ -64,5 +81,17 @@ export default registerAs('kafka', (): KafkaConfig => {
       process.env.KAFKA_TOPIC_REPLICATION_FACTOR,
       1,
     ),
+
+    bootstrapMaxBackoffMs: envNumber(
+      process.env.KAFKA_BOOTSTRAP_MAX_BACKOFF_MS,
+      60000,
+    ),
+    consumerMaxAttempts: envNumber(process.env.KAFKA_CONSUMER_MAX_ATTEMPTS, 3),
+    consumerRetryBackoffMs: envNumber(
+      process.env.KAFKA_CONSUMER_RETRY_BACKOFF_MS,
+      250,
+    ),
+    dlqSuffix: envString(process.env.KAFKA_DLQ_SUFFIX, '.dlq')!,
+    lagCacheSeconds: envNumber(process.env.KAFKA_LAG_CACHE_SECONDS, 15),
   };
 });

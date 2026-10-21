@@ -162,6 +162,36 @@ ok(
   lookupUses,
 );
 
+// ── 2b. The edge gateway path ─────────────────────────────────────────────
+//
+// Enforcing per-device auth broke the edge agent, which forwards for many
+// devices and holds none of their tokens. The fix is a gateway identity
+// bounded by device.edgeId — not a weakening of device auth.
+section('2b. An edge gateway may forward only for ITS devices');
+
+ok(
+  'the verifier has an edge path',
+  svc.includes('authenticateEdgeForDevice'),
+);
+ok(
+  'the edge secret is compared in constant time',
+  /authenticateEdgeForDevice[\s\S]{0,1400}safeEqual/.test(svc),
+);
+ok(
+  'the device must be assigned to that edge AND share its tenant',
+  /device\.edgeId !== edge\.id/.test(svc) &&
+    /device\.tenantId !==/.test(svc),
+  'both predicates are required; either alone is bypassable',
+);
+ok(
+  'the HTTP adapter accepts the edge credential',
+  http.includes("x-edge-key") && http.includes("x-edge-secret"),
+);
+ok(
+  'a refused edge does NOT fall through to the device-token paths',
+  /if \(edgeKey && edgeSecret\)[\s\S]{0,900}return null;/.test(http),
+);
+
 // ── 3. The MQTT broker ────────────────────────────────────────────────────
 section('3. EMQX delegates both decisions');
 

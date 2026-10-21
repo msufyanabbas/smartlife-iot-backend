@@ -18,6 +18,7 @@ import { IntegrationDispatchService } from '@modules/integrations/integration-di
 import { AutomationService } from '@modules/automation/automation.service';
 import { TelemetryRollupService } from './telemetry-rollup.service';
 import { TelemetryRetentionService } from './telemetry-retention.service';
+import { TelemetryLatestCacheService } from './telemetry-latest-cache.service';
 
 /** Role and scope of the caller, for the device access check below. */
 interface CallerScope {
@@ -54,7 +55,14 @@ export class TelemetryService {
     private readonly telemetryRepository: Repository<Telemetry>,
     @InjectRepository(Device)
     private readonly deviceRepository: Repository<Device>,
+    // Retained but no longer used by this class: the latest-reading cache
+    // moved to TelemetryLatestCacheService (it has to be shared with
+    // TelemetryConsumer, the other writer). Kept because this module's cron
+    // service needs a distributed lock and will take it from here.
     private readonly redisService: RedisService,
+    // Sole owner of the `telemetry:latest:*` key — see that class for why the
+    // cache cannot live in this service.
+    private readonly latestCache: TelemetryLatestCacheService,
     // Provided by ProfilesModule, already imported by TelemetryModule.
     private readonly profileAlarmService: ProfileAlarmService,
     // Provided by IntegrationsModule, already imported by TelemetryModule.
@@ -195,8 +203,14 @@ export class TelemetryService {
 
     const saved = await this.telemetryRepository.save(telemetry);
 
-    // Cache latest values in Redis for fast reads
-    await this.cacheLatest(device.id, dto).catch((err) =>
+    // Write-through cache of the latest reading. `saved`, not `dto`: the row
+    // is what `getLatest()` returns, and it carries the id, deviceKey and
+    // server-assigned timestamp the DTO does not have.
+    //
+    // The .catch() keeps a Redis outage from failing an ingest that has
+    // already been committed to Postgres — a cache write is never allowed to
+    // lose a reading.
+    await this.cacheLatest(device.id, saved).catch((err) =>
       this.logger.error(`Redis cache failed: ${err.message}`),
     );
 
@@ -334,25 +348,29 @@ export class TelemetryService {
 
   // ── Latest ─────────────────────────────────────────────────────────────────
 
+  /**
+   * The device's most recent reading.
+   *
+   * This is the hottest read on the platform: every dashboard tile, every
+   * floor-plan marker and every device-detail header polls it, so a tenant
+   * with 100 devices on screen generates 100 of these per refresh. The query
+   * it replaces is `ORDER BY timestamp DESC LIMIT 1` over the largest table in
+   * the schema.
+   *
+   * ── The access check is NOT cached, deliberately ──────────────────────────
+   *
+   * `resolveDeviceForUser()` runs first and unconditionally. It is what stops
+   * one tenant reading another's telemetry by uuid (§4g), and it is the one
+   * thing in this method that must never be served from a cache: a cached
+   * authorization decision that outlives an unassignment is a cross-tenant
+   * read. Only the reading itself comes from Redis, and only after the caller
+   * has been shown to be entitled to this device.
+   */
   async getLatest(deviceId: string, userId: string): Promise<Telemetry> {
     const device = await this.resolveDeviceForUser(deviceId, userId);
 
-    // // Try Redis cache first
-    // try {
-    //   const cached = await this.redisService.hgetall(`device:${deviceId}:telemetry:latest`);
-    //   if (cached && Object.keys(cached).length > 0 && cached.timestamp) {
-    //     return {
-    //       deviceId,
-    //       temperature: parseFloat(cached.temperature) || undefined,
-    //       humidity: parseFloat(cached.humidity) || undefined,
-    //       pressure: parseFloat(cached.pressure) || undefined,
-    //       batteryLevel: parseFloat(cached.batteryLevel) || undefined,
-    //       timestamp: new Date(parseInt(cached.timestamp)),
-    //     } as any;
-    //   }
-    // } catch (err) {
-    //   this.logger.error(`Redis read failed: ${err.message}`);
-    // }
+    const cached = await this.latestCache.read(device.id);
+    if (cached) return cached;
 
     const telemetry = await this.telemetryRepository.findOne({
       where: { deviceId },
@@ -362,17 +380,13 @@ export class TelemetryService {
     if (!telemetry)
       throw new NotFoundException('No telemetry data found for this device');
 
-    // // Populate cache for next read
-    // await this.redisService.hmset(`device:${deviceId}:telemetry:latest`, {
-    //   temperature: telemetry.temperature?.toString() ?? '',
-    //   humidity: telemetry.humidity?.toString() ?? '',
-    //   pressure: telemetry.pressure?.toString() ?? '',
-    //   batteryLevel: telemetry.batteryLevel?.toString() ?? '',
-    //   timestamp: telemetry.timestamp.getTime().toString(),
-    // }).catch((err) => this.logger.error(`Redis write failed: ${err.message}`));
-
-    // await this.redisService.expire(`device:${deviceId}:telemetry:latest`, 300)
-    //   .catch(() => {});
+    // Populate for the next read. A cold cache after a deploy or an eviction
+    // would otherwise never warm for a device that has stopped reporting,
+    // which is the case that benefits most — a silent device is polled just as
+    // often as a busy one.
+    await this.latestCache
+      .write(device.id, telemetry)
+      .catch((err) => this.logger.error(`Redis write failed: ${err.message}`));
 
     return telemetry;
   }
@@ -715,6 +729,154 @@ export class TelemetryService {
     }));
   }
 
+  // ── Multi-key series ───────────────────────────────────────────────────────
+
+  /**
+   * Several telemetry keys for one device, in one call, optionally bucketed.
+   *
+   * ── Why this exists ──────────────────────────────────────────────────────
+   * Every read above is single-key (`getTimeSeries`) or fixed-column
+   * (`getAggregated`, which can only report the five denormalised columns a
+   * rollup covers). The analytics surface needs neither: a dashboard chart
+   * asks for "temperature and humidity between these two instants, averaged
+   * into hourly buckets", with the keys chosen by the user and living only in
+   * `data` jsonb. `POST /analytics/timeseries` and `GET /analytics/aggregate`
+   * both read through here, so there is one access-control path and one
+   * definition of what a bucket means.
+   *
+   * ── Raw vs bucketed ──────────────────────────────────────────────────────
+   * Without a `bucketMs` this delegates straight to `getTimeSeries()` per key,
+   * which keeps its rollup awareness: over a wide window the series comes from
+   * `telemetry_rollups` instead of scanning a year of raw rows, and each point
+   * carries `min`/`max`/`count` as well as the mean.
+   *
+   * With a `bucketMs` it is one SQL statement for every key at once:
+   * `data->>key` cast to float, grouped by key and by a floor-divided epoch
+   * bucket. N keys cost one query rather than N, which matters because a
+   * widget asking for six keys would otherwise be six round trips per refresh.
+   * The rollup tables are deliberately NOT consulted on this path — their
+   * buckets are hour/day/month, and silently answering a 15-minute request
+   * with hourly data would be a wrong chart rather than a slow one.
+   *
+   * ── Non-numeric values ───────────────────────────────────────────────────
+   * A bucketed read filters to numeric values with a regex before the cast,
+   * the same guard `AnalyticsService.expandKeys()` uses: `data` holds
+   * `{"status":"online"}` alongside `{"temperature":21.4}`, and `::float` on
+   * the former aborts the whole statement. A key that is never numeric
+   * therefore comes back as an empty series from a bucketed read and as its
+   * real string values from a raw one, which is the honest answer in both
+   * cases — you cannot average "online".
+   */
+  async getMultiKeySeries(
+    deviceId: string,
+    userId: string,
+    keys: string[],
+    startDate: string,
+    endDate: string,
+    options: {
+      /** Bucket width in milliseconds. 0 / undefined → raw samples. */
+      bucketMs?: number;
+      aggregation?: 'AVG' | 'MIN' | 'MAX' | 'SUM' | 'COUNT';
+      limit?: number;
+    } = {},
+  ): Promise<Record<string, Array<Record<string, any>>>> {
+    // The tenancy gate. Every other read in this file goes through the same
+    // method for the same reason — see its own comment.
+    const device = await this.resolveDeviceForUser(deviceId, userId);
+
+    const unique = Array.from(
+      new Set(keys.map((key) => String(key).trim()).filter(Boolean)),
+    );
+    if (unique.length === 0) return {};
+
+    const limit = Math.min(Math.max(options.limit ?? 1000, 1), 50_000);
+    const bucketMs = Number(options.bucketMs ?? 0);
+
+    if (!Number.isFinite(bucketMs) || bucketMs < 1000) {
+      const series = await Promise.all(
+        unique.map((key) =>
+          this.getTimeSeries(deviceId, userId, key, startDate, endDate, limit),
+        ),
+      );
+      return Object.fromEntries(unique.map((key, index) => [key, series[index]]));
+    }
+
+    const aggregation = (options.aggregation ?? 'AVG').toUpperCase();
+    // Whitelisted, not interpolated from the caller: this string lands inside
+    // the SQL text, and an `@IsEnum` on the DTO is not something this service
+    // can assume its callers applied.
+    const sqlAggregate =
+      {
+        AVG: 'AVG(kv.value::float)',
+        MIN: 'MIN(kv.value::float)',
+        MAX: 'MAX(kv.value::float)',
+        SUM: 'SUM(kv.value::float)',
+        COUNT: 'COUNT(*)::float',
+      }[aggregation] ?? 'AVG(kv.value::float)';
+
+    const bucketSeconds = Math.max(1, Math.floor(bucketMs / 1000));
+
+    const rows: Array<{
+      key: string;
+      bucket: Date;
+      value: string;
+      min: string;
+      max: string;
+      samples: string;
+    }> = await this.telemetryRepository.query(
+      `SELECT kv.key AS key,
+              to_timestamp(FLOOR(EXTRACT(EPOCH FROM t.timestamp) / $5) * $5) AS bucket,
+              ${sqlAggregate}     AS value,
+              MIN(kv.value::float) AS min,
+              MAX(kv.value::float) AS max,
+              COUNT(*)             AS samples
+         FROM telemetry t
+         CROSS JOIN LATERAL jsonb_each_text(t.data) kv
+        WHERE t."deviceId" = $1
+          AND t.timestamp BETWEEN $2 AND $3
+          AND t.deleted_at IS NULL
+          AND kv.key = ANY($4)
+          AND kv.value ~ '^-?[0-9]+(\\.[0-9]+)?$'
+        GROUP BY kv.key, bucket
+        ORDER BY kv.key, bucket ASC`,
+      [
+        deviceId,
+        new Date(startDate),
+        new Date(endDate),
+        unique,
+        bucketSeconds,
+      ],
+    );
+
+    const out: Record<string, Array<Record<string, any>>> = Object.fromEntries(
+      unique.map((key) => [key, [] as Array<Record<string, any>>]),
+    );
+
+    for (const row of rows) {
+      const bucket = out[row.key];
+      // Per-key rather than overall: one key reaching the cap must not
+      // truncate the others, and the SQL is ordered by key then bucket.
+      if (!bucket || bucket.length >= limit) continue;
+      bucket.push({
+        timestamp: row.bucket,
+        value: row.value === null ? null : Number(row.value),
+        min: row.min === null ? null : Number(row.min),
+        max: row.max === null ? null : Number(row.max),
+        count: Number(row.samples),
+        aggregation,
+        bucketMs: bucketSeconds * 1000,
+        source: 'telemetry',
+      });
+    }
+
+    this.logger.debug(
+      `Multi-key series for ${device.deviceKey}: ${unique.length} key(s), ` +
+        `${rows.length} bucket(s) at ${bucketSeconds}s`,
+    );
+
+    return out;
+  }
+
   // ── Delete ─────────────────────────────────────────────────────────────────
 
   async deleteByDevice(deviceId: string, userId: string): Promise<number> {
@@ -873,24 +1035,60 @@ export class TelemetryService {
 
   // ── Redis cache helper ─────────────────────────────────────────────────────
 
+  /**
+   * ── What this used to be, and the four separate things wrong with it ──────
+   *
+   * It wrote `device:{id}:telemetry:latest` as a five-field hash and
+   * `telemetry:{id}:recent` as a capped list — four Redis round trips on the
+   * ingest hot path — and:
+   *
+   *  1. **Nothing read either of them.** `getLatest()`'s cache read was
+   *     commented out, and no code anywhere touched `:recent`. The cost was
+   *     real and the benefit was zero.
+   *  2. **The hash had no TTL.** One key per device, forever, including for
+   *     devices decommissioned a year ago. On a Redis shared with Bull, where
+   *     eviction is what protects the queues, that is a slow leak with a
+   *     consequence.
+   *  3. **It was lossy.** Five scalars out of a row whose point is the
+   *     `data` jsonb. The commented-out read reconstructed a fake `Telemetry`
+   *     with no `id`, no `deviceKey` and no `data` — so switching it on as
+   *     written would have made `GET /telemetry/:id/latest` start returning a
+   *     different, emptier shape than the database path, intermittently,
+   *     depending on cache state.
+   *  4. **It was written from only ONE of the two ingest paths.** This method
+   *     is called from `create()` (the HTTP path). The MQTT/CoAP path persists
+   *     through `TelemetryConsumer`, which never wrote the cache. So for every
+   *     MQTT device — the majority — the "latest" entry would have been
+   *     whatever stale HTTP reading last arrived, or absent.
+   *
+   * Item 4 is the one that makes this a correctness story rather than a
+   * performance one: a cache populated by one writer and read by a path that
+   * serves both is not a slow cache, it is a wrong answer.
+   *
+   * ── What it is now ────────────────────────────────────────────────────────
+   *
+   * One key, `telemetry:latest:{deviceId}`, holding the **saved row** verbatim,
+   * written by BOTH ingest paths (`TelemetryConsumer` calls
+   * `cacheLatestRow()`), with a TTL, and read by `getLatest()`.
+   *
+   * **Invalidation:** every write is a full overwrite, so there is nothing to
+   * invalidate on the write side — the newest reading replaces the previous
+   * one by construction. The TTL covers the one case an overwrite cannot: the
+   * retention sweep (§4h) deletes old rows, and for a device silent for longer
+   * than its plan's retention that can delete the very row this key holds,
+   * leaving a cached reading whose row no longer exists. `TELEMETRY_LATEST_CACHE_TTL`
+   * bounds that to 5 minutes by default, which is also the staleness ceiling if
+   * a write ever fails.
+   */
   private async cacheLatest(
     deviceId: string,
-    dto: CreateTelemetryDto,
+    telemetry: Telemetry,
   ): Promise<void> {
-    await this.redisService.hmset(`device:${deviceId}:telemetry:latest`, {
-      temperature: dto.temperature?.toString() ?? '',
-      humidity: dto.humidity?.toString() ?? '',
-      pressure: dto.pressure?.toString() ?? '',
-      batteryLevel: dto.batteryLevel?.toString() ?? '',
-      timestamp: Date.now().toString(),
-    });
-
-    await this.redisService.lpush(
-      `telemetry:${deviceId}:recent`,
-      JSON.stringify({ ...dto.data, timestamp: Date.now() }),
-    );
-    await this.redisService.ltrim(`telemetry:${deviceId}:recent`, 0, 99);
-    await this.redisService.expire(`telemetry:${deviceId}:recent`, 3600);
+    // The key, its TTL and its serialisation live in
+    // TelemetryLatestCacheService, not here — `TelemetryConsumer` is the other
+    // writer and must produce byte-identical entries, which is precisely what
+    // two copies of this logic would stop doing the first time one changed.
+    await this.latestCache.write(deviceId, telemetry);
   }
 
   // ══════════════════════════════════════════════════════════════════════════

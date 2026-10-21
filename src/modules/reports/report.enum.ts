@@ -37,6 +37,16 @@ export enum ReportFormat {
   CSV = 'CSV',
   JSON = 'JSON',
   PDF = 'PDF',
+  /**
+   * A real .xlsx workbook, not a CSV with a different extension.
+   *
+   * `report_templates.format` and `report_executions.format` are both plain
+   * `varchar` columns (see the entities), NOT Postgres enums, so adding a
+   * member here needs no migration — unlike `integrations.type`, where a
+   * TypeScript-only addition passes `@IsEnum` and then fails at INSERT
+   * (CLAUDE.md §4e).
+   */
+  XLSX = 'XLSX',
 }
 
 export enum ReportTrigger {

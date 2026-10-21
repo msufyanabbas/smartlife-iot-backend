@@ -38,6 +38,8 @@ import {
   IsUUID,
 } from 'class-validator';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 // ══════════════════════════════════════════════════════════════════════════
 // DTOs
@@ -127,6 +129,11 @@ export class AssignmentController {
    * POST /assignments/customer
    */
   @Post('customer')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.CUSTOMER,
+    description: 'create resource assignment',
+  })
   @RequirePermissions('customers:create')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
@@ -159,6 +166,12 @@ export class AssignmentController {
    * DELETE /assignments/customer/:customerId/:resourceType/:resourceId
    */
   @Delete('customer/:customerId/:resourceType/:resourceId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.CUSTOMER,
+    description: 'delete resource assignment',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('customers:update')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
@@ -197,6 +210,11 @@ export class AssignmentController {
    * POST /assignments/user
    */
   @Post('user')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.CUSTOMER,
+    description: 'create resource assignment',
+  })
   @RequirePermissions('customers:create')
   @CustomerAdminOnly()
   @HttpCode(HttpStatus.OK)
@@ -229,6 +247,12 @@ export class AssignmentController {
    * DELETE /assignments/user/:userId/:resourceType/:resourceId
    */
   @Delete('user/:userId/:resourceType/:resourceId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.CUSTOMER,
+    description: 'delete resource assignment',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('customers:update')
   @CustomerAdminOnly()
   @HttpCode(HttpStatus.OK)
@@ -358,6 +382,11 @@ export class AssignmentController {
   }
 
   @Post('holders/:resourceType')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.CUSTOMER,
+    description: 'update resource assignment',
+  })
   @RequirePermissions('customers:update')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
@@ -390,6 +419,11 @@ export class AssignmentController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post('customer/bulk')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.CUSTOMER,
+    description: 'create resource assignment',
+  })
   @RequirePermissions('customers:create')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
@@ -408,6 +442,11 @@ export class AssignmentController {
   }
 
   @Post('user/bulk')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.CUSTOMER,
+    description: 'create resource assignment',
+  })
   @RequirePermissions('customers:create')
   @CustomerAdminOnly()
   @HttpCode(HttpStatus.OK)
@@ -426,6 +465,12 @@ export class AssignmentController {
   }
 
   @Post('customer/bulk-unassign')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.CUSTOMER,
+    description: 'delete resource assignment',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('customers:create')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
@@ -444,6 +489,12 @@ export class AssignmentController {
   }
 
   @Post('user/bulk-unassign')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.CUSTOMER,
+    description: 'delete resource assignment',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('customers:create')
   @CustomerAdminOnly()
   @HttpCode(HttpStatus.OK)

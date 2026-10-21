@@ -52,6 +52,7 @@ import {
   BulkUpdateUsersDto,
 } from './dto/bulk-user.dto';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { PermissionCacheService } from '@lib/redis/permission-cache.service';
 
 @Injectable()
 export class UsersService {
@@ -75,7 +76,30 @@ export class UsersService {
     private configService: ConfigService,
     // Bulk operations commit one transaction per item — see bulkDelete.
     private readonly dataSource: DataSource,
+    // From the @Global RedisModule. PermissionGuard caches each user's
+    // resolved permission set; anything here that changes a role assignment,
+    // a direct grant or `enforcePermissions` has to invalidate it, or the old
+    // set keeps being honoured for up to PERMISSION_CACHE_TTL_SECONDS.
+    private readonly permissionCache: PermissionCacheService,
   ) {}
+
+  /**
+   * Drop cached permission sets for every tenant represented in `users`.
+   *
+   * Bulk routes take arbitrary user ids, which can span tenants, so a single
+   * bump is not enough. Deduplicated because the epoch is per tenant and
+   * bumping it twice for the same tenant achieves nothing but a round trip.
+   */
+  private async invalidatePermissionCache(
+    users: Array<{ tenantId?: string | null }>,
+  ): Promise<void> {
+    const tenantIds = new Set(
+      users.map((u) => u.tenantId).filter((t): t is string => !!t),
+    );
+    for (const tenantId of tenantIds) {
+      await this.permissionCache.bumpTenant(tenantId);
+    }
+  }
 
   /**
    * Create a new user
@@ -126,8 +150,14 @@ export class UsersService {
     // Send verification email
     await this.sendVerificationEmail(savedUser);
 
-    // Emit event
-    this.eventEmitter.emit('user.created', { user: savedUser });
+    // Emit event. The flat tenantId/customerId are what the audit handler
+    // scopes its row by; `{ user }` alone left it undefined and the NOT NULL
+    // insert threw inside the listener.
+    this.eventEmitter.emit('user.created', {
+      user: savedUser,
+      tenantId: savedUser.tenantId,
+      customerId: savedUser.customerId,
+    });
 
     return savedUser;
   }
@@ -270,12 +300,54 @@ export class UsersService {
       user.emailVerificationToken = crypto.randomBytes(32).toString('hex');
     }
 
+    const previousRole = user.role;
+
+    // Only the keys the DTO carries, captured before the assign — a whole-row
+    // diff would put `preferences` and the password hash column into the audit
+    // row's `changes` jsonb.
+    const before: Record<string, any> = {};
+    for (const key of Object.keys(updateUserDto)) {
+      before[key] = (user as any)[key];
+    }
+
     Object.assign(user, updateUserDto);
 
     const updatedUser = await this.userRepository.save(user);
 
-    // Emit event
-    this.eventEmitter.emit('user.updated', { user: updatedUser });
+    // `update()` can change three things the permission resolution depends on:
+    // `role` (SUPER_ADMIN and TENANT_ADMIN short-circuit the guard entirely),
+    // `enforcePermissions` (the opt-in that makes a tenant admin's grants real
+    // — see §4k) and `customerId` (which decides whether the set is
+    // intersected with the customer's ceiling). Bumping unconditionally rather
+    // than inspecting the DTO: the cost is one rebuilt query, and the cost of
+    // getting the condition subtly wrong is a stale privilege.
+    await this.permissionCache.bumpTenant(updatedUser.tenantId);
+
+    // Emit event. `tenantId`/`customerId` are passed explicitly: the audit
+    // handler needs a tenant (audit_logs.tenantId is NOT NULL) and `{ user }`
+    // alone left it undefined, so the INSERT threw inside a listener nobody
+    // awaits — the row was silently never written.
+    this.eventEmitter.emit('user.updated', {
+      user: updatedUser,
+      tenantId: updatedUser.tenantId,
+      customerId: updatedUser.customerId,
+      changes: { before, after: { ...updateUserDto } },
+    });
+
+    // A role change is a privilege change and deserves its own entry rather
+    // than being buried in a field diff. `user.role.changed` had a handler and
+    // no emitter.
+    if (updateUserDto.role && updateUserDto.role !== previousRole) {
+      this.eventEmitter.emit('user.role.changed', {
+        userId: updatedUser.id,
+        userName: updatedUser.name,
+        email: updatedUser.email,
+        tenantId: updatedUser.tenantId,
+        customerId: updatedUser.customerId,
+        oldRole: previousRole,
+        newRole: updatedUser.role,
+      });
+    }
 
     return updatedUser;
   }
@@ -306,6 +378,7 @@ export class UsersService {
     // Emit event
     this.eventEmitter.emit('user.deleted', {
       userId: id,
+      userEmail: user.email,
       role: user.role,
       customerId: user.customerId,
       tenantId: user.tenantId,
@@ -334,8 +407,14 @@ export class UsersService {
     user.password = changePasswordDto.newPassword;
     await this.userRepository.save(user);
 
-    // Emit event
-    this.eventEmitter.emit('user.password.changed', { userId });
+    // Emit event — tenantId is required by the audit handler.
+    this.eventEmitter.emit('user.password.changed', {
+      userId,
+      userName: user.name,
+      email: user.email,
+      tenantId: user.tenantId,
+      customerId: user.customerId,
+    });
 
     // Send email notification
     await this.mailService.sendEmail({
@@ -615,6 +694,7 @@ export class UsersService {
     for (const user of deleted) {
       this.eventEmitter.emit('user.deleted', {
         userId: user.id,
+        userEmail: user.email,
         role: user.role,
         customerId: user.customerId,
         tenantId: user.tenantId,
@@ -896,6 +976,10 @@ export class UsersService {
     }
 
     await this.userRepository.save(users);
+    // A role carries permissions, so assigning one widens what these users can
+    // do. Without this the new permissions would not take effect for up to the
+    // cache TTL — the less dangerous direction, but still wrong.
+    await this.invalidatePermissionCache(users);
 
     this.eventEmitter.emit('users.role.bulk.assigned', {
       userIds: users.map((u) => u.id),
@@ -921,6 +1005,10 @@ export class UsersService {
     }
 
     await this.userRepository.save(users);
+    // This is the dangerous direction: a revoked role whose permissions stay
+    // cached is an administrator being told access was removed while it is
+    // still being granted.
+    await this.invalidatePermissionCache(users);
 
     this.eventEmitter.emit('users.role.bulk.removed', {
       userIds: users.map((u) => u.id),
@@ -1010,6 +1098,10 @@ export class UsersService {
     }
 
     await this.userRepository.save(users);
+    // Covers all three operations — `replace` and `remove` can both narrow a
+    // user's grants, and a narrowing that is not invalidated is a revocation
+    // that did not happen.
+    await this.invalidatePermissionCache(users);
 
     return { updated: users.length };
   }

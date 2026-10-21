@@ -30,7 +30,6 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { File as MulterFile } from 'multer';
 import type { Response } from 'express';
-import { createReadStream } from 'fs';
 import { FloorPlansService, Actor } from './floor-plans.service';
 import {
   CreateFloorPlanDto,
@@ -318,22 +317,85 @@ export class FloorPlansController {
 
   @Get(':id/model')
   @RequirePermissions('floor_plans:read')
-  @ApiOperation({ summary: 'Download the floor plan 3D model file' })
+  @ApiOperation({
+    summary: 'Download the floor plan 3D model file',
+    description:
+      'Served through StorageService, so it works on any replica. It used to ' +
+      'stream from an absolute path rebuilt on the fly, which only the replica ' +
+      'that handled the upload could open.',
+  })
   async getModel(
     @CurrentUser('tenantId') tenantId: string,
     @Param('id', ParseIdPipe) id: string,
     @Res() res: Response,
   ) {
-    const {
-      path: filePath,
-      contentType,
-      fileName,
-    } = await this.floorPlansService.getModelFile(id, tenantId);
+    const { buffer, contentType, fileName } =
+      await this.floorPlansService.getModelFile(id, tenantId);
 
-    // @Res() bypasses the global TransformInterceptor so the raw bytes are sent.
+    this.sendFile(res, buffer, contentType, fileName);
+  }
+
+  @Get(':id/dwg')
+  @RequirePermissions('floor_plans:read')
+  @ApiOperation({
+    summary: 'Download the uploaded DWG/DXF source drawing',
+    description:
+      'The driver-independent read path for the source file. The static ' +
+      '/uploads mount serves the same bytes only while the storage driver is ' +
+      'local and only on the replica that received the upload.',
+  })
+  async getDwg(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const { buffer, contentType, fileName } =
+      await this.floorPlansService.getDwgFile(id, tenantId);
+
+    this.sendFile(res, buffer, contentType, fileName);
+  }
+
+  @Get(':id/preview')
+  @RequirePermissions('floor_plans:read')
+  @ApiOperation({
+    summary: 'Fetch the generated PNG preview of the floor plan',
+    description:
+      'Rendered from the parsed geometry after a DWG/DXF upload. Sent inline ' +
+      'so it can be used directly as an <img> source.',
+  })
+  async getPreview(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const { buffer, contentType, fileName } =
+      await this.floorPlansService.getPreviewFile(id, tenantId);
+
+    this.sendFile(res, buffer, contentType, fileName, 'inline');
+  }
+
+  /**
+   * One place that writes the bytes out.
+   *
+   * `@Res()` bypasses the global TransformInterceptor, which is the point — it
+   * would otherwise wrap the body in the standard envelope. Content-Length is
+   * set explicitly because the buffer is already in memory, so the response is
+   * not chunked and a client can show real progress.
+   */
+  private sendFile(
+    res: Response,
+    buffer: Buffer,
+    contentType: string,
+    fileName: string,
+    disposition: 'attachment' | 'inline' = 'attachment',
+  ): void {
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-    createReadStream(filePath).pipe(res);
+    res.setHeader('Content-Length', buffer.length);
+    res.setHeader(
+      'Content-Disposition',
+      `${disposition}; filename="${fileName}"`,
+    );
+    res.end(buffer);
   }
 
   // ============ DEVICE PLACEMENT ============

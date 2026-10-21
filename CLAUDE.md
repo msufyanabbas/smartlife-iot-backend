@@ -237,7 +237,7 @@ iot-platform-backend/
 | `ScriptsModule` | User-defined JavaScript scripts with execution context |
 | `IntegrationsModule` | The Integration Centre: 18 types driven by a declarative catalogue, outbound adapters (MQTT, Kafka, AWS IoT, Azure IoT/Event Hubs, Google Pub/Sub, IBM Watson, CoAP, webhook), inbound uplinks (ChirpStack, TTN, generic HTTP, persistent MQTT subscriptions), Tuya device import and commands, and an append-only event log. See §4e |
 | `ConvertersModule` | Data converters: uplink/downlink payload transformation driven by a declarative catalogue — `json` field mapping, sandboxed `script`, and `codec` which delegates to `CodecRegistryService` so the 127 registered codecs are reachable from a converter. Includes `POST /converters/:id/test` with a per-step trace |
-| `ReportsModule` | Report templates and real generation (CSV / JSON / PDF) as a declarative query over `TelemetryService`, `AnalyticsService`, alarms, devices and the audit log, plus a cron scheduler that emails a summary |
+| `ReportsModule` | Report templates and real generation (CSV / JSON / PDF / **XLSX**, via `exceljs`) as a declarative query over `TelemetryService`, `AnalyticsService`, alarms, devices and the audit log, plus a cron scheduler that emails a summary **and attaches the generated file** while it fits under `MAIL_MAX_ATTACHMENT_BYTES` (default 10 MB), falling back to the download link above that. `ReportFormat` is a `varchar` column on both entities, so adding a format needs no migration |
 | `GroupsModule` | Named sets of entities of one kind (devices, assets, customers, users) with bulk membership, used for assignment and filtering |
 | `QueuesModule` | Queue definitions a rule chain can be assigned to. `GET /queues/capabilities` reports which fields are honoured and which are stored-only — see §4h |
 | `DefaultRuleChainsModule` | Maps (originator type, message type, device profile) → rule chain, consulted by `RuleEngineConsumer` before the fan-out fallback |
@@ -274,8 +274,10 @@ FloorPlanDevice (x/y/z placement)      "the CO2 sensor sits at (12, 4, 2.5) on f
 ```
 
 ### AssetProfile defines the type and the schema
-- `type` (varchar): `building | shop | farm | warehouse | hospital | hotel | factory | custom`
+- `type` (varchar): `building | vehicle | shop | farm | warehouse | hospital | hotel | factory | custom`
   (`AssetProfileType`). Varchar rather than a PG enum so new types need no DB migration.
+  **This is the only source of an asset's type** — see "An asset's type is its
+  profile's type" below.
 - `schema` (jsonb): `{ fields: ProfileField[] }` where a field is
   `{ key, label, type, required, options?, min?, max?, defaultValue? }` and type is
   `text | number | boolean | select | floors_array` (`ProfileFieldType`).
@@ -294,6 +296,60 @@ FloorPlanDevice (x/y/z placement)      "the CO2 sensor sits at (12, 4, 2.5) on f
 - `AssetsService.findOne()` always joins `assetProfile`, so the schema travels with the
   asset and the frontend can render `configuration` as a form.
 - Still distinct from `attributes` (free-form/legacy) and `additionalInfo` (off-schema).
+
+### An asset's type is its profile's type
+
+There used to be two answers. `assets.type` is a PG enum
+(`building | floor | room | office | vehicle | equipment | infrastructure | zone | other`,
+`AssetType`) and `asset_profiles.type` is a varchar (`AssetProfileType`); the two share
+only `building` and `vehicle`, and nothing said which won. So a warehouse asset was
+`infrastructure` or `other` to its own column and `warehouse` to its profile, and
+`assetSceneFamily.ts` in the frontend picked the 3D context scene from the profile when
+there was one and **keyword-matched the free text when there wasn't** — same asset, two
+types, scene depending on which read ran.
+
+`AssetProfile.type` is now the single source. The rules:
+
+- **Read it as `assetType`.** `Asset.resolveAssetType()` returns
+  `assetProfile?.type ?? null`, and `AssetsService.withAssetType()` materialises it onto
+  the non-column `Asset.assetType` on every read path (`findOne`, `findAll`,
+  `getRootAssets`, `getChildren`). `GET /assets/:id/floors` carries `assetType` (and
+  `assetProfileType`, the same value under its old name).
+- **`null` is a real answer.** No profile, or a profile whose own `type` is NULL, means
+  the asset has no type. Nothing defaults it to `custom` — a guessed `custom` would be
+  indistinguishable from a profile that really is custom.
+- **Floor plans inherit.** `FloorPlansService.projectAsset()` is the single projection
+  used by `findOneEnriched`, `getAssetFloorPlansOverview` and `get3DSimulationData`;
+  `findOne`, `findByAsset` and `assertAsset` all load `asset.assetProfile` for it. The
+  free-text `type` is **gone from the floor-plan asset projection** — a plan reports
+  `assetType`, `assetProfileType`, `assetProfileId`. A plan whose asset has no profile
+  reports `assetType: null` and otherwise behaves identically (lists, parses, exports);
+  the viewer resolves `null` to its pre-existing `ground` scene.
+- **`?type=` and `?sortBy=type` resolve through the profile**, so the query vocabulary is
+  `AssetProfileType`, not `AssetType`. `?untyped=true` lists the assets with no
+  resolvable type. `GET /assets/statistics`'s `byType` is keyed by `AssetProfileType`
+  plus an `unassigned` bucket.
+- **`Asset.type` is deprecated, not dropped.** Live rows hold the only record of the
+  original operator classification, `AnalyticsService.getAssetPerformance()` still groups
+  by it, and the vocabularies cannot be mapped — so a "synced" column would be a third
+  source of truth. The column is marked with a `COMMENT ON COLUMN`, writes to it are
+  **ignored with a warning** (`AssetsService.stripDeprecatedType()`, kept on the DTO
+  because `forbidNonWhitelisted: true` would 400 every older client), and its values
+  never change again. The `@Index(['tenantId','type'])` on it is now dead weight; it is
+  left in place because dropping it is a separate, non-urgent migration.
+- `AssetTypeFromProfile1788700000000` backfills the other side — making sure assets HAVE
+  a profile. Eight branches, two of which write; it never retypes an asset whose profile
+  already answers, and leaves ambiguous cases alone and reported rather than guessing.
+  `npm run migration:asset-type-inheritance <db> plan` prints the per-branch counts and
+  the unresolved rows; `up`/`down` apply and revert it (`down()` restores
+  `assetProfileId` from `additionalInfo._assetTypeBackfill`). Asserted by
+  `npm run verify:asset-type-inheritance <db>`.
+- A trap fixed on the way: **`PATCH /assets/:id` with a new `assetProfileId` never moved
+  an asset that already had a profile.** `findOne()` joins `assetProfile`, and
+  `repository.save()` gives the loaded relation object precedence over a changed FK — so
+  `Object.assign` set the column and the UPDATE wrote the old id straight back.
+  `update()` now `delete`s the stale relation when the FK changes. Without that fix an
+  asset's type could never be corrected.
 
 ### FloorPlan is per floor
 - `floorNumber` (int, default 1) + `floorName` (varchar) + **`UNIQUE (assetId, floorNumber)`**
@@ -379,6 +435,13 @@ flags.
 |---|---|
 | `POST /devices` with a `deviceProfileId` | `materialiseProfileAlarms()` writes one **INACTIVE** Alarm row per enabled rule, so the device's alarm list shows what is being watched before anything fires. Non-fatal on error. |
 | Telemetry arrives (`TelemetryConsumer` step 2b) | `evaluateProfileAlarmRules()` tests each rule; a match triggers the existing row (ACTIVE, `triggerCount++`), a matching `clearRule` returns it to CLEARED. |
+
+Note the ordering against the **asset** profile's calculated fields, which run at
+`TelemetryConsumer` **step 0** and merge their results into `payload.data` before
+persistence (§11). Both alarm engines read `payload.data` at step 2, so an alarm rule
+can name a calculated field as its `key` — and both normalise the ThingsBoard
+`{ts, values:{…}}` envelope the same way, deliberately, so "the same key" means the
+same thing to both features.
 
 Key details:
 - Rows are located by **`metadata.profileRuleId`**, never by `name` — the rule engine's
@@ -661,7 +724,7 @@ message reaches subscribers — reported in the result's `sideEffect`.
 | Route | Serves |
 |---|---|
 | `POST /integrations/lorawan/chirpstack` | ChirpStack webhook. Auto-creates devices by DevEUI. |
-| `POST /integrations/lorawan/ttn` | The Things Stack v3 webhook (snake_case envelope). |
+| `POST /integrations/lorawan/ttn` | The Things Stack v3 webhook (snake_case envelope). Also records `metadata.lorawanDeviceId` from `end_device_ids.device_id`, which is what the DOWNLINK path addresses — see below. |
 | `POST /integrations/http/:id` | **Generic uplink** — Loriot, Sigfox, a vendor cloud, a gateway script. |
 | `POST /integrations/tuya/webhook` | Bridge for a sidecar Pulsar consumer (see §4d — Tuya has no HTTP callback). |
 | MQTT subscriptions | `IntegrationMqttInboundService`, below. |
@@ -695,6 +758,45 @@ Both inbound paths hand off to **`DeviceListenerService.handleTelemetry()`**, so
 an uplink gets the same codec decode, Kafka publish, alarm evaluation and
 WebSocket broadcast as a first-party reading. Reimplementing persistence is how
 the Tuya path ended up bypassing alarms entirely.
+
+### LoRaWAN downlink (ChirpStack and TTN)
+
+`LorawanDownlinkService` queues a downlink through the network server's own
+REST API, with the credentials on that integration's `configuration`. Reached
+from `GatewayService.sendCommand()` — so the queued command path
+(`DeviceCommandsConsumer`) and `POST /gateway/devices/:deviceKey/command` both
+work on a LoRaWAN device — via `ModuleRef.get('LorawanDownlinkService')`, not an
+import: `GatewayModule` ← `ProtocolsModule` ← `IntegrationsModule` already
+closes a loop, and a module load cycle here crashes `bootstrap()`.
+
+| | ChirpStack | The Things Stack |
+|---|---|---|
+| Endpoint | `POST {serverUrl}/api/devices/{devEUI}/queue` | `POST {base}/api/v3/as/applications/{appId}/devices/{deviceId}/down/{push\|replace}` |
+| Auth header | **`Grpc-Metadata-Authorization`** — a token in plain `Authorization` is ignored and answers 401, because the REST surface is a grpc-gateway transcoding | `Authorization: Bearer` |
+| Body | v4 `{queueItem:{devEui,…}}`, v3 `{deviceQueueItem:{devEUI,…}}` — the key *and* the EUI casing changed between majors, so `apiVersion` is declared, not sniffed | `{downlinks:[{frm_payload,f_port,confirmed,priority}]}` |
+| Addressed by | DevEUI | the console **`device_id`**, captured from the uplink into `metadata.lorawanDeviceId`. There is no API mapping one to the other, so a device that has never reported cannot be reached |
+
+Four things worth knowing:
+
+- **A downlink is QUEUED, not sent.** A Class A device — almost every battery
+  LoRaWAN sensor — can only receive in the two windows after an uplink it chose
+  to send, so the network server holds the frame until then. HTTP 200 means
+  "accepted into the queue", which may be seconds or most of a day before
+  transmission. Nothing in this platform claims otherwise.
+- **`hasAdapter: true`, `direction: inbound`** on both manifests, exactly like
+  Tuya. `hasAdapter` records that an adapter exists; the telemetry fan-out reads
+  `isDispatchableType()` = outbound AND hasAdapter, and platform telemetry must
+  never be POSTed at a network server's queue endpoint — that would fail ten
+  times and quarantine the row, which is how working Tuya integrations used to
+  switch themselves off (above).
+- **Before this, both protocols published to `milesight/downlink/<devEUI>` on
+  this platform's own broker**, which no ChirpStack or TTN deployment
+  subscribes to. The publish succeeded, the command row went DELIVERED, and
+  nothing reached the device.
+- **Not implemented:** ChirpStack's `ack` event and TTN's
+  `downlink_ack`/`downlink_failed` are not consumed, so a queued downlink's
+  terminal fate is not recorded; and neither queue is read or flushed, so a
+  device offline for a week accumulates stale downlinks at its network server.
 
 ### The event log
 
@@ -759,10 +861,13 @@ distinguish two failures an hour apart from one. Neither could answer "did the
   `DataSource.initialize` — `Data type "Object" in "IntegrationEvent.deviceKey"
   is not supported by "postgres"` — and the **whole application fails to boot**,
   not just that entity.
-- An unreachable **Kafka broker stops the application booting**: `KafkaModule`'s
-  factory awaits `initProducer()`, and a consumer's failed `connect()` surfaces
-  as an unhandled rejection that kills the process. Pre-existing, unchanged here,
-  but it makes local work without the full stack impossible.
+- An unreachable **Kafka broker used to stop the application booting**:
+  `KafkaModule`'s factory awaited `initProducer()`, and a consumer's failed
+  `connect()` surfaced as an unhandled rejection that killed the process. **Fixed
+  — see §11a.** The connect is now a background retry loop, so the app boots
+  without a broker and attaches when one appears; `KAFKA_ENABLED=false` skips it
+  entirely. The `kafka` outbound adapter above is unaffected either way: it
+  pools its own producers per broker set and does not use `KafkaService`.
 
 ## 4f. Rule Engine
 
@@ -1841,8 +1946,317 @@ bypass; it is not a supported running state.
 
 No DTLS for CoAP or LwM2M, so those tokens travel in clear over UDP and are
 replayable by anyone on the path. That port belongs on a private APN or behind
-a DTLS terminator. There is also no gateway-to-child-device model, which is
-why batch falls back to a same-tenant bound rather than a per-device one.
+a DTLS terminator. `POST /v1/ingestion/batch` still falls back to a same-tenant bound when an
+entry carries no token of its own.
+
+### The edge gateway path
+
+Enforcing per-device authentication **broke the edge agent**, and the break is
+worth recording because the instinct it provokes is the wrong one. The agent
+forwards for many devices and holds none of their tokens — it was sending only
+the platform-wide `x-api-key`, which identifies no one, so every forwarded
+reading was rejected.
+
+The answer is not to weaken device auth. It is to give the gateway an identity
+and bound what that identity may speak for:
+
+```
+x-edge-key: <edgeKey>        the same pair the agent registers with
+x-edge-secret: <edgeSecret>  stored server-side as SHA-256, select: false
+```
+
+`authenticateEdgeForDevice()` authorises the edge for a device only when
+**`device.edgeId` is that edge AND the tenants match**. Both predicates are
+required; either alone is bypassable. A presented-but-refused edge credential
+returns null rather than falling through to the device-token paths, because in
+edge mode the path segment is a deviceKey and trying it as a token is noise.
+
+This is the gateway-to-child-device model the platform lacked.
+
+---
+
+## 4p. The audit log — comprehensive-looking, and recording nothing
+
+The audit module had an entity with six composite indexes, a 526-line
+controller with fourteen routes, role-based read scoping, CSV export,
+statistics, eighteen `@OnEvent` handlers and a 533-line Kafka consumer. It
+recorded **almost nothing**, and `tsc` could not see any of it, because the
+absence of a decorator is silence rather than an error.
+
+### Four independent defects, any one of which was sufficient
+
+| Defect | Measured |
+|---|---|
+| **`@Audit()` on 3 of 56 controllers** | users, devices, customers — one handler each, out of ~700 routes. `AuditInterceptor` is a global `APP_INTERCEPTOR` that returns `next.handle()` untouched when a handler has no `AUDIT_KEY` metadata (the §4g/§4k default-open shape, a third time). So there was no CRUD audit for tenants, dashboards, rule chains, automations, integrations, subscriptions, payments, roles, permissions, groups, firmware, relations or SCADA diagrams. |
+| **10 of 18 `@OnEvent` handlers had no emitter** | `grep "emit('<name>'"` returned 0 for `user.login`, `user.login.failed`, `user.logout`, `user.role.changed`, `device.created`, `device.updated`, `device.deleted`, `device.disconnected`, `device.command.sent`. **Authentication was not recorded at all.** |
+| **The 8 handlers that DID fire wrote nothing either** | Worse than the above and not visible from a grep. `UsersService` emits `{ user }`, `AlarmsService` emits `{ alarm }`; every handler read `payload.tenantId`, got `undefined`, and `audit_logs.tenantId` is NOT NULL — so the INSERT threw. `EventEmitter2.emit()` discards the listener's promise, so it surfaced as an unhandled rejection, not an error anyone saw. |
+| **No retention** | The only purge was the manual `DELETE /audit/cleanup/:daysOld`. The table grew at request rate, forever. |
+
+Plus `src/database/seeds/audit-log/audit-log.seeder.ts`, which wrote
+**fabricated** audit rows — logins that never happened, attributed to real
+seeded users with real timestamps and IPs. In any other table demo data is a
+convenience; in an audit log a row that did not happen destroys the table's
+only property, and a reviewer cannot tell a seeded row from a real one.
+
+### What it looks like now
+
+- **~298 of 375 auditable write routes carry `@Audit()` (79.5%)**, across 46
+  controllers, applied by `scripts/add-audit-decorators.py` — re-runnable and
+  idempotent, same shape as `add-require-permissions.py`.
+- **All 18 event handlers have an emitter.** Login, failed login (all three
+  failure branches: bad password, inactive account, bad 2FA code), logout and
+  role change come from `AuthService` / `UsersService`; the device events from
+  `DevicesService` and `GatewayService.sendCommand()`. Self-registration emits
+  `user.created` too — it writes its user row through its own repository, so it
+  never went through `UsersService.create()`.
+- **One guarded write path.** `AuditEventsService.record()` resolves `tenantId`
+  from the entity when the emitter did not send one, drops (with a warning)
+  rather than throws when there is no tenant, and swallows repository errors.
+  An audit write must never fail the operation it describes.
+- **`AUDIT_RETENTION_DAYS`** (default 365, `0` disables) with a daily
+  03:30 cron in `AuditRetentionService`. It is a single idempotent
+  `DELETE … WHERE timestamp < cutoff`, so it is **safe unlocked on N
+  replicas** and needs no entry on the distributed-lock allow-list; the class
+  comment says so, and says what would change that.
+- **The seeder is gated** behind `SEED_DEMO_AUDIT_LOGS=true` and off by
+  default.
+- **`npm run check:audit-coverage`** (`scripts/check-audit-coverage.ts`)
+  asserts all of it. The check that would have caught the original bug is
+  "every `@OnEvent` audit handler has at least one emitter", and it searches
+  every file in `src` **except** `audit-events.service.ts`, so a handler
+  quoting its own event name in a comment cannot satisfy it.
+
+### Rules worth knowing before you touch this
+
+- **Reads are deliberately not audited.** Decorating GETs would grow
+  `audit_logs` at full request rate — every dashboard poll, every telemetry
+  page. Who read what is in `api_logs`, which has its own retention.
+- **Telemetry ingest routes are excluded** for the same reason:
+  `POST /telemetry/devices/:key` and `POST /gateway/devices/:key/telemetry`
+  are hit once per sample per device.
+- **One row per action.** Where an event covers an action, the HTTP route is
+  **not** decorated — device and user single-entity CRUD, alarm
+  create/acknowledge/clear/resolve, `POST /gateway/.../command`. The event is
+  the one to keep because it also fires for the origins with no request behind
+  them (a Tuya import, a telemetry-raised alarm, a queued downlink). Bulk
+  routes keep their decorator: "an admin ran a bulk delete on 40 users" and 40
+  per-user rows are different facts. Removing the pre-existing `@Audit()` from
+  `POST /users` and `POST /devices` was part of this — they would now write two
+  rows each.
+- **`AuditEntityType` is a Postgres enum.** A new TypeScript member alone is
+  not enough (§4e's `integrations.type` trap) and `migration:run` is blocked
+  (§11), so the codemod emits only existing members. A resource with no
+  dedicated member maps onto the closest one plus an explicit `description`
+  naming the real resource — `SETTINGS` is the catch-all for roles,
+  permissions, groups, templates and edge instances, and the description is
+  what keeps the rows readable.
+- **`GET /audit/modules/:module`** is a generic route backed by
+  `AUDIT_MODULE_ENTITY_TYPES`, declared **after** the seven literal
+  `modules/*` routes — Nest matches in declaration order, so a parameterised
+  segment above them would capture `modules/users` (the §4o route-order trap).
+  An unknown module answers **400 with the valid list**, never an empty page:
+  an empty page is indistinguishable from "nothing happened".
+- **`src/modules/audit/audit.consumer.ts` is deleted.** 533 lines, in no
+  module's `providers`, subscribing to 25 `audit.*` topics — none of which is
+  one of the two `KafkaService.createTopics()` creates, and nothing produced to
+  any of them. It also wrote through a raw `pg.Pool`, bypassing TypeORM.
+  Registering it would have made boot depend on a reachable broker (§11) for a
+  path that would receive nothing.
+
+### Still not covered
+
+- `POST /auth/register` and the other `@Public` auth routes have no
+  authenticated actor, so the interceptor skips them; registration is covered
+  by the `user.created` emit instead, and password reset/email verification
+  are not covered at all.
+- `PATCH /auth/profile` has neither a decorator nor an event.
+- `assets/`, `profiles/`, `floor-plans/`, `reports/` and `analytics/` were
+  being edited in parallel and were left out of the codemod — ~40 write routes.
+  Re-running `scripts/add-audit-decorators.py` with those paths added is the
+  whole change.
+- A failed login against an email matching **no account** has no tenant to
+  scope a row to, so it is logged to the application log and dropped. It is
+  still in `api_logs`. Attempts against real accounts — the credential-stuffing
+  case — always resolve.
+
+---
+
+## 4q. Socket subscriptions — authenticated is not authorized
+
+`WsJwtGuard` proves **who** is connected. Nothing proved **what** they were
+allowed to watch. Every `@SubscribeMessage` handler in all three gateways took
+an id off the wire and called `client.join('device:' + id)`:
+
+| Gateway | Handlers |
+|---|---|
+| `/ws` | `device:subscribe`, `dashboard:subscribe`, `widget:subscribe`, `device:command` |
+| `/alarms` | `subscribe:device`, `subscribe:customer` |
+| `/telemetry` | `subscribe` |
+
+So any authenticated account — including a customer user of another tenant —
+could stream any tenant's live telemetry and alarms by naming a device uuid,
+and the server logged it as an ordinary subscription. `dashboard:subscribe` and
+`widget:subscribe` were worse: they took a whole `deviceIds[]` **array** from
+the browser.
+
+The check now lives in one place, `WsSubscriptionAuthorizer`
+(`src/common/websocket/`), reached through `WsAuthorizationModule`. That module
+holds **only** the Device repository: `WebsocketModule`, `AlarmsModule` and
+`TelemetryModule` already import one another behind `forwardRef()`, and a
+shared provider that pulled in `DevicesModule` would tighten that knot until
+Nest could not resolve it.
+
+Scoping rules, in order:
+1. `SUPER_ADMIN` is cross-tenant by definition → allowed.
+2. **Anyone else with no `tenantId` on their token → refused.** A missing claim
+   is not a wildcard. This is the direction that fails closed, and it is the
+   one that matters: the naive version builds `where: { tenantId: undefined }`,
+   which TypeORM **drops from the query** — turning "scope me to nothing" into
+   "return everything".
+3. Otherwise the device must belong to the caller's tenant.
+4. If the token carries a `customerId`, the device must also be assigned to
+   that customer. Tenant isolation alone is not enough inside a tenant that
+   has several customers.
+
+Things that are load-bearing and easy to undo by accident:
+- **A refusal answers "not found", never "not yours".** Confirming that another
+  tenant's device exists is itself a leak.
+- **Malformed ids are refused before the query.** `In(['not-a-uuid'])` reaches
+  Postgres as a uuid comparison and raises `invalid input syntax for type
+  uuid` — a 500 from a subscribe payload, and a crash loop if the widget
+  retries.
+- **A database error denies.** An authorizer that cannot answer must not answer
+  "yes".
+- **`subscribe-dashboard` scopes the devices it derives from the dashboard**,
+  even though the dashboard read is already tenant-scoped. Widget configuration
+  is arbitrary JSON written by tenant users, so a widget can name any uuid it
+  likes; deriving the room list from the dashboard moves the forgery one level
+  down rather than preventing it.
+- **The claims it scopes by must actually arrive.** `WsJwtGuard` has to copy
+  `customerId` onto `client.data`, and the signed access token has to carry it.
+  If either stops, the customer narrowing does not fail — it silently stops
+  applying, and every customer user regains tenant-wide visibility.
+  `check:ws-authorization` pins both links.
+
+Two further leaks found in the same files:
+- `device:command` used `this.server.emit(...)`, which is a broadcast to
+  **every** socket in the namespace — one tenant's `userId`, `tenantId`,
+  `deviceId` and command delivered to every other tenant's browser. Nothing
+  anywhere listened for `device:command:request`, so the broadcast was its only
+  effect and the command reached no device.
+- `/telemetry` had `cors: origin: '*'` and `get:subscriptions` had no guard at
+  all.
+
+`verify:ws-delivery` is the one to keep. It boots the real gateway on a real
+HTTP server, connects two real socket.io clients with signed JWTs for two
+tenants, and asserts that a push **arrives** at the subscriber, does **not**
+arrive at the other tenant, **and still arrives at the first** — that third
+assertion is there because scoping subscriptions is exactly the kind of fix
+that makes a stream secure by making it dead.
+
+---
+
+## 4r. The verification suite was itself unverified
+
+`scripts/` had never been typechecked. `tsconfig.json` included only
+`src/**/*`, and most `verify:*` scripts run under `ts-node -T`
+(transpile-only), so nothing checked them at build time or at run time.
+
+The first `typecheck:scripts` run found **12 constructor arity mismatches
+across 8 scripts**. The mechanism is always the same: a service gains a
+dependency, every call site in `src` is corrected because `tsc` demands it, and
+the script that constructs the same class by hand is not, because nothing was
+looking.
+
+Worth knowing exactly how bad one of them was. `verify-permissions.ts` built
+`PermissionGuard` with 3 of 4 arguments, so `this.permissionCache` was
+`undefined` and `canActivate()` threw on its first call. The script caught the
+throw and returned `false`. The result was **asymmetric**:
+
+- every *"is allowed"* assertion failed loudly — 3 of them
+- every *"is denied"* assertion **passed, for the wrong reason**
+
+A revoke test whose baseline is already "denied" proves nothing. The suite
+reported 12 passes while testing nothing at all. **A guard that fails is noisy
+and gets fixed; a guard that passes vacuously is worse than no guard, because
+it is counted as evidence.**
+
+Rules that follow from this:
+- `typecheck:scripts` must be clean. It is the only thing standing between the
+  suite and this recurring back into it.
+- **Never cast the class away when hand-constructing a service.**
+  `new (TelemetryService as any)(...)` is what let a *positional* shift through
+  — `TelemetryLatestCacheService` was inserted as parameter 4 and pushed every
+  later stub by one, so `rollupStub` landed in the AutomationService slot. Put
+  the `any` on the stubs, not on the constructor.
+- **A test double that always misses tests nothing.** Prefer
+  `scripts/support/in-memory-redis.ts` — a real in-memory implementation with
+  working TTLs and a monotonic `increment`, because the permission cache's
+  correctness rests on its epoch scheme — over a Proxy that answers
+  `undefined`.
+- **Fixtures must survive a crashed run.** `tenants.name` is UNIQUE, and
+  several scripts used fixed literals (`'Perm tenant'`, `'AI tenant 0'`). One
+  run that died before cleanup left the row behind and made the script
+  permanently unrunnable with a duplicate-key error that says nothing about
+  what it verifies. Names now carry the run's uuid, and residue is swept first.
+- **A cron body wrapped in `@DistributedCron` will not run in a script** unless
+  a `DistributedLockService` has been constructed (it populates a static
+  holder) — set `CLUSTER_LOCKS_ENABLED=false` so `withLock` runs the work
+  inline and returns its real result. Otherwise the body is skipped and the
+  assertions report the business logic as broken when it was never invoked.
+- **Assert the negative control.** The watchdog check in
+  `verify-cluster-locks.ts` originally used a 2s TTL with a 2.5s body, but
+  `withLock` clamps the TTL up to `MIN_TTL_SECONDS` (5) — so the lock would
+  have survived with no renewal whatsoever and the assertion proved nothing.
+  Only the paired `renew: false` case revealed it.
+
+---
+
+## 4s. Nothing ran the application until something had broken it
+
+The app would not boot, and every guard was green.
+
+`TelemetryGateway` had been dead code: present in no module's `providers`, so
+Nest never instantiated it, the `/telemetry` namespace did not exist, and its
+`@OnEvent` handlers never ran. Registering it in `TelemetryModule` made it
+real — and made its `@UseGuards(WsJwtGuard)` resolvable only in a module that
+provides `JwtService`, which `TelemetryModule` did not:
+
+```
+Nest can't resolve dependencies of the WsJwtGuard (?, ConfigService).
+Please make sure that the argument JwtService at index [0] is available
+in the TelemetryModule context.
+```
+
+Why nothing caught it:
+- `tsc` cannot see a DI graph. Both typecheck configs were clean.
+- `npm run build` uses **SWC**, which does not typecheck — and this was not a
+  type error in any case.
+- `check:swagger` builds a `ProbeModule`, not the real `AppModule`.
+- Every other guard reads source text or hand-constructs a service.
+
+`npm run check:boot` closes it: build, start `node dist/main.js` against a
+synchronised scratch schema, and wait for `GET /health` to answer 200. It has
+been negative-tested — removing the fix reproduces the failure and the guard
+names it.
+
+Two things worth knowing if you run the app locally:
+
+- **`DB_SYNCHRONIZE=true` is not enough to create the schema.** It is gated on
+  `NODE_ENV === 'development'` *and* the flag, and a fresh database still came
+  up empty. Booting against an empty database dies on an unhandled
+  `relation "schedules" does not exist` from a startup query, which is a raw
+  TypeORM error rather than anything that names the cause. `check:boot`
+  synchronises the entity graph itself first.
+- **The resolution order of fail-fast checks is a list of what a deployment
+  cannot start without**, and it is longer than it looks: `JWT_REFRESH_SECRET`,
+  `KAFKA_BROKERS` (**required by `env.validation` even when
+  `KAFKA_ENABLED=false`** — worth fixing, since the point of that flag is
+  running without Kafka), `OTA_PUBLIC_URL`/`BACKEND_URL`, `FRONTEND_URL` (must
+  be an absolute URL), `MOYASAR_API_KEY`, and a clientID/secret for **each** of
+  the Google, GitHub and Apple passport strategies, which construct eagerly and
+  throw without one. `bootEnv()` in `scripts/check-boot.ts` is the executable
+  record of that set, and it fails the moment the set grows.
 
 ---
 
@@ -2045,10 +2459,42 @@ DB_DATABASE=postgres
 DB_LOGGING=false
 
 # Redis
+# REDIS_HOST is REQUIRED — a localhost default meant a deploy with the variable
+# missing would start, fail every cache read, and look like a Redis outage
+# rather than a config mistake. Redis being DOWN, by contrast, no longer stops
+# the boot: the connect is fire-and-forget and ioredis retries (see §11).
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_PASSWORD=
-REDIS_DB=0
+REDIS_DB=0                            # RedisService + the cache-manager store
+REDIS_QUEUE_DB=1                      # Bull. A SEPARATE logical database, or a
+                                      #   cache flush drops queued jobs
+REDIS_KEY_PREFIX=smartlife:           # RedisService's ioredis keyPrefix. The
+                                      #   cache-manager store appends `cache:`
+                                      #   to it, so the two cannot collide on
+                                      #   db 0 — see §11
+REDIS_TTL=3600                        # default cache-manager TTL, SECONDS
+REDIS_CONNECT_TIMEOUT=10000
+REDIS_COMMAND_TIMEOUT=5000
+REDIS_RETRY_DELAY=1000                # ceiling on the reconnect backoff
+REDIS_MAX_RETRIES=3
+REDIS_READY_CHECK=true
+REDIS_OFFLINE_QUEUE=true              # queue commands during a reconnect, so a
+                                      #   blip does not surface as an error
+
+# Caches (all Redis-backed; each states what invalidates it in its own class).
+# Lower a TTL to narrow a staleness window; 0 disables that cache entirely and
+# sends every request to Postgres.
+PERMISSION_CACHE_ENABLED=true         # PermissionGuard's effective-permission
+                                      #   set. Invalidated by a per-tenant
+                                      #   epoch (one INCR) plus a global epoch
+                                      #   for system roles — NOT by TTL alone
+PERMISSION_CACHE_TTL_SECONDS=60
+SUBSCRIPTION_CACHE_TTL_SECONDS=30     # SubscriptionGuard's row. BYPASSED on any
+                                      #   route with @RequireSubscriptionLimit()
+                                      #   — the row carries live quota counters
+TELEMETRY_LATEST_CACHE_TTL=300        # GET /telemetry/:id/latest. Write-through
+                                      #   from BOTH ingest paths
 
 # JWT
 JWT_SECRET=<required>
@@ -2063,7 +2509,36 @@ MQTT_PASSWORD=public
 MQTT_CLIENT_ID=smartlife-platform
 
 # Kafka
-KAFKA_BROKERS=localhost:9093
+# ON by default — only an explicit false disables it, so a production deploy
+# that forgets the variable still gets the ingestion pipeline. An unreachable
+# broker no longer stops the boot (see §11); KAFKA_ENABLED=false is the
+# supported way to work without the Docker stack at all.
+KAFKA_ENABLED=true                    # false => no client is constructed, no
+                                      #   consumer runs, every produce is a
+                                      #   logged no-op (NOT a throw)
+KAFKA_BROKERS=localhost:9093          # comma-separated; split properly
+KAFKA_CLIENT_ID=smartlife-iot-platform
+KAFKA_SSL=false
+KAFKA_SASL_USERNAME=                  # SASL is configured only when BOTH
+KAFKA_SASL_PASSWORD=                  #   halves are set
+KAFKA_CONNECTION_TIMEOUT=10000
+KAFKA_REQUEST_TIMEOUT=30000
+KAFKA_INITIAL_RETRY_TIME=100
+KAFKA_RETRIES=8
+KAFKA_SESSION_TIMEOUT=30000
+KAFKA_HEARTBEAT_INTERVAL=3000
+KAFKA_TOPIC_PARTITIONS=3
+KAFKA_TOPIC_REPLICATION_FACTOR=1      # a CLUSTER property — 1 means no replicas
+KAFKA_BOOTSTRAP_MAX_BACKOFF_MS=60000  # ceiling on the background reconnect
+KAFKA_CONSUMER_MAX_ATTEMPTS=3         # in-process retries per message before
+                                      #   it is dead-lettered
+KAFKA_CONSUMER_RETRY_BACKOFF_MS=250   # doubled each attempt
+KAFKA_DLQ_SUFFIX=.dlq                 # fallback only; TOPIC_REGISTRY names
+                                      #   each stream's DLQ explicitly
+KAFKA_LAG_CACHE_SECONDS=15            # /health polling must not amplify into
+                                      #   admin round trips
+KAFKA_LAG_UNHEALTHY_THRESHOLD=10000   # total lag per group above which
+                                      #   /health/messaging fails
 
 # Email (SMTP)
 SMTP_HOST=
@@ -2090,6 +2565,15 @@ MOYASAR_WEBHOOK_SECRET=
 
 # Integrations
 INTEGRATION_EVENT_RETENTION_DAYS=14   # How long integration_events rows are kept
+
+# Audit
+AUDIT_RETENTION_DAYS=365   # How long audit_logs rows are kept; 0 disables the
+                           # sweep entirely (for a deployment shipping rows to
+                           # an external SIEM). Much longer than the
+                           # integration-event window on purpose — see §4p.
+SEED_DEMO_AUDIT_LOGS=false # `npm run seed` writes NO audit rows unless this is
+                           # exactly "true". Fabricated audit entries are worse
+                           # than an empty table.
 
 # SMS (NotificationChannel.SMS and `sms` 2FA both go through SmsChannel).
 # Nothing is sent unless SMS_ENABLED is true, and a disabled or misconfigured
@@ -2154,8 +2638,9 @@ ALARM_PROPAGATION_MAX_DEPTH=10        # ceiling on the asset-tree walk
 SUBSCRIPTION_GRACE_PERIOD_DAYS=3      # paid plan survives a failed renewal this long
 
 # Reports
-REPORT_SCHEDULER_ENABLED=true         # set false on all but ONE instance:
-                                      # the tick has no distributed lock
+REPORT_SCHEDULER_ENABLED=true         # blunt per-instance off switch. No longer
+                                      # needed for correctness: the tick holds a
+                                      # distributed lock (see §12)
 
 # Transports (see §4i)
 SNMP_ENABLED=true                     # false => no poller, no timer, no sockets
@@ -2164,6 +2649,45 @@ SNMP_MAX_DEVICES=500
 LWM2M_LIFETIME_GRACE_SECONDS=30
 LWM2M_EXPIRY_SWEEP_SECONDS=15
 GATEWAY_RPC_LISTENER_ENABLED=true     # false => every two-way RPC times out
+
+# ── Running more than one replica (see §12) ────────────────────────────────
+# Every one of these DEFAULTS to the multi-replica-safe value, so a scaled
+# deploy needs no new configuration to be correct. They exist to be turned OFF
+# for a broker or deployment that cannot support them.
+
+# One replica runs each @Cron tick, claimed through a Redis lock.
+# false => EVERY replica runs EVERY cron: duplicate report emails, N copies of
+# each scheduled notification, scheduled automations firing device commands N
+# times, billing sweeps racing. Only correct on a single process.
+CLUSTER_LOCKS_ENABLED=true
+
+# MQTT shared subscriptions: `$share/<group>/<topic>`, so the broker delivers
+# each uplink to ONE replica instead of all of them.
+# false => every replica persists every reading: the telemetry table, Kafka
+# throughput and alarm evaluation all multiply by the replica count. EMQX 5
+# supports this; a broker that does not will refuse the subscription.
+MQTT_SHARED_SUBSCRIPTION=true
+MQTT_SHARED_GROUP=smartlife-platform   # the consumer-pool identity. TWO
+                                       # deployments on one broker MUST use
+                                       # different groups or they steal each
+                                       # other's uplinks
+
+# Socket.IO Redis adapter, so `server.to(room).emit()` crosses replicas.
+# false => a browser on replica A never receives a push produced on replica B.
+WS_REDIS_ADAPTER_ENABLED=true
+WS_REDIS_ADAPTER_KEY=smartlife-ws      # pub/sub channel prefix; two
+                                       # deployments sharing one Redis MUST
+                                       # differ or they cross-deliver emits
+
+# Uploads. `local` is the current behaviour: bytes on the handling replica's
+# disk. `s3` is a STUB and fails at boot (see §11).
+STORAGE_DRIVER=local                   # local | s3 (stub)
+STORAGE_LOCAL_SHARED=false             # set true ONLY if UPLOAD_PATH is on
+                                       # genuinely shared storage (NFS/EFS, or
+                                       # one Docker volume on one host). It
+                                       # only silences the startup warning —
+                                       # a wrong `true` turns a visible 404
+                                       # into silent data loss
 
 # Feature Flags
 AUTO_REGISTER_DEVICES=false    # Auto-create device records on first MQTT message
@@ -2249,18 +2773,72 @@ npm run check:rule-templates      # every built-in template is instantiable as s
 npm run check:expression-sandbox  # calculated-field formulas cannot reach the host
 npm run check:node-sandbox        # rule-node scripts cannot reach the host
 npm run check:swagger             # the Swagger document builds from dist (see §4h)
-                                  #   — builds dist first; this is the only check
-                                  #     that covers bootstrap()
+                                  #   — builds dist first. NOTE: it assembles a
+                                  #     ProbeModule, NOT the real AppModule, so
+                                  #     it does NOT resolve most feature
+                                  #     modules' DI. It used to claim to cover
+                                  #     bootstrap(); it does not. check:boot
+                                  #     does.
+npm run check:boot      [db]      # starts the REAL `node dist/main.js` against a
+                                  #   synchronised scratch schema and waits for
+                                  #   GET /health to answer 200. The only guard
+                                  #   that resolves the whole DI graph.
+                                  #   Catches: a gateway or guard whose module
+                                  #   lacks a provider (see §4s), a module
+                                  #   missing from an import graph, and a boot
+                                  #   that Kafka or MQTT being down would block
+                                  #   (§11a). Needs Postgres.
 npm run check:permissions         # every @RequirePermissions string is seeded,
                                   #   and reports decorator coverage (§4k)
 npm run check:ai-wiring           # the AI DI graph resolves; catches the
                                   #   string-token and recursion traps (§4l)
+npm run check:cluster-safety      # every @Cron is locked or explicitly
+                                  #   allow-listed as idempotent, MQTT uses
+                                  #   $share/, the Socket.IO Redis adapter is
+                                  #   wired, and the compose stack can scale
+                                  #   (§12). THIS IS THE REGRESSION GATE: a new
+                                  #   unlocked @Cron fails the build — as does
+                                  #   an fs.writeFile reappearing in either
+                                  #   floor-plan service (§11b)
+npm run check:infra-wiring        # Kafka and Redis DEGRADE instead of failing
+                                  #   the boot, every declared topic has a
+                                  #   consumer or a written reason, every
+                                  #   consumer rethrows so its DLQ is real, and
+                                  #   every cache has an invalidation path
+                                  #   (§11a)
+npm run check:ws-authorization    # no @SubscribeMessage handler joins a
+                                  #   device:/customer: room without asking
+                                  #   the authorizer; the claims it scopes by
+                                  #   are actually populated (§4q)
 node scripts/check-exception-filter.js   # field-level errors reach the client
 
-# ── Verification: each needs its own empty database (createdb first) ────────
+# ── Typechecking: three configs, and all three must be clean ───────────────
+# tsconfig.json is the BUILD config and no longer includes tests, so
+# `tsc --noEmit` is meaningful again. It previously reported ~98 permanent
+# errors (`Cannot find name 'describe'`) that had to be filtered by eye, which
+# is how a real error hides.
+#
+# tsconfig.scripts.json is the important one: scripts/ had NEVER been
+# typechecked, and most verify scripts run under `ts-node -T`. The first run
+# found 12 constructor arity mismatches across 8 scripts — see §4r.
+npm run typecheck                 # src only — must be 0
+npm run typecheck:tests           # adds jest globals — must be 0
+npm run typecheck:scripts         # scripts/ + src — must be 0
+
+# ── One command for the whole suite ────────────────────────────────────────
+# Creates the scratch databases if missing (a fresh `verify:*` otherwise fails
+# with `database "..." does not exist`, which reads as a broken guard rather
+# than a missing database), runs every check:* and verify:*, and reports
+# pass/fail/skip. An unavailable dependency is a SKIP, never a pass.
+npm run verify:all                # everything
+npm run verify:all -- --checks    # static guards only, no database needed
+npm run verify:all -- --filter ws # only scripts matching "ws"
+
+# ── Verification: each needs its own empty database (createdb first, or let
+#    `verify:all` create them) ───────────────────────────────────────────────
 # These exercise real repositories, real SQL and real transactions. The app
-# itself cannot be booted without Kafka (§11), so the services are wired by
-# hand inside each script.
+# now boots without Kafka (§11a), but these still wire the services by hand
+# inside each script so they need no HTTP server or broker at all.
 npm run verify:rule-templates      <db>
 npm run verify:data-converters     <db>
 npm run verify:telemetry-retention <db>
@@ -2277,6 +2855,29 @@ npm run verify:resource-assignments <db>  # assignment reads — scoping + the
 npm run verify:permissions         <db>   # grants/revocations decide access (§4k)
 npm run verify:ai                  <db>   # credential crypto, prompt templating,
                                           #   response normalisation, scoping (§4l)
+npm run verify:floor-plan-storage  <db>   # a real DXF through upload → parse →
+                                          #   preview → generate → download,
+                                          #   comparing BYTES; all four legacy
+                                          #   reference shapes; the backfill (§11b)
+npm run verify:ws-authorization    <db>   # a socket of tenant A cannot subscribe
+                                          #   to tenant B's device; a customer
+                                          #   user cannot reach a sibling
+                                          #   customer; fails closed (§4q)
+npm run verify:ws-delivery         <db>   # boots the REAL gateway on a real HTTP
+                                          #   server and connects a real
+                                          #   socket.io-client: a telemetry push
+                                          #   ARRIVES at its own tenant and does
+                                          #   not arrive anywhere else (§4q)
+npm run verify:audit-write         <db>   # an emitted event becomes a ROW, with
+                                          #   the nested `{ user: { tenantId } }`
+                                          #   payload shape that wrote nothing
+                                          #   for all 18 handlers (§4p)
+npm run verify:cluster-locks              # needs REDIS, not Postgres. Mutual
+                                          #   exclusion, release on throw, TTL
+                                          #   expiry after a simulated crash,
+                                          #   compare-and-delete, watchdog
+                                          #   renewal, and that an unreachable
+                                          #   Redis is counted and surfaced (§12)
 
 # ── Migrations: `migration:run` is blocked by the drift in §11, so each new
 #    migration ships with a standalone runner that applies it in isolation ───
@@ -2286,6 +2887,7 @@ npm run migration:data-converters        <db> [up|down]
 npm run migration:telemetry-rollups      <db> [up|down]
 npm run migration:reports-groups-queues  <db> [up|down]
 npm run migration:ai-models              <db> [up|down]
+npm run migration:floor-plan-storage-keys <db> [up|down]
 ```
 
 ---
@@ -2379,6 +2981,12 @@ import { DevicesService } from '@modules/index.service';
 | ~~`src/modules/api-monitoring/api-monitoring.service.ts`~~ | **RESOLVED** — real health probes. |
 | ~~`src/modules/images/images.service.ts`~~ | **RESOLVED** — local-disk storage and delete are implemented. |
 | `src/modules/images/images.controller.ts` line 46 | File upload to persistent storage (S3/local) is TODO |
+| ~~Six `@Cron` jobs fired on every replica~~ | **RESOLVED** — `RedisService.acquireLock()` existed with **zero callers** while the report scheduler, scheduled notifications, the scheduled-automation tick, the Tuya poll and two subscription sweeps all ran on every instance. `@DistributedCron` (`src/lib/cluster/`) now claims a Redis lock per tick; `DevicesService.checkOfflineDevices()` was locked too, because its bulk UPDATE is idempotent but the `device.offline` events it emits are not. See §12. |
+| ~~MQTT had no shared subscription~~ | **RESOLVED** — `$share/<group>/` on every uplink filter, in both `MQTTService` and `IntegrationMqttInboundService`. This was the worst of the set: it duplicated the primary ingestion path. See §12. |
+| ~~No Socket.IO Redis adapter~~ | **RESOLVED** — `@socket.io/redis-adapter` was a dependency and was never wired, so `server.to(room).emit()` reached only the emitting replica. `RedisIoAdapter` is registered in `main.ts`. See §12. |
+| ~~`RpcCorrelatorService.pending` was per-process~~ | **RESOLVED** — a device reply landing on a different replica than the one holding the promise always timed out, which is (N-1)/N of every two-way RPC. Responses an instance does not own are relayed over the Redis channel `cluster:rpc:response` and settled by the owner. |
+| `src/modules/analytics/analytics.service.ts` — `generateDailyAnalytics()` | **Not replica-safe.** Writes one `analytics` row per tenant per day with no uniqueness constraint, so N replicas write N rows and every historical series is multiplied by the replica count. Left untouched because `src/modules/analytics/` was owned by another work stream in the same round. It is the one `known-gap` entry in `scripts/check-cluster-safety.ts`, which prints it on every run. Fix: `@DistributedCron(CronExpression.EVERY_DAY_AT_MIDNIGHT, { name: 'analytics-daily-rollup', lockTtl: 1800 })`. Until then, run it on one replica. |
+| Uploads are still local-disk only | `src/lib/storage/` introduces the seam — a `StorageDriver` interface, a `local` driver that reproduces the previous behaviour exactly (including the `UPLOAD_PATH_IMAGES` / `FIRMWARE_STORAGE_DIR` / `UPLOAD_PATH_TEMPLATES` root overrides), and an `s3` driver that is an explicit stub throwing at construction. **Five of six call sites moved** (`images`, `firmware`, `solution-templates`, and now both floor-plan services — see §11b); only `reports/reports.service.ts` still calls `fs.writeFile` directly, because that directory is owned by another work stream. The `images` and `firmware` **read** paths (`FirmwareService` OTA download, `ImagesService.getPublicImageFile`) still stream from an absolute local path, so a remote driver needs those routed through `storage.get()` as well; the floor-plan read paths are done. `npm run check:cluster-safety` asserts the converted files and prints the remaining one on every run. |
 | ~~`src/modules/alarms/alarms.consumer.ts` line 359~~ | **RESOLVED** — it already routed SMS through `NotificationsService`; the gap was `SmsChannel`, every provider call in which was commented out and which then returned success, so the notification row was marked **sent and delivered** while nothing left the host. Twilio and AWS SNS are now both wired (`SMS_PROVIDER=twilio\|aws_sns`), numbers are normalised to E.164 with `libphonenumber-js`, and every failure path throws so `markAsFailed()` runs. |
 | ~~`src/modules/notifications/channels/push.channel.ts`~~ | **RESOLVED** — same silent-false-success shape (`sendToMultipleDevices()` set `success = deviceTokens.length` with no network call). FCM via `firebase-admin` (modular subpath imports; iOS is relayed to APNs by Firebase, as there is no `apn` package here) and Web Push via `web-push`. Device tokens live in the new `push_subscriptions` table, registered through `POST /push-subscriptions`; `NotificationsService.sendPush()` fans out to a user's devices when no token is given. |
 | ~~`MODBUS_ENABLED` / `MODBUS_DEVICES`~~ | **RESOLVED** — `ModbusAdapter` defaults to **ON** (`MODBUS_ENABLED=false` disables) and reads `modbus_devices` rather than an environment JSON blob. CRUD at `/modbus/devices` with a register-map editor at `/modbus` in the frontend. The env blob is still read, but only when the table has no enabled rows. **Polling is still a per-process `setInterval`, so every replica polls every device** — run it on one replica until leader election exists; `GET /modbus/devices/status` reports that caveat. |
@@ -2388,7 +2996,10 @@ import { DevicesService } from '@modules/index.service';
 | `src/modules/protocols/adapters/coap.adapter.ts` | Implemented (ThingsBoard-style telemetry/attributes/rpc over UDP 5683). Remaining TODO: two-way server-side RPC dispatch (currently only acknowledges device-initiated RPC). |
 | `src/modules/devices/codecs/milesight/ds/ds3604.codec.ts` | Binary image payload decode not implemented |
 | ~~`src/modules/rules/rule-engine.service.ts`~~ | **RESOLVED** — 258 lines, a complete traversal engine. See §4f. |
-| `KafkaModule` / the Kafka consumers | An unreachable broker stops the app booting: the module factory awaits `initProducer()`, and a consumer's failed `connect()` becomes an unhandled rejection that kills the process. Running locally therefore needs the full Docker stack. |
+| ~~`KafkaModule` / the Kafka consumers~~ | **RESOLVED** — an unreachable broker no longer stops the boot, and the same shape of bug is fixed in `RedisModule`. See §11a. |
+| `src/modules/audit/audit.consumer.ts` | Dead code: no `@Injectable()`, registered in no module, takes a raw `pg.Pool` with no DI token. It would read `audit.user.actions` / `audit.api.requests` / `audit.security.*` — and **nothing produces to any of them**; `AuditInterceptor` writes `audit_logs` rows directly and `ApiLoggingMiddleware` writes `api_logs`. The two declared topics are kept in `TOPIC_REGISTRY` with that reason recorded rather than deleted, because the decision is whether to finish the consumer or drop the topics. It also produces to `alarms.security`, which is declared nowhere. |
+| `telemetry.device.processed`, `device.lifecycle.*`, `device.connectivity.*`, `alarms.*`, `rules.output`, `notifications.*` | Declared topics with **no producer and no consumer** — the platform carries all of these over EventEmitter2, Bull or in-process calls instead. Each carries its `reason` in `TOPIC_REGISTRY`, so `npm run check:infra-wiring` passes; they cost an empty topic on the broker and nothing else. Deleting them is safe but is a decision about whether Kafka is intended to carry these streams later. |
+| `src/modules/profiles/profile-alarm.service.ts` | `evaluateProfileAlarmRules()` loads the device **with `relations: ['deviceProfile']` on every telemetry frame** — the strongest remaining caching candidate on the ingest path (a profile changes by hand, perhaps monthly). Not done here: `src/modules/profiles/` is owned elsewhere. The invalidation is a device-profile update and a device's `deviceProfileId` changing. |
 | `src/modules/integrations/` — `notification` and `database` types | Declared in the catalogue with `hasAdapter: false`; they are skipped by the dispatcher rather than forwarding anything. Use a webhook or Kafka instead. |
 | ~~`src/modules/integrations/` — converters~~ | **RESOLVED** — `ConvertersModule` exists; the `codec` converter type delegates to `CodecRegistryService` rather than reimplementing decoding. See §4. |
 | Frontend: groups and default rule chains | The backend modules, API clients and hooks are complete and verified, but **no screen was built** for either (`src/features/groups/` and `src/features/default-rule-chains/` contain services, hooks and — for default rule chains — a `ResolvePanel`, with no page). They are therefore unrouted. Everything else in this round is reachable from the sidebar. |
@@ -2399,9 +3010,225 @@ import { DevicesService } from '@modules/index.service';
 | `CustomersService.remove()` | **Hard**-deletes the customer *and* its user accounts (`repository.remove`, with the `softRemove` line commented out) — irreversible data loss from one API call. The authorization hole in front of it is fixed (§4g); the delete semantics are not, because switching to a soft delete makes the unique `name`/`email` permanently unavailable for re-creation, which is a product decision rather than a bug fix. |
 | `TelemetryService.exportToCSV()` | Does not quote fields, so a device named `Lobby, North` shifts every later column on that row. |
 | `WidgetRenderer.tsx` (frontend) | Calls `useState` **inside** a conditional branch after early returns — a hooks-order violation that throws when a widget's classification changes. |
-| `src/services/api/analytics.api.ts` (frontend) | Declares six routes that do not exist on `AnalyticsController`; all 404 at runtime. |
+| ~~`src/services/api/analytics.api.ts` (frontend)~~ | **RESOLVED** — it declared six routes `AnalyticsController` did not have. Two were re-pointed at the existing routes that already served the data (`/analytics/telemetry`, `/analytics/data-consumption`). The other four are now implemented: `POST /analytics/timeseries`, `GET /analytics/aggregate`, `POST /analytics/export` and `GET /analytics/realtime`. `timeseries` was the one that mattered — `dashboardService.loadTimeSeriesData()` and `useTimeSeries` both call it, so every timeseries dashboard widget was fetching a 404. The first three read through `TelemetryService.getMultiKeySeries()`, which keeps `resolveDeviceForUser()` as the single tenancy gate (§4g) and stays rollup-aware for raw reads; `AnalyticsService` reaches it with `ModuleRef.get('TelemetryService')` rather than importing `TelemetryModule`, so `AnalyticsModule` still imports no sibling feature module. The client's `exportData` also offered an `'EXCEL'` format no backend has ever produced; it is `'XLSX'` now, the spelling `ReportFormat` uses. A seventh method, `getAlarmAnalytics`, hit a route that *does* exist with `startTime`/`endTime` query keys it does not accept — a flat 400 under `forbidNonWhitelisted` — and now sends `?timeRange=`. |
 | ~~`src/services/api/devices.api.ts` — `sendCommand` (frontend)~~ | **RESOLVED** — posted to `/devices/:id/command`, which does not exist (the control routes moved to `GatewayController` to break a DevicesModule ↔ GatewayModule cycle). TWO things were wrong: the path AND the body — the DTO field is `method`, so `{ command }` would have been stripped by the global `ValidationPipe` and 400'd even once the path was right. Now `POST /gateway/devices/:deviceKey/command`, with `sendCommandByDeviceId()` resolving the key for the many call sites that hold only a uuid. Every dashboard Switch, Slider and action button 404'd behind a "Failed to send command" toast; the Slider and the action panel never called the API at all and only toasted success. |
+| ~~Two-way RPC had no UI caller~~ | **RESOLVED** — `POST /gateway/devices/:deviceKey/rpc` was complete server-side (correlator, MQTT reply listener, timeout, history row) and `devicesApi.sendRpc()` existed with **nothing calling it**. There is now an **RPC tab** on the device detail page: `features/device-commands/components/SendRpcPanel.tsx` (method, JSON params, timeout, wait/no-wait) plus `useSendDeviceRpc`, showing the device's response or the timeout and the `durationMs`. Its own tab next to Control, not inside the queued-command panel, because the two downlink paths mean different things — the queue can only ever report "published to broker", while an RPC reports what the device answered. The panel renders `responseListenerConnected: false` as a banner: with no gateway subscription on the response topic every RPC times out regardless of the device, and without saying so the reader blames the device. |
+| ~~Calculated fields never saw telemetry~~ | **RESOLVED** — `AssetProfilesService.calculateFields()` was a real sandboxed evaluator whose only caller was `POST /profiles/asset/:id/calculate`, which takes the inputs **in the request body** and stores nothing: a calculator you typed numbers into, not a derived series. `CalculatedFieldsService` (`src/modules/telemetry/`) now evaluates a device's asset profile's calculated fields against each arriving reading plus the device's and asset's attributes, and `TelemetryConsumer` merges the results into `payload.data` at **step 0, before persistence** — so a derived value charts (`data->>key`), alarms (both engines run on `payload.data` at step 2), triggers automations and reaches integrations with no change to any of those paths. It calls into `AssetProfilesService` rather than copying the sandbox; the only change there is a `computeCalculatedFields(profile, …)` entry point so a cached profile can be passed in. A field whose name collides with a key the device reported is **discarded, not applied** — a formula must never overwrite a measurement. Two bounded TTL caches (plan 60s, attributes 30s, 5,000 entries each) keep this off the per-message query path. Limits: a device with no `assetId` has nothing to compute, fields cannot reference each other, and a `null` (failed expression) is not stored. |
 | ~~`src/services/websocket/wsClient.ts` (frontend)~~ | **RESOLVED** — the socket was broken end to end. It called `io(SOCKET_URL)` with **no namespace**, joining the Socket.IO default `/`, where none of the three gateways is registered (`/ws`, `/alarms`, `telemetry`); Socket.IO does not fall back, so every emit was dropped and no server event could arrive. The event names were wrong independently: it emitted `subscribe-telemetry` / `get-device-telemetry` / `subscribe-alarms` (no handler exists for any of them) and listened for `telemetry:update` / `alarm:update` (nothing emits either). Fixing one without the other would still have produced silence. Now `/ws` with `device:subscribe` / `device:telemetry`, plus a second socket on `/alarms` for the seven real lifecycle events — that namespace is also the only one that joins a `tenant:` room, which is why `WebsocketGateway`'s own `alarm:new` broadcast reaches nobody. `useLiveTelemetry` had been hiding all of it behind REST polling. |
+
+### 11a. Kafka and Redis degradation — the properties, and the guard
+
+`npm run check:infra-wiring` (106 checks, `scripts/check-infra-wiring.ts`)
+asserts everything below. It is a source-reading guard like
+`check-device-auth`, because `tsc` cannot see any of it and a test would need
+a broker, Redis and a database.
+
+**Neither Kafka nor Redis can stop the boot.** Both module factories used to
+`await` a connect. A rejected provider factory makes Nest abort the whole DI
+graph and exit — before `app.listen()`, so there was no HTTP server, no
+`/health`, and nothing in the logs naming the cause. `DeviceCommandsConsumer`
+had a second route to the same outcome: its `onModuleInit` awaited
+`createConsumer()` with no try/catch, so a failed `connect()` was an unhandled
+rejection. Now:
+
+- `KafkaService.bootstrap()` returns `void` and the connect, `createTopics()`
+  and every consumer attach run in a background loop with capped exponential
+  backoff (`KAFKA_BOOTSTRAP_MAX_BACKOFF_MS`). A broker that comes up ten
+  minutes later needs no restart; a consumer registered while it was down
+  attaches by itself.
+- `RedisService.connect()` returns `void` and ioredis owns the reconnect.
+
+**A produce that cannot be queued fails loudly, per message.**
+`sendMessage()` throws `KafkaUnavailableError` rather than buffering into a
+producer that will never flush. `DeviceListenerService` catches it, logs
+`TELEMETRY DROPPED` naming the device, and **does not rethrow** —
+`handleTelemetry()` has ~20 callers, several of them polled adapters on bare
+timers where a rejection becomes an unhandled rejection. Refused produces are
+counted and surfaced as `kafka.refusedProduces` on `GET /health/messaging`,
+because "telemetry stopped arriving" and "telemetry is arriving and being
+thrown away" look identical on a dashboard and need different responses.
+
+**`KAFKA_ENABLED=false` is a real mode.** No client is constructed, no
+consumer runs, every produce is a logged no-op (not a throw — "there is no
+broker here" is a different statement from "the broker is down"), and the
+health indicator reports healthy, so an orchestrator does not restart the pod
+forever.
+
+**Topics are a registry, not a list.** `TOPIC_REGISTRY` in
+`kafka.service.ts` pairs each of the 23 topics with the consumer group that
+reads it, its dead-letter topic, or a written reason why nothing consumes it.
+The guard fails on an unconsumed topic with no reason, on a consumed topic with
+no DLQ, on a group named in the registry that is never created, and on a group
+created that the registry does not name. `firmware.update` and
+`firmware.status` were produced to without ever being declared, so they existed
+only by broker auto-creation — which uses the *broker's* partition count and
+replication factor, meaning `KAFKA_TOPIC_REPLICATION_FACTOR` silently did not
+apply to them.
+
+**Message failure is bounded and replayable.** `KafkaService.runHandler()`
+retries `KAFKA_CONSUMER_MAX_ATTEMPTS` times with growing backoff, then
+dead-letters to the registry's DLQ for that topic (`telemetry.device.raw` →
+`telemetry.device.invalid`, keeping the name operators already use). The DLQ
+entry carries the original value verbatim and the original key. It never
+rethrows: the offset must advance or one poison message blocks its partition
+forever. **All five consumers now rethrow from their handlers** — a handler
+that catches its own errors is invisible to the retry and the DLQ, which is
+what the previous code did everywhere.
+
+**Ordering-sensitive topics are keyed.** `device.commands` and
+`device.commands.retry` are now keyed by `deviceKey`. Unkeyed, two commands for
+one device land on different partitions, which are consumed concurrently and in
+no defined order relative to each other — so "close the valve" then "open the
+valve" could reach the device reversed. Kafka orders within a partition only.
+
+**Consumer lag is visible.** `getConsumerLag()` reports committed offset vs
+log end offset per partition, cached for `KAFKA_LAG_CACHE_SECONDS`.
+`KafkaHealthIndicator` reads it through `KafkaService` instead of building its
+own `Kafka` client and doing `connect` → `describeCluster` → `disconnect` on
+every probe — which also bypassed the `kafka` config namespace, so a secured
+cluster reported down from a probe that could never have connected. A
+never-committed partition reports lag 0, not the whole log, or a new group
+looks catastrophically behind on every empty partition.
+
+**Redis fails closed where it is authoritative, open where it caches.**
+Sessions (`session:*`) and the token blacklist exist only in Redis, so Redis
+down means no new logins and no session refresh — deliberate, because failing
+open would stop enforcing a logout or a token revocation exactly when the
+infrastructure is least observable. Everything else Redis holds is a cache, and
+every read is wrapped so a failure falls through to Postgres.
+
+**Namespaces.** Three clients share one deployment: `RedisService` on db 0 with
+`REDIS_KEY_PREFIX` (`smartlife:`), the cache-manager store on db 0 with that
+prefix **plus `cache:`**, and Bull on `REDIS_QUEUE_DB` (db 1). Bull is split by
+database so a cache flush cannot drop queued jobs. The other two shared
+`smartlife:` until now — nothing collided only because nothing injects
+`CACHE_MANAGER` today, but the first route to add `CacheInterceptor` on a path
+whose key happened to match would have overwritten live sessions with cached
+response bodies.
+
+**`RedisService.keys()` and `scan()` were wrong in both directions.** ioredis
+applies `keyPrefix` to arguments Redis reports as keys; `KEYS` and `SCAN` take a
+*pattern*, which Redis does not report as a key, so the pattern was **not**
+prefixed — while the keys in the reply came back **with** the prefix attached.
+So `keys('session:*')` asked the server for literal `session:*` and matched
+nothing, and had it matched, feeding the results to `del()` would have prefixed
+them a second time (`DEL smartlife:smartlife:session:abc`). `invalidateCache()`
+was built on this and therefore never invalidated anything while reporting
+success. Both halves are fixed, and `invalidateCache()` now uses `SCAN` rather
+than `KEYS`, which is O(keyspace) and blocks the single-threaded server.
+
+#### What is cached, and what invalidates it
+
+| Cache | Key | Invalidated by | Why it is worth it |
+|---|---|---|---|
+| Effective permissions (`PermissionGuard`) | `perm:{tenant}:{global}.{tenant epoch}:{user}` | A **per-tenant epoch** (`INCR`) bumped by `RolesService` create/update/remove/assignPermissions/removePermissions and `UsersService` update/bulkAssignRole/bulkRemoveRole/bulkUpdatePermissions, plus a **global epoch** for system roles (`tenantId IS NULL`, held across every tenant). TTL 60s is only a backstop. | Two multi-join queries (user→roles→permissions, plus customer→grantedPermissions) on **every** request carrying `@RequirePermissions` |
+| Subscription row (`SubscriptionGuard`) | `subscription:tenant:{id}` | `SubscriptionCacheSubscriber`, a TypeORM entity subscriber — covers all 14 `save()` sites and any future one by construction, and re-invalidates on `afterTransactionCommit`. The three paths that bypass the ORM (`incrementTenantUsage`, `decrementTenantUsage`, `syncUsageFromDB`) invalidate by hand. | One SELECT on every request |
+| Latest reading (`GET /telemetry/:id/latest`) | `telemetry:latest:{deviceId}` | Write-through from **both** ingest paths; TTL 300s bounds the retention sweep orphaning the row | The hottest read on the platform — every dashboard tile polls it |
+| Device credentials (`DeviceAuthService`) | pre-existing | `invalidate()` on revocation; negatives cached too | The ingestion hot path |
+
+Three things about that table are load bearing:
+
+1. **The permission epoch, not a TTL.** A cached permission set that outlives a
+   revocation is a security bug. The dangerous mutation is a change to a
+   *role*, which affects every holder — and finding the holders needs the query
+   the cache exists to avoid. One `INCR` orphans every entry in the tenant with
+   no `SCAN` and no chance of missing a user. It deliberately invalidates more
+   than necessary; the cost is one rebuilt query per active user.
+
+2. **Quota routes bypass the subscription cache.** The row carries live `usage`
+   counters that `SubscriptionLimitGuard` enforces against. Served from a cache
+   with TTL *T*, a tenant on a 5-device plan can create as many devices as it
+   can push through in *T* seconds, per replica — a hard limit silently becomes
+   a function of request rate. `SubscriptionGuard` therefore checks the route
+   for `@RequireSubscriptionLimit()` and goes to Postgres when it is present.
+   It reads the **handler only**, matching `SubscriptionLimitGuard`; reading the
+   class too would disable the cache for whole controllers.
+
+3. **The latest-telemetry cache had two producers and only one of them.** It
+   was written by `TelemetryService.create()` — the HTTP path — while MQTT,
+   CoAP, Modbus, SNMP, BACnet, OPC UA and LwM2M all persist through
+   `TelemetryConsumer`, which never wrote it. Its read was commented out, which
+   is the only reason that never surfaced: switching it on as written would
+   have served most devices a stale reading or none, and the commented-out code
+   reconstructed a `Telemetry` with no `id`, no `deviceKey` and no `data`, so a
+   cache hit would have returned a different shape from a miss. The key now has
+   one owner (`TelemetryLatestCacheService`), both paths call it, the stored
+   value is the saved row, and there is a TTL — the old hash had none, so it
+   was one permanent key per device on a Redis shared with Bull. The
+   `telemetry:{id}:recent` list was removed outright: nothing read it, and no
+   100-item Redis list can serve the time-range, key-filter and tenant-scoped
+   queries the history endpoints run.
+
+Also deliberately **not** cached: `GET /cad-standards`, because
+`CadStandardsService` touches no repository at all — it reads frozen
+module-level constants, and a Redis round trip would be slower than the array
+it already holds. And the access check inside `getLatest()`:
+`resolveDeviceForUser()` runs unconditionally before the cache is consulted,
+because a cached authorization decision that outlives an unassignment is a
+cross-tenant read (§4g).
+
+### 11b. Floor-plan files on the storage seam
+
+Both floor-plan services are off direct `fs`. What that actually required, and
+the two traps in it:
+
+```
+POST /floor-plans/:id/dwg-upload
+   └─ storage.put('floor-plans/dwg/<uuid>.dwg')   → dwgStorageKey + dwgFileUrl
+         └─ (async) storage.get(key)              → bytes, not a path
+               └─ withScratchFile(bytes, '.dwg')  → os.tmpdir(), rm in finally
+                     └─ dwg2dxf / ODAFileConverter   ← the one local-only step
+               └─ renderThumbnail() → PNG bytes
+                     └─ storage.put('floor-plans/previews/<id>.png')
+GET  /floor-plans/:id/dwg | /preview | /model      → storage.get(key)
+```
+
+- **The row stores a key, not a path.** `dwgStorageKey`,
+  `thumbnailStorageKey`, `modelStorageKey` and `storageProvider`
+  (`FloorPlanStorageKeys1788800000000`, applied with
+  `npm run migration:floor-plan-storage-keys <db> [up|down]` because
+  `migration:run` is blocked). The `*Url` columns keep their old meaning —
+  where a browser fetches it — because they are returned to clients and an
+  object-store URL may be signed or on another host, so the key cannot be
+  recovered from it.
+- **The reads mattered as much as the writes.** `getModelFile()` ignored
+  `modelFileUrl` entirely and rebuilt `<modelDir>/<id>.<type>`, which only the
+  uploading replica has; the controller then `createReadStream`'d it. There was
+  no route at all for the DWG source or the preview — they were reachable only
+  through the static `/uploads/**` mount, i.e. only on the local driver and only
+  on that one replica. `GET /:id/dwg` and `GET /:id/preview` are new, and all
+  three now return bytes from `storage.get()`. A converted write with an
+  unconverted read is worse than no conversion: it looks finished and 404s
+  (N-1)/N of the time.
+- **Legacy values still resolve.** `resolveRef()` classifies what a row holds
+  by shape — a key, a `/uploads/...` URL, an absolute path, or an external
+  `https://` URL — and `/uploads/x/y` yields exactly the key `x/y` that the
+  local driver would have produced for those bytes. So pre-seam rows read
+  through the seam with no migration; the key columns are the fast path, not a
+  prerequisite. The legacy absolute path is kept as a second attempt for the
+  one case the derived key cannot cover: a deployment whose `UPLOAD_PATH` moved
+  after the rows were written. An external URL is never read or deleted — the
+  seeder writes `https://example.com/floorplans/...` into `thumbnailUrl`, and
+  treating that as a key would point `delete()` at a path built from someone
+  else's hostname.
+- **The DWG converter still needs a real local file**, and that is not
+  negotiable: `dwg2dxf` and `ODAFileConverter` take a path. `withScratchFile()`
+  (`src/lib/storage/scratch-file.ts`) stages the bytes in a `mkdtemp`
+  directory, runs the work and removes the directory in a `finally`. It lives
+  in `lib/` and not in the service on purpose: `check:cluster-safety` now
+  **fails** on an `fs.writeFile` in either floor-plan file, and a legitimate
+  exception written into that assertion is a hole the next real regression
+  hides in. `mkdtemp` rather than a fixed name because the converter writes its
+  DXF beside its input — two concurrent parses of one plan would delete each
+  other's output.
+- **Verified by running it**: `npm run verify:floor-plan-storage <db>` (63
+  checks) pushes a real DXF through upload → parse → preview → generate →
+  download and compares bytes, exercises all four legacy shapes including the
+  moved-`UPLOAD_PATH` fallback, and asserts the backfill. The backfill's own
+  bug was found that way: `substring(col FROM $1)` with an untyped parameter
+  resolves to the **regex** overload, so `FROM 10` matched the pattern `'10'`,
+  found nothing, and wrote NULL into every row — a migration that ran, reported
+  success and populated nothing. It is `substr(col, $1::integer)`.
 
 ### Structural Notes
 - The `src/migrations/` directory (at `src/` root, separate from `src/database/migrations/`) exists but is also empty
@@ -2409,3 +3236,169 @@ import { DevicesService } from '@modules/index.service';
 - `assignment-safety-triggers.sql` at project root — SQL triggers for assignment safety checks; status of application to DB is unknown
 - `src/modules/gateway/` is a thin HTTP wrapper; the main ingestion path is via `ProtocolsModule/HTTPAdapter`
 - `dist/modules/alarms/index.html` and `dist/modules/dashboards/smartlife-dashboard.html` are static HTML files in the dist directory — unclear if these are intentionally served or build artifacts
+
+---
+
+## 12. Running more than one replica
+
+`docker compose --scale app=2` used to corrupt data silently. Nothing failed,
+nothing logged, and the symptoms looked like unrelated bugs: telemetry rows
+appearing in triplicate, two identical report emails, a dashboard that showed
+nothing while REST polling worked, a device command executed three times. Every
+cause was the same shape — **per-process state in a process that is no longer
+alone.**
+
+```
+            ┌──────────── one Redis, three coordination roles ────────────┐
+            │                                                             │
+ @DistributedCron ──▶ cluster:lock:<name>     one replica runs each tick
+ Socket.IO       ──▶ smartlife-ws:*           room emits cross replicas
+ RpcCorrelator   ──▶ cluster:rpc:response     a reply finds its promise
+            │                                                             │
+            └─────────────────────────────────────────────────────────────┘
+
+ EMQX ──▶ $share/smartlife-platform/devices/+/telemetry
+          one replica per uplink, instead of all of them
+```
+
+### The four mechanisms
+
+| Concern | Mechanism | Where |
+|---|---|---|
+| `@Cron` fires N times | Redis `SET NX EX` lock per tick, released in `finally` via compare-and-delete, TTL renewed by a watchdog while the body runs | `src/lib/cluster/` |
+| Every replica receives every MQTT uplink | `$share/<group>/<filter>` shared subscriptions | `src/lib/mqtt/mqtt.service.ts`, `integration-mqtt-inbound.service.ts` |
+| `server.to(room).emit()` is replica-local | `@socket.io/redis-adapter` behind a custom `IoAdapter` | `src/lib/websocket/redis-io.adapter.ts`, registered in `main.ts` |
+| An RPC reply lands on the wrong replica | Redis pub/sub relay, settled local-only by the owner | `src/modules/protocols/rpc-correlator.service.ts` |
+
+`npm run check:cluster-safety` asserts all four and fails the build on a new
+unlocked `@Cron`. `npm run verify:cluster-locks` proves the lock actually
+behaves against a **real Redis** — mutual exclusion between two live service
+instances, release on throw, TTL expiry after a simulated crash,
+compare-and-delete so an overran holder cannot unlock its successor, and
+watchdog renewal.
+
+### When Redis is unreachable, the crons stop — and that has to be visible
+
+This is the part to understand before trusting the table above.
+
+When `withLock` cannot reach Redis it returns `{ran: false}` and the body does
+not run. That is the right call — a lock that cannot be claimed might be held
+by another replica, and a duplicated billing sweep is worse than a deferred
+one. But say the consequence out loud: **nine crons are locked**, so report
+delivery, scheduled notifications, automation schedules, Tuya polling,
+subscription expiry, usage sync, the monthly usage reset, scheduled downgrades
+and the device-offline sweep **all stop happening anywhere** while Redis is
+down.
+
+Nothing throws. No request fails. No other health probe turns red. The only
+trace was one error line per tick, in a log nobody reads during an incident —
+so "reports stopped going out three days ago" would have been diagnosed from
+scratch.
+
+`GET /health/cluster` is the probe that shows it:
+
+```jsonc
+{
+  "status": "degraded",        // or "ok"
+  "nodeId": "app-1-7",
+  "locksEnabled": true,
+  "degraded": true,            // ← alert on this field
+  "crons": [
+    { "name": "report-schedule-tick",
+      "skippedNoRedis": 42,    // work did not happen ANYWHERE
+      "skippedNotAcquired": 0, // another replica won — healthy
+      "lastNoRedisAt": "2026-10-21T08:12:04.000Z" }
+  ]
+}
+```
+
+`skippedNotAcquired` is **normal** on more than one replica: exactly one winner
+per tick means the losers count a skip. `skippedNoRedis` above zero is not.
+The route is deliberately **not** a `@HealthCheck()` — a replica losing lock
+races is perfectly healthy, and reporting it as "down" would make an
+orchestrator restart the replicas that are behaving correctly.
+
+Counters are per-process and reset on restart. That is the honest scope: this
+is "what has this replica skipped", not a cluster-wide total.
+
+On a deliberately single-process deployment set `CLUSTER_LOCKS_ENABLED=false`,
+and ticks run with no lock and no Redis dependency at all.
+
+### `@DistributedCron` — what to know before adding a cron
+
+```typescript
+@DistributedCron(CronExpression.EVERY_MINUTE, {
+  name: 'report-schedule-tick',   // REQUIRED — it is the lock key
+  lockTtl: 300,                   // seconds; a FLOOR, not a cap
+})
+async tick(): Promise<void> { … }
+```
+
+- **`name` is required**, unlike `@Cron`'s optional one. Two unnamed jobs would
+  share a lock and starve each other; the guard script refuses an unnamed one
+  and refuses two that collide.
+- **`lockTtl` is a floor.** The holder re-arms the TTL every `ttl/3` while the
+  body runs, so it only has to exceed the renewal interval. A TTL *shorter*
+  than the run without renewal is the classic failure: the key expires
+  mid-flight, a second replica acquires it, and both execute — the lock costs a
+  round trip and buys nothing.
+- **It fails closed.** No Redis means the tick is skipped, not run. Running it
+  would reintroduce the duplication on every replica at once, and
+  `RedisModule` awaits a connection at boot anyway, so "Redis is down" already
+  means "the application is down".
+- **Not every cron needs one.** A bounded, repeatable statement with no side
+  effects outside the database does not: `DELETE WHERE timestamp < cutoff` run
+  three times is one effective delete. Those are listed in `ALLOW_LIST` in
+  `scripts/check-cluster-safety.ts` **with a reason**, and an entry for a cron
+  that no longer exists is itself a failure.
+- **`UPDATE … RETURNING` is its own lock.** `EdgeService.detectOfflineEdges()`
+  flips `status = 'active'` rows and acts only on what came back, so Postgres
+  picks the winner and the loser gets zero rows. Prefer this shape where it
+  fits.
+- **The trap is read-then-act.** `DevicesService.checkOfflineDevices()` looks
+  idempotent — one bulk UPDATE to a terminal value — but it SELECTs first and
+  then emits `device.offline` per row, which fires DEVICE_STATUS automations.
+  Both replicas SELECT before either UPDATEs. It is locked.
+- **`TelemetryMaintenanceService` is the other correct pattern:** a
+  deterministic Bull `jobId` (`agg:<tenant>:<15-min slot>`) collapses N ticks
+  into one run. Where the work belongs on a queue, prefer that over a lock —
+  it also gets retries and backpressure.
+
+### MQTT shared subscriptions
+
+`$share/` wraps the filter at **subscribe** time only; the broker delivers the
+message under its original topic, so nothing downstream changes — do not strip
+a prefix in `handleMessage`. Two deployments pointed at one broker must use
+different `MQTT_SHARED_GROUP` values or they will steal each other's uplinks
+instead of each receiving them.
+
+### What is still single-instance-only
+
+| Thing | Why | Workaround |
+|---|---|---|
+| **Uploads** | Still local disk, because the only driver that exists is `local`. The *seam* is in place everywhere but `reports` (§11, §11b), so this is now one driver away rather than an audit of six services — the floor-plan write **and read** paths both go through `storage.get()`/`put()`, so they need no further change. Worst case remains OTA: the firmware URL goes to a *device*, and `FirmwareService`'s download route still streams from an absolute path. | Mount `UPLOAD_PATH` on shared storage and set `STORAGE_LOCAL_SHARED=true`, or finish the `s3` driver (§11). |
+| **Modbus poller** | Per-process `setInterval`, no leader election. | `MODBUS_ENABLED=false` on all but one. |
+| **SNMP poller** | Same shape. | `SNMP_ENABLED=false` on all but one. |
+| **`generateDailyAnalytics()`** | Unlocked; writes N rows per tenant per day (§11). | Run on one replica until it is locked. |
+| **`WebsocketGateway.getStats()`** | Per-process counts, labelled `scope: 'replica'`. | Not a correctness issue; read it per replica. |
+
+### Compose
+
+`docker-compose.prod.yml` is unchanged and is still the single-node stack — it
+pins `container_name: smartlife-app` and publishes `5000:5000`, both of which
+are fatal to `--scale`. `docker-compose.scale.yml` is a **separate project**
+(Compose can replace a scalar in an override but cannot unset one) that
+declares a scalable `app` plus an nginx load balancer, attaching to the
+production stack's external network and volumes:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d postgres redis kafka zookeeper emqx
+docker compose -f docker-compose.scale.yml up -d --scale app=3
+```
+
+`docker/nginx/nginx.conf` needs **both** halves of the Socket.IO fix:
+`ip_hash`, because an HTTP long-polling session is a sequence of requests that
+must reach the same replica, and the `Upgrade`/`Connection` headers, because
+without them the handshake silently falls back to that polling. Neither
+replaces the Redis adapter — they get the client to *a* replica; the adapter
+gets a message produced on another one to it.

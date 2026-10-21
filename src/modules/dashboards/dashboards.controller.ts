@@ -27,6 +27,8 @@ import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
 import { RolesGuard } from '@common/guards/index.guards';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('dashboards')
 @Controller('dashboards')
@@ -36,6 +38,10 @@ export class DashboardsController {
   constructor(private readonly dashboardsService: DashboardsService) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.DASHBOARD,
+  })
   @RequirePermissions('dashboards:create')
   @ApiOperation({ summary: 'Create new dashboard' })
   @ApiResponse({ status: 201, description: 'Dashboard created successfully' })
@@ -85,6 +91,10 @@ export class DashboardsController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+  })
   @RequirePermissions('dashboards:update')
   @ApiOperation({ summary: 'Update dashboard' })
   @ApiResponse({ status: 200, description: 'Dashboard updated' })
@@ -97,6 +107,11 @@ export class DashboardsController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DASHBOARD,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('dashboards:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete dashboard' })
@@ -120,6 +135,10 @@ export class DashboardsController {
   }
 
   @Post(':id/widgets')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+  })
   @RequirePermissions('dashboards:update')
   @ApiOperation({ summary: 'Add widget to dashboard' })
   @ApiResponse({ status: 201, description: 'Widget added' })
@@ -136,6 +155,10 @@ export class DashboardsController {
   // Declared before ':id/widgets/:widgetId' so 'layout' is never parsed as a
   // widgetId — Nest matches routes in declaration order.
   @Patch(':id/layout')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+  })
   @RequirePermissions('dashboards:update')
   @ApiOperation({ summary: 'Batch update widget positions (drag and drop)' })
   @ApiResponse({ status: 200, description: 'Updated widget list' })
@@ -149,6 +172,10 @@ export class DashboardsController {
   }
 
   @Patch(':id/widgets/:widgetId')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+  })
   @RequirePermissions('dashboards:update')
   @ApiOperation({ summary: 'Update widget' })
   @ApiResponse({ status: 200, description: 'Widget updated' })
@@ -163,6 +190,11 @@ export class DashboardsController {
   }
 
   @Delete(':id/widgets/:widgetId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DASHBOARD,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('dashboards:update')
   @ApiOperation({ summary: 'Remove widget from dashboard' })
   @ApiResponse({ status: 200, description: 'Widget removed' })
@@ -176,6 +208,10 @@ export class DashboardsController {
   }
 
   @Post(':id/share')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+  })
   @RequirePermissions('dashboards:share')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Share dashboard with users' })
@@ -189,6 +225,11 @@ export class DashboardsController {
   }
 
   @Delete(':id/share/:userId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DASHBOARD,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('dashboards:share')
   @ApiOperation({ summary: 'Unshare dashboard with user' })
   @ApiResponse({ status: 200, description: 'Dashboard unshared' })
@@ -201,6 +242,10 @@ export class DashboardsController {
   }
 
   @Post(':id/clone')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+  })
   @RequirePermissions('dashboards:update')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Clone dashboard' })
@@ -214,6 +259,10 @@ export class DashboardsController {
   }
 
   @Post(':id/favorite')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+  })
   @RequirePermissions('dashboards:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Toggle dashboard favorite' })
@@ -259,6 +308,10 @@ export class DashboardsController {
    * Assign dashboard to customer (Owner or Admins only)
    */
   @Post(':id/assign-customer')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+  })
   @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
@@ -289,6 +342,10 @@ export class DashboardsController {
    * Unassign dashboard from customer (Owner or Admins only)
    */
   @Post(':id/unassign-customer')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DASHBOARD,
+  })
   @RequirePermissions('dashboards:update')
   @UseGuards(RolesGuard)
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)

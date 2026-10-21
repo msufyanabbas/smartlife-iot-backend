@@ -14,6 +14,7 @@ import * as path from 'path';
 import { promises as fs } from 'fs';
 import type { File as MulterFile } from 'multer';
 
+import { StorageService } from '@/lib/storage/storage.service';
 import { SolutionTemplate } from './entities/solution-template.entity';
 import { TemplateInstallation } from './entities/template-installation.entity';
 import { Device, DeviceProtocol } from '../devices/entities/device.entity';
@@ -104,6 +105,8 @@ export class SolutionTemplatesService {
     private readonly installationRepo: Repository<TemplateInstallation>,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly dataSource: DataSource,
+    // StorageModule is @Global, so SolutionTemplatesModule needs no new import.
+    private readonly storage: StorageService,
   ) {}
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -663,12 +666,14 @@ export class SolutionTemplatesService {
       );
     }
 
-    await fs.mkdir(this.imageDir, { recursive: true });
-
     // Filename is derived from the template id, never from client input.
     const fileName = `${template.id}.${ext}`;
-    const filePath = path.join(this.imageDir, fileName);
-    await fs.writeFile(filePath, file.buffer);
+    // Through StorageService rather than fs.writeFile. The local driver honours
+    // UPLOAD_PATH_TEMPLATES as the root override for the `solution-templates/`
+    // key prefix, so the bytes land exactly where they did before.
+    await this.storage.put(`solution-templates/${fileName}`, file.buffer, {
+      contentType: file.mimetype,
+    });
 
     // Drop a previously uploaded image that used a different extension.
     const previous = template.imageUrl;

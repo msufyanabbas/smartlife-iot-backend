@@ -55,6 +55,9 @@ import {
   PaymentProvider,
   UserRole,
 } from '../src/common/enums/index.enum';
+import { inMemoryRedis } from './support/in-memory-redis';
+import { DistributedLockService } from '../src/lib/cluster/distributed-lock.service';
+import { SubscriptionCacheService } from '../src/lib/redis/subscription-cache.service';
 
 const database = process.argv[2] ?? 'subcheck';
 
@@ -179,6 +182,25 @@ const contextFor = (handler: Function, request: any) =>
   await dataSource.query("DELETE FROM users WHERE email LIKE '%@example.invalid'");
   await dataSource.query("DELETE FROM tenants WHERE email LIKE '%@example.invalid'");
 
+  // ── The cron methods below are wrapped in @DistributedCron ───────────────
+  //
+  // That decorator looks up `DistributedLockService.instance`, a static holder
+  // populated when ClusterModule constructs the service. This script never
+  // registers ClusterModule, so the holder was null, the decorator logged
+  // "ClusterModule is not registered" and SKIPPED the body, returning
+  // undefined. Eight assertions then failed and the run crashed reading
+  // `.cancellationsCompleted` off undefined — all of it reported as broken
+  // subscription logic, which it was not.
+  //
+  // Two things are needed, and both are deliberate:
+  //   • construct the lock service, so the static holder is populated;
+  //   • with CLUSTER_LOCKS_ENABLED=false, so `withLock` runs the work inline
+  //     and returns its real result. This script is asserting what the expiry
+  //     sweep DOES, not whether two replicas race for it — that property
+  //     belongs to check:cluster-safety and the lock service's own tests.
+  process.env.CLUSTER_LOCKS_ENABLED = 'false';
+  new DistributedLockService(inMemoryRedis());
+
   const subscriptions = new SubscriptionsService(
     subscriptionRepo,
     dataSource.getRepository(entities.Tenant),
@@ -191,6 +213,9 @@ const contextFor = (handler: Function, request: any) =>
     dataSource.getRepository(entities.FloorPlan),
     dataSource.getRepository(entities.Automation),
     dataSource,
+    // SubscriptionCacheService — a real in-memory cache rather than a
+    // stub, so the invalidation path is exercised instead of skipped.
+    new SubscriptionCacheService(inMemoryRedis()),
   );
 
   const configStub: any = {
@@ -357,7 +382,15 @@ const contextFor = (handler: Function, request: any) =>
   section('4. Over-quota tenant: reads and existing resources keep working');
 
   const reflector = new Reflector();
-  const subscriptionGuard = new SubscriptionGuard(reflector, subscriptions as any);
+  const subscriptionGuard = new SubscriptionGuard(
+    reflector,
+    subscriptions as any,
+    // The guard caches the subscription row. Quota routes bypass the cache —
+    // a TTL there would turn a hard device limit into a function of request
+    // rate — and section 5 below asserts exactly that, so this must be a real
+    // cache and not a stub that always misses.
+    new SubscriptionCacheService(inMemoryRedis()),
+  );
   const limitGuard = new SubscriptionLimitGuard(reflector);
   const user = { id: a.userId, role: UserRole.TENANT_ADMIN, tenantId: a.tenantId };
 

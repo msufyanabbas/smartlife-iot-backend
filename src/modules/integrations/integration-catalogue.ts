@@ -694,11 +694,24 @@ export const INTEGRATION_CATALOGUE: Record<
     category: 'lorawan',
     direction: IntegrationDirection.INBOUND,
     description:
-      'Receive LoRaWAN uplinks from a ChirpStack network server. Devices are auto-provisioned on first uplink.',
+      'Receive LoRaWAN uplinks from a ChirpStack network server, and queue downlinks back to its devices. Devices are auto-provisioned on first uplink.',
     icon: 'RadioTower',
-    hasAdapter: false,
+    // True because an adapter now exists: LorawanDownlinkService queues
+    // downlinks through ChirpStack's REST API using the credentials below.
+    //
+    // `direction` stays `inbound` all the same, and that is not an oversight.
+    // The flag the TELEMETRY fan-out reads is `isDispatchableType()` =
+    // outbound AND hasAdapter, and platform telemetry is NOT forwarded to a
+    // network server — the readings came FROM it. Declaring this bidirectional
+    // would put these rows in `IntegrationDispatchService`'s target list, where
+    // every reading from every other device in the tenant would be POSTed at
+    // the ChirpStack queue endpoint, fail, and quarantine the row after ten
+    // tries — which is precisely how working Tuya integrations used to switch
+    // themselves off (CLAUDE.md §4e). Tuya carries the same pair of flags for
+    // the same reason: commands travel one way, telemetry does not.
+    hasAdapter: true,
     adapterNote:
-      'Inbound only. Point ChirpStack’s HTTP integration at the URL below; telemetry is not sent back to it.',
+      'Inbound: point ChirpStack’s HTTP integration at the URL below. Outbound: downlinks ARE queued through the ChirpStack REST API when the API URL and token are set — platform telemetry is never forwarded to ChirpStack, which is why the direction reads "receives". A queued downlink is transmitted after the device’s next uplink (Class A), not immediately.',
     inboundPath: '/integrations/lorawan/chirpstack',
     defaultProtocol: 'HTTPS',
     fields: [
@@ -706,13 +719,40 @@ export const INTEGRATION_CATALOGUE: Record<
         key: 'applicationId',
         label: 'Application ID',
         type: 'text',
-        help: 'Only needed when this tenant has more than one ChirpStack integration — it tells them apart.',
+        help: 'Only needed when this tenant has more than one ChirpStack integration — it tells them apart, for uplinks and downlinks alike.',
       },
       {
         key: 'webhookSecret',
         label: 'Webhook secret',
         type: 'password',
         help: 'When set, uplinks must carry a matching x-webhook-secret header.',
+      },
+      {
+        key: 'serverUrl',
+        label: 'API base URL',
+        type: 'text',
+        group: 'Downlink',
+        placeholder: 'https://chirpstack.example.com:8080',
+        help: 'Required for downlinks only. The ChirpStack REST API root — the same host the web UI runs on. Uplinks keep working without it.',
+      },
+      {
+        key: 'apiToken',
+        label: 'API key',
+        type: 'password',
+        group: 'Downlink',
+        help: 'Required for downlinks only. ChirpStack → Tenant → API keys. Sent as Grpc-Metadata-Authorization, which is the header ChirpStack’s grpc-gateway reads; a key in a plain Authorization header is ignored and comes back 401.',
+      },
+      {
+        key: 'apiVersion',
+        label: 'ChirpStack version',
+        type: 'select',
+        default: 'v4',
+        group: 'Downlink',
+        options: [
+          { value: 'v4', label: 'v4 (queueItem / devEui)' },
+          { value: 'v3', label: 'v3 (deviceQueueItem / devEUI)' },
+        ],
+        help: 'The queue request body changed shape AND field casing between v3 and v4, and a wrong-shaped body returns a 400 naming neither. v3 has been end-of-life since 2023.',
       },
     ],
   },
@@ -723,15 +763,76 @@ export const INTEGRATION_CATALOGUE: Record<
     category: 'lorawan',
     direction: IntegrationDirection.INBOUND,
     description:
-      'Receive LoRaWAN uplinks from The Things Stack v3 via its webhook integration.',
+      'Receive LoRaWAN uplinks from The Things Stack v3 via its webhook integration, and queue downlinks back to its devices.',
     icon: 'RadioTower',
-    hasAdapter: false,
-    adapterNote: 'Inbound only. Add a custom webhook in TTS pointing at the URL below.',
+    // See the note on CHIRPSTACK above: an adapter exists (downlinks), while
+    // the direction stays `inbound` because platform telemetry is never
+    // forwarded to a network server and must not enter the dispatcher's
+    // target list.
+    hasAdapter: true,
+    adapterNote:
+      'Inbound: add a custom webhook in TTS pointing at the URL below. Outbound: downlinks ARE queued through the TTS Application Server API when the API key is set — platform telemetry is never forwarded to TTS, which is why the direction reads "receives". A downlink is transmitted after the device’s next uplink (Class A), not immediately.',
     inboundPath: '/integrations/lorawan/ttn',
     defaultProtocol: 'HTTPS',
     fields: [
-      { key: 'applicationId', label: 'Application ID', type: 'text' },
+      {
+        key: 'applicationId',
+        label: 'Application ID',
+        type: 'text',
+        help: 'The TTS application id. Required for downlinks — it is part of the downlink URL — and used to disambiguate uplinks when a tenant has more than one TTS integration.',
+      },
       { key: 'webhookSecret', label: 'Webhook secret', type: 'password' },
+      {
+        key: 'cluster',
+        label: 'Cluster',
+        type: 'select',
+        default: 'eu1',
+        group: 'Downlink',
+        options: [
+          { value: 'eu1', label: 'eu1 (Europe)' },
+          { value: 'nam1', label: 'nam1 (North America)' },
+          { value: 'au1', label: 'au1 (Australia)' },
+        ],
+        help: 'Each cluster is a separate deployment with separate data; an API key from one is invalid on another. Ignored when API base URL is set.',
+      },
+      {
+        key: 'apiBaseUrl',
+        label: 'API base URL',
+        type: 'text',
+        group: 'Downlink',
+        placeholder: 'https://tts.example.com',
+        help: 'For a self-hosted The Things Stack. Overrides Cluster. Leave blank for the public Cloud/Community clusters.',
+      },
+      {
+        key: 'apiKey',
+        label: 'API key',
+        type: 'password',
+        group: 'Downlink',
+        help: 'Required for downlinks only. Create it on the APPLICATION (not the user) with the "write downlink application traffic" right. Uplinks keep working without it.',
+      },
+      {
+        key: 'downlinkMode',
+        label: 'Queue behaviour',
+        type: 'select',
+        default: 'push',
+        group: 'Downlink',
+        options: [
+          { value: 'push', label: 'Push — append to the device’s queue' },
+          { value: 'replace', label: 'Replace — discard anything queued' },
+        ],
+        help: 'Replace drops downlinks already waiting for the device, which is what you want when only the latest value matters and wrong when an operator queued two commands in order.',
+      },
+      {
+        key: 'downlinkPriority',
+        label: 'Downlink priority',
+        type: 'select',
+        default: 'NORMAL',
+        group: 'Downlink',
+        options: ['LOWEST', 'LOW', 'BELOW_NORMAL', 'NORMAL', 'ABOVE_NORMAL', 'HIGH', 'HIGHEST'].map(
+          (value) => ({ value, label: value }),
+        ),
+        help: 'How TTS orders this frame against other downlinks for the same gateway. It does not make a Class A device listen any sooner.',
+      },
     ],
   },
 

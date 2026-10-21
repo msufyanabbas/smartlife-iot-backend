@@ -29,6 +29,8 @@ import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/users/entities/user.entity';
 import { EmailTemplateType, UserRole } from '@common/enums/index.enum';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Email Templates')
 @ApiBearerAuth()
@@ -53,6 +55,11 @@ export class EmailTemplatesController {
   constructor(private readonly emailTemplatesService: EmailTemplatesService) { }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'create email template',
+  })
   @RequirePermissions('settings:create')
   @ApiOperation({ summary: 'Create a new email template' })
   @ApiResponse({
@@ -184,6 +191,11 @@ export class EmailTemplatesController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update email template',
+  })
   @RequirePermissions('settings:update')
   @ApiOperation({ summary: 'Update email template' })
   @ApiResponse({ status: 200, description: 'Template updated successfully' })
@@ -199,6 +211,12 @@ export class EmailTemplatesController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete email template',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('settings:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete email template' })

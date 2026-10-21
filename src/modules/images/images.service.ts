@@ -11,6 +11,7 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import type { File as MulterFile } from 'multer';
+import { StorageService } from '@/lib/storage/storage.service';
 import { Image } from './entities/image.entity';
 import { CreateImageDto } from './dto/create-image.dto';
 import { UpdateImageDto } from './dto/update-image.dto';
@@ -49,6 +50,8 @@ export class ImagesService implements OnModuleInit {
   constructor(
     @InjectRepository(Image)
     private readonly imageRepository: Repository<Image>,
+    // StorageModule is @Global, so no module import is needed.
+    private readonly storage: StorageService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -95,11 +98,18 @@ export class ImagesService implements OnModuleInit {
       throw new BadRequestException('Uploaded file is empty');
     }
 
-    await fs.mkdir(this.imageDir, { recursive: true });
-
+    // Through StorageService rather than fs.writeFile, so swapping in a shared
+    // object store is a driver change and not an edit here. The local driver
+    // writes to exactly the same absolute path this used to (it honours
+    // UPLOAD_PATH_IMAGES as a root override for the `images/` key prefix), so
+    // the bytes, the URL and the stored `path` are unchanged — which is what
+    // makes this safe for rows written before it.
     const fileName = `${randomUUID()}.${ext}`;
-    const diskPath = path.join(this.imageDir, fileName);
-    await fs.writeFile(diskPath, file.buffer);
+    const storageKey = `images/${fileName}`;
+    const stored = await this.storage.put(storageKey, file.buffer, {
+      contentType: file.mimetype,
+    });
+    const diskPath = stored.localPath ?? path.join(this.imageDir, fileName);
 
     const image = this.imageRepository.create({
       // Client metadata first — every server-derived field below must win.
@@ -110,7 +120,7 @@ export class ImagesService implements OnModuleInit {
       size: file.size,
       url: `${this.publicPrefix}/${fileName}`,
       path: this.toStoredPath(diskPath),
-      storageProvider: 'local',
+      storageProvider: this.storage.name,
       tenantId,
       userId,
       uploadedBy: userId,
@@ -126,7 +136,7 @@ export class ImagesService implements OnModuleInit {
       return saved;
     } catch (error) {
       // Do not leave the bytes behind if the row never landed.
-      await fs.unlink(diskPath).catch(() => undefined);
+      await this.storage.delete(storageKey).catch(() => undefined);
       throw error;
     }
   }

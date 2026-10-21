@@ -58,6 +58,7 @@ import { CodecRegistryService } from '../src/modules/devices/codecs/codec-regist
 import { LWM2M_CAPABILITIES, LWM2M_SCOPE_SUMMARY } from '../src/modules/protocols/lwm2m/lwm2m.scope';
 import { DeviceTransportType } from '../src/common/enums/device-profile.enum';
 import { DeviceStatus, DeviceType } from '../src/common/enums/device.enum';
+import { Edge } from '../src/modules/edge/entities/edge.entity';
 
 const database = process.argv[2] ?? 'transportcheck';
 const COAP_PORT = Number(process.env.LWM2M_TEST_PORT ?? 15683);
@@ -268,6 +269,11 @@ function coapRequest(opts: {
     const deviceAuth = new DeviceAuthService(
       credentialsRepo,
       deviceRepo,
+      // The Edge repository, added so an edge gateway can forward only for
+      // devices assigned to it. Real, so the edge branch resolves against the
+      // same database as the device branch instead of a stub that cannot
+      // refuse.
+      dataSource.getRepository(Edge),
       redisStub,
     );
 

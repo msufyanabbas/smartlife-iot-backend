@@ -28,6 +28,8 @@ import {
 } from './dto/group.dto';
 import { GroupEntityType } from './group.enum';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * Entity groups — a named collection of devices, assets, customers or users.
@@ -155,6 +157,11 @@ export class GroupsController {
   }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'create entity group',
+  })
   @RequirePermissions('groups:create')
   @TenantAdminOnly()
   @ApiOperation({
@@ -174,6 +181,11 @@ export class GroupsController {
   }
 
   @Post(':id/members')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update entity group',
+  })
   @RequirePermissions('groups:update')
   @TenantAdminOnly()
   @ApiOperation({
@@ -195,6 +207,11 @@ export class GroupsController {
   }
 
   @Put(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update entity group',
+  })
   @RequirePermissions('groups:update')
   @TenantAdminOnly()
   @ApiOperation({
@@ -215,6 +232,11 @@ export class GroupsController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update entity group',
+  })
   @RequirePermissions('groups:update')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Update a group (alias of PUT)' })
@@ -230,6 +252,12 @@ export class GroupsController {
 
   // Before `DELETE /:id/members`, or "missing" is taken as part of that route's body-less form.
   @Delete(':id/members/missing')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete entity group',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('groups:update')
   @TenantAdminOnly()
   @ApiOperation({
@@ -249,6 +277,12 @@ export class GroupsController {
   }
 
   @Delete(':id/members')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete entity group',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('groups:update')
   @TenantAdminOnly()
   @ApiOperation({
@@ -268,6 +302,12 @@ export class GroupsController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete entity group',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('groups:delete')
   @TenantAdminOnly()
   @ApiOperation({

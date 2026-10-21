@@ -38,6 +38,8 @@ import { User } from '../users/entities/user.entity';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * RolesGuard is listed explicitly because it returns TRUE when a handler has no
@@ -62,6 +64,10 @@ export class IntegrationsController {
   ) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.INTEGRATION,
+  })
   @RequirePermissions('integrations:create')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Create a new integration' })
@@ -294,6 +300,10 @@ export class IntegrationsController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.INTEGRATION,
+  })
   @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Update integration' })
@@ -308,6 +318,11 @@ export class IntegrationsController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.INTEGRATION,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('integrations:delete')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -319,6 +334,10 @@ export class IntegrationsController {
   }
 
   @Post(':id/toggle')
+  @Audit({
+    action: AuditAction.DEVICE_COMMAND,
+    entityType: AuditEntityType.INTEGRATION,
+  })
   @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: 'Toggle integration status' })
@@ -332,6 +351,10 @@ export class IntegrationsController {
   }
 
   @Post(':id/test')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.INTEGRATION,
+  })
   @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @ApiOperation({
@@ -552,6 +575,10 @@ export class IntegrationsController {
   }
 
   @Post(':id/tuya/sync')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.INTEGRATION,
+  })
   @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -599,6 +626,10 @@ export class IntegrationsController {
   }
 
   @Post(':id/tuya/command')
+  @Audit({
+    action: AuditAction.DEVICE_COMMAND,
+    entityType: AuditEntityType.INTEGRATION,
+  })
   @RequirePermissions('integrations:update')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)

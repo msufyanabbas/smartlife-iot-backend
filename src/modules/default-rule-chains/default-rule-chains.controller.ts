@@ -28,6 +28,8 @@ import {
 } from './dto/default-rule-chain.dto';
 import { DefaultRuleChainOriginatorType } from './default-rule-chain.enum';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * Default rule chains — the mapping that decides which rule chain handles which
@@ -139,6 +141,11 @@ export class DefaultRuleChainsController {
   }
 
   @Post('type/:type')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update default rule chain',
+  })
   @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({
@@ -167,6 +174,11 @@ export class DefaultRuleChainsController {
   }
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'create default rule chain',
+  })
   @RequirePermissions('automations:create')
   @TenantAdminOnly()
   @ApiOperation({
@@ -186,6 +198,11 @@ export class DefaultRuleChainsController {
   }
 
   @Put(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update default rule chain',
+  })
   @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Update a mapping' })
@@ -201,6 +218,11 @@ export class DefaultRuleChainsController {
 
   // The shipped frontend client sends PATCH. Same handler.
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update default rule chain',
+  })
   @RequirePermissions('automations:update')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Update a mapping (alias of PUT)' })
@@ -215,6 +237,12 @@ export class DefaultRuleChainsController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'delete default rule chain',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('automations:delete')
   @TenantAdminOnly()
   @ApiOperation({

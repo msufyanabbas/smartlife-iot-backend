@@ -33,6 +33,8 @@ import { Public } from '@/common/decorators/public.decorator';
 import { Roles } from '@common/decorators/index.decorator';
 import { UserRole } from '@common/enums/index.enum';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ROLES: this controller had no @Roles metadata on any handler, and RolesGuard
@@ -52,6 +54,10 @@ export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post('create')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.PAYMENT,
+  })
   @RequirePermissions('billing:manage')
   @UseGuards(JwtAuthGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -215,6 +221,10 @@ export class PaymentsController {
   }
 
   @Post('refund')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.PAYMENT,
+  })
   @RequirePermissions('billing:manage')
   @UseGuards(JwtAuthGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -355,6 +365,10 @@ export class PaymentsController {
   }
 
   @Post('admin/retry/:paymentId')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.PAYMENT,
+  })
   @RequirePermissions('billing:manage')
   @UseGuards(JwtAuthGuard)
   @Roles(UserRole.SUPER_ADMIN)
@@ -389,6 +403,10 @@ export class PaymentsController {
   }
 
   @Post('admin/chargeback')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.PAYMENT,
+  })
   @RequirePermissions('billing:manage')
   @UseGuards(JwtAuthGuard)
   @Roles(UserRole.SUPER_ADMIN)

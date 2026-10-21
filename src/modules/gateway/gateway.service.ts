@@ -7,6 +7,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
+import { ModuleRef } from '@nestjs/core';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import mqttConfig from '../../config/mqtt.config';
 import { DevicesService } from '../devices/devices.service';
@@ -40,6 +41,37 @@ interface VerifiedConnection {
   verifiedAt: Date;
 }
 
+/**
+ * The slice of `LorawanDownlinkService` this module uses.
+ *
+ * Declared structurally rather than importing the class: the whole point of
+ * the `ModuleRef` lookup in `sendLorawanDownlink()` is that this file does not
+ * import `IntegrationsModule`'s graph, and importing the class for its type
+ * alone would reintroduce the module edge the lookup exists to avoid.
+ */
+interface LorawanDownlinkPort {
+  enqueue(
+    device: unknown,
+    request: {
+      data: string;
+      fPort: number;
+      confirmed?: boolean;
+      reference?: string;
+    },
+  ): Promise<{
+    network: 'chirpstack' | 'ttn';
+    fPort: number;
+    queueItemId?: string;
+    message: string;
+  }>;
+}
+
+/** Protocols whose downlinks go through a network server's REST API, not MQTT. */
+const LORAWAN_NETWORK_PROTOCOLS = new Set<string>([
+  DeviceProtocol.LORAWAN_CHIRPSTACK,
+  DeviceProtocol.LORAWAN_TTN,
+]);
+
 @Injectable()
 export class GatewayService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(GatewayService.name);
@@ -55,6 +87,13 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
 
   private readonly verifiedConnections = new Map<string, VerifiedConnection>();
   private cleanupInterval: NodeJS.Timeout | null = null;
+
+  /**
+   * Resolved lazily through ModuleRef, then memoised. `undefined` means "not
+   * looked up yet"; `null` means "looked up and not present", which must not
+   * be retried on every command.
+   */
+  private lorawanDownlink?: LorawanDownlinkPort | null;
 
   constructor(
     @Inject(mqttConfig.KEY)
@@ -73,6 +112,9 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
     // service), so this direction must be forwardRef'd at both ends.
     @Inject(forwardRef(() => DeviceCommandsService))
     private readonly deviceCommandsService: DeviceCommandsService,
+    // Used only to resolve LorawanDownlinkService without importing
+    // IntegrationsModule — see sendLorawanDownlink().
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -88,12 +130,38 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
 
   // ── Send command (downlink) ────────────────────────────────────────────────
 
-  async sendCommand(deviceKey: string, command: DeviceCommand): Promise<void> {
+  /**
+   * `actor` is optional because this method has two callers with different
+   * origins: an authenticated HTTP route, and `DeviceCommandsConsumer` working
+   * through a queue where there is no request. Passing it through is what lets
+   * the `device.command.sent` audit row name who pressed the button — without
+   * it the row records the command and not the person, which is the half of
+   * the question nobody asks.
+   */
+  async sendCommand(
+    deviceKey: string,
+    command: DeviceCommand,
+    actor?: Pick<User, 'id' | 'name' | 'email'>,
+  ): Promise<void> {
     const device = await this.devicesService.findByDeviceKey(deviceKey, this.systemUser);
 
     this.logger.log(`sendCommand — deviceKey: ${deviceKey}, protocol: ${device.protocol}, devEUI: ${device.metadata?.devEUI}`);
 
     const devEUI = device.metadata?.devEUI as string | undefined;
+
+    // ── LoRaWAN network servers are not reachable over this broker ──────────
+    // A ChirpStack or TTN device's downlinks have to be queued through that
+    // network server's REST API; it is the server that owns the device's
+    // receive windows and decides when the frame is actually transmitted.
+    // Publishing to `milesight/downlink/<devEUI>` on this platform's own
+    // broker — which is what this method did for both protocols — succeeded
+    // every time and reached nothing, marking the command DELIVERED.
+    //
+    // Checked before the switch so it covers both protocols in one place and
+    // so a deployment WITHOUT the network-server credentials configured still
+    // falls through to the old broker behaviour rather than losing a path it
+    // may be relying on (a sidecar bridging that topic into ChirpStack).
+    if (await this.sendLorawanDownlink(device, command)) return;
 
     let topic: string;
     let payload: any;
@@ -147,6 +215,160 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
 
     await this.mqttService.publish(topic, payload);
     this.logger.log(`Command sent → ${deviceKey} (${command.method})`);
+
+    // Actuation is the most consequential thing a user can do to a device and
+    // it was not recorded: `device.command.sent` has an audit handler and had
+    // no emitter. Emitted here rather than in the controller so the queued
+    // path (DeviceCommandsConsumer → sendCommand) is covered too.
+    //
+    // `sentBy` is null for the queued path — a command dispatched by
+    // DeviceCommandsConsumer has no request behind it, and inventing an actor
+    // would be worse than an empty field. The HTTP route passes one.
+    this.eventEmitter.emit('device.command.sent', {
+      deviceId: device.id,
+      deviceName: device.name,
+      deviceKey: device.deviceKey,
+      tenantId: device.tenantId,
+      customerId: device.customerId,
+      command: command.method,
+      params: command.params,
+      sentBy: actor,
+    });
+  }
+
+  // ── LoRaWAN downlink (ChirpStack / The Things Stack) ──────────────────────
+
+  /**
+   * Queue a downlink through the device's LoRaWAN network server.
+   *
+   * Returns **true** when this command was handled here and `sendCommand()`
+   * should stop; **false** when the device is not a LoRaWAN network-server
+   * device, or no downlink service is available, so the caller continues to
+   * its MQTT branches.
+   *
+   * ── Why ModuleRef and not an import ────────────────────────────────────────
+   * `LorawanDownlinkService` lives in `IntegrationsModule`, next to the uplink
+   * webhooks and the integration catalogue it reads credentials from. Importing
+   * that module here would close a third edge on an already-cyclic graph —
+   * `GatewayModule` ← `ProtocolsModule` ← `IntegrationsModule` — and a module
+   * load cycle in this application does not degrade, it crashes `bootstrap()`
+   * (CLAUDE.md §4e). `AiInsightsService` resolves `TelemetryService` through
+   * `ModuleRef` for exactly this reason, and the token is registered as a
+   * string alias so it can be named without the import.
+   *
+   * The lookup is memoised: `ModuleRef.get` walks the container, and this is on
+   * the command path for every actuation.
+   *
+   * ── Payload: the codec first, raw params second ────────────────────────────
+   * A LoRaWAN downlink is bytes, an fPort and a confirmed flag. Those come
+   * from the device's codec when it has one — the same `codecRegistry.encode()`
+   * the Milesight branch uses, so a `setSwitch` command means the same thing on
+   * both transports. A caller that already holds the frame can pass
+   * `params: { data, fPort, confirmed }` and bypass the codec, which is what
+   * the raw-downlink path needs and what no codec can express generically.
+   */
+  private async sendLorawanDownlink(
+    device: { id: string; deviceKey: string; protocol?: string | null; metadata?: any },
+    command: DeviceCommand,
+  ): Promise<boolean> {
+    if (!LORAWAN_NETWORK_PROTOCOLS.has(String(device.protocol))) return false;
+
+    const downlink = this.resolveLorawanDownlinkService();
+    if (!downlink) {
+      this.logger.warn(
+        `LorawanDownlinkService is not available — falling back to the MQTT ` +
+          `branch for ${device.deviceKey}, which will not reach its network server.`,
+      );
+      return false;
+    }
+
+    const request = this.buildLorawanDownlink(device, command);
+
+    // Errors propagate: `sendCommand()`'s callers treat a throw as "this
+    // command failed" (DeviceCommandsConsumer marks the row FAILED and retries,
+    // the HTTP route answers 5xx). Swallowing one here would restore exactly
+    // the silent-success behaviour this branch exists to remove.
+    const result = await downlink.enqueue(device as any, request);
+
+    this.logger.log(
+      `LoRaWAN downlink queued → ${device.deviceKey} via ${result.network} ` +
+        `(fPort ${result.fPort}, ${result.queueItemId ?? 'no queue id'})`,
+    );
+
+    this.eventEmitter.emit('device.command.sent', {
+      deviceId: device.id,
+      deviceKey: device.deviceKey,
+      tenantId: (device as any).tenantId,
+      customerId: (device as any).customerId,
+      command: command.method,
+      params: command.params,
+      transport: result.network,
+      // Not "sent": the network server holds it until the device's next
+      // uplink opens a receive window.
+      queued: true,
+    });
+
+    return true;
+  }
+
+  /** Bytes + fPort + confirmed, from an explicit payload or from the codec. */
+  private buildLorawanDownlink(
+    device: { deviceKey: string; metadata?: any },
+    command: DeviceCommand,
+  ): { data: string; fPort: number; confirmed?: boolean; reference?: string } {
+    const params = (command.params ?? {}) as Record<string, any>;
+
+    // Raw passthrough. `data` is base64 (the wire format); `hex` is accepted
+    // because every Milesight codec in this repo emits hex and an operator
+    // reading codec documentation has hex in front of them.
+    const rawBase64 =
+      typeof params.data === 'string'
+        ? params.data
+        : typeof params.payload === 'string'
+          ? params.payload
+          : undefined;
+    const rawHex = typeof params.hex === 'string' ? params.hex : undefined;
+
+    if (rawBase64 || rawHex) {
+      return {
+        data: rawHex
+          ? Buffer.from(rawHex.replace(/\s+/g, ''), 'hex').toString('base64')
+          : rawBase64!,
+        fPort: Number(params.fPort ?? params.port ?? 1),
+        confirmed: params.confirmed === true,
+        reference: command.method,
+      };
+    }
+
+    const encoded = this.codecRegistry.encode(
+      { type: command.method, params: command.params },
+      { codecId: device.metadata?.codecId as string },
+    );
+
+    return {
+      // Codecs in this repo return hex; the network servers take base64.
+      data: Buffer.from(encoded.data, 'hex').toString('base64'),
+      fPort: encoded.fPort ?? 1,
+      confirmed: encoded.confirmed ?? false,
+      reference: command.method,
+    };
+  }
+
+  /** Memoised ModuleRef lookup — see `sendLorawanDownlink()`. */
+  private resolveLorawanDownlinkService(): LorawanDownlinkPort | null {
+    if (this.lorawanDownlink !== undefined) return this.lorawanDownlink;
+    try {
+      this.lorawanDownlink = this.moduleRef.get<LorawanDownlinkPort>(
+        'LorawanDownlinkService',
+        { strict: false },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve LorawanDownlinkService: ${(error as Error).message}`,
+      );
+      this.lorawanDownlink = null;
+    }
+    return this.lorawanDownlink;
   }
 
   // ── Send RPC request (two-way) ────────────────────────────────────────────

@@ -89,6 +89,8 @@ import { TelemetryService } from '../src/modules/telemetry/telemetry.service';
 import { RulesService } from '../src/modules/rules/rules.service';
 import { RuleEngineService } from '../src/modules/rules/rule-engine.service';
 import { RuleEngineConsumer } from '../src/modules/rules/rule-engine.consumer';
+import { DistributedLockService } from '../src/lib/cluster/distributed-lock.service';
+import { inMemoryRedis } from './support/in-memory-redis';
 
 const database = process.argv[2] ?? 'rgqcheck';
 
@@ -350,14 +352,39 @@ const TRICKY_DEVICE_NAME = 'Lobby, "North"';
     settings: {},
   };
 
+  /**
+   * The latest-reading cache. It must be a real miss, not a `noop`: `read()`
+   * is consulted on the `/latest` path and a stub returning `undefined` is
+   * the honest "nothing cached", while `write()` has to be callable because
+   * the create path calls it.
+   */
+  const latestCacheStub: any = {
+    read: async () => null,
+    write: async () => undefined,
+    invalidate: async () => undefined,
+  };
+
   // Positional construction, so this breaks loudly if TelemetryService gains a
   // dependency the query path DOES use. Everything after the two repositories
   // and Redis is only reached by create()/createBatch(), which a report never
   // calls.
-  const telemetryService: any = new (TelemetryService as any)(
+  //
+  // It DID break: `TelemetryLatestCacheService` was inserted as the fourth
+  // parameter, which shifted every stub after it by one, so `rollupStub`
+  // landed in the AutomationService slot and a `noop` landed in the rollup
+  // slot — producing `this.rollupService.shouldUseRollups is not a function`
+  // at run time.
+  //
+  // The `as any` on the class was why typecheck:scripts could not catch it:
+  // casting the constructor away discards the arity check that found eleven
+  // other instances of this exact drift. It is gone, and the stubs carry the
+  // `any` instead — same convenience, without blinding the one check that
+  // would have caught this.
+  const telemetryService: any = new TelemetryService(
     telemetryRepo,
     deviceRepo,
     redisStub,
+    latestCacheStub, // TelemetryLatestCacheService — a real miss, see above
     noop, // ProfileAlarmService
     noop, // IntegrationDispatchService
     noop, // AutomationService
@@ -645,9 +672,44 @@ const TRICKY_DEVICE_NAME = 'Lobby, "North"';
 
   // SMTP is not configured in a verification run, so sendEmail() returns false
   // and logs; the delivery record must say so rather than claim a send.
+  // The scheduler now decides attachment-vs-link BEFORE building the body, by
+  // asking the mail service for its cap. A stub carrying only sendEmail threw
+  // on `maxAttachmentBytes()` inside the delivery block, so no delivery record
+  // was written at all and the assertion below read `null` — reported as
+  // "delivery was glossed over" when delivery had never been reached.
+  //
+  // The cap mirrors MailService's own default (10 MB) rather than being
+  // Infinity: a stub that accepts any size would never exercise the
+  // over-cap branch, and that branch is the one that has to keep the email
+  // text and the actual attachment in agreement.
   const mailStub: any = {
     sendEmail: async (_options: any) => false,
+    maxAttachmentBytes: () => 10 * 1024 * 1024,
+    attachmentBytes: (attachments: any[] = []) =>
+      attachments.reduce(
+        (sum, a) => sum + (a?.content?.byteLength ?? 0),
+        0,
+      ),
+    canAttach: (attachments: any[] = []) =>
+      attachments.reduce((sum, a) => sum + (a?.content?.byteLength ?? 0), 0) <=
+      10 * 1024 * 1024,
   };
+  // ── The scheduler tick is wrapped in @DistributedCron ────────────────────
+  //
+  // The decorator reads `DistributedLockService.instance`, a static holder
+  // populated when ClusterModule constructs the service. This script never
+  // registers ClusterModule, so the holder was null and the decorator skipped
+  // the body outright — five assertions failed reporting that the scheduler
+  // had not run the due template, when in fact it had never been called.
+  //
+  // Constructing the lock service populates the holder;
+  // CLUSTER_LOCKS_ENABLED=false makes `withLock` run the work inline and
+  // return its real result. What this script asserts is what the tick DOES.
+  // Whether two replicas race for it is a different property, owned by
+  // check:cluster-safety and verify:cluster-locks.
+  process.env.CLUSTER_LOCKS_ENABLED = 'false';
+  new DistributedLockService(inMemoryRedis());
+
   const scheduler = new ReportSchedulerService(
     templateRepo,
     executionRepo,

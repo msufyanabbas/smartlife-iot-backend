@@ -32,6 +32,8 @@ import { RolesGuard } from '@common/guards/roles.guard';
 import { Roles } from '@common/decorators/roles.decorator';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
 import { UserRole } from '@common/enums/index.enum';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -70,6 +72,11 @@ export class RolesController {
   constructor(private readonly rolesService: RolesService) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'create role',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('roles:create')
   @ApiOperation({ summary: 'Create a new role' })
@@ -165,6 +172,11 @@ export class RolesController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update role',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('roles:update')
   @ApiOperation({ summary: 'Update a role' })
@@ -182,6 +194,12 @@ export class RolesController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete role',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('roles:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -195,6 +213,12 @@ export class RolesController {
   }
 
   @Post(':id/permissions')
+  @Audit({
+    action: AuditAction.PERMISSION_CHANGE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'permission change role',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('roles:update')
   @ApiOperation({ summary: 'Assign permissions to a role' })
@@ -211,6 +235,12 @@ export class RolesController {
   }
 
   @Delete(':id/permissions')
+  @Audit({
+    action: AuditAction.PERMISSION_CHANGE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'permission change role',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('roles:update')
   @ApiOperation({ summary: 'Remove permissions from a role' })

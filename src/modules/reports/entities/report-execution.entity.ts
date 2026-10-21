@@ -95,7 +95,15 @@ export class ReportExecution extends BaseEntity {
     recipients: string[];
     sent: string[];
     failed: string[];
-    /** Stated because MailService's EmailOptions has no attachment support. */
+    /**
+     * Whether the artefact itself travelled with the email. False when it was
+     * over `MAIL_MAX_ATTACHMENT_BYTES` and only the download link was sent —
+     * the one fact a recipient asking "where is my file?" needs.
+     */
+    attached?: boolean;
+    /** Size of the attachment that was sent; 0 when it was not attached. */
+    attachmentBytes?: number;
+    /** Human-readable summary of which of the two paths was taken. */
     note: string;
   } | null;
 

@@ -25,6 +25,8 @@ import { User } from '@modules/index.entities';
 import { TenantOrCustomerAdmin } from '@common/decorators/access-control.decorator';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Device Commands')
 @Controller('device-commands')
@@ -37,6 +39,11 @@ export class DeviceCommandsController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'create device command',
+  })
   @RequirePermissions('devices:create')
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'Send command to device' })
@@ -146,6 +153,11 @@ export class DeviceCommandsController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Patch(':id/acknowledge')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update device command',
+  })
   @RequirePermissions('devices:update')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)
@@ -186,6 +198,12 @@ export class DeviceCommandsController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'delete device command',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('devices:delete')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.OK)

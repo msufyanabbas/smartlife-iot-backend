@@ -90,12 +90,10 @@ export class UsersController {
   @ApiOperation({ summary: 'Create a new user' })
   @ApiResponse({ status: 201, description: 'User created successfully' })
   @ApiResponse({ status: 409, description: 'User already exists' })
-  @Audit({
-    action: AuditAction.CREATE,
-    entityType: AuditEntityType.USER,
-    severity: AuditSeverity.INFO,
-    description: 'User created',
-  })
+  // No @Audit() here on purpose. `UsersService.create()` emits `user.created`,
+  // which AuditEventsService turns into the row — and that event also fires
+  // for the callers that never reach this controller. Decorating the route as
+  // well produced two audit rows for one created user.
   async create(@Body() createUserDto: CreateUserDto) {
     const user = await this.usersService.create(createUserDto);
     return {
@@ -146,6 +144,10 @@ export class UsersController {
    * Update current user profile
    */
   @Patch('me')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.USER,
+  })
   @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -188,6 +190,11 @@ export class UsersController {
    * Forgot password
    */
   @Post('forgot-password')
+  @Audit({
+    action: AuditAction.PASSWORD_RESET,
+    entityType: AuditEntityType.USER,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('users:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Request password reset' })
@@ -203,6 +210,11 @@ export class UsersController {
    * Reset password
    */
   @Post('reset-password')
+  @Audit({
+    action: AuditAction.PASSWORD_RESET,
+    entityType: AuditEntityType.USER,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('users:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reset password with token' })
@@ -219,6 +231,10 @@ export class UsersController {
    * Verify email
    */
   @Post('verify-email')
+  @Audit({
+    action: AuditAction.EMAIL_VERIFY,
+    entityType: AuditEntityType.USER,
+  })
   @RequirePermissions('users:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify email with token' })
@@ -235,6 +251,10 @@ export class UsersController {
    * Resend verification email
    */
   @Post('resend-verification')
+  @Audit({
+    action: AuditAction.EMAIL_VERIFY,
+    entityType: AuditEntityType.USER,
+  })
   @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -252,6 +272,10 @@ export class UsersController {
    * Update preferences
    */
   @Patch('me/preferences')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.USER,
+  })
   @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -316,6 +340,10 @@ export class UsersController {
    * Invite user
    */
   @Post('invite')
+  @Audit({
+    action: AuditAction.NOTIFICATION_SENT,
+    entityType: AuditEntityType.USER,
+  })
   @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -334,6 +362,10 @@ export class UsersController {
    * Bulk update status
    */
   @Patch('bulk/status')
+  @Audit({
+    action: AuditAction.STATUS_CHANGE,
+    entityType: AuditEntityType.USER,
+  })
   @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -353,6 +385,11 @@ export class UsersController {
   // ── Bulk operations (declared before ':id' so 'bulk' is not read as an id) ─
 
   @Post('bulk/delete')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.USER,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('users:delete')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -389,6 +426,10 @@ export class UsersController {
   }
 
   @Patch('bulk')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.USER,
+  })
   @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -463,6 +504,11 @@ export class UsersController {
   }
 
   @Delete('bulk')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.USER,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('users:delete')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -487,6 +533,11 @@ export class UsersController {
   }
 
   @Patch('bulk/assign-role')
+  @Audit({
+    action: AuditAction.ROLE_CHANGE,
+    entityType: AuditEntityType.USER,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -499,6 +550,11 @@ export class UsersController {
   }
 
   @Patch('bulk/remove-role')
+  @Audit({
+    action: AuditAction.ROLE_CHANGE,
+    entityType: AuditEntityType.USER,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -511,6 +567,11 @@ export class UsersController {
   }
 
   @Patch('bulk/permissions')
+  @Audit({
+    action: AuditAction.PERMISSION_CHANGE,
+    entityType: AuditEntityType.USER,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -523,6 +584,10 @@ export class UsersController {
   }
 
   @Post('bulk/send-email')
+  @Audit({
+    action: AuditAction.NOTIFICATION_SENT,
+    entityType: AuditEntityType.USER,
+  })
   @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -536,6 +601,10 @@ export class UsersController {
   }
 
   @Post('bulk/send-notification')
+  @Audit({
+    action: AuditAction.NOTIFICATION_SENT,
+    entityType: AuditEntityType.USER,
+  })
   @RequirePermissions('users:create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
@@ -615,6 +684,10 @@ export class UsersController {
    * Update user status
    */
   @Patch(':id/status')
+  @Audit({
+    action: AuditAction.STATUS_CHANGE,
+    entityType: AuditEntityType.USER,
+  })
   @RequirePermissions('users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)

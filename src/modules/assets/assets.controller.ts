@@ -35,7 +35,6 @@ import { RolesGuard } from '@common/guards/roles.guard';
 import { Roles } from '@common/decorators/roles.decorator';
 import { User } from '@modules/index.entities';
 import { UserRole } from '@common/enums/index.enum';
-import { AssetType } from '@common/enums/index.enum';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
 import { RequirePermissions } from '@common/decorators/permission.decorator';

@@ -18,6 +18,7 @@ import {
   FirmwareUpdateStatus,
 } from '@common/enums/index.enum';
 import { KafkaService } from '@/lib/kafka/kafka.service';
+import { StorageService } from '@/lib/storage/storage.service';
 import { CreateFirmwareDto } from './dto/create-firmware.dto';
 import { AssignFirmwareDto } from './dto/assign-firmware.dto';
 import { OtaStatusDto } from './dto/ota-status.dto';
@@ -51,6 +52,8 @@ export class FirmwareService {
     private readonly deviceRepo: Repository<Device>,
     private readonly kafka: KafkaService,
     private readonly configService: ConfigService,
+    // StorageModule is @Global, so FirmwareModule needs no new import.
+    private readonly storage: StorageService,
   ) {
     // Derived from UPLOAD_PATH so firmware lands on the same mounted volume as
     // every other upload. Previously it hardcoded ./uploads/firmware while
@@ -97,8 +100,25 @@ export class FirmwareService {
       .update(file.buffer)
       .digest('hex');
     const storedName = `${crypto.randomUUID()}.bin`;
-    const storagePath = path.join(this.storageDir, storedName);
-    await fs.promises.writeFile(storagePath, file.buffer);
+    // Through StorageService rather than fs.writeFile. The local driver treats
+    // `firmware/` as a key prefix and honours FIRMWARE_STORAGE_DIR as the root
+    // override for it, so the absolute path is identical to what this wrote
+    // before and existing `storagePath` rows keep resolving.
+    //
+    // This matters more here than anywhere else: the OTA command hands devices
+    // a download URL for this file. On two replicas without shared storage, a
+    // device told to fetch firmware uploaded on replica A gets a 404 from
+    // replica B and the rollout sits in IN_PROGRESS for ever.
+    const stored = await this.storage.put(
+      `firmware/${storedName}`,
+      file.buffer,
+      { contentType: file.mimetype || 'application/octet-stream' },
+    );
+    // Still an absolute path on the local driver, because the download routes
+    // below stream from it with fs. A remote driver would need those routes to
+    // stream through `storage.get()` instead — noted in CLAUDE.md §11.
+    const storagePath =
+      stored.localPath ?? path.join(this.storageDir, storedName);
 
     const firmware = this.firmwareRepo.create({
       tenantId,

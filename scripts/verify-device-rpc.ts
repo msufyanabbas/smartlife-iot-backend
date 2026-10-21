@@ -51,6 +51,12 @@ import { Lwm2mService } from '../src/modules/protocols/lwm2m/lwm2m.service';
 import { DeviceListenerService } from '../src/modules/protocols/device-listener.service';
 import { CodecRegistryService } from '../src/modules/devices/codecs/codec-registry.service';
 import { DeviceStatus, DeviceType } from '../src/common/enums/device.enum';
+import { DeviceAuthService } from '../src/modules/device-auth/device-auth.service';
+import {
+  CredentialsType,
+  DeviceCredentials,
+} from '../src/modules/devices/entities/device-credentials.entity';
+import { Edge } from '../src/modules/edge/entities/edge.entity';
 
 const database = process.argv[2] ?? 'transportcheck';
 const COAP_PORT = Number(process.env.RPC_TEST_COAP_PORT ?? 15783);
@@ -70,6 +76,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TENANT = randomUUID();
 const USER = randomUUID();
 const DEVICE_KEY = 'rpcfix-relay-01';
+/**
+ * The access token the CoAP leg presents. CoAP carries no headers for a
+ * credential, so the adapter treats the path segment as the token — which
+ * means this value, not DEVICE_KEY, is what section 8 puts in the URL.
+ */
+const COAP_TOKEN = 'rpcfix-coap-token-2f8c41d9b60e4a37';
 const OTHER_KEY = 'rpcfix-relay-02';
 
 /** A CoAP POST, same client pattern as scripts/test-coap.ts. */
@@ -123,6 +135,14 @@ function coapPost(pathname: string, payload: unknown): Promise<{ code: string; b
     await deviceRepo.query(
       `DELETE FROM device_commands WHERE "deviceId" IN (SELECT id FROM devices WHERE "deviceKey" LIKE 'rpcfix-%')`,
     );
+    // Credentials first: device_credentials.deviceId has an FK to devices(id),
+    // so deleting the devices while a credential row survives from a previous
+    // run fails on the constraint.
+    await deviceRepo.query(
+      `DELETE FROM device_credentials WHERE "deviceId" IN (
+         SELECT id FROM devices WHERE "deviceKey" LIKE 'rpcfix-%'
+       )`,
+    );
     await deviceRepo.query(`DELETE FROM devices WHERE "deviceKey" LIKE 'rpcfix-%'`);
     await deviceRepo.query(`DELETE FROM users WHERE id = $1`, [USER]);
     await deviceRepo.query(`DELETE FROM tenants WHERE id = $1`, [TENANT]);
@@ -153,6 +173,21 @@ function coapPost(pathname: string, payload: unknown): Promise<{ code: string; b
     const device = await makeDevice(DEVICE_KEY);
     const otherDevice = await makeDevice(OTHER_KEY);
     check('fixtures created', Boolean(device.id && otherDevice.id));
+
+    // Device authentication is enforced by default, so a device with no
+    // credential row is correctly refused — including over CoAP, where the
+    // path segment IS the presented token. The fixture therefore has to be
+    // issued a real access token, and section 8 presents that token rather
+    // than the deviceKey (a public identifier, which no longer authenticates
+    // anything unless DEVICE_AUTH_ENFORCED=false).
+    await dataSource.getRepository(DeviceCredentials).save(
+      dataSource.getRepository(DeviceCredentials).create({
+        deviceId: device.id,
+        credentialsType: CredentialsType.ACCESS_TOKEN,
+        credentialsId: COAP_TOKEN,
+        isActive: true,
+      }),
+    );
 
     // ── Wire the real services ─────────────────────────────────────────────
     const kafkaStub: any = { sendMessage: async () => undefined };
@@ -216,6 +251,11 @@ function coapPost(pathname: string, payload: unknown): Promise<{ code: string; b
       correlator,
       responseListener,
       commandsService,
+      // ModuleRef — GatewayService resolves LoRaWAN downlink lazily through
+      // it to avoid a module cycle. Returning undefined keeps this script on
+      // the MQTT/CoAP paths it is actually asserting; a LoRaWAN device would
+      // need the real module graph.
+      { get: () => undefined } as any,
     );
 
     // ── 1. A response resolves the pending request ─────────────────────────
@@ -545,14 +585,69 @@ function coapPost(pathname: string, payload: unknown): Promise<{ code: string; b
       new CodecRegistryService(),
       kafkaStub,
     );
+    // The REAL DeviceAuthService, not a stub that waves everything through.
+    // CoAPAdapter gained this parameter when device authentication became
+    // enforced, and the script was still passing seven arguments — so
+    // `this.deviceAuth` was undefined and every CoAP check died on
+    // "Cannot read properties of undefined (reading 'authenticate')".
+    //
+    // Using the real service means these checks also confirm a CoAP device
+    // must present a credential that verifies, rather than only confirming
+    // that the correlator wiring is intact.
+    const coapDeviceAuth = new DeviceAuthService(
+      dataSource.getRepository(DeviceCredentials),
+      deviceRepo,
+      dataSource.getRepository(Edge),
+      // RedisService is a required dependency and is used unguarded
+      // (`this.redis.get(...).catch(...)` — a TypeError on undefined throws
+      // before .catch can absorb it), so this is a real in-memory stand-in
+      // rather than `undefined`. Honouring the TTL matters: the negative
+      // cache stores the sentinel 'MISS', and a stub that ignored it would
+      // let a once-refused token stay refused for the rest of the run.
+      (() => {
+        const store = new Map<string, { value: string; expiresAt: number }>();
+        return {
+          async get(key: string): Promise<string | null> {
+            const hit = store.get(key);
+            if (!hit) return null;
+            if (hit.expiresAt < Date.now()) {
+              store.delete(key);
+              return null;
+            }
+            return hit.value;
+          },
+          async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
+            store.set(key, {
+              value,
+              expiresAt: Date.now() + (ttlSeconds ?? 60) * 1000,
+            });
+          },
+          async del(key: string): Promise<void> {
+            store.delete(key);
+          },
+        };
+      })() as any,
+    );
+
     coapAdapter = new CoAPAdapter(
       listenerService,
       {} as any,
       {} as any,
-      new Lwm2mService(listenerService, deviceRepo, coapConfigStub),
+      // Lwm2mService gained a registration repository (so registrations
+      // survive a restart) and device auth. Passed the real repository and
+      // the same verifier the adapter uses, so the LwM2M leg is not quietly
+      // running against a different identity than the CoAP leg.
+      new Lwm2mService(
+        listenerService,
+        deviceRepo,
+        coapConfigStub,
+        dataSource.getRepository(entities.Lwm2mRegistration ?? (entities as any).Lwm2mRegistration),
+        coapDeviceAuth,
+      ),
       correlator,
       deviceRepo,
       coapConfigStub,
+      coapDeviceAuth,
     );
     await coapAdapter.start();
 
@@ -565,7 +660,7 @@ function coapPost(pathname: string, payload: unknown): Promise<{ code: string; b
     });
     check('one request is pending', correlator.pendingCount() === 1);
 
-    const coapAnswer = await coapPost(`/api/v1/${DEVICE_KEY}/rpc`, {
+    const coapAnswer = await coapPost(`/api/v1/${COAP_TOKEN}/rpc`, {
       id: coapRequestId,
       result: { uptime: 42 },
     });
@@ -581,7 +676,7 @@ function coapPost(pathname: string, payload: unknown): Promise<{ code: string; b
     check('THE PENDING MAP IS EMPTY AFTERWARDS', correlator.pendingCount() === 0, correlator.pendingIds());
 
     // A device-initiated CoAP RPC (nothing pending) must still be accepted.
-    const initiated = await coapPost(`/api/v1/${DEVICE_KEY}/rpc`, {
+    const initiated = await coapPost(`/api/v1/${COAP_TOKEN}/rpc`, {
       id: 'device-chosen-id',
       method: 'getTime',
     });

@@ -128,16 +128,61 @@ export class MQTTService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * Wrap a topic filter in `$share/<group>/` so the broker load-balances it.
+   *
+   * ── Why this is the most important line in the file on a scaled deploy ────
+   * A plain `devices/+/telemetry` subscription is FAN-OUT. Every replica that
+   * subscribes gets its own copy of every uplink, and each copy ran the whole
+   * ingestion path: a `telemetry` row written, a `telemetry.device.raw` Kafka
+   * message produced, device-profile alarm rules evaluated, the WebSocket
+   * broadcast emitted. Three replicas therefore tripled the telemetry table,
+   * tripled Kafka throughput, and evaluated every DURATION/REPEATING alarm
+   * three times against shared `alarms.metadata.conditionState` — which is how
+   * a 10-minute window could be satisfied in under four minutes. This is the
+   * data-corrupting one, because it is the primary ingestion path.
+   *
+   * `$share/<group>/<filter>` (MQTT 5 shared subscriptions, supported by EMQX
+   * 5) makes the broker pick ONE member of `<group>` per message.
+   *
+   * Two details that matter:
+   *   • The prefix is a *subscription-time* wrapper only. The broker delivers
+   *     the message under its ORIGINAL topic, so `extractDeviceKey()` and
+   *     `findDevice()` need no change — do not strip anything in handleMessage.
+   *   • `$share` is meaningless for a publish; `publish()` below is untouched.
+   */
+  private sharedTopic(filter: string): string {
+    if (!this.settings.sharedSubscription) return filter;
+    // Already shared (e.g. someone put a $share filter in
+    // MQTT_EXTRA_UPLINK_TOPICS) — do not double-wrap, the broker would treat
+    // the inner `$share` as a literal level.
+    if (filter.startsWith('$share/')) return filter;
+    return `$share/${this.settings.sharedGroup}/${filter}`;
+  }
+
   private subscribeToTopics(): void {
     const qos = this.settings.qos ?? 1;
 
+    if (!this.settings.sharedSubscription) {
+      this.logger.warn(
+        'MQTT_SHARED_SUBSCRIPTION=false — every replica will receive every ' +
+          'uplink and persist it. Only correct when exactly one instance runs.',
+      );
+    }
+
     for (const topic of this.uplinkTopics) {
-      this.client?.subscribe(topic, { qos }, (err) => {
+      const filter = this.sharedTopic(topic);
+      this.client?.subscribe(filter, { qos }, (err) => {
         if (err)
-          this.logger.error(`Failed to subscribe to ${topic}: ${err.message}`);
-        else this.logger.log(`Subscribed → ${topic}`);
+          this.logger.error(`Failed to subscribe to ${filter}: ${err.message}`);
+        else this.logger.log(`Subscribed → ${filter}`);
       });
     }
+  }
+
+  /** The filters actually sent to the broker. Read by the guard script and ops. */
+  subscribedFilters(): string[] {
+    return this.uplinkTopics.map((topic) => this.sharedTopic(topic));
   }
 
   // ── Message handling ──────────────────────────────────────────────────────

@@ -29,6 +29,8 @@ import {
   SettingsMessageResponseDto,
 } from './dto/user-settings.dto';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('User Settings')
 @ApiBearerAuth()
@@ -54,6 +56,11 @@ export class UserSettingsController {
   // ==================== UPDATE GENERAL SETTINGS ====================
 
   @Put('general')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update user setting',
+  })
   @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -75,6 +82,11 @@ export class UserSettingsController {
   // ==================== UPDATE NOTIFICATION SETTINGS ====================
 
   @Put('notifications')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update user setting',
+  })
   @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -96,6 +108,11 @@ export class UserSettingsController {
   // ==================== UPDATE DISPLAY SETTINGS ====================
 
   @Put('display')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update user setting',
+  })
   @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -117,6 +134,11 @@ export class UserSettingsController {
   // ==================== UPDATE ALL SETTINGS ====================
 
   @Put()
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update user setting',
+  })
   @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -138,6 +160,11 @@ export class UserSettingsController {
   // ==================== RESET TO DEFAULT ====================
 
   @Post('reset')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'create user setting',
+  })
   @RequirePermissions('settings:create')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -156,6 +183,11 @@ export class UserSettingsController {
   // ==================== DASHBOARD LAYOUT ====================
 
   @Put('dashboard-layout')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update user setting',
+  })
   @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
@@ -177,6 +209,11 @@ export class UserSettingsController {
   // ==================== WIDGET PREFERENCES ====================
 
   @Put('widget-preferences')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update user setting',
+  })
   @RequirePermissions('settings:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 

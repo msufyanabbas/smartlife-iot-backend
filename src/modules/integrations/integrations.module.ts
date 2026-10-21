@@ -12,6 +12,7 @@ import { Telemetry } from '../telemetry/entities/telemetry.entity';
 import { IntegrationDispatchService } from './integration-dispatch.service';
 import { TuyaSyncService } from './tuya-sync.service';
 import { LorawanService } from './lorawan.service';
+import { LorawanDownlinkService } from './lorawan-downlink.service';
 import { IntegrationEventsService } from './integration-events.service';
 import { IntegrationUplinkService } from './integration-uplink.service';
 import { IntegrationMqttInboundService } from './integration-mqtt-inbound.service';
@@ -57,6 +58,13 @@ import { ProtocolsModule } from '../protocols/protocols.module';
     IntegrationMqttInboundService,
     TuyaSyncService,
     LorawanService,
+    LorawanDownlinkService,
+    // String alias, the same trick TelemetryModule uses for TelemetryService.
+    // GatewayService resolves this through ModuleRef instead of importing
+    // IntegrationsModule, because GatewayModule ← ProtocolsModule ←
+    // IntegrationsModule already closes a loop and ModuleRef needs a token it
+    // can name without the import. See GatewayService.sendCommand().
+    { provide: 'LorawanDownlinkService', useExisting: LorawanDownlinkService },
   ],
   exports: [
     IntegrationsService,
@@ -64,6 +72,8 @@ import { ProtocolsModule } from '../protocols/protocols.module';
     IntegrationEventsService,
     TuyaSyncService,
     LorawanService,
+    LorawanDownlinkService,
+    'LorawanDownlinkService',
   ],
 })
 export class IntegrationsModule {}

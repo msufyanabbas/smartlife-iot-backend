@@ -102,9 +102,15 @@ export class FirmwareConsumer implements OnModuleInit {
       device.firmwareUpdateProgress = 0;
       await this.deviceRepo.save(device);
     } catch (error) {
+      // Rethrow for the bounded retry + DLQ in KafkaService.runHandler()
+      // (`firmware.update.dlq`). A dropped rollout message left the device row
+      // at UPDATING with no downlink ever sent — the rollout table showed a
+      // device stuck mid-update forever, which is indistinguishable from a
+      // device that is genuinely still downloading.
       this.logger.error(
         `Error processing firmware.update message: ${(error as Error).message}`,
       );
+      throw error;
     }
   }
 }

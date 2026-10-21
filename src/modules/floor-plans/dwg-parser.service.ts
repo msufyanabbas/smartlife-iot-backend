@@ -6,6 +6,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { createCanvas } from 'canvas';
 import { DWGGeometry } from '@common/interfaces/index.interface';
+import { withScratchFile } from '@/lib/storage/scratch-file';
 import { DxfFloorPlanParser } from './parsers/dxf-floor-plan.parser';
 
 const execAsync = promisify(exec);
@@ -15,8 +16,22 @@ interface Point2D { x: number; y: number }
 /**
  * File-level owner of the DWG/DXF pipeline.
  *
- * Responsibilities kept here: locating and reading the file, converting DWG →
- * DXF, validating the result, and rendering a thumbnail.
+ * Responsibilities kept here: converting DWG → DXF, validating the result, and
+ * rendering a thumbnail.
+ *
+ * ── Bytes in, bytes out ────────────────────────────────────────────────────
+ * This service no longer takes or returns filesystem paths. The durable copy
+ * of an uploaded drawing lives in `StorageService` and, with a shared-storage
+ * or object-store driver, is not on this replica's disk at all — so a path
+ * argument would have been a path only the replica that handled the POST could
+ * open. `parseDWGBuffer()` takes the bytes and `renderThumbnail()` returns
+ * them.
+ *
+ * The one thing that still needs a real local file is the DWG → DXF step: it
+ * shells out to an external converter (`dwg2dxf`, or ODAFileConverter) which
+ * takes a path. That is handled by `withScratchFile()` — a private directory
+ * under os.tmpdir(), removed in a `finally`. The scratch copy is derived data
+ * with a lifetime of one call; nothing durable is left on local disk.
  *
  * Entity classification and 3D geometry construction now live in
  * `parsers/dxf-floor-plan.parser.ts` (DxfFloorPlanParser), which expands BLOCK
@@ -29,17 +44,57 @@ export class DWGParserService {
   // ── Public API ─────────────────────────────────────────────────────────────
 
   /**
-   * Parse a DWG or DXF file and return normalised geometry.
+   * Parse the bytes of a DWG or DXF drawing and return normalised geometry.
    *
    * Pipeline:
-   *   1. Detect file type
-   *   2. If .dwg → convert to .dxf with libredwg `dwg2dxf` (or ODA / WSL)
+   *   1. Land the bytes in a private scratch directory (os.tmpdir())
+   *   2. If .dwg → convert to .dxf with libredwg `dwg2dxf` (or ODA / WSL),
+   *      writing the DXF into that same scratch directory
    *   3. Hand the DXF text to DxfFloorPlanParser
-   *   4. Return the geometry; never throws — returns empty geometry on failure
+   *   4. Remove the scratch directory; return the geometry
+   *
+   * Never throws — returns empty geometry on failure, as before.
+   *
+   * `extension` decides whether conversion runs, so it comes from the
+   * validated upload extension (`.dwg` / `.dxf`), never from a raw filename.
    */
-  async parseDWGFile(filePath: string): Promise<DWGGeometry> {
-    this.logger.log(`parseDWGFile → ${filePath}`);
+  async parseDWGBuffer(
+    source: Buffer,
+    extension: string,
+  ): Promise<DWGGeometry> {
+    if (!source?.length) {
+      this.logger.error('parseDWGBuffer called with no bytes');
+      return this.emptyGeometry();
+    }
 
+    const ext = (extension || '.dxf').toLowerCase();
+    this.logger.log(`parseDWGBuffer → ${source.length} bytes (${ext})`);
+
+    try {
+      return await withScratchFile(source, ext, ({ path: scratchPath }) =>
+        this.parseLocalFile(scratchPath),
+      );
+    } catch (err: any) {
+      // withScratchFile itself can fail (a full or unwritable tmpdir).
+      // parseLocalFile swallows its own errors, so reaching here means the
+      // scratch copy could not be made at all.
+      this.logger.error(
+        `parseDWGBuffer could not stage the drawing locally: ${err.message}`,
+        err.stack,
+      );
+      return this.emptyGeometry();
+    }
+  }
+
+  // ── Private: parsing a staged local file ──────────────────────────────────
+
+  /**
+   * The old `parseDWGFile()`, now private and only ever handed a scratch path.
+   *
+   * It stays path-based because the external converter is: everything below
+   * `convertDwgToDxf` reads and writes real files.
+   */
+  private async parseLocalFile(filePath: string): Promise<DWGGeometry> {
     let dxfPath = filePath;
     let tempDxf = false;
 
@@ -73,9 +128,12 @@ export class DWGParserService {
 
       return geometry;
     } catch (err: any) {
-      this.logger.error(`parseDWGFile failed: ${err.message}`, err.stack);
+      this.logger.error(`parseLocalFile failed: ${err.message}`, err.stack);
       return this.emptyGeometry();
     } finally {
+      // Redundant now that the whole scratch directory is removed by
+      // withScratchFile, but kept: it bounds tmpdir usage during a parse of a
+      // large drawing rather than only after it.
       if (tempDxf) {
         await fs.unlink(dxfPath).catch(() => {
           /* ignore */
@@ -152,9 +210,14 @@ export class DWGParserService {
    *   - Cyan windows
    *   - Grey columns
    *
-   * @returns The output file path (same as `outputPath` argument).
+   * @returns The PNG bytes, or `null` when rendering failed.
+   *
+   * Returns bytes rather than writing a file: the caller puts them through
+   * `StorageService`, so the preview is reachable from every replica. Writing
+   * here is what left the PNG on one container's disk with `thumbnailUrl`
+   * pointing at it.
    */
-  async generateThumbnail(geometry: DWGGeometry, outputPath: string): Promise<string> {
+  async renderThumbnail(geometry: DWGGeometry): Promise<Buffer | null> {
     const W = 800, H = 600, PADDING = 40;
 
     try {
@@ -170,9 +233,9 @@ export class DWGParserService {
       geometry.rooms.forEach(r => r.boundaries.forEach(p => allPoints.push(p)));
 
       if (allPoints.length === 0) {
-        await fs.mkdir(path.dirname(outputPath), { recursive: true });
-        await fs.writeFile(outputPath, canvas.toBuffer('image/png'));
-        return outputPath;
+        // A blank sheet is still a valid preview — a drawing can parse to text
+        // and circles with no walls or rooms.
+        return canvas.toBuffer('image/png');
       }
 
       let gMinX = Infinity, gMaxX = -Infinity, gMinY = Infinity, gMaxY = -Infinity;
@@ -273,15 +336,15 @@ export class DWGParserService {
         ctx.stroke();
       });
 
-      const dir = path.dirname(outputPath);
-      await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(outputPath, canvas.toBuffer('image/png'));
-
-      this.logger.log(`Thumbnail written → ${outputPath}`);
-      return outputPath;
+      const png = canvas.toBuffer('image/png');
+      this.logger.log(`Thumbnail rendered — ${png.length} bytes`);
+      return png;
     } catch (err: any) {
-      this.logger.error(`generateThumbnail failed: ${err.message}`, err.stack);
-      return outputPath; // return path even on failure; caller checks existence
+      this.logger.error(`renderThumbnail failed: ${err.message}`, err.stack);
+      // null, not an empty buffer: the caller must be able to tell "no preview"
+      // from "a preview that happens to be blank", because it only stores a
+      // thumbnailUrl for the second case.
+      return null;
     }
   }
 

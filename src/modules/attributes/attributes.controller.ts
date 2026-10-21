@@ -30,6 +30,8 @@ import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/users/entities/user.entity';
 import { AttributeScope } from '@common/enums/index.enum';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('attributes')
 @Controller('attributes')
@@ -39,6 +41,11 @@ export class AttributesController {
   constructor(private readonly attributesService: AttributesService) {}
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'create attribute',
+  })
   @RequirePermissions('devices:create')
   @ApiOperation({ summary: 'Create a single attribute' })
   @ApiResponse({ status: 201, description: 'Attribute created successfully' })
@@ -47,6 +54,11 @@ export class AttributesController {
   }
 
   @Post(':entityType/:entityId/:scope')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'update attribute',
+  })
   @RequirePermissions('devices:update')
   @ApiOperation({ summary: 'Save multiple attributes for an entity' })
   @ApiResponse({ status: 201, description: 'Attributes saved successfully' })
@@ -184,6 +196,12 @@ export class AttributesController {
   }
 
   @Delete(':entityType/:entityId/:attributeKey')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'delete attribute',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('devices:update')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete an attribute' })
@@ -206,6 +224,12 @@ export class AttributesController {
   }
 
   @Delete(':entityType/:entityId')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DEVICE,
+    description: 'delete attribute',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('devices:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete multiple attributes' })

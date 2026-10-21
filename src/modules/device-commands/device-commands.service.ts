@@ -58,20 +58,33 @@ export class DeviceCommandsService {
     const savedCommand = await this.commandRepository.save(command);
 
     // 3. Publish to Kafka for async processing
-    await this.kafkaService.sendMessage('device.commands', {
-      id: savedCommand.id,
-      deviceId: savedCommand.deviceId,
-      deviceKey: device.deviceKey,
-      tenantId: savedCommand.tenantId,
-      userId: savedCommand.userId,
-      commandType: savedCommand.commandType,
-      params: savedCommand.params,
-      priority: savedCommand.priority,
-      timeout: savedCommand.timeout,
-      retries: savedCommand.retries,
-      createdAt: savedCommand.createdAt.getTime(),
-      scheduledFor: savedCommand.scheduledFor?.getTime(),
-    });
+    //
+    // Keyed by deviceKey. `device.commands` has 5 partitions, so without a key
+    // kafkajs round-robins and two commands for the SAME device land on
+    // different partitions — which are consumed concurrently and in no defined
+    // order relative to each other. For telemetry that is harmless; for
+    // downlink commands it means "close the valve" then "open the valve" can
+    // arrive at the device in the opposite order, and the device ends up in the
+    // state the operator explicitly cancelled. Ordering is per partition only,
+    // so a per-device key is what makes a per-device command sequence ordered.
+    await this.kafkaService.sendMessage(
+      'device.commands',
+      {
+        id: savedCommand.id,
+        deviceId: savedCommand.deviceId,
+        deviceKey: device.deviceKey,
+        tenantId: savedCommand.tenantId,
+        userId: savedCommand.userId,
+        commandType: savedCommand.commandType,
+        params: savedCommand.params,
+        priority: savedCommand.priority,
+        timeout: savedCommand.timeout,
+        retries: savedCommand.retries,
+        createdAt: savedCommand.createdAt.getTime(),
+        scheduledFor: savedCommand.scheduledFor?.getTime(),
+      },
+      device.deviceKey,
+    );
 
     console.log(`✅ Command ${savedCommand.id} published to Kafka`);
 

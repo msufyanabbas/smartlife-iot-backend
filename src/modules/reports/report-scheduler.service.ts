@@ -1,8 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { CronExpression } from '@nestjs/schedule';
+import { DistributedCron } from '@/lib/cluster/distributed-cron.decorator';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThanOrEqual, Repository } from 'typeorm';
 import { MailService } from '@modules/mail/mail.service';
+import type { EmailAttachment } from '@modules/mail/interfaces/mail.interface';
 import { ReportTemplate } from './entities/report-template.entity';
 import { ReportExecution } from './entities/report-execution.entity';
 import { ReportsService } from './reports.service';
@@ -24,18 +26,30 @@ const EMAIL_PREVIEW_ROWS = 20;
  * `ReportsService` on every write and here after every run. The index
  * `(enabled, nextRunAt)` on `report_templates` exists for exactly this query.
  *
- * A consequence worth stating: with several application instances, each would
- * tick and each would run the same due template. `REPORT_SCHEDULER_ENABLED`
- * (default `true`) is the switch that makes a multi-instance deploy able to
- * nominate one runner, and the log line on startup says which it is. There is
- * no distributed lock here.
+ * With several application instances, each would tick and each would run the
+ * same due template — duplicate generation AND duplicate emails. The tick is
+ * now wrapped in a Redis lock (`@DistributedCron`), so one replica runs it and
+ * the others skip. `REPORT_SCHEDULER_ENABLED` (default `true`) is retained as
+ * the blunt per-instance off switch; it is no longer required for correctness
+ * on a scaled deploy.
  *
  * ── Delivery ──────────────────────────────────────────────────────────────
- * `MailService.sendEmail()` takes `{to, subject, html, text}` and has no
- * attachment field, so the artefact is NOT attached. The email carries the
- * summary, the first 20 rows as a table, and the download path. That is stated
- * on `GET /reports/sources` too, rather than letting a user assume a file will
- * arrive.
+ * The generated artefact IS attached. `MailService.sendEmail()` now takes an
+ * `attachments` array (nodemailer handles the MIME multipart itself), so the
+ * recipient gets the CSV / XLSX / PDF / JSON file rather than a link they have
+ * to be logged in to follow.
+ *
+ * It is attached only while it fits under `MailService.maxAttachmentBytes()`
+ * (`MAIL_MAX_ATTACHMENT_BYTES`, default 10 MB). Past that the email falls back
+ * to the download link and SAYS the file was too large. That fallback is not
+ * decoration: a report is a tenant-defined query with a 50,000-row ceiling, and
+ * handing a multi-tens-of-megabyte message to an SMTP relay — base64 inflates
+ * it a further ~37% — either gets rejected after the whole transfer, times out
+ * mid-socket, or queues every other email on the platform (verification,
+ * password reset, alarm notification) behind a report nobody is watching.
+ *
+ * Either way the email still carries the summary and the first 20 rows inline,
+ * and `execution.delivery.note` records which of the two happened.
  */
 @Injectable()
 export class ReportSchedulerService {
@@ -62,7 +76,15 @@ export class ReportSchedulerService {
     );
   }
 
-  @Cron(CronExpression.EVERY_MINUTE, { name: 'report-schedule-tick' })
+  // Locked across replicas: the `running` Set above is per-process, so it stops
+  // one instance overlapping itself and does nothing about three instances
+  // generating and emailing the same report at the same second.
+  // 300s because generating a report is a real query plus a file write plus one
+  // SMTP send per recipient; the holder renews the TTL past that if needed.
+  @DistributedCron(CronExpression.EVERY_MINUTE, {
+    name: 'report-schedule-tick',
+    lockTtl: 300,
+  })
   async tick(): Promise<void> {
     if (!this.enabled) return;
 
@@ -106,7 +128,15 @@ export class ReportSchedulerService {
       });
 
       if (result.execution) {
-        await this.deliver(template, result.execution, result.rowSet);
+        // The rendered bytes are already in hand from the run — `deliver()`
+        // attaches these rather than reading the artefact back off disk, so a
+        // storage volume that has rotated the file cannot turn a successful
+        // run into a failed delivery.
+        await this.deliver(template, result.execution, result.rowSet, {
+          content: result.content,
+          fileName: result.fileName,
+          mimeType: result.mimeType,
+        });
       }
     } catch (err) {
       // `ReportsService.run()` has already written a FAILED execution row and
@@ -138,22 +168,55 @@ export class ReportSchedulerService {
     template: ReportTemplate,
     execution: ReportExecution,
     rowSet: ReportRowSet,
+    artefact: { content: Buffer; fileName: string; mimeType: string },
   ): Promise<void> {
     const recipients = template.schedule?.recipients ?? [];
     if (recipients.length === 0) return;
 
+    const attachment: EmailAttachment = {
+      filename: artefact.fileName,
+      content: artefact.content,
+      contentType: artefact.mimeType,
+    };
+
+    // Decided ONCE, before the body is built, so the email text and what is
+    // actually attached can never disagree. Asking the mail service rather
+    // than hardcoding a number keeps the cap in one place.
+    const cap = this.mailService.maxAttachmentBytes();
+    const bytes = artefact.content.byteLength;
+    const attach = bytes <= cap;
+
+    if (!attach) {
+      this.logger.warn(
+        `Report "${template.name}" is ${bytes} bytes, over the ${cap}-byte ` +
+          'email attachment cap — sending the download link instead. Raise ' +
+          'MAIL_MAX_ATTACHMENT_BYTES if the relay accepts more, or narrow the ' +
+          'report with a device filter or a lower row limit.',
+      );
+    }
+
     const subject = `${template.name} — ${execution.rowCount} row(s)`;
-    const html = this.buildEmail(template, execution, rowSet);
+    const html = this.buildEmail(template, execution, rowSet, {
+      attached: attach,
+      bytes,
+      cap,
+    });
 
     const sent: string[] = [];
     const failed: string[] = [];
 
     for (const to of recipients) {
-      // sendEmail() returns false (and logs) when SMTP is not configured or the
-      // send fails; it does not throw. Recording both lists means "the report
-      // ran but nobody received it" is visible on the execution row.
+      // sendEmail() returns false (and logs) when SMTP is not configured, the
+      // send fails, or the attachment is over its own cap; it does not throw.
+      // Recording both lists means "the report ran but nobody received it" is
+      // visible on the execution row.
       const ok = await this.mailService
-        .sendEmail({ to, subject, html })
+        .sendEmail({
+          to,
+          subject,
+          html,
+          ...(attach && { attachments: [attachment] }),
+        })
         .catch(() => false);
       (ok ? sent : failed).push(to);
     }
@@ -165,15 +228,22 @@ export class ReportSchedulerService {
           recipients,
           sent,
           failed,
-          note:
-            'The report file is not attached — MailService.sendEmail() accepts ' +
-            `{to, subject, html, text} only. Download it from /reports/executions/${execution.id}/download.`,
+          attached: attach,
+          attachmentBytes: attach ? bytes : 0,
+          note: attach
+            ? `${artefact.fileName} (${bytes} bytes, ${artefact.mimeType}) was ` +
+              'attached to each email. It is also at ' +
+              `/reports/executions/${execution.id}/download.`
+            : `The file was NOT attached: ${bytes} bytes exceeds the ` +
+              `${cap}-byte cap (MAIL_MAX_ATTACHMENT_BYTES). Download it from ` +
+              `/reports/executions/${execution.id}/download.`,
         },
       },
     );
 
     this.logger.log(
       `Report "${template.name}" delivered to ${sent.length}/${recipients.length} recipient(s)` +
+        (attach ? ` with ${artefact.fileName} attached` : ' as a link only') +
         (failed.length ? ` — failed: ${failed.join(', ')}` : ''),
     );
   }
@@ -182,6 +252,7 @@ export class ReportSchedulerService {
     template: ReportTemplate,
     execution: ReportExecution,
     rowSet: ReportRowSet,
+    delivery: { attached: boolean; bytes: number; cap: number },
   ): string {
     const escape = (value: unknown): string =>
       String(value ?? '')
@@ -232,9 +303,16 @@ export class ReportSchedulerService {
         }
         ${remaining ? `<p style="font-size:12px;color:#6b7280">…and ${remaining} more row(s) in the full file.</p>` : ''}
         <p style="font-size:12px;color:#6b7280;margin-top:16px">
-          The file is not attached to this email. Download
-          <code>${escape(execution.fileName)}</code> from
-          <code>/reports/executions/${execution.id}/download</code>.
+          ${
+            delivery.attached
+              ? `<code>${escape(execution.fileName)}</code> is attached to this email ` +
+                `(${delivery.bytes} bytes). It is also available from ` +
+                `<code>/reports/executions/${execution.id}/download</code>.`
+              : `<strong>The file is not attached:</strong> it is ${delivery.bytes} bytes, ` +
+                `over this platform's ${delivery.cap}-byte email attachment limit. ` +
+                `Download <code>${escape(execution.fileName)}</code> from ` +
+                `<code>/reports/executions/${execution.id}/download</code>.`
+          }
         </p>
       </div>`;
   }

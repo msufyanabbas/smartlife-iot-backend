@@ -11,6 +11,7 @@ import { Asset, Device, Tenant, User } from '../index.entities';
 import { BullModule } from '@nestjs/bull';
 import { AlarmConsumer } from './alarms.consumer';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { WsAuthorizationModule } from '@common/websocket/ws-authorization.module';
 
 @Module({
   imports: [
@@ -25,6 +26,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
     // which would pull DevicesModule back in through their own forwardRef
     // chains.
     TypeOrmModule.forFeature([Alarm, Asset, Device, Tenant, User]),
+    // Supplies WsSubscriptionAuthorizer to AlarmsGateway.
+    WsAuthorizationModule,
     ConfigModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

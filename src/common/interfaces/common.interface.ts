@@ -150,6 +150,12 @@ export interface MqttConfig {
   // Features
   cleanSession: boolean | undefined;
   retainMessages: boolean | undefined;
+
+  // Shared subscriptions (MQTT 5 / EMQX `$share/<group>/<topic>`).
+  // ON by default: without it every replica receives every uplink. Only turn
+  // it off for a broker that does not implement the extension.
+  sharedSubscription: boolean;
+  sharedGroup: string;
 }
 
 // Migration Configuration

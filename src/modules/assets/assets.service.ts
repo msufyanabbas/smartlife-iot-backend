@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, In, IsNull } from 'typeorm';
+import { Repository, Like, In, IsNull, SelectQueryBuilder } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Alarm,
@@ -19,7 +19,7 @@ import {
   FloorPlan,
   FloorPlanDevice,
 } from '@modules/index.entities';
-import { AlarmStatus, AssetType } from '@common/enums/index.enum';
+import { AlarmStatus, AssetProfileType } from '@common/enums/index.enum';
 import type {
   FloorConfig,
   ProfileField,
@@ -68,6 +68,81 @@ export class AssetsService {
     private subscriptionsService: SubscriptionsService,
   ) {}
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // THE ASSET'S TYPE — ONE SOURCE, THE PROFILE
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * The light projection of `assetProfile` that a type read needs.
+   *
+   * `leftJoinAndSelect` would haul `schema`, `alarmRules`, `calculatedFields`
+   * and five more jsonb columns into every row of every list — the Building
+   * profile's schema alone is several kilobytes, and a 100-row page would
+   * repeat it 100 times. `findOne` still selects the whole profile, because
+   * there the schema is the point (§4a: the frontend renders `configuration`
+   * against it).
+   */
+  private static joinProfileLightly(
+    qb: SelectQueryBuilder<Asset>,
+  ): SelectQueryBuilder<Asset> {
+    return qb
+      .leftJoin('asset.assetProfile', 'assetProfile')
+      .addSelect([
+        'assetProfile.id',
+        'assetProfile.name',
+        'assetProfile.type',
+      ]);
+  }
+
+  /**
+   * Materialises the inherited type onto an asset (or a list of them) so
+   * consumers read `assetType` rather than reaching through a relation that
+   * may or may not be loaded.
+   *
+   * Mutates in place and returns the same objects: these are TypeORM entities
+   * on their way to the serialiser, and cloning them would drop the relations
+   * already loaded onto them.
+   */
+  private withAssetType<T extends Asset>(asset: T): T;
+  private withAssetType<T extends Asset>(assets: T[]): T[];
+  private withAssetType<T extends Asset>(input: T | T[]): T | T[] {
+    if (Array.isArray(input)) {
+      for (const asset of input) asset.assetType = asset.resolveAssetType();
+      return input;
+    }
+    input.assetType = input.resolveAssetType();
+    return input;
+  }
+
+  /**
+   * Drops the deprecated `type` from a write and says so once per request.
+   *
+   * The field is still declared on the DTO (see its docblock) because the
+   * global `ValidationPipe` uses `forbidNonWhitelisted: true` and removing it
+   * would 400 every existing client. Stripping it here is what makes the
+   * write "accepted and ignored" rather than "accepted and conflicting": if
+   * it reached `Object.assign`/`repository.create`, the column would start
+   * disagreeing with the profile again on precisely the rows this change
+   * exists to reconcile.
+   *
+   * Returns a shallow copy — mutating the DTO instance the pipe handed us
+   * would hide the field from anything downstream that wants to see what the
+   * client actually sent.
+   */
+  private stripDeprecatedType<T extends { type?: unknown }>(
+    dto: T,
+    context: string,
+  ): Omit<T, 'type'> {
+    const { type, ...rest } = dto;
+    if (type !== undefined) {
+      this.logger.warn(
+        `${context}: ignoring deprecated "type" (${String(type)}). ` +
+          "An asset's type is its AssetProfile's type — set assetProfileId instead.",
+      );
+    }
+    return rest;
+  }
+
   /**
    * Create a new asset
    */
@@ -110,7 +185,9 @@ export class AssetsService {
 
     const asset = this.assetRepository.create(
       {
-        ...createAssetDto,
+        // `type` is stripped, not persisted: the column keeps its enum default
+        // (`other`) on a new row and means nothing. See the entity docblock.
+        ...this.stripDeprecatedType(createAssetDto, 'POST /assets'),
         tenantId: user.tenantId,
         customerId: user.role === UserRole.CUSTOMER_USER ? user.customerId : createAssetDto.customerId
       }
@@ -137,7 +214,12 @@ export class AssetsService {
     // Emit event
     this.eventEmitter.emit('asset.created', { asset: savedAsset });
 
-    return savedAsset;
+    // Re-read so the response carries the profile and the type it implies.
+    // `repository.save()` returns the row it wrote, with `assetProfile`
+    // unloaded — so returning `savedAsset` directly would answer
+    // `assetType: null` for an asset that does have a profile, which is the
+    // one thing this endpoint must not get wrong on the request that sets it.
+    return await this.findOne(savedAsset.id, user);
   }
 
   /**
@@ -150,7 +232,11 @@ private static readonly ALLOWED_SORT_FIELDS: Record<string, string> = {
   name: 'asset.name',
   createdAt: 'asset.createdAt',
   updatedAt: 'asset.updatedAt',
-  type: 'asset.type',
+  // `?sortBy=type` sorts by the INHERITED type. It used to sort by
+  // `asset.type`, so the order changes: the values are a different closed
+  // list, and an asset with no profile now sorts with the NULLs rather than
+  // under `other`.
+  type: 'assetProfile.type',
   label: 'asset.label',
 };
 
@@ -161,7 +247,11 @@ async findAll(
 ): Promise<PaginatedResponseDto<Asset>> {
   const { page, limit, skip, take, search, sortBy, sortOrder } = queryDto;
 
-  const qb = this.assetRepository.createQueryBuilder('asset');
+  // The profile join is unconditional: it carries the type, and both the
+  // `type` filter and `?sortBy=type` reference its alias.
+  const qb = AssetsService.joinProfileLightly(
+    this.assetRepository.createQueryBuilder('asset'),
+  );
 
   // ── Tenant scoping ────────────────────────────────────────────────────────
   if (user.role === UserRole.SUPER_ADMIN) {
@@ -200,8 +290,18 @@ async findAll(
     );
   }
 
+  // Resolved through the profile, not `asset.type` — the asset's type IS its
+  // profile's type, so filtering on anything else would answer a different
+  // question than the one the parameter name asks.
   if (queryDto.type) {
-    qb.andWhere('asset.type = :type', { type: queryDto.type });
+    qb.andWhere('assetProfile.type = :type', { type: queryDto.type });
+  }
+
+  // "Show me what has no type." An asset with a profile whose own `type` is
+  // null counts too: it has no resolvable type either, and leaving it out of
+  // this list is how such a row stays invisible forever.
+  if (queryDto.untyped) {
+    qb.andWhere('(asset.assetProfileId IS NULL OR assetProfile.type IS NULL)');
   }
 
   if (queryDto.assetProfileId) {
@@ -234,7 +334,12 @@ async findAll(
     .take(take);
 
   const [assets, total] = await qb.getManyAndCount();
-  return PaginatedResponseDto.create(assets, page, limit, total);
+  return PaginatedResponseDto.create(
+    this.withAssetType(assets),
+    page,
+    limit,
+    total,
+  );
 }
 
   /**
@@ -269,7 +374,7 @@ async findAll(
       throw new NotFoundException('Asset not found');
     }
 
-    return asset;
+    return this.withAssetType(asset);
   }
 
   /**
@@ -281,6 +386,7 @@ async findAll(
     user: User,
   ): Promise<Asset> {
     const asset = await this.findOne(id, user);
+    const previousProfileId = asset.assetProfileId;
 
     // Customer users cannot change customerId
     if (
@@ -333,13 +439,44 @@ async findAll(
       );
     }
 
-    Object.assign(asset, updateAssetDto);
+    // Without the strip, `Object.assign` would write the client's `type`
+    // straight back onto the row — the exact drift the profile is now the
+    // single answer to.
+    Object.assign(
+      asset,
+      this.stripDeprecatedType(updateAssetDto, `PATCH /assets/${id}`),
+    );
+
+    // Repointing the profile has to clear the LOADED relation, not just the
+    // foreign key.
+    //
+    // `findOne()` above left-joins `assetProfile`, so `asset` arrives with the
+    // old profile object attached. `repository.save()` gives a loaded relation
+    // object precedence over a changed FK column and writes the object's id
+    // back — so `Object.assign` alone set `assetProfileId` and the UPDATE then
+    // silently restored the previous value. `PATCH /assets/:id` with a new
+    // `assetProfileId` therefore never moved an asset that already had a
+    // profile, which is now also the only way to correct its TYPE.
+    //
+    // `delete` rather than `= undefined`: TypeORM reads an own property set to
+    // undefined as "loaded and set to null" in some paths, which would null
+    // the FK instead of leaving it to the assignment above.
+    if (
+      updateAssetDto.assetProfileId !== undefined &&
+      updateAssetDto.assetProfileId !== previousProfileId
+    ) {
+      delete (asset as { assetProfile?: unknown }).assetProfile;
+    }
+
     const updatedAsset = await this.assetRepository.save(asset);
 
     // Emit event
     this.eventEmitter.emit('asset.updated', { asset: updatedAsset });
 
-    return updatedAsset;
+    // Re-read rather than returning the saved row: a PATCH that changed
+    // `assetProfileId` changed the asset's TYPE, and `asset.assetProfile` is
+    // still the stale relation `findOne` loaded before the write.
+    return await this.findOne(id, user);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -624,9 +761,9 @@ async findAll(
    * Get root assets (no parent)
    */
    async getRootAssets(user: User): Promise<Asset[]> {
-    const queryBuilder = this.assetRepository
-      .createQueryBuilder('asset')
-      .where('asset.parentAssetId IS NULL');
+    const queryBuilder = AssetsService.joinProfileLightly(
+      this.assetRepository.createQueryBuilder('asset'),
+    ).where('asset.parentAssetId IS NULL');
 
     // Apply customer filtering
     if (user.role === UserRole.CUSTOMER_USER) {
@@ -642,7 +779,9 @@ async findAll(
       });
     }
 
-    return await queryBuilder.orderBy('asset.name', 'ASC').getMany();
+    return this.withAssetType(
+      await queryBuilder.orderBy('asset.name', 'ASC').getMany(),
+    );
   }
 
 
@@ -770,7 +909,12 @@ async findAll(
       assetId: asset.id,
       assetName: asset.name,
       assetProfileId: asset.assetProfileId ?? null,
-      assetProfileType: (asset.assetProfile as any)?.type ?? null,
+      // `assetType` is the name every consumer should read; `assetProfileType`
+      // is the same value under the name this payload already shipped, kept so
+      // the floor-plan wizard does not break mid-upgrade. Both come from the
+      // profile — there is no second source any more.
+      assetType: asset.resolveAssetType(),
+      assetProfileType: asset.resolveAssetType(),
       totalFloors,
       floorsWithPlans: floorPlans.length,
       floors: [...floors, ...orphans],
@@ -807,9 +951,9 @@ async findAll(
   ): Promise<Array<Asset & { deviceCount: number }>> {
     await this.findOne(id, user); // Validate access to parent
 
-    const queryBuilder = this.assetRepository
-      .createQueryBuilder('asset')
-      .where('asset.parentAssetId = :id', { id });
+    const queryBuilder = AssetsService.joinProfileLightly(
+      this.assetRepository.createQueryBuilder('asset'),
+    ).where('asset.parentAssetId = :id', { id });
 
     // Apply customer filtering
     if (user.role === UserRole.CUSTOMER_USER) {
@@ -828,7 +972,10 @@ async findAll(
 
     const counts = await this.countDevicesByAsset(children.map((c) => c.id));
 
-    return children.map((child) =>
+    // The tree views label each node with its type, so children carry the
+    // inherited one too — otherwise a child renders untyped purely because
+    // this query was not the one that joined the profile.
+    return this.withAssetType(children).map((child) =>
       Object.assign(child, { deviceCount: counts.get(child.id) ?? 0 }),
     );
   }
@@ -1189,7 +1336,17 @@ async findAll(
     total: number;
     active: number;
     inactive: number;
-    byType: Record<AssetType, number>;
+    /**
+     * Counts per `AssetProfileType`, plus an `unassigned` bucket.
+     *
+     * The keys changed with the source of truth: this used to be keyed by
+     * `AssetType` (`floor`, `room`, `office`, `equipment`, `infrastructure`,
+     * `zone`, `other`), which no longer exists as a concept. `unassigned` is
+     * not a type — it is every asset with no profile, or a profile with no
+     * type, and it is the number that tells an operator whether the backfill
+     * left work behind.
+     */
+    byType: Record<string, number>;
     withDevices: number;
     withoutDevices: number;
   }> {
@@ -1221,20 +1378,22 @@ async findAll(
         .getCount(),
     ]);
 
-    // Count by type
+    // Count by type — through the profile. `COALESCE` folds both "no profile"
+    // and "profile with no type" into one `unassigned` bucket, because from a
+    // consumer's point of view they are the same thing: no type.
     const types = await queryBuilder
       .clone()
-      .select('asset.type', 'type')
+      .leftJoin('asset.assetProfile', 'assetProfile')
+      .select("COALESCE(assetProfile.type, 'unassigned')", 'type')
       .addSelect('COUNT(*)', 'count')
-      .groupBy('asset.type')
+      .groupBy("COALESCE(assetProfile.type, 'unassigned')")
       .getRawMany();
 
-    const byType: any = {};
-    Object.values(AssetType).forEach((type) => {
-      byType[type] = 0;
-    });
+    const byType = this.emptyTypeCounts();
 
     types.forEach((row) => {
+      // A profile carrying a type outside `AssetProfileType` (the column is a
+      // varchar by design, §4a) still gets counted rather than dropped.
       byType[row.type] = parseInt(row.count);
     });
 
@@ -1416,11 +1575,17 @@ private async wouldCreateCircularReference(
     return deg * (Math.PI / 180);
   }
 
-  private getEmptyStatistics() {
-    const byType: any = {};
-    Object.values(AssetType).forEach((type) => {
+  /** Every `AssetProfileType` at zero, plus the `unassigned` bucket. */
+  private emptyTypeCounts(): Record<string, number> {
+    const byType: Record<string, number> = { unassigned: 0 };
+    Object.values(AssetProfileType).forEach((type) => {
       byType[type] = 0;
     });
+    return byType;
+  }
+
+  private getEmptyStatistics() {
+    const byType = this.emptyTypeCounts();
 
     return {
       total: 0,

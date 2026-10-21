@@ -53,6 +53,7 @@ import {
 } from './dto/bulk-device.dto';
 import { BulkResultDto } from '@common/dto/bulk-operation.dto';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { AuditSeverity } from '@common/enums/index.enum';
 // Device control endpoints (command, rpc, telemetry) live in GatewayController
 // at POST /gateway/devices/:deviceKey/command|rpc|telemetry.
 // Keeping them here would create a circular dependency:
@@ -107,7 +108,9 @@ export class DevicesController {
   @Post()
   @RequirePermissions('devices:create')
   @Roles(UserRole.USER, UserRole.TENANT_ADMIN, UserRole.CUSTOMER_USER, UserRole.CUSTOMER)
-  @Audit({ action: AuditAction.CREATE, entityType: AuditEntityType.DEVICE })
+  // No @Audit() here on purpose — `DevicesService.create()` emits
+  // `device.created`, which is the one row for a created device however it was
+  // created (this route, a Tuya import, a LoRaWAN auto-provision).
   @Notify({
     type: NotificationType.DEVICE,
     channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
@@ -192,6 +195,11 @@ async getDeviceCapabilities(
   // ── Bulk operations (declared before ':id' so 'bulk' is not read as an id) ─
 
   @Post('bulk/delete')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.DEVICE,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('devices:delete')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -228,6 +236,10 @@ async getDeviceCapabilities(
   }
 
   @Patch('bulk')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+  })
   @RequirePermissions('devices:update')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -271,6 +283,10 @@ async getDeviceCapabilities(
   }
 
   @Post(':id/activate')
+  @Audit({
+    action: AuditAction.ACTIVATE,
+    entityType: AuditEntityType.DEVICE,
+  })
   @RequirePermissions('devices:control')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Activate device' })
@@ -279,6 +295,11 @@ async getDeviceCapabilities(
   }
 
   @Post(':id/deactivate')
+  @Audit({
+    action: AuditAction.DEACTIVATE,
+    entityType: AuditEntityType.DEVICE,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('devices:control')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Deactivate device' })
@@ -322,6 +343,11 @@ async getDeviceCapabilities(
   }
 
   @Post(':id/credentials/regenerate')
+  @Audit({
+    action: AuditAction.API_KEY_CREATE,
+    entityType: AuditEntityType.DEVICE,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('devices:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -338,6 +364,11 @@ async getDeviceCapabilities(
 
   /** @deprecated Use POST /devices/:id/credentials/regenerate. */
   @Post(':id/regenerate-credentials')
+  @Audit({
+    action: AuditAction.API_KEY_CREATE,
+    entityType: AuditEntityType.DEVICE,
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('devices:update')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -363,6 +394,10 @@ async getDeviceCapabilities(
   // ── Bulk operations ───────────────────────────────────────────────────────
 
   @Post('bulk/status')
+  @Audit({
+    action: AuditAction.STATUS_CHANGE,
+    entityType: AuditEntityType.DEVICE,
+  })
   @RequirePermissions('devices:update')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -395,6 +430,10 @@ async getDeviceCapabilities(
   }
 
   @Post(':id/assign-customer')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+  })
   @RequirePermissions('devices:update')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -409,6 +448,10 @@ async getDeviceCapabilities(
   }
 
   @Post(':id/unassign-customer')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+  })
   @RequirePermissions('devices:update')
   @Roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)

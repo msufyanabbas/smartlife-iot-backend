@@ -463,7 +463,23 @@ export class AssetProfilesService {
     assetAttributes: Record<string, any>,
   ): Promise<Record<string, any>> {
     const profile = await this.findOne(profileId);
+    return this.computeCalculatedFields(profile, assetAttributes);
+  }
 
+  /**
+   * The evaluator itself, against a profile the caller already holds.
+   *
+   * Split out of `calculateFields()` above, which still behaves exactly as it
+   * did. The telemetry path (`CalculatedFieldsService`) needs this entry point
+   * because it runs once per telemetry message: it caches the profile per
+   * device, and routing through `calculateFields()` would re-read the same
+   * profile row from Postgres for every reading from every device using it.
+   * Nothing else about the computation differs.
+   */
+  computeCalculatedFields(
+    profile: AssetProfile,
+    assetAttributes: Record<string, any>,
+  ): Record<string, any> {
     if (!profile.calculatedFields || profile.calculatedFields.length === 0) {
       return {};
     }
@@ -592,7 +608,18 @@ export class AssetProfilesService {
     assets: Array<{
       id: string;
       name: string;
-      type: string;
+      /**
+       * The asset's type. Every asset in this list has the SAME type, because
+       * every one of them is an instance of this profile — that is what makes
+       * it the single source of truth. It is projected per row anyway so a
+       * caller rendering the usage table does not have to reach back up to
+       * `profile.type` for a column it is already drawing per asset.
+       *
+       * It used to read `asset.type`, which is why this table could show
+       * `floor`, `equipment` or `other` for assets of a Building profile — one
+       * screen displaying both answers at once.
+       */
+      type: string | null;
       active: boolean;
       deviceCount: number;
       childrenCount: number;
@@ -607,7 +634,7 @@ export class AssetProfilesService {
       assets: assets.map((asset) => ({
         id: asset.id,
         name: asset.name,
-        type: asset.type,
+        type: profile.type ?? null,
         active: asset.active,
         deviceCount: asset.deviceCount || 0,
         childrenCount: asset.childrenCount || 0,

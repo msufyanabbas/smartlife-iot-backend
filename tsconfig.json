@@ -66,6 +66,14 @@
   "exclude": [
     "node_modules",
     "dist",
-    "src/test"
+    "src/test",
+    // Tests are typechecked by tsconfig.spec.json, which adds jest's globals.
+    // They were inside this config's `include`, so every `tsc --noEmit`
+    // printed ~98 permanent errors (`Cannot find name 'describe'`) that had
+    // to be filtered by eye — which is how a real error goes unnoticed.
+    // They are never emitted into dist either way.
+    "src/**/__tests__/**",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts"
   ]
 }

@@ -40,6 +40,8 @@ import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { User } from '@modules/users/entities/user.entity';
 import { UserRole } from '@common/enums/index.enum';
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +136,11 @@ export class FirmwareController {
   }
 
   @Post('ota/:deviceId/retry')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.FILE,
+    description: 'update firmware package',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @RequirePermissions('firmware:assign')
   @HttpCode(HttpStatus.OK)
@@ -150,6 +157,12 @@ export class FirmwareController {
   }
 
   @Post('ota/:deviceId/cancel')
+  @Audit({
+    action: AuditAction.DEACTIVATE,
+    entityType: AuditEntityType.FILE,
+    description: 'deactivate firmware package',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @RequirePermissions('firmware:assign')
   @HttpCode(HttpStatus.OK)
@@ -170,6 +183,11 @@ export class FirmwareController {
   // ═══════════════════════════════════════════════════════════════════════════
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.FILE,
+    description: 'create firmware package',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('firmware:create')
   @ApiOperation({ summary: 'Upload a new firmware package' })
@@ -266,6 +284,11 @@ export class FirmwareController {
   }
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.FILE,
+    description: 'update firmware package',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('firmware:update')
   @ApiOperation({
@@ -282,6 +305,11 @@ export class FirmwareController {
   }
 
   @Post(':id/assign')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.FILE,
+    description: 'update firmware package',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @RequirePermissions('firmware:assign')
   @HttpCode(HttpStatus.OK)
@@ -297,6 +325,11 @@ export class FirmwareController {
   }
 
   @Post(':id/unassign')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.FILE,
+    description: 'update firmware package',
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @RequirePermissions('firmware:assign')
   @HttpCode(HttpStatus.OK)
@@ -308,6 +341,12 @@ export class FirmwareController {
   }
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.FILE,
+    description: 'delete firmware package',
+    severity: AuditSeverity.WARNING,
+  })
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
   @RequirePermissions('firmware:delete')
   @HttpCode(HttpStatus.NO_CONTENT)

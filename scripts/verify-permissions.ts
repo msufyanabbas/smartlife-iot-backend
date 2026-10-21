@@ -31,6 +31,9 @@ import { Reflector } from '@nestjs/core';
 import * as entities from '../src/modules/index.entities';
 import { PermissionGuard } from '../src/common/guards/permission.guard';
 import { PERMISSIONS_KEY } from '../src/common/decorators/index.decorator';
+import { PermissionCacheService } from '../src/lib/redis/permission-cache.service';
+import { inMemoryRedis } from './support/in-memory-redis';
+
 
 const database = process.argv[2] ?? 'permcheck';
 
@@ -109,8 +112,31 @@ const reflectorFor = () => {
   await ds.initialize();
   const q = (sql: string, p: any[] = []) => ds.query(sql, p);
 
+  // `tenants.name` is UNIQUE and this fixture used the fixed literal
+  // 'Perm tenant'. Any run that died before its cleanup — a failed assertion,
+  // a Ctrl-C, a schema change mid-run — left that row behind and made the
+  // script permanently unrunnable with a duplicate-key error that says nothing
+  // about permissions. A guard that needs the database hand-cleaned before it
+  // will run is a guard that stops being run.
+  //
+  // Two changes: the name is now unique per run, and any residue from an
+  // earlier crashed run is swept first.
+  await q(
+    `DELETE FROM users WHERE "tenantId" IN (
+       SELECT id FROM tenants WHERE name LIKE 'Perm tenant%'
+     )`,
+  );
+  await q(
+    `DELETE FROM customers WHERE "tenantId" IN (
+       SELECT id FROM tenants WHERE name LIKE 'Perm tenant%'
+     )`,
+  );
+  await q(`DELETE FROM tenants WHERE name LIKE 'Perm tenant%'`);
+
   await q('INSERT INTO tenants (id,name,email) VALUES ($1,$2,$3)', [
-    TENANT, 'Perm tenant', `perm-${TENANT.slice(0, 8)}@example.invalid`,
+    TENANT,
+    `Perm tenant ${TENANT.slice(0, 8)}`,
+    `perm-${TENANT.slice(0, 8)}@example.invalid`,
   ]);
   await q(
     `INSERT INTO customers (id,name,email,"tenantId",status)
@@ -152,15 +178,52 @@ const reflectorFor = () => {
       [CUSTOMER, id]);
   }
 
+  // PermissionGuard gained a fourth constructor parameter — PermissionCacheService
+  // — when per-request permission resolution was cached. This script was still
+  // passing three, so `this.permissionCache` was undefined, `canActivate()`
+  // threw a TypeError on the first `.get()`, and `can()` below catches and
+  // returns false.
+  //
+  // That is worth spelling out, because the failure was asymmetric and the
+  // asymmetry is the dangerous part: every "is allowed" assertion failed
+  // loudly, while every "is denied" assertion PASSED — for the wrong reason.
+  // A revoke test whose baseline is already denied proves nothing. The suite
+  // would have reported 3 failures and 12 passes while actually testing
+  // nothing at all.
+  //
+  // The real cache is used here, not a pass-through stub, so its invalidation
+  // is exercised too. It is backed by an in-memory Redis stand-in: the epoch
+  // scheme needs INCR and real TTL semantics, and a stub that ignored them
+  // would make every cached lookup a miss and hide the same class of bug
+  // again.
+  const permissionCache = new PermissionCacheService(inMemoryRedis());
+
   const guard = new PermissionGuard(
     reflectorFor(),
     ds.getRepository(entities.Customer) as any,
     ds.getRepository(entities.User) as any,
+    permissionCache,
   );
 
   const sub = {
     hasFeature: (k: string) => k !== 'floorPlans', // everything but floor plans
   } as any;
+
+  /**
+   * Every raw-SQL change to a grant below has to be followed by a cache
+   * invalidation, exactly as the ORM-bypassing paths in the application do.
+   * `UsersService` and `RolesService` call this for writes that go through
+   * them; a script (or a seeder, or a migration) writing the join tables
+   * directly gets no subscriber and no hook, so it must bump by hand or every
+   * subsequent assertion reads a stale set.
+   *
+   * This is the requirement the cache imposes on any new write path, stated
+   * once, in the place that would otherwise silently drift.
+   */
+  const invalidate = async () => {
+    await permissionCache.bumpTenant(TENANT);
+    await permissionCache.bumpGlobal();
+  };
 
   const can = async (user: any, required: string[] | undefined, subscription = sub) => {
     const { context } = ctxFor(user, required, subscription);
@@ -185,12 +248,14 @@ const reflectorFor = () => {
 
   await q('DELETE FROM customer_permissions WHERE "customerId"=$1 AND "permissionId"=$2',
     [CUSTOMER, perms['devices:read']]);
+  await invalidate();
   ok('revoking the CUSTOMER grant denies even though the role still has it',
     !(await can(customerUser, ['devices:read'])));
 
   // put it back for the remaining checks
   await q('INSERT INTO customer_permissions ("customerId","permissionId") VALUES ($1,$2)',
     [CUSTOMER, perms['devices:read']]);
+  await invalidate();
   ok('restoring the grant allows again', await can(customerUser, ['devices:read']));
 
   section('3. The subscription can veto a granted permission');
@@ -218,6 +283,7 @@ const reflectorFor = () => {
   await q('UPDATE users SET "enforcePermissions" = true WHERE id = $1', [
     TENANT_ADMIN,
   ]);
+  await invalidate();
   const restrictedAdmin = { ...tenantAdmin, enforcePermissions: true };
 
   ok(
@@ -235,6 +301,7 @@ const reflectorFor = () => {
     ADMIN_ROLE,
     perms['devices:read'],
   ]);
+  await invalidate();
   await q(`INSERT INTO user_roles ("userId","roleId") VALUES ($1,$2)`, [
     TENANT_ADMIN,
     ADMIN_ROLE,
@@ -260,6 +327,7 @@ const reflectorFor = () => {
   await q('UPDATE users SET "enforcePermissions" = false WHERE id = $1', [
     TENANT_ADMIN,
   ]);
+  await invalidate();
   ok(
     'with the flag off again the admin bypasses as before',
     await can(tenantAdmin, ['devices:delete']),

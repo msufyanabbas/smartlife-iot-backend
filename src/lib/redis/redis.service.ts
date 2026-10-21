@@ -62,18 +62,66 @@ export class RedisService implements OnApplicationShutdown {
     );
   }
 
-  async connect(): Promise<void> {
-    if (!this.isConnected) {
-      await this.client.connect();
-    }
+  /**
+   * ── Redis must not decide whether the platform boots either ───────────────
+   *
+   * This used to `await this.client.connect()` from `RedisModule`'s factory.
+   * With `lazyConnect: true` that call is what opens the socket, so a Redis
+   * that was down at boot rejected the factory, Nest aborted the DI graph and
+   * the process exited — the same shape of failure `KafkaModule` had, and
+   * with the same consequence: no HTTP server, no `/health`, nothing that
+   * named the cause.
+   *
+   * It is now fire-and-forget. ioredis owns the reconnect (`retryStrategy`,
+   * capped by REDIS_RETRY_DELAY) and reconnects by itself, so Redis coming
+   * back needs no restart.
+   *
+   * ── What a Redis outage means at runtime, deliberately ────────────────────
+   *
+   * The platform **fails closed** on anything Redis is authoritative for, and
+   * degrades for anything Redis only caches:
+   *
+   *   • Sessions (`session:*`) and the token blacklist live ONLY in Redis.
+   *     Redis down therefore means no new logins and no session refresh —
+   *     and that is the correct behaviour, not an accident: failing open
+   *     would mean accepting a token the blacklist exists to reject, so a
+   *     logout or a compromised-token revocation would stop being enforced
+   *     exactly when the infrastructure is least observable.
+   *   • Caches (permissions, subscriptions, device credentials, latest
+   *     telemetry) fail OPEN to their source of truth: every read is wrapped
+   *     so a Redis error falls through to Postgres. A slow platform is the
+   *     right failure mode for a cache miss.
+   *
+   * `enableOfflineQueue` (REDIS_OFFLINE_QUEUE, default true) is what makes the
+   * second half work: a command issued during a brief reconnect is queued
+   * rather than rejected, so a blip does not surface as an error at all.
+   */
+  connect(): void {
+    if (this.isConnected) return;
+
+    this.client.connect().catch((error: Error) => {
+      this.logger.error(
+        `Redis initial connect failed (${this.settings.host}:${this.settings.port}): ` +
+          `${error.message}. ioredis will keep retrying. The application stays ` +
+          `up: cached reads fall through to Postgres, but logins and session ` +
+          `refresh will fail until Redis is reachable.`,
+      );
+    });
   }
 
   async onApplicationShutdown(): Promise<void> {
+    // Every quit is guarded. `quit()` on a client that never reached a
+    // connected state rejects with "Connection is closed" — which was
+    // unreachable while the boot could not complete without Redis, and is now
+    // the normal case: the app boots with Redis down, so shutdown has to cope
+    // with a client that never connected. An unhandled rejection in
+    // onApplicationShutdown turns a clean SIGTERM into a non-zero exit and,
+    // worse, skips the shutdown hooks registered after this one.
     for (const sub of this.subscribers) {
-      await sub.quit();
+      await sub.quit().catch(() => undefined);
     }
     this.subscribers.length = 0;
-    await this.client.quit();
+    await this.client.quit().catch(() => undefined);
     this.isConnected = false;
     this.logger.log('Redis disconnected');
   }
@@ -336,8 +384,36 @@ export class RedisService implements OnApplicationShutdown {
     await this.client.persist(key);
   }
 
+  /**
+   * ── The keyPrefix asymmetry, which made this method silently useless ──────
+   *
+   * ioredis applies `keyPrefix` to arguments it knows are KEYS, derived from
+   * the Redis command table. `KEYS` and `SCAN` take a *pattern*, not a key, so
+   * Redis reports them as having no key arguments and ioredis does NOT prefix
+   * them — while the keys that come back in the reply ARE returned with the
+   * prefix still attached, because ioredis only strips prefixes it added.
+   *
+   * The result was a method that was wrong in both directions at once:
+   *
+   *   keys('session:*')  → asked the server for literal `session:*`
+   *                        → matched nothing, because every key on this
+   *                          connection is stored as `smartlife:session:*`
+   *   the reply          → would have been `['smartlife:session:abc']`
+   *                        → fed back into del(), which prefixes again
+   *                        → DEL smartlife:smartlife:session:abc
+   *
+   * So a pattern delete could not match, and if it had matched it would have
+   * deleted the wrong keys. `invalidateCache()` is built on this and therefore
+   * never invalidated anything — it reported success every time.
+   *
+   * Both halves are corrected here: the pattern is prefixed on the way out and
+   * the prefix is stripped on the way back, so a caller passes and receives
+   * logical keys and never has to know the prefix exists.
+   */
   async keys(pattern: string): Promise<string[]> {
-    return this.client.keys(pattern);
+    const prefix = this.settings.keyPrefix ?? '';
+    const found = await this.client.keys(`${prefix}${pattern}`);
+    return found.map((k) => (k.startsWith(prefix) ? k.slice(prefix.length) : k));
   }
 
   async scan(
@@ -345,11 +421,21 @@ export class RedisService implements OnApplicationShutdown {
     pattern?: string,
     count?: number,
   ): Promise<[string, string[]]> {
-    if (pattern && count)
-      return this.client.scan(cursor, 'MATCH', pattern, 'COUNT', count);
-    if (pattern) return this.client.scan(cursor, 'MATCH', pattern);
-    if (count) return this.client.scan(cursor, 'COUNT', count);
-    return this.client.scan(cursor);
+    const prefix = this.settings.keyPrefix ?? '';
+    const match = pattern === undefined ? undefined : `${prefix}${pattern}`;
+
+    const [next, found] = await (match && count
+      ? this.client.scan(cursor, 'MATCH', match, 'COUNT', count)
+      : match
+        ? this.client.scan(cursor, 'MATCH', match)
+        : count
+          ? this.client.scan(cursor, 'COUNT', count)
+          : this.client.scan(cursor));
+
+    return [
+      next,
+      found.map((k) => (k.startsWith(prefix) ? k.slice(prefix.length) : k)),
+    ];
   }
 
   async rename(oldKey: string, newKey: string): Promise<void> {
@@ -407,9 +493,32 @@ export class RedisService implements OnApplicationShutdown {
     return data;
   }
 
-  async invalidateCache(pattern: string): Promise<void> {
-    const matched = await this.keys(pattern);
-    if (matched.length > 0) await this.del(...matched);
+  /**
+   * Delete every key matching a pattern.
+   *
+   * Uses SCAN, not KEYS: `KEYS` is O(n) over the entire keyspace and blocks
+   * the single-threaded server for the whole scan. On a database that also
+   * holds this platform's cache entries that is a stall for every other
+   * client, and it grows with the number of devices.
+   *
+   * Prefer an explicit key or a version bump (see `PermissionCacheService`)
+   * over a pattern delete. This exists for the cases where the key set is not
+   * enumerable, and it is deliberately not on any hot path.
+   */
+  async invalidateCache(pattern: string): Promise<number> {
+    let cursor = 0;
+    let deleted = 0;
+
+    do {
+      const [next, batch] = await this.scan(cursor, pattern, 500);
+      cursor = Number(next);
+      if (batch.length > 0) {
+        await this.del(...batch);
+        deleted += batch.length;
+      }
+    } while (cursor !== 0);
+
+    return deleted;
   }
 
   // ── Rate limiting ─────────────────────────────────────────────────────────
@@ -455,17 +564,68 @@ export class RedisService implements OnApplicationShutdown {
 
   // ── Distributed lock ──────────────────────────────────────────────────────
 
-  async acquireLock(lockKey: string, ttl = 10, retries = 3): Promise<boolean> {
+  /**
+   * `SET key <owner> EX ttl NX` — the claim one replica wins and the others
+   * lose.
+   *
+   * `owner` defaults to '1' for backwards compatibility, but every caller that
+   * intends to *release* the lock must pass a unique token and release with
+   * `releaseLockIfOwner()`. Releasing by key alone (`releaseLock`) is only safe
+   * when the holder is certain it still owns the lock: if a job overruns its
+   * TTL, the key has already expired and been re-acquired by another replica,
+   * and a blind DEL then unlocks that replica's work mid-run.
+   */
+  async acquireLock(
+    lockKey: string,
+    ttl = 10,
+    retries = 3,
+    owner = '1',
+  ): Promise<boolean> {
     for (let i = 0; i < retries; i++) {
-      const result = await this.client.set(lockKey, '1', 'EX', ttl, 'NX');
+      const result = await this.client.set(lockKey, owner, 'EX', ttl, 'NX');
       if (result === 'OK') return true;
-      await new Promise((r) => setTimeout(r, 100));
+      if (i < retries - 1) await new Promise((r) => setTimeout(r, 100));
     }
     return false;
   }
 
+  /**
+   * Unconditional release. Prefer `releaseLockIfOwner()` — see above.
+   */
   async releaseLock(lockKey: string): Promise<void> {
     await this.del(lockKey);
+  }
+
+  /** Compare-and-delete: only the token that set the lock can clear it. */
+  async releaseLockIfOwner(lockKey: string, owner: string): Promise<boolean> {
+    const released = await this.client.eval(
+      `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
+      1,
+      lockKey,
+      owner,
+    );
+    return released === 1;
+  }
+
+  /**
+   * Push the expiry out while the holder is still working, so a lock TTL can be
+   * sized for a *typical* run instead of the worst imaginable one. Returns
+   * false when the lock is gone or owned by somebody else, which is the signal
+   * that this holder has lost it.
+   */
+  async extendLockIfOwner(
+    lockKey: string,
+    owner: string,
+    ttl: number,
+  ): Promise<boolean> {
+    const extended = await this.client.eval(
+      `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end`,
+      1,
+      lockKey,
+      owner,
+      String(ttl),
+    );
+    return extended === 1;
   }
 
   // ── Health ────────────────────────────────────────────────────────────────

@@ -65,9 +65,14 @@ export class RuleEngineConsumer implements OnModuleInit {
 
       await this.dispatch(payload, nodeMessage);
     } catch (error) {
+      // Rethrow for the bounded retry + DLQ in KafkaService.runHandler()
+      // (`rules.input.dlq`). A chain that failed mid-traversal left a
+      // half-applied graph and no replayable record of the message that
+      // caused it.
       this.logger.error(
         `Rule engine message handling failed: ${(error as Error).message}`,
       );
+      throw error;
     }
   }
 

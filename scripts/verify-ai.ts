@@ -151,9 +151,24 @@ const T_B = randomUUID();
   });
   await ds.initialize();
 
+  // `tenants.name` is UNIQUE and these fixtures used the fixed literals
+  // 'AI tenant 0' / 'AI tenant 1', so a run that died before its cleanup left
+  // them behind and every later run failed on a duplicate key — an error that
+  // says nothing about AI models and makes the guard look broken rather than
+  // the database dirty. The name now carries the run's own uuid, and residue
+  // from an earlier crashed run is swept first.
+  await ds.query(
+    `DELETE FROM ai_models WHERE "tenantId" IN (
+       SELECT id FROM tenants WHERE name LIKE 'AI tenant %'
+     )`,
+  );
+  await ds.query(`DELETE FROM tenants WHERE name LIKE 'AI tenant %'`);
+
   for (const [i, id] of [T_A, T_B].entries()) {
     await ds.query('INSERT INTO tenants (id,name,email) VALUES ($1,$2,$3)', [
-      id, `AI tenant ${i}`, `ai${i}-${id.slice(0, 8)}@example.invalid`,
+      id,
+      `AI tenant ${i} ${id.slice(0, 8)}`,
+      `ai${i}-${id.slice(0, 8)}@example.invalid`,
     ]);
   }
 

@@ -24,6 +24,8 @@ import {
 import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { UserRole } from '@common/enums/index.enum';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 @ApiTags('Automations')
 @Controller('automations')
@@ -33,6 +35,11 @@ export class AutomationController {
   // ── Create ────────────────────────────────────────────────────────────────
 
   @Post()
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'create automation',
+  })
   @RequirePermissions('automations:create')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Create a new automation', 'Automation created')
@@ -105,6 +112,11 @@ export class AutomationController {
   // ── Update ────────────────────────────────────────────────────────────────
 
   @Patch(':id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update automation',
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Update automation', 'Automation updated')
@@ -121,6 +133,11 @@ export class AutomationController {
   }
 
   @Post(':id/toggle')
+  @Audit({
+    action: AuditAction.DEVICE_COMMAND,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'device command automation',
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Toggle automation on/off', 'Toggled successfully')
@@ -137,6 +154,12 @@ export class AutomationController {
   // ── Delete ────────────────────────────────────────────────────────────────
 
   @Delete(':id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'delete automation',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('automations:delete')
   @TenantOrCustomerAdmin()
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -154,6 +177,11 @@ export class AutomationController {
   // ── Manual execution ──────────────────────────────────────────────────────
 
   @Post(':id/execute')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.RULE_CHAIN,
+    description: 'update automation',
+  })
   @RequirePermissions('automations:update')
   @TenantOrCustomerAdmin()
   @SwaggerAuth('Manually execute an automation', 'Execution result')

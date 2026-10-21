@@ -513,9 +513,11 @@ const configStub = (overrides: Record<string, string> = {}): any => ({
     const badTest = await opcuaAdapter.testConnection(badRow);
     check(
       'a non-existent NodeId is reported as failing, by name',
+      // `?.some()` is boolean | undefined; an absent `nodes` array must read
+      // as a failed check, not as `undefined` passed to a boolean parameter.
       badTest.success === false &&
-        badTest.nodes?.some((n) => n.nodeId.includes('Does.Not.Exist') && !n.ok) &&
-        badTest.nodes?.some((n) => n.key === 'temperature' && n.ok),
+        badTest.nodes?.some((n) => n.nodeId.includes('Does.Not.Exist') && !n.ok) === true &&
+        badTest.nodes?.some((n) => n.key === 'temperature' && n.ok) === true,
       badTest.nodes,
     );
 

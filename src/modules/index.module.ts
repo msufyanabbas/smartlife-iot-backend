@@ -18,6 +18,10 @@ export { RolesModule } from './roles/roles.module';
 export { PermissionsModule } from './permissions/permissions.module';
 export { GuardsModule } from '../common/guards/guards.module';
 export { EdgeModule } from './edge/edge.module';
+export { ClusterModule } from '@/lib/cluster/cluster.module';
+export { DistributedLockService } from '@/lib/cluster/distributed-lock.service';
+export { StorageModule } from '@/lib/storage/storage.module';
+export { StorageService } from '@/lib/storage/storage.service';
 
 // ============================================
 // FEATURE MODULES (application modules)
@@ -120,6 +124,11 @@ import { GuardsModule } from '../common/guards/guards.module';
 import { KafkaModule } from '@/lib/kafka/kafka.module';
 import { RedisModule } from '@/lib/redis/redis.module';
 import { MQTTModule } from '@/lib/mqtt/mqtt.module';
+// Multi-replica infrastructure: the distributed cron lock (@DistributedCron
+// reaches it through a static holder, so it MUST be registered) and the
+// storage abstraction that replaces hard-coded fs.writeFile at upload sites.
+import { ClusterModule } from '@/lib/cluster/cluster.module';
+import { StorageModule } from '@/lib/storage/storage.module';
 import { EdgeModule } from './edge/edge.module';
 
 // ============================================
@@ -173,6 +182,11 @@ export const featureModules = [
   MQTTModule,
   KafkaModule,
   RedisModule,
+  // Must come after RedisModule: DistributedLockService depends on
+  // RedisService and publishes itself into a static holder on construction,
+  // which is what @DistributedCron resolves at tick time.
+  ClusterModule,
+  StorageModule,
   GuardsModule,
   PermissionsModule,
   CodecModule,

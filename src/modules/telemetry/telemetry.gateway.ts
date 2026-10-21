@@ -8,16 +8,42 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Logger, UseGuards } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { websocketCorsOrigin } from '../../common/utils/websocket-cors';
 import { WsJwtGuard } from '../../common/guards/ws-jwt.guard';
+import { WsSubscriptionAuthorizer } from '../../common/websocket/ws-subscription-authorizer';
 
 /**
- * WebSocket Gateway for real-time telemetry streaming
- * Broadcasts telemetry data to connected clients
+ * WebSocket Gateway for real-time telemetry streaming.
+ * Broadcasts telemetry data to connected clients.
+ *
+ * ── This gateway was dead code; it is now registered ──────────────────────
+ * It appeared in no module's `providers`, so Nest never instantiated it: the
+ * namespace did not exist, `server` was never assigned and its `@OnEvent`
+ * handlers never ran. It is declared in `TelemetryModule` now rather than
+ * deleted, because `/telemetry` is part of the documented socket surface.
+ *
+ * Cross-replica delivery comes from the Socket.IO Redis adapter wired in
+ * `main.ts`: it is attached to the one shared Socket.IO server, so it covers
+ * this namespace as well as `/ws` and `/alarms`. Without it, `server.to(room)`
+ * here would reach only the sockets on the replica that called it.
+ *
+ * The in-process `deviceSubscriptions` / `userSockets` maps below are
+ * bookkeeping for THIS replica only. Room joins (`client.join`) are what
+ * actually route messages and those are replicated by the adapter; the maps
+ * are not, so any count derived from them is a per-replica figure.
  */
 @WebSocketGateway({
-  namespace: 'telemetry',
+  // Spelled with the leading slash, like the other two gateways. Socket.IO
+  // prepends it anyway, so `'telemetry'` and `'/telemetry'` are the same
+  // namespace — but a client has to connect to `/telemetry`, and the bare form
+  // reads as though it did not.
+  namespace: '/telemetry',
+  // Was `origin: '*'` with a "configure properly in production" comment. The
+  // other two gateways already resolve this from configuration; a wildcard is
+  // not a default worth keeping once the rooms behind it are scoped.
   cors: {
-    origin: '*', // Configure properly in production
+    origin: websocketCorsOrigin(),
+    credentials: true,
   },
 })
 export class TelemetryGateway
@@ -29,6 +55,8 @@ export class TelemetryGateway
   private readonly logger = new Logger(TelemetryGateway.name);
   private deviceSubscriptions: Map<string, Set<string>> = new Map(); // deviceId -> socketIds
   private userSockets: Map<string, Set<string>> = new Map(); // userId -> socketIds
+
+  constructor(private readonly authorizer: WsSubscriptionAuthorizer) {}
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected to telemetry: ${client.id}`);
@@ -72,7 +100,14 @@ export class TelemetryGateway
    */
   @SubscribeMessage('subscribe')
   @UseGuards(WsJwtGuard)
-  handleSubscribe(client: Socket, deviceId: string) {
+  async handleSubscribe(client: Socket, deviceId: string) {
+    if (!(await this.authorizer.canSubscribeToDevice(client, deviceId))) {
+      this.logger.warn(
+        `Client ${client.id} refused telemetry subscription to device ${deviceId}`,
+      );
+      return { event: 'error', data: { deviceId, message: 'Device not found' } };
+    }
+
     if (!this.deviceSubscriptions.has(deviceId)) {
       this.deviceSubscriptions.set(deviceId, new Set());
     }
@@ -108,6 +143,7 @@ export class TelemetryGateway
    * Get current subscriptions for a client
    */
   @SubscribeMessage('get:subscriptions')
+  @UseGuards(WsJwtGuard)
   handleGetSubscriptions(client: Socket) {
     const subscriptions: string[] = [];
 

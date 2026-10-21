@@ -40,8 +40,11 @@ module.exports = {
   // transforms .tsx?, hence the explicit .js rule with allowJs below.
   transformIgnorePatterns: ['/node_modules/(?!(uuid)/)'],
   transform: {
-    // no options -> uses tsconfig.json (which already sets isolatedModules)
-    '^.+\\.tsx?$': ['ts-jest', {}],
+    // Pointed at tsconfig.spec.json, not tsconfig.json. The build config sets
+    // `types: ["node"]` — jest's globals must not leak into the emitted
+    // build — so compiling a spec against it fails on `describe`, `it` and
+    // `expect`. tsconfig.spec.json extends the build config and adds "jest".
+    '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.spec.json' }],
     // uuid ships ESM .js; force CommonJS output just for these files
     '^.+\\.js$': ['ts-jest', { tsconfig: { allowJs: true, module: 'commonjs' } }],
   },

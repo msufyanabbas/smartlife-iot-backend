@@ -12,6 +12,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as cronParser from 'cron-parser';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
+import { XLSX_MIME_TYPE } from '@common/utils/xlsx.util';
 import { User } from '@modules/users/entities/user.entity';
 import {
   ReportDefinition,
@@ -525,9 +526,12 @@ export class ReportsService {
         cronFields: 5,
         delivery: 'email',
         deliveryNote:
-          'A scheduled run emails a summary with the first rows inline and a ' +
-          'download link. MailService’s EmailOptions carries no attachment ' +
-          'field, so the file itself is NOT attached — it is fetched from ' +
+          'A scheduled run emails a summary with the first rows inline AND ' +
+          'attaches the generated file, while it fits under the platform’s ' +
+          'attachment cap (MAIL_MAX_ATTACHMENT_BYTES, default 10 MB). A larger ' +
+          'artefact is not attached — the email says so and carries the ' +
+          'download link instead, and execution.delivery.attached records ' +
+          'which happened. Either way the file is at ' +
           'GET /reports/executions/:id/download.',
       },
     };
@@ -806,6 +810,8 @@ export class ReportsService {
         return 'application/json';
       case '.pdf':
         return 'application/pdf';
+      case '.xlsx':
+        return XLSX_MIME_TYPE;
       case '.csv':
       default:
         return 'text/csv; charset=utf-8';

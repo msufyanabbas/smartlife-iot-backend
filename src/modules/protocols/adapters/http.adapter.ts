@@ -276,6 +276,8 @@ export class HTTPAdapter implements IProtocolAdapter {
     @Headers('content-type') contentType?: string,
     @Headers('authorization') authorization?: string,
     @Headers('x-device-token') deviceToken?: string,
+    @Headers('x-edge-key') edgeKey?: string,
+    @Headers('x-edge-secret') edgeSecret?: string,
   ) {
     try {
       // The payload is no longer logged. It was printed in full on every
@@ -292,6 +294,8 @@ export class HTTPAdapter implements IProtocolAdapter {
         deviceId,
         authorization,
         deviceToken,
+        edgeKey,
+        edgeSecret,
       );
       if (!authed) {
         // One generic message for "no credential", "wrong credential" and
@@ -340,7 +344,32 @@ export class HTTPAdapter implements IProtocolAdapter {
     pathSegment: string,
     authorization?: string,
     deviceToken?: string,
+    edgeKey?: string,
+    edgeSecret?: string,
   ) {
+    // ── Edge gateway ──────────────────────────────────────────────────────
+    //
+    // An edge agent forwards on behalf of many devices and cannot hold every
+    // device's token — a gateway compromised on one site would otherwise hold
+    // credentials for every device it has ever relayed. It authenticates as
+    // ITSELF and is authorised only for devices assigned to it
+    // (`device.edgeId`), which is the gateway-to-child-device model this
+    // platform previously lacked.
+    if (edgeKey && edgeSecret) {
+      const device = await this.deviceAuth.authenticateEdgeForDevice(
+        edgeKey,
+        edgeSecret,
+        pathSegment,
+      );
+      if (device) {
+        return { device, credentialsType: 'EDGE' as any };
+      }
+      // An edge that presents credentials and is refused must NOT fall
+      // through to the device-token paths below: the path segment is a
+      // deviceKey in this mode, and trying it as a token would be noise.
+      return null;
+    }
+
     const bearer = authorization?.toLowerCase().startsWith('bearer ')
       ? authorization.slice(7).trim()
       : undefined;

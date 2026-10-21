@@ -38,6 +38,8 @@ import { Public } from '@common/decorators/public.decorator';
 import { TenantAdminOnly, TenantOrCustomerAdmin } from '@common/decorators/access-control.decorator';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
 import { User } from '@modules/index.entities';
+import { Audit } from '@common/decorators/audit.decorator';
+import { AuditAction, AuditEntityType, AuditSeverity } from '@common/enums/index.enum';
 
 class UpsertAiModelDto {
   @IsString() @MaxLength(120) name: string;
@@ -124,6 +126,11 @@ export class AiController {
   }
 
   @Post('models')
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'create AI model',
+  })
   @RequirePermissions('settings:create')
   @TenantAdminOnly()
   @ApiOperation({ summary: 'Register an AI model' })
@@ -133,6 +140,11 @@ export class AiController {
   }
 
   @Patch('models/:id')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update AI model',
+  })
   @RequirePermissions('settings:update')
   @TenantAdminOnly()
   @ApiOperation({
@@ -150,6 +162,12 @@ export class AiController {
   }
 
   @Delete('models/:id')
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'delete AI model',
+    severity: AuditSeverity.WARNING,
+  })
   @RequirePermissions('settings:delete')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
@@ -163,6 +181,11 @@ export class AiController {
   }
 
   @Post('models/:id/check')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update AI model',
+  })
   @RequirePermissions('settings:update')
   @TenantAdminOnly()
   @HttpCode(HttpStatus.OK)
@@ -181,6 +204,11 @@ export class AiController {
   // ══════════════════════════════════════════════════════════════════════════
 
   @Post('insights/device/:deviceId')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'update AI model',
+  })
   @TenantOrCustomerAdmin()
   @RequirePermissions('devices:read')
   @HttpCode(HttpStatus.OK)

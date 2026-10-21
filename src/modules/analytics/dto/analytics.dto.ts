@@ -1,7 +1,7 @@
 // src/modules/analytics/dto/analytics.dto.ts
 import {
   IsEnum, IsOptional, IsDateString, IsString, IsObject,
-  IsInt, Min, Max,
+  IsInt, Min, Max, IsArray, ArrayNotEmpty, ArrayMaxSize, ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { AnalyticsType, AnalyticsPeriod } from '@common/enums/analytics.enum';
@@ -190,6 +190,213 @@ export class DateRangeQueryDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Entity time series / aggregate / export
+//
+// These three DTOs exist because `src/services/api/analytics.api.ts` has
+// declared `POST /analytics/timeseries`, `GET /analytics/aggregate` and
+// `POST /analytics/export` since it was written and `AnalyticsController` had
+// none of them — every call 404'd. The shapes below are the client's, not
+// invented ones: `AnalyticsQuery` there is
+// `{entityId, entityType, keys[], startTime, endTime, interval?, aggregation?, limit?}`
+// with the window in EPOCH MILLISECONDS, which is why these take numbers where
+// every other analytics DTO takes an ISO `startDate`. Changing the client to
+// ISO would have been a second breaking change on top of the 404.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** How a bucketed read combines the samples inside one bucket. */
+export enum AnalyticsAggregation {
+  AVG = 'AVG',
+  MIN = 'MIN',
+  MAX = 'MAX',
+  SUM = 'SUM',
+  COUNT = 'COUNT',
+  /** No bucketing: raw samples, in order. The default. */
+  NONE = 'NONE',
+}
+
+export enum AnalyticsEntityType {
+  DEVICE = 'DEVICE',
+  ASSET = 'ASSET',
+}
+
+/** Output formats `POST /analytics/export` can render. */
+export enum AnalyticsExportFormat {
+  CSV = 'CSV',
+  JSON = 'JSON',
+  /**
+   * A real workbook. The frontend offered `'EXCEL'` for a route that did not
+   * exist and a format no backend surface has ever produced; `XLSX` is the
+   * spelling `ReportFormat` uses, and using one name for one thing is worth
+   * the client-side rename.
+   */
+  XLSX = 'XLSX',
+}
+
+/** Hard ceiling per request — see AnalyticsService.getEntityTimeSeries(). */
+export const ANALYTICS_MAX_SERIES_KEYS = 20;
+
+export class EntityTimeSeriesDto {
+  @ApiProperty({ description: 'Device or asset UUID' })
+  @IsString()
+  entityId: string;
+
+  @ApiProperty({
+    type: String,
+    enum: AnalyticsEntityType,
+    enumName: 'AnalyticsEntityType',
+    default: AnalyticsEntityType.DEVICE,
+  })
+  @IsEnum(AnalyticsEntityType)
+  entityType: AnalyticsEntityType;
+
+  @ApiProperty({
+    type: [String],
+    description:
+      'Telemetry keys to read, e.g. ["temperature","humidity"]. Capped at ' +
+      `${ANALYTICS_MAX_SERIES_KEYS} per request.`,
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(ANALYTICS_MAX_SERIES_KEYS)
+  @IsString({ each: true })
+  keys: string[];
+
+  @ApiProperty({ description: 'Window start, epoch milliseconds' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  startTime: number;
+
+  @ApiProperty({ description: 'Window end, epoch milliseconds' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  endTime: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Bucket width in MILLISECONDS. Omitted (or 0) returns raw samples. ' +
+      'Minimum 1000; a bucket smaller than the reporting interval returns one ' +
+      'sample per bucket and nothing else.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  interval?: number;
+
+  @ApiPropertyOptional({
+    type: String,
+    enum: AnalyticsAggregation,
+    enumName: 'AnalyticsAggregation',
+    default: AnalyticsAggregation.NONE,
+    description:
+      'Ignored without an `interval` — there is nothing to combine inside a ' +
+      'bucket that does not exist.',
+  })
+  @IsOptional()
+  @IsEnum(AnalyticsAggregation)
+  aggregation?: AnalyticsAggregation;
+
+  @ApiPropertyOptional({
+    default: 1000,
+    maximum: 50000,
+    description: 'Maximum points per key.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50_000)
+  limit?: number;
+}
+
+/**
+ * `GET /analytics/aggregate` — the same read, as a query string.
+ *
+ * `keys` arrives comma-separated because the client builds it with
+ * `keys.join(',')`; a repeated `?keys=` parameter would have been the more
+ * conventional choice and is not what is on the wire.
+ */
+export class EntityAggregateQueryDto {
+  @ApiProperty({ description: 'Device or asset UUID' })
+  @IsString()
+  entityId: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    enum: AnalyticsEntityType,
+    enumName: 'AnalyticsEntityType',
+    default: AnalyticsEntityType.DEVICE,
+  })
+  @IsOptional()
+  @IsEnum(AnalyticsEntityType)
+  entityType?: AnalyticsEntityType;
+
+  @ApiProperty({ description: 'Comma-separated telemetry keys' })
+  @IsString()
+  keys: string;
+
+  @ApiProperty({ description: 'Window start, epoch milliseconds' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  startTime: number;
+
+  @ApiProperty({ description: 'Window end, epoch milliseconds' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  endTime: number;
+
+  @ApiPropertyOptional({
+    type: String,
+    enum: AnalyticsAggregation,
+    enumName: 'AnalyticsAggregation',
+    default: AnalyticsAggregation.AVG,
+  })
+  @IsOptional()
+  @IsEnum(AnalyticsAggregation)
+  aggregation?: AnalyticsAggregation;
+
+  @ApiPropertyOptional({
+    description: 'Bucket width in milliseconds. Default one hour.',
+    default: 3_600_000,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  interval?: number;
+
+  @ApiPropertyOptional({ default: 1000, maximum: 50000 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50_000)
+  limit?: number;
+}
+
+/** `POST /analytics/export` — a time-series read rendered to a file. */
+export class ExportAnalyticsDto {
+  @ApiProperty({ type: EntityTimeSeriesDto })
+  @ValidateNested()
+  @Type(() => EntityTimeSeriesDto)
+  query: EntityTimeSeriesDto;
+
+  @ApiPropertyOptional({
+    type: String,
+    enum: AnalyticsExportFormat,
+    enumName: 'AnalyticsExportFormat',
+    default: AnalyticsExportFormat.CSV,
+  })
+  @IsOptional()
+  @IsEnum(AnalyticsExportFormat)
+  format?: AnalyticsExportFormat;
 }
 
 export class RecordDashboardViewDto {
