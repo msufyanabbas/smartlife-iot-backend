@@ -44,6 +44,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 import { DxfFloorPlanParser } from '../src/modules/floor-plans/parsers/dxf-floor-plan.parser';
+import { buildStairFlightsDetailed } from '../src/modules/floor-plans/display/stair-flight';
+import { CadStandardsService } from '../src/modules/cad-standards/cad-standards.service';
 import { buildDisplayGeometry } from '../src/modules/floor-plans/display/display-geometry';
 import { detectXVoids } from '../src/modules/floor-plans/display/x-void';
 import { pairWallFaces } from '../src/modules/floor-plans/display/wall-pairing';
@@ -87,7 +89,15 @@ try {
   // ── 1. The standard reaches the viewer's geometry ────────────────────────
   section('1. the drawing standard is applied');
 
-  // 21 lines are drawn; the parser hands on 19. It is still deliberately
+  // 22 lines are drawn on wall-ish layers; the parser hands on 20. The
+  // stair's 16 tread lines and 2 stringers are NOT among them — they go to
+  // `stairs`, because `A-FLOR-STRS` has the stair role — but the stair's
+  // direction ARROW is on `A-FLOR-STRS-ARRW`, whose role is annotation, so it
+  // arrives here as a wall candidate like any other annotation and the
+  // standard is what drops it. `wallsAfterStandard` staying at 10 is the
+  // proof it was dropped.
+  //
+  // It is still deliberately
   // permissive about every OTHER kind of noise — the grid line, the dimension
   // string, the hatch and the demolished partition all arrive as candidates
   // and are cut by the standard below. The two it does remove are the X
@@ -97,7 +107,7 @@ try {
   // strokes usually sit on a layer the standard would keep.
   ok(
     'the parser offers every line as a wall candidate, less the X strokes',
-    display.stats.wallCandidates === 19,
+    display.stats.wallCandidates === 20,
     display.stats.wallCandidates,
   );
   // Named by the two corner-to-corner spans of the fixture's 3 × 3 m marked
@@ -492,6 +502,145 @@ try {
     'and no wall is thicker than a metre, which a mm/m mix-up would make it',
     display.walls.every((w) => w.thickness < 1),
     display.walls.map((w) => w.thickness).filter((t) => t >= 1),
+  );
+
+  // ── 8. Staircases ───────────────────────────────────────────────────────
+  section('8. the tread lines become one real staircase');
+
+  // The fixture draws the standard's own library flight: 16 tread lines at
+  // 280 going, 1200 wide, plus two stringers along the run and a direction
+  // arrow. Every number below is therefore the DRAWING's, and a failure is
+  // the flight builder's rather than an argument about what a stair should be.
+  const stair = display.stairs[0];
+  const detailed = buildStairFlightsDetailed(
+    (parsed as any).stairs ?? [],
+    (input) => new CadStandardsService().checkStair(input),
+    { storeyHeight: display.wallHeight },
+  );
+
+  ok(
+    'the 19 stair-layer lines become ONE flight, not nineteen slabs',
+    display.stairs.length === 1,
+    `${display.stairs.length} flights from ${parsed.stairs.length} parser entries`,
+  );
+  // The shared grouping in `mesh/stair-flight.ts` needs THREE real treads
+  // before it calls something a flight, so a going is always measured and
+  // never guessed from the library — there is no outline fallback to get
+  // wrong. The stringers and the direction arrow form no flight and are
+  // counted as orphans instead.
+  ok(
+    'the stringers and the arrow form no flight — they are reported as orphans',
+    detailed.orphans >= 2,
+    `orphans ${detailed.orphans}`,
+  );
+  // The orphans ARE reported, in words, naming what unmatched lines usually
+  // are and what to check if a staircase is missing. That is the right
+  // behaviour and the assertion pins it: silently dropping three lines on a
+  // stair layer is how a half-missing flight becomes unexplainable.
+  ok(
+    'and the orphans are explained rather than silently dropped',
+    detailed.warnings.length === 1 &&
+      /did not form part of a flight/.test(detailed.warnings[0]) &&
+      detailed.warnings[0].includes('16 treads'),
+    detailed.warnings,
+  );
+  ok(
+    '16 treads — the two stringers are not treads',
+    stair?.treadCount === 16,
+    stair?.treadCount,
+  );
+  ok(
+    'and the direction arrow contributed nothing',
+    stair?.treadCount === 16,
+    stair?.treadCount,
+  );
+  ok(
+    '17 risers, one more than the treads — the top one lands on the floor above',
+    stair?.riserCount === 17,
+    stair?.riserCount,
+  );
+  ok(
+    'the going is the drawn 280 mm',
+    Math.abs(stair.going - 0.28) < 1e-6,
+    stair?.going,
+  );
+  ok(
+    'the width is the drawn 1200 mm',
+    Math.abs(stair.width - 1.2) < 1e-6,
+    stair?.width,
+  );
+  ok(
+    'the riser divides the STOREY, because a plan records nothing vertical',
+    Math.abs(stair.riser - display.wallHeight / 17) < 1e-9,
+    `${stair?.riser} vs ${display.wallHeight / 17}`,
+  );
+  ok(
+    'the last tread is one riser short of the floor above — not level with it',
+    Math.abs(
+      stair.treads[stair.treads.length - 1].top + stair.riser - display.wallHeight,
+    ) < 1e-9,
+    stair?.treads?.[stair.treads.length - 1]?.top,
+  );
+  ok(
+    'the first tread is one riser up, not on the floor',
+    Math.abs(stair.treads[0].top - stair.riser) < 1e-9,
+    stair?.treads?.[0]?.top,
+  );
+  ok(
+    'tread tops rise monotonically by exactly one riser each',
+    stair.treads.every(
+      (t: any, i: number) => Math.abs(t.top - stair.riser * (i + 1)) < 1e-9,
+    ),
+    stair.treads.slice(0, 3).map((t: any) => t.top),
+  );
+  ok(
+    'the run is the treads times the going',
+    Math.abs(stair.run - 16 * 0.28) < 1e-6,
+    stair?.run,
+  );
+  ok(
+    'the flight runs along +y, as drawn',
+    Math.abs(stair.directionDeg - 90) < 1e-6,
+    stair?.directionDeg,
+  );
+  ok(
+    'two handrails, one per side',
+    stair?.handrails?.length === 2 &&
+      new Set(stair.handrails.map((h: any) => h.side)).size === 2,
+    stair?.handrails?.map((h: any) => h.side),
+  );
+  ok(
+    'the pitch is in the comfortable band the standard names',
+    stair.pitchDeg > 30 && stair.pitchDeg < 35,
+    stair?.pitchDeg,
+  );
+  // The fixture was chosen to be compliant, so ANY issue here is a defect in
+  // the measurement or in the unit handed to the rules — a going drawn at
+  // exactly the 280 minimum arrives as 279.99999999999994 and was being
+  // reported as breaking the rule it exactly meets.
+  ok(
+    'and the flight is reported compliant, with no issues at all',
+    stair?.compliance?.ok === true && stair.compliance.issues.length === 0,
+    stair?.compliance?.issues?.map((i: any) => `${i.rule}:${i.message}`),
+  );
+  ok(
+    'every tread is inside the plan, not off the edge of the drawing',
+    stair.treads.every(
+      (t: any) =>
+        t.centre.x >= display.bounds.minX - 1 &&
+        t.centre.x <= display.bounds.maxX + 1 &&
+        t.centre.y >= display.bounds.minY - 1 &&
+        t.centre.y <= display.bounds.maxY + 1,
+    ),
+    display.bounds,
+  );
+
+  // Negative control for the whole module.
+  const noStairs = buildDisplayGeometry(parsed as any, { buildStairs: false });
+  ok(
+    'buildStairs=false really leaves the parser\'s per-line stairs alone',
+    noStairs.stairs.length === 0,
+    noStairs.stairs.length,
   );
 } finally {
   rmSync(work, { recursive: true, force: true });

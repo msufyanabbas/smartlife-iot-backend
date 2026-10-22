@@ -103,6 +103,34 @@ const XX = 4000, XY = 4000, XS = 3000;
 line('A-AREA-IDEN', [XX, XY], [XX + XS, XY + XS]);
 line('A-AREA-IDEN', [XX + XS, XY], [XX, XY + XS]);
 
+// ── A real staircase, drawn the way the library draws one ──────────────────
+//
+// LIB-04's flight: tread lines perpendicular to the direction of travel, so
+// walking in +y means each tread runs along x. The parser offers ONE "stair"
+// per line, with steps: 0 — grouping them back into a flight is
+// `display/stair-flight.ts`.
+//
+// The numbers are the standard's own library flight and every one of them is
+// compliant for a 3 m storey, so a failure is the builder's and not the
+// fixture's:
+//
+//   16 treads, going 280          -> run 4.20 m between first and last tread
+//   17 risers over 3.000 m        -> riser 176.5 mm   (rule: 100-180)
+//   2R + G = 632.9                             (rule: 600-650)
+//   pitch  = atan(176.5/280) = 32.2 deg        (rule: max 42)
+//   clear width 1200                           (rule: min 1120)
+const STAIR_X0 = 8600, STAIR_X1 = 9800, STAIR_Y0 = 600, STAIR_GOING = 280;
+const STAIR_TREADS = 16;
+for (let i = 0; i < STAIR_TREADS; i++) {
+  const y = STAIR_Y0 + i * STAIR_GOING;
+  line('A-FLOR-STRS', [STAIR_X0, y], [STAIR_X1, y]);
+}
+// The two stringers, along the run. They must NOT be counted as treads.
+line('A-FLOR-STRS', [STAIR_X0, STAIR_Y0], [STAIR_X0, STAIR_Y0 + (STAIR_TREADS - 1) * STAIR_GOING]);
+line('A-FLOR-STRS', [STAIR_X1, STAIR_Y0], [STAIR_X1, STAIR_Y0 + (STAIR_TREADS - 1) * STAIR_GOING]);
+// The direction arrow is an annotation and must contribute nothing.
+line('A-FLOR-STRS-ARRW', [9200, STAIR_Y0 + 200], [9200, STAIR_Y0 + 1800]);
+
 // ── Equipment, per the master template's symbol legend ─────────────────────
 //
 // SYM-LIGHT on E-LITE, and an HVAC unit on M-HVAC-EQPM. These are what the

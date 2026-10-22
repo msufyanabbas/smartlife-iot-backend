@@ -2977,6 +2977,175 @@ filters.**
 
 ---
 
+## 4v-b. Real staircases, and a walkthrough you can actually walk
+
+Reported as: *"I want my floor plans like 3D like Sweet Home 3D software, like
+my software detects if something is a staircase in the layout and it draws
+real staircase in place of that and also, I can move in 3D in that place, like
+this, same for walls, windows and like this."*
+
+Two halves, and the second one is why the first is not enough on its own.
+
+### A flight is reconstructed, not extruded
+
+`DxfFloorPlanParser` emits one `ParsedStair` **per line segment** on a stair
+layer, with `steps: 0` and `width` set to that segment's own length. A drawn
+flight is a dozen or more parallel tread lines plus two stringers along the
+run, so one staircase arrives as ~19 unrelated "stairs" that know nothing
+about each other and carry no step count at all. Extruding those gives a
+puddle of flat slabs on the floor.
+
+It is the `wall-pairing.ts` problem again: **the drawing records the faces of a
+thing, and the thing has to be reconstructed from them.**
+
+**And it was already solved.** `mesh/stair-flight.ts` has done this grouping
+since before this round, for the export path, with the rules written out: per
+LAYER (so the flight below the cut plane and the one above it stay separate
+rather than merging into one impossible 30-step run), by direction modulo 180,
+within a 120-600 mm going window, with an overlap test across the run, a
+three-tread minimum, and a warning naming whatever formed no flight.
+
+`display/stair-flight.ts` was first written with its own copy of all of it.
+That is the §4m warning arriving on schedule — and it would have been worse
+than the usual case, because two copies would have put the staircases of one
+drawing in different places on the export path and the viewer path, which is
+the §4v defect one module along. `assembleStairFlights` is now the single
+grouping implementation and the display module adds only the vertical half.
+
+The grouping works geometrically:
+
+```
+     tread lines, all parallel        the run axis is PERPENDICULAR
+     ───────────────────────          to them
+     ───────────────────────   ▲
+     ───────────────────────   │   going = spacing between them
+     ───────────────────────   │   width = their length
+     └─ stringer ─────────────┘    along the run: NOT a tread
+```
+
+Find the axis most of the drawn length lies along, project the tread midpoints
+onto the perpendicular, sort, read the spacing. The stringers fall out
+automatically because they run the other way — they are never named or
+special-cased.
+
+**The rise comes from the STOREY, not the drawing.** A plan is a horizontal
+section: it records the going, because you can measure it, and says nothing
+whatsoever about the riser. So `riser = storeyHeight / riserCount`, and
+`riserCount = treadCount + 1` — the top riser lands on the floor above and has
+no tread drawn in plan. Getting that off by one is a stair that misses its
+landing, which in a walkthrough means climbing into the underside of the slab.
+Four assertions fail when the `+ 1` is removed.
+
+**The standard is consulted, not restated.** `CadStandardsService.checkStair()`
+already holds LIB-04's riser, going, Blondel (2R+G), pitch, width and
+rise-per-flight limits. The module measures and asks; it does not repeat a
+single number. A non-compliant flight is still built and still reported —
+refusing to draw a steep stair hides the drawing's problem behind an
+apparently missing staircase, and the viewer surfaces the issue text instead.
+
+Measured on the fixture, which draws the standard's own library flight: 19
+parser entries → **1** flight, 16 treads, 17 risers, going 280 mm, width
+1200 mm, riser 176.47 mm, pitch 32.2°, compliant with no issues, and 3
+orphans (two stringers and the direction arrow) reported in words.
+
+#### What the duplicate copy got wrong, and why it is gone
+
+**1. Clustering one-dimensionally.** My copy grouped treads only by position
+ALONG the run, so any stair-layer line projecting into a flight's range joined
+it. The fixture's `A-FLOR-STRS-ABOV` fragment — one metre long, in the
+opposite corner — landed at tread 2's run distance and became a 17th tread,
+moving every riser from 176.5 mm to 166.7 mm. Two staircases in different
+corners of a plan would have merged outright.
+
+**2. Both of these were already handled by the module I had not found.** The
+lateral overlap test and the per-layer split both exist in
+`mesh/stair-flight.ts`, and its three-tread minimum is stricter than what I
+wrote: an outline of two parallel lines a whole flight apart never becomes a
+"two-step staircase" because it never becomes a flight at all — it is counted
+as orphans and explained in a warning. Deleting my copy removed the defects
+with it.
+
+> **The lesson, which is the one §4m already states:** before writing a
+> geometric reconstruction for the display path, look for it on the mesh path.
+> `grep -rn "stair\|pair\|assemble" src/modules/floor-plans/mesh/` costs
+> nothing. Two implementations of "where are the stairs" is worse than either
+> one of them alone.
+
+### The walkthrough is a SECOND viewer, deliberately
+
+`FloorPlanWalkthrough3D` is metres end to end. It is not a mode of
+`FloorPlan3DViewer`, which is a pixel-space scene (a fixed 22 × 16 world
+mapped from the 800 × 500 stage, and stretched ~16 % in Z by two different
+scale factors). Feeding metre geometry into that one is precisely what made
+the earlier attempt unusable, and the frontend records it in
+`docs/floor-plan-3d-coordinate-space.md`. Having both viewers, each coherent,
+is fine; mixing them is not — so the page has a fourth view button rather than
+a flag.
+
+It draws what `display-geometry` already resolved and re-derives none of it:
+walls with their measured thickness, doors as lining + leaf + lever, windows
+as frame + mullions + glass + sill, the reconstructed flights with treads,
+risers, stringers and handrails, and room floor plates.
+
+#### The opening split gives collision for free
+
+This is the part worth knowing before changing anything there. Because the
+backend splits every wall into the solid pieces AROUND its openings, the piece
+over a door is a segment with `bottom: 2.1, top: 3.0`. A walking body occupies
+roughly 0.1 to 1.8 m, so that lintel is **not in the body's height band and is
+never a collider** — you walk through doorways, with no door-specific case
+anywhere in the collision code. The spandrel under a window sill
+(`bottom: 0, top: 0.9`) IS in the band and does block, which is equally
+correct and comes from the same line.
+
+One `if` is the whole implementation. Remove it and every doorway becomes a
+solid wall; three assertions fail, including *"you can stand in the doorway"*.
+
+Stair climbing is the same trick in the vertical: project the body onto the
+flight's run, read the tread at that distance, ease the eye height toward it.
+No physics engine, and a flight is traversable.
+
+#### `verify:walkthrough` — 39 assertions, no WebGL
+
+The pure half lives in `utils/walkthrough.ts` with no React and no three.js
+imports, exactly like `displayGeometry.ts`, so it runs under plain node. A
+rendered scene cannot be asserted; whether a doorway is walkable can, and that
+is the half that decides whether the feature works.
+
+Covered: the plan-Y-to-scene-Z mapping and the rotation **sign** (dropping it
+mirrors the whole building about its centre, which reads as a plan that is
+subtly the wrong way round rather than as an error); the height band in both
+directions; collision push-out leaving you on the side you came from; the
+tread under your feet, the clamp at the top of a flight, and that you do not
+levitate beside one.
+
+Two things recorded there rather than quietly fixed:
+
+- **The two-pass collision solver was justified by a wrong comment.** It said
+  one pass leaves the body embedded in the second wall of an inside corner.
+  Reducing it to one pass and re-running left every assertion passing —
+  resolution is already sequential *within* a pass, so the second wall sees the
+  first wall's push. The comment now says what is true, and the second pass is
+  kept for the case it does cover: a push that re-enters a collider already
+  visited. A gap narrower than the body has no solution at all, and the
+  bounded pass count is what stops that oscillating; the assertion pins that
+  the body stays finite and near where it was rather than being flung across
+  the building.
+- **The millimetre rounding before the compliance check is defensive and
+  unproven.** It was added on the belief that the fixture's 280 going arrived
+  as 279.99999999999994; that is wrong — `0.28 * 1000` is exactly 280 in IEEE
+  doubles, and the going really being rejected came from the mis-clustered
+  flight above. It is kept because unit scales and an even-count median can
+  genuinely land a hair under an exact limit, but the comment says plainly
+  that nothing exercises it and it must not be counted as verified.
+
+```bash
+npm run verify:display-geometry      # 82 checks — §8 is the staircase
+npm run verify:walkthrough           # frontend: 39, no WebGL needed
+```
+
+---
+
 ## 4w. Floor-plan control widgets
 
 *"Add the widgets to the floor plan so I can turn on and off the lights, Air

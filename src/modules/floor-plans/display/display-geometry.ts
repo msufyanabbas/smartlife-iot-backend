@@ -71,6 +71,11 @@ import {
   type PairingOptions,
 } from './wall-pairing';
 import {
+  buildStairFlights,
+  type DisplayStair,
+  type StairFlightOptions,
+} from './stair-flight';
+import {
   detectXVoids,
   isXStrokeLayer,
   suppressInsideVoids,
@@ -135,7 +140,12 @@ export interface DisplayGeometry {
     layer: string;
   }>;
   columns: any[];
-  stairs: any[];
+  /**
+   * Real staircases, reconstructed from the drawn tread lines — treads,
+   * risers, pitch and handrails. `stair-flight.ts` explains why the parser's
+   * own `stairs` (one entry per LINE, `steps: 0`) cannot be drawn directly.
+   */
+  stairs: DisplayStair[];
   devices: any[];
   /** Loose contents — desks, fittings. Suppressed inside a crossed-out space. */
   furniture: any[];
@@ -173,6 +183,9 @@ export interface DisplayGeometryOptions {
   windowHeight: number;
   /** Off returns unfiltered geometry — the old behaviour, for comparison. */
   enforceStandard: boolean;
+  /** Off leaves the parser's one-entry-per-tread-line stairs alone. */
+  buildStairs: boolean;
+  stair: Partial<StairFlightOptions>;
   detectXVoids: boolean;
   pairWalls: boolean;
   cutOpenings: boolean;
@@ -190,6 +203,8 @@ export const DEFAULT_DISPLAY_OPTIONS: DisplayGeometryOptions = {
   detectXVoids: true,
   pairWalls: true,
   cutOpenings: true,
+  buildStairs: true,
+  stair: {},
 };
 
 /**
@@ -692,6 +707,20 @@ export function buildDisplayGeometry(
       }
     }
   }
+  // ── Staircases ──────────────────────────────────────────────────────────
+  //
+  // Built AFTER the standard filter, so the direction arrow on
+  // `A-FLOR-STRS-ARRW` (role annotation, solid ignore) is already gone and
+  // cannot be mistaken for a stringer. The flight builder measures what is
+  // left; the rules it is measured against stay in the standard.
+  const stairs: DisplayStair[] = opts.buildStairs
+    ? buildStairFlights(
+        filtered.geometry.stairs as any[],
+        (input) => standards.checkStair(input),
+        { storeyHeight: wallHeight, ...opts.stair },
+      )
+    : [];
+
   const bounds =
     xs.length > 0
       ? {
@@ -718,7 +747,7 @@ export function buildDisplayGeometry(
       layer: String(r.layer ?? ''),
     })),
     columns: filtered.geometry.columns,
-    stairs: filtered.geometry.stairs,
+    stairs,
     devices: deviceResult.kept,
     furniture: furnitureResult.kept,
     voids,

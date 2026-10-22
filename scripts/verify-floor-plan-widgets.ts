@@ -393,11 +393,17 @@ async function seed(ds: DataSource, dxf: string): Promise<Fixture> {
     const display = payload(dg.body)?.display;
     ok('with draw-ready geometry', !!display, Object.keys(payload(dg.body) ?? {}));
     ok(
-      'the standard has been applied — 19 candidates down to 10 built',
-      display?.stats?.wallCandidates === 19 && display?.stats?.wallsAfterStandard === 10,
+      'the standard has been applied — 20 candidates down to 10 built',
+      display?.stats?.wallCandidates === 20 && display?.stats?.wallsAfterStandard === 10,
       display?.stats,
     );
-    // 19, not the 21 lines the fixture draws: the two X strokes are removed
+    // 20, not the 22 lines the fixture draws on wall-ish layers. The stair's
+    // 16 tread lines and 2 stringers are not here at all — they carry the
+    // stair role and go to `stairs` — but its direction ARROW is an
+    // annotation and arrives as a wall candidate like any other, which the
+    // standard then drops: `wallsAfterStandard` staying at 10 is the proof.
+    //
+    // The two X strokes are removed
     // before this, so the crossed-out box renders as a box with nothing in
     // it. That is the client's standard, and suppressing the region's
     // CONTENTS while leaving the cross standing was the complaint.
