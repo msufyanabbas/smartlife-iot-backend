@@ -99,15 +99,39 @@ export class CustomerListener {
     }
   }
 
+  /**
+   * Keep the customers row's status in step with its login account's.
+   *
+   * The payload is normalised before it is read, because this handler has two
+   * emitters and they did not agree: `UsersService.updateStatus()` sends the
+   * flat `{userId, role, customerId, status}` while
+   * `AuthService.setPasswordFromToken()` sent `{user, newStatus}`. Reading
+   * `payload.role` off the second one yielded `undefined`, the guard below
+   * returned early, and an activated customer stayed INACTIVE on every admin
+   * screen — with nothing logged, because an `EventEmitter2` payload is `any`
+   * and `emit()` discards the handler's promise.
+   *
+   * Both emitters send the flat shape now. Accepting either as well costs four
+   * lines and removes the only way this can silently no-op again.
+   */
   @OnEvent('user.status.changed')
-  async handleUserStatusChanged(payload: {
-    userId: string;
-    role: UserRole;
+  async handleUserStatusChanged(raw: {
+    userId?: string;
+    role?: UserRole;
     customerId?: string;
-    status: UserStatus;
-    previousStatus: UserStatus;
+    status?: UserStatus;
+    newStatus?: UserStatus;
+    previousStatus?: UserStatus;
+    user?: { id: string; role: UserRole; customerId?: string };
   }) {
-    if (payload.role !== UserRole.CUSTOMER || !payload.customerId) return;
+    const payload = {
+      userId: raw.userId ?? raw.user?.id,
+      role: raw.role ?? raw.user?.role,
+      customerId: raw.customerId ?? raw.user?.customerId,
+      status: raw.status ?? raw.newStatus,
+    };
+
+    if (payload.role !== UserRole.CUSTOMER || !payload.customerId || !payload.status) return;
 
     const statusMap: Partial<Record<UserStatus, CustomerStatus>> = {
       [UserStatus.ACTIVE]:    CustomerStatus.ACTIVE,

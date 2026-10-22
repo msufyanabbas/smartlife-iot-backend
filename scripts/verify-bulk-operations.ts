@@ -449,6 +449,11 @@ const TENANT_B = randomUUID();
     stub, // UsersService
     subscriptionsService,
     dataSource,
+    // PermissionCacheService. Real rather than `stub`, even though the bulk
+    // paths do not change grants: `stub` is a Proxy answering undefined, so a
+    // future bulk path that did invalidate would call `undefined()` and throw
+    // inside the operation it was meant to make correct.
+    new PermissionCacheService(inMemoryRedis()),
   );
 
   const usage = async (tenantId: string, key: string): Promise<number> => {

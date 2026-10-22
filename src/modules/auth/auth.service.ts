@@ -1068,15 +1068,37 @@ export class AuthService {
 
     this.logger.log(`Password set and account activated for: ${user.email}`);
 
-    // The customers row tracks its own status, and nothing moved it when the
-    // user it belongs to activated — so an invited customer stayed INACTIVE
-    // forever and every admin screen showed it as such. The listener for this
-    // event flips it.
+    // The customers row tracks its own status, and nothing moves it when the
+    // user it belongs to activates — so an invited customer stays INACTIVE
+    // forever and every admin screen shows it as such. `CustomerListener`
+    // flips it on this event.
+    //
+    // ── The shape is the contract, and it was wrong here ───────────────────
+    //
+    // This emitted `{ user, previousStatus, newStatus, reason }`. The listener
+    // reads `payload.role` and `payload.status` — the FLAT shape that
+    // `UsersService.updateStatus()` emits — so `payload.role` was `undefined`,
+    // the `!== UserRole.CUSTOMER` guard returned early, and the handler did
+    // nothing. Verified: the customer row stayed `inactive` after a successful
+    // activation and login.
+    //
+    // Exactly the §4p failure: an `EventEmitter2` payload is `any`, so a
+    // handler reading fields the emitter never sent typechecks perfectly and
+    // silently no-ops. `emit()` also discards the handler's promise, so there
+    // was nothing to see in a log either.
+    //
+    // The flat shape is canonical because `UsersService` — the other emitter —
+    // already uses it. `user` is kept alongside for anything that wants the
+    // entity.
     this.eventEmitter.emit('user.status.changed', {
-      user,
+      userId: user.id,
+      role: user.role,
+      customerId: user.customerId,
+      tenantId: user.tenantId,
+      status: UserStatus.ACTIVE,
       previousStatus: UserStatus.INACTIVE,
-      newStatus: UserStatus.ACTIVE,
       reason: 'invitation-accepted',
+      user,
     });
 
     return { message: 'Password set successfully. You can now log in.' };

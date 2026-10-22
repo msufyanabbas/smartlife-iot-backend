@@ -2506,6 +2506,201 @@ this is driven by the server's configured default, not by the container's.
 
 ---
 
+## 4u. Customer and customer-user login — the whole chain, and why it did nothing
+
+Reported as: *"I don't see any option for login for customers, and no option of
+login for customer users — what is the purpose of those users, if they cannot
+login? Also the permission to those users are not working."*
+
+Every piece existed. A customer created through the API minted a `User` with
+`role = customer` and a 7-day `setPasswordToken`; `POST /auth/set-password`
+activated it; the permission matrix wrote `customer_permissions` rows;
+`PermissionGuard` resolved `(role ∪ direct) ∩ grants`. Six separate defects sat
+between that and a working login, and **not one of them is visible to `tsc`**.
+
+### 1. A freshly created customer could log in and reach nothing
+
+`CustomersService.create()` mints the login with no Role rows and no direct
+permissions, because nothing assigns it any. `PermissionGuard` intersected that
+empty set with the customer's grants, and the intersection of ∅ with anything
+is ∅ — so the account authenticated successfully and then answered **403 on
+every one of the ~690 permission-gated handlers**.
+
+The fix is a branch on the kind of account, and the asymmetry is the design:
+
+| Role | Effective set | Why |
+|---|---|---|
+| `CUSTOMER` | **the customer's grants** | This is the customer's own admin login. The tenant decides what a customer may see; its admin sees exactly that. |
+| `CUSTOMER_USER` with roles or direct permissions | `(role ∪ direct) ∩ grants` | The customer admin subdivides its own grant. The intersection is the point — no role may exceed the ceiling. |
+| `CUSTOMER_USER` with **nothing** assigned | the **read-only** subset of the grants | `roleId` on `POST /customer-users` is optional, so this is the normal state of a just-invited user. Without a floor, an invitation produced a working password and a dead session. |
+
+That last fallback is scoped as narrowly as possible: it applies only when the
+account holds *no* roles and *no* direct permissions. The moment it has one,
+the intersection governs — otherwise assigning a narrow role would *remove*
+access the user already had, which is the opposite of what assigning it means.
+`PermissionGuard.customerGrants()` is the single reader of the ceiling, so the
+`CUSTOMER` branch and the `CUSTOMER_USER` intersection cannot drift apart.
+
+### 2. Changing the matrix did nothing for up to a minute
+
+The headline cause of *"the permission to those users are not working"*, and
+the one worth remembering.
+
+`setGrantedPermissions()` ended with
+`eventEmitter.emit('customer.permissions.changed', …)` under a comment saying
+cached resolutions were now stale — and **nothing in the repository listened
+for that event**. `PermissionGuard` caches the resolved set per user under a
+per-tenant epoch (§11a), so an admin who unchecked a box, saved, and tested
+immediately saw no change at all for `PERMISSION_CACHE_TTL_SECONDS` (60), per
+replica. A revoked permission kept working; a newly granted one kept 403-ing.
+
+It is a direct `permissionCache.bumpTenant()` call now, not a listener: the
+correctness of a grant must not depend on a subscriber existing. The event is
+still emitted for anything that wants to observe the change, but nothing
+load-bearing hangs off it. Matches `RolesService` and `UsersService`.
+
+> **The rule:** an `emit()` is not an invalidation, a notification, or a write.
+> `EventEmitter2` payloads are `any` and `emit()` discards the handler's
+> promise, so an unconsumed event and a consumed one are indistinguishable from
+> the call site, from the type checker, and from the log. This is the §4p audit
+> bug for the third time.
+
+### 3. The customers row stayed INACTIVE after a successful activation
+
+Same family, one level further in. `AuthService.setPasswordFromToken()` emitted
+`{ user, previousStatus, newStatus, reason }`; `CustomerListener` reads
+`payload.role` and `payload.status` — the flat shape
+`UsersService.updateStatus()` sends. So `payload.role` was `undefined`, the
+`!== UserRole.CUSTOMER` guard returned early, and the handler did nothing. The
+customer appeared deactivated on every admin screen while its owner was logged
+in and using the product.
+
+Both emitters send the flat shape now, **and** the listener normalises either
+one. The normalisation is four lines and removes the only way this can silently
+no-op again.
+
+### 4. A customer admin could not manage its own users
+
+`POST /customer-users` demanded `users:create`. `users` is deliberately absent
+from `CUSTOMER_GRANTABLE_RESOURCES` — granting it would be granting authority
+over the *tenant's* accounts — so the permission the route demanded was one its
+own `@Roles` list could never hold. The route admitted `UserRole.CUSTOMER` and
+then always refused it.
+
+**`customer_users:*` is a new resource**, separate from `users:*` on purpose:
+
+- `users:*` gates `/users/**` — the tenant's user administration, reaching
+  every account in the tenant.
+- `customer_users:*` gates `/customer-users/**`, whose service is bounded to
+  the caller's own customer.
+
+It is grantable, and it is the one resource whose **default** is not read-only:
+`DEFAULT_ACTIONS_BY_RESOURCE` gives a new customer `read, list, create, update`
+on it, because the first thing a customer admin does is invite their staff, and
+shipping that switched off reproduces the same "looks broken" 403. `delete`
+still has to be granted deliberately.
+
+The TENANT_ADMIN-only routes on that controller (`unassign`, `bulk-assign`,
+`transfer`, per-customer statistics) keep `users:*` — they are tenant-level
+operations and must not become reachable by granting a customer rights over its
+own users.
+
+### 5. `hasAccessToCustomer()` was wrong in both directions at once
+
+Five lines, two opposite defects:
+
+- **`UserRole.CUSTOMER` fell through to `return false`** — the customer's own
+  admin was refused access to its own customer, so every route guarded by
+  `validateCustomerAccess()` answered 403 to the principal most entitled to be
+  there. The same omission as the dashboards and assets drift in §4g.
+- **`TENANT_ADMIN` returned `true` for ANY customer id**, with no tenant
+  comparison. One call site happened to re-scope downstream, which is the only
+  reason this was not a live cross-tenant read; the next caller to trust the
+  function on its own would have been one.
+
+One bounded row read settles both. A falsy `tenantId` on a non-super-admin
+denies rather than skipping the comparison (§4g).
+
+Four handlers on that controller also carried **no `@Roles`** —
+`GET customer/:customerId`, `customer/:customerId/search`,
+`check-access/:customerId`, `accessible-customers` — the §4g default-open shape,
+three of them taking a customer id straight from the URL. They are decorated
+now.
+
+### 6. A customer creating a device got a 403 and left an orphan behind
+
+`DevicesService.create()` set `userId` and `tenantId` from the caller and
+**never `customerId`**. For a `CUSTOMER` or `CUSTOMER_USER` creator the row
+landed unassigned, and then `DeviceCredentialsService.verifyAccess()` — which
+runs during credential issuance and requires
+`device.customerId === user.customerId` — refused with *"Access denied to this
+device"* about the device the caller had just created.
+
+The row is **saved before credentials are issued**, so every attempt left a
+device owned by nobody's customer, invisible to its creator (read scoping
+filters on `customerId`) and undeletable by them. Each retry left another.
+
+The customer id comes from the authenticated principal, never the body —
+`CreateDeviceDto` has no such field. A tenant admin still creates unassigned
+devices and assigns them afterwards (§4i).
+
+### Two traps found alongside
+
+- **`getGrantablePermissions` widened for a tenant-less caller.** It was
+  `where: [{ tenantId: tenantId ?? undefined }, { tenantId: IsNull() }]`, and
+  TypeORM drops an `undefined` key from the WHERE — so for a SUPER_ADMIN the
+  first branch matched **every** row, and the grantable list contained every
+  tenant's custom permissions. A missing tenantId must narrow to the system
+  catalogue, never widen to all of them. The §4q `undefined`-drops-predicate
+  trap, in a third place.
+- **The response envelope is two deep on some routes.**
+  `TransformInterceptor` wraps everything as `{success, data, timestamp}`, and
+  several handlers *also* return their own `{message, data}` — `POST /customers`
+  among them. Unwrapping a fixed single level yields `{message, data}`, which
+  has no `id`, and reads exactly like a handler that returned nothing.
+
+### Verifying it
+
+```bash
+npm run verify:customer-login [db] [port]   # 73 checks
+```
+
+This is the **only** script in the suite that boots the real
+`node dist/main.js` and drives the HTTP API as the browser does, and it has to
+be: every defect above lives in the interaction between nine global guards, a
+JWT, a password hash written by an entity hook, an `emailVerified` flag set in
+another module, and a cache. Hand-constructing a service proves the service.
+`scripts/support/boot-app.ts` holds the harness (`check-boot.ts` keeps its own
+copy deliberately — it asserts things about the boot itself that a helper
+returning a live server cannot express, and a guard that depends on a helper it
+is also guarding can fail open).
+
+Negative-tested: commenting out the `bumpTenant()` call fails §7 with
+*"a 200 here means the permission cache was not invalidated"*.
+
+Three things the script needs that are worth knowing before testing by hand:
+
+1. **Redis must be up, or nobody can log in at all.** Sessions and the token
+   blacklist exist only in Redis and fail closed (§11a), so
+   `POST /auth/login` answers 500 `MaxRetriesPerRequestError` with Redis down.
+   That is deliberate, and it is not a customer-login bug.
+2. **The tenant needs a subscription row.** `SubscriptionGuard` is global and
+   answers 403 *"No subscription found for this tenant"*, so a tenant created
+   outside the registration flow cannot create a customer.
+3. **SMTP is off in the harness, so no invitation email is sent.** The script
+   reads `users.setPasswordToken` from the database instead. Testing by hand
+   with no SMTP configured needs the same — the link is
+   `${FRONTEND_URL}/auth/accept-invitation?token=<token>`.
+
+### Still open
+
+`POST /customer-users` takes an optional `roleId` and the UI does not require
+one, so the read-only fallback in §1 is load bearing rather than a safety net.
+Making the invite form require a role would be the better product answer and
+would let the fallback be removed.
+
+---
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
@@ -3099,6 +3294,17 @@ npm run verify:rpc                 <db>
 npm run verify:resource-assignments <db>  # assignment reads — scoping + the
                                           #   two-tier customer→user bound (§4i)
 npm run verify:permissions         <db>   # grants/revocations decide access (§4k)
+npm run verify:customer-login      <db> [port]
+                                          # 73 checks. Boots the REAL
+                                          #   `node dist/main.js` and drives the
+                                          #   HTTP API: a customer and a
+                                          #   customer user activate from their
+                                          #   invitation and LOG IN, see only
+                                          #   their own things, and the
+                                          #   permission matrix decides on the
+                                          #   very next request. Needs Postgres
+                                          #   AND Redis — login fails closed
+                                          #   without Redis (§4u)
 npm run verify:ai                  <db>   # credential crypto, prompt templating,
                                           #   response normalisation, scoping (§4l)
 npm run verify:floor-plan-storage  <db>   # a real DXF through upload → parse →

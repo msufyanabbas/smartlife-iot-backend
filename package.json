@@ -88,6 +88,7 @@
     "verify:permissions": "ts-node -T -r tsconfig-paths/register scripts/verify-permissions.ts",
     "verify:user-admin-scoping": "ts-node -T -r tsconfig-paths/register scripts/verify-user-admin-scoping.ts",
     "verify:customer-permissions": "ts-node -T -r tsconfig-paths/register scripts/verify-customer-permissions.ts",
+    "verify:customer-login": "ts-node -T -r tsconfig-paths/register scripts/verify-customer-login.ts",
     "check:ws-authorization": "ts-node -T -r tsconfig-paths/register scripts/check-ws-authorization.ts",
     "verify:ws-authorization": "ts-node -T -r tsconfig-paths/register scripts/verify-ws-authorization.ts",
     "verify:ws-delivery": "ts-node -T -r tsconfig-paths/register scripts/verify-ws-telemetry-delivery.ts",

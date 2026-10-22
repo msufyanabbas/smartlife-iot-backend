@@ -208,6 +208,63 @@ export class PermissionSeeder implements ISeeder {
       },
 
       // ════════════════════════════════════════════════════════════════
+      // CUSTOMER-USER PERMISSIONS
+      //
+      // Separate from `users:*` on purpose, and the distinction is the whole
+      // point of the resource.
+      //
+      // `users:*` gates the TENANT's user administration — /users/**, which
+      // reaches every account in the tenant. `customer_users:*` gates
+      // /customer-users/**, whose service is scoped to the caller's own
+      // customer. A customer admin has to be able to add and manage its own
+      // users, and before this the only permission that said so was
+      // `users:create` — which is not grantable to a customer (see
+      // CUSTOMER_GRANTABLE_RESOURCES), because granting it would be granting
+      // authority over the tenant's own accounts.
+      //
+      // So the customer admin login could do nothing at all with its users:
+      // POST /customer-users answered 403 "Required: users:create" to the one
+      // role the route's own @Roles list admits. These strings are what make
+      // "each customer manages its own users" expressible without also making
+      // it "each customer manages the tenant's users".
+      // ════════════════════════════════════════════════════════════════
+      {
+        resource: 'customer_users',
+        action: 'create',
+        description: 'Invite users under your own customer',
+        isSystem: true,
+        tenantId: null,
+      },
+      {
+        resource: 'customer_users',
+        action: 'read',
+        description: 'View users under your own customer',
+        isSystem: true,
+        tenantId: null,
+      },
+      {
+        resource: 'customer_users',
+        action: 'list',
+        description: 'List users under your own customer',
+        isSystem: true,
+        tenantId: null,
+      },
+      {
+        resource: 'customer_users',
+        action: 'update',
+        description: 'Update users under your own customer',
+        isSystem: true,
+        tenantId: null,
+      },
+      {
+        resource: 'customer_users',
+        action: 'delete',
+        description: 'Remove users under your own customer',
+        isSystem: true,
+        tenantId: null,
+      },
+
+      // ════════════════════════════════════════════════════════════════
       // DASHBOARD PERMISSIONS
       // ════════════════════════════════════════════════════════════════
       {

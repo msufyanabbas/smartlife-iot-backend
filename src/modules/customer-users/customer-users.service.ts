@@ -55,6 +55,13 @@ private usersService: UsersService,
   @InjectRepository(CustomerUserLimit)
   private userLimitsRepository: Repository<CustomerUserLimit>,
 
+  // Registered directly rather than reaching through CustomersService, which
+  // is already a forwardRef from here: `hasAccessToCustomer` needs one bounded
+  // row read, and an extra edge in that cycle is a worse trade than a
+  // repository.
+  @InjectRepository(Customer)
+  private customerRepository: Repository<Customer>,
+
   @Inject(forwardRef(() => AssignmentService))
   private assignmentService: AssignmentService,
 ) {}
@@ -477,21 +484,52 @@ private usersService: UsersService,
   /**
    * Check if user has access to a specific customer
    */
+  /**
+   * May this principal act on this customer?
+   *
+   * Two defects lived in the previous five lines, and they pulled in opposite
+   * directions:
+   *
+   *   · **`UserRole.CUSTOMER` fell through to `return false`.** That is the
+   *     customer's OWN admin login — the account `CustomersService.create()`
+   *     mints — so it was refused access to its own customer, and every route
+   *     guarded by `validateCustomerAccess()` answered 403 to the one
+   *     principal most entitled to be there. The same omission as the
+   *     dashboards and assets scoping drift in §4g, where `CUSTOMER` also fell
+   *     through a role switch and could not see its own data.
+   *
+   *   · **`TENANT_ADMIN` returned `true` for ANY customer id**, with no tenant
+   *     comparison at all. One call site happened to re-scope downstream
+   *     (`customersService.findOne(tenantId, …)`), which is the only reason
+   *     this was not a live cross-tenant read; the next caller to trust this
+   *     function on its own would have been one.
+   *
+   * The ONE row read here settles both: a tenant admin is bounded to its own
+   * tenant, and a customer-scoped principal to its own customer. `SUPER_ADMIN`
+   * is cross-tenant by definition and returns before the query.
+   *
+   * A falsy `tenantId` on a non-super-admin DENIES rather than skipping the
+   * comparison — the §4g rule. Only SUPER_ADMIN is legitimately tenant-less.
+   */
   async hasAccessToCustomer(user: User, customerId: string): Promise<boolean> {
-    // Super Admin and Tenant Admin have access to all customers in their scope
-    if (
-      user.role === UserRole.SUPER_ADMIN ||
-      user.role === UserRole.TENANT_ADMIN
-    ) {
-      return true;
+    if (user.role === UserRole.SUPER_ADMIN) return true;
+    if (!user.tenantId || !customerId) return false;
+
+    if (user.role === UserRole.TENANT_ADMIN) {
+      const customer = await this.customerRepository.findOne({
+        where: { id: customerId, tenantId: user.tenantId },
+        select: ['id'],
+      });
+      return !!customer;
     }
 
-    // Customer users can only access their assigned customer
-    if (user.role === UserRole.CUSTOMER_USER) {
-      return user.customerId === customerId;
+    // A customer-scoped principal — the customer's own admin (CUSTOMER) or one
+    // of its users (CUSTOMER_USER) — reaches exactly its own customer.
+    if (user.role === UserRole.CUSTOMER || user.role === UserRole.CUSTOMER_USER) {
+      return !!user.customerId && user.customerId === customerId;
     }
 
-    // Default: no access
+    // A plain tenant USER has no customer administration rights.
     return false;
   }
 

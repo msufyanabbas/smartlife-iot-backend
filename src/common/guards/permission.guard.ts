@@ -199,17 +199,116 @@ if (isPublic) return true;
       permissions = this.filterBySubscriptionFeatures(permissions, subscription);
     }
 
-    // ── Step 4: Intersect with customer grants (customer-scoped users only) ─
-    // CUSTOMER_ADMIN and CUSTOMER_USER can only have what their customer was granted
+    // ── Step 4: Apply the customer's grants ────────────────────────────────
+    //
+    // The customer's granted set is the CEILING for everyone beneath it. How it
+    // combines with the account's own permissions depends on which kind of
+    // account this is, and the difference is load bearing:
+    //
+    //   CUSTOMER      — the customer's OWN admin login, minted by
+    //                   `CustomersService.create()`. It holds no Role rows and
+    //                   no direct permissions, because nothing assigns it any.
+    //                   Intersecting an empty set with the grants yields an
+    //                   empty set, so this account could log in successfully
+    //                   and then take 403 on every permission-gated route —
+    //                   which is what "the permission to those users are not
+    //                   working" described. Its effective set IS the customer's
+    //                   grants: the tenant decides what a customer may see, and
+    //                   the customer's admin sees exactly that.
+    //
+    //   CUSTOMER_USER — an end user beneath that customer. Here the
+    //                   INTERSECTION is the point: the customer admin
+    //                   subdivides its own grant among its users via roles and
+    //                   direct permissions, and no role can exceed the
+    //                   ceiling. Giving these accounts the full grant would
+    //                   make roles decorative.
+    //
+    // Both are still filtered by the subscription plan, inside each branch.
     if (fullUser.customerId) {
-      permissions = await this.intersectWithCustomerGrants(
-        permissions,
-        fullUser.customerId,
-        subscription,
-      );
+      if (fullUser.role === UserRole.CUSTOMER) {
+        permissions = await this.customerGrants(fullUser.customerId, subscription);
+      } else if (rolePerms.length === 0 && directPerms.length === 0) {
+        // ── A customer user with nothing assigned yet ──────────────────────
+        //
+        // `roleId` on `POST /customer-users` is OPTIONAL, so an invited user
+        // routinely starts with no roles and no direct permissions. The
+        // intersection of an empty set with anything is empty, so such an
+        // account logged in successfully and then took 403 on every route —
+        // an invitation that produces a working password and a dead session.
+        //
+        // The fallback is the customer's grants narrowed to READS. They can
+        // see their customer's estate, which is the whole reason they were
+        // invited, and they can change nothing until someone gives them a
+        // role. Write access stays a decision.
+        //
+        // Scoped deliberately narrowly: this applies ONLY when the account
+        // holds nothing at all. The moment it has one role or one direct
+        // permission, the intersection below governs — otherwise assigning a
+        // narrow role would *remove* access the user already had, which is
+        // the opposite of what assigning it means.
+        permissions = this.readOnly(
+          await this.customerGrants(fullUser.customerId, subscription),
+        );
+      } else {
+        permissions = await this.intersectWithCustomerGrants(
+          permissions,
+          fullUser.customerId,
+          subscription,
+        );
+      }
     }
 
     return permissions;
+  }
+
+  /**
+   * The read-only subset of a permission set.
+   *
+   * `read` and `list` are the two actions the seeder uses for non-mutating
+   * access, and they are what `CustomersService.DEFAULT_CUSTOMER_ACTIONS`
+   * grants a new customer. Anything else — create, update, delete, control,
+   * share, export, configure — is a change or an egress and is excluded.
+   */
+  private readOnly(permissions: Set<string>): Set<string> {
+    const readable = new Set<string>();
+    for (const perm of permissions) {
+      const action = perm.split(':')[1];
+      if (action === 'read' || action === 'list') readable.add(perm);
+    }
+    return readable;
+  }
+
+  /**
+   * The customer's granted permissions, plan-filtered — the set a CUSTOMER
+   * account resolves to, and the ceiling every CUSTOMER_USER is intersected
+   * against. One reader, so the two cannot drift apart.
+   *
+   * A customer row that does not exist denies everything rather than returning
+   * an unrestricted set: a dangling customerId must not become a bypass.
+   */
+  private async customerGrants(
+    customerId: string,
+    subscription: Subscription | undefined,
+  ): Promise<Set<string>> {
+    const customer = await this.customersRepo.findOne({
+      where: { id: customerId },
+      relations: ['grantedPermissions'],
+    });
+
+    if (!customer) {
+      this.logger.warn(
+        `Customer ${customerId} not found during permission resolution — denying all`,
+      );
+      return new Set();
+    }
+
+    const granted = new Set<string>(
+      (customer.grantedPermissions ?? []).map((p) => p.permissionString),
+    );
+
+    return subscription
+      ? this.filterBySubscriptionFeatures(granted, subscription)
+      : granted;
   }
 
   private filterBySubscriptionFeatures(
@@ -242,24 +341,7 @@ if (isPublic) return true;
     customerId: string,
     subscription: Subscription | undefined,
   ): Promise<Set<string>> {
-    const customer = await this.customersRepo.findOne({
-      where: { id: customerId },
-      relations: ['grantedPermissions'],
-    });
-
-    if (!customer) {
-      this.logger.warn(`Customer ${customerId} not found during permission resolution — denying all`);
-      return new Set(); // customer doesn't exist — deny everything
-    }
-
-    // Build the customer's permission set, also filtered by subscription features
-    let customerPerms = new Set<string>(
-      (customer.grantedPermissions ?? []).map((p) => p.permissionString),
-    );
-
-    if (subscription) {
-      customerPerms = this.filterBySubscriptionFeatures(customerPerms, subscription);
-    }
+    const customerPerms = await this.customerGrants(customerId, subscription);
 
     // Intersection: user must have it AND customer must have been granted it
     const intersection = new Set<string>();

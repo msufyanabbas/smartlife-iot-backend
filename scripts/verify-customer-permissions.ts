@@ -165,6 +165,12 @@ const CUST_USER = randomUUID();
     devicesRead.id,
   ]);
 
+  // The guard and the service must share ONE cache instance, exactly as the
+  // application shares one (RedisModule is @Global). With two, the service
+  // would bump an epoch the guard never reads and the staleness this file
+  // asserts against would be invisible.
+  const cache = new PermissionCacheService(inMemoryRedis());
+
   const customersService = new CustomersService(
     dataSource.getRepository(Customer) as any,
     dataSource.getRepository(User) as any,
@@ -175,12 +181,16 @@ const CUST_USER = randomUUID();
     {} as any, // UsersService
     {} as any, // SubscriptionsService
     dataSource,
+    // Real, not a stub: `setGrantedPermissions` invalidates the resolved
+    // permission cache, and a stub answering `undefined` would turn the one
+    // call that makes a grant take effect immediately into a silent no-op —
+    // the exact bug `verify:customer-login` §7 exists to catch.
+    cache,
   );
 
   const admin = { id: ADMIN_A, role: UserRole.TENANT_ADMIN, tenantId: TENANT_A } as any;
 
   // ── The guard, wired exactly as the application wires it ────────────────
-  const cache = new PermissionCacheService(inMemoryRedis());
   const guard = new PermissionGuard(
     {
       getAllAndOverride: (key: string) =>

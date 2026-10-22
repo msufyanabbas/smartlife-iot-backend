@@ -27,6 +27,9 @@ import { UsersService } from '../users/users.service';
 // CustomersService impossible to construct in a verification script.
 // UsersService already imports it this way.
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+// RedisModule is @Global, so this needs no import edge — which is the whole
+// reason PermissionCacheService lives there rather than in GuardsModule.
+import { PermissionCacheService } from '@/lib/redis/permission-cache.service';
 import { SubscriptionLimits, SubscriptionUsage } from '@/common/interfaces/subscription.interface';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
 import {
@@ -53,6 +56,7 @@ export class CustomersService {
     private userService: UsersService,
     private subscriptionsService: SubscriptionsService,
     private readonly dataSource: DataSource,
+    private readonly permissionCache: PermissionCacheService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -905,6 +909,14 @@ private validateAllocatedLimits(
     'firmware',
     'edge',
     'integrations',
+    // The customer's OWN users. Deliberately a separate resource from
+    // `users`, which stays off this list: `users:*` gates /users/**, the
+    // tenant's user administration, while `customer_users:*` gates
+    // /customer-users/**, whose service is bounded to the caller's own
+    // customer. Without this a customer admin could not invite or list a
+    // single one of its own users — POST /customer-users answered 403
+    // "Required: users:create" to the one role its @Roles list admits.
+    'customer_users',
   ];
 
   /**
@@ -918,10 +930,43 @@ private validateAllocatedLimits(
    */
   private static readonly DEFAULT_CUSTOMER_ACTIONS = ['read', 'list'];
 
+  /**
+   * Resources whose DEFAULT actions differ from read-only.
+   *
+   * `customer_users` is the one case where read-only is the wrong default. The
+   * account these grants land on is the customer's own ADMIN login, and the
+   * first thing a customer admin does is invite their staff. Shipping that
+   * ability switched off makes a new customer look broken in exactly the way
+   * the read-only default is meant to prevent — a 403 with no explanation —
+   * and the authority is bounded to the customer's own users either way.
+   *
+   * `delete` is still excluded: removing an account is destructive and the
+   * tenant can grant it per customer.
+   */
+  private static readonly DEFAULT_ACTIONS_BY_RESOURCE: Record<string, string[]> = {
+    customer_users: ['read', 'list', 'create', 'update'],
+  };
+
   /** Permissions a customer MAY hold, for the tenant's picker. */
   async getGrantablePermissions(tenantId: string | null): Promise<Permission[]> {
+    // ── The `undefined` trap, in the shape §4g and §4q both warn about ──────
+    //
+    // This was `where: [{ tenantId: tenantId ?? undefined }, { tenantId: IsNull() }]`.
+    // TypeORM DROPS a key whose value is `undefined` from the generated WHERE,
+    // so for a caller with no tenantId — a SUPER_ADMIN — the first branch
+    // became an empty object, which matches EVERY row. The grantable list then
+    // contained every tenant's custom permissions, and `setGrantedPermissions`
+    // is the only thing standing between that list and granting one tenant's
+    // custom permission to another tenant's customer.
+    //
+    // A missing tenantId must narrow to the system catalogue, never widen to
+    // all of them.
+    const where = tenantId
+      ? [{ tenantId }, { tenantId: IsNull() }]
+      : [{ tenantId: IsNull() }];
+
     const all = await this.permissionRepository.find({
-      where: [{ tenantId: tenantId ?? undefined }, { tenantId: IsNull() }],
+      where,
       order: { resource: 'ASC', action: 'ASC' },
     });
     return all.filter((p) =>
@@ -995,12 +1040,37 @@ private validateAllocatedLimits(
     customer.grantedPermissions = permissions;
     const saved = await this.customerRepository.save(customer);
 
+    // ── Why this invalidation is here and not on a listener ────────────────
+    //
+    // `PermissionGuard` resolves `(role ∪ direct) ∩ customer.grantedPermissions`
+    // and caches the RESULT per user, keyed by a per-tenant epoch. So the
+    // moment these grants change, every cached entry for every user under this
+    // customer is wrong — a revoked permission keeps working, and a newly
+    // granted one keeps 403-ing, for up to PERMISSION_CACHE_TTL_SECONDS (60),
+    // per replica.
+    //
+    // That is precisely the "permissions I assign don't apply" report. The
+    // feature was correct; the admin was reading a cache.
+    //
+    // This used to be an `eventEmitter.emit('customer.permissions.changed')`
+    // whose comment said the cached resolutions were now stale — and NOTHING
+    // IN THE REPOSITORY LISTENED FOR IT. An emit with no handler is not an
+    // invalidation, and it typechecks perfectly. The bump is a direct call
+    // now, so the correctness of a grant does not depend on a subscriber
+    // existing; the event is still emitted, for anything that wants to observe
+    // the change, but nothing load-bearing hangs off it.
+    //
+    // One INCR orphans every entry in the tenant with no SCAN and no chance of
+    // missing a user. It invalidates more than strictly necessary — users of
+    // OTHER customers in the tenant rebuild too — and that is the right trade:
+    // the alternative is finding the holders, which is the query the cache
+    // exists to avoid. Matches RolesService/UsersService (§11a).
+    await this.permissionCache.bumpTenant(customer.tenantId);
+
     this.logger.log(
       `Customer ${customerId} grants set to ${permissions.length} permission(s) by ${user.id}`,
     );
 
-    // Every user under this customer has a different effective permission set
-    // from this moment, so any cached resolution for them is stale.
     this.eventEmitter.emit('customer.permissions.changed', {
       customer: saved,
       tenantId: customer.tenantId,
@@ -1045,7 +1115,10 @@ private validateAllocatedLimits(
   ): Promise<Permission[]> {
     const grantable = await this.getGrantablePermissions(tenantId);
     return grantable.filter((p) =>
-      CustomersService.DEFAULT_CUSTOMER_ACTIONS.includes(p.action),
+      (
+        CustomersService.DEFAULT_ACTIONS_BY_RESOURCE[p.resource] ??
+        CustomersService.DEFAULT_CUSTOMER_ACTIONS
+      ).includes(p.action),
     );
   }
 

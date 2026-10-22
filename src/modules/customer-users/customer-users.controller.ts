@@ -63,7 +63,7 @@ export class CustomerUsersController {
     entityType: AuditEntityType.USER,
     description: 'create customer user',
   })
-  @RequirePermissions('users:create')
+  @RequirePermissions('customer_users:create')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a new customer user (sends invitation email)' })
@@ -97,7 +97,7 @@ export class CustomerUsersController {
   }
 
   @Get('hierarchy')
-  @RequirePermissions('users:list')
+  @RequirePermissions('customer_users:list')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(
   UserRole.SUPER_ADMIN,
@@ -129,7 +129,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
     entityType: AuditEntityType.USER,
     description: 'notification sent customer user',
   })
-  @RequirePermissions('users:update')
+  @RequirePermissions('customer_users:update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @ApiBearerAuth()
@@ -152,7 +152,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
     entityType: AuditEntityType.USER,
     description: 'create customer user',
   })
-  @RequirePermissions('users:create')
+  @RequirePermissions('customer_users:create')
   @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Assign a user to a customer' })
@@ -198,7 +198,12 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Get all users for a specific customer
    */
   @Get('customer/:customerId')
-  @RequirePermissions('users:read')
+  // This handler carried NO @Roles, and RolesGuard returns true without it
+  // (§4g) — so a customer id in the URL was readable by any authenticated
+  // account that held users:read. hasAccessToCustomer() bounds it too; both
+  // are needed, because the guard cannot see WHICH customer is named.
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER, UserRole.CUSTOMER_USER)
+  @RequirePermissions('customer_users:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all users for a customer' })
@@ -306,7 +311,10 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Get customers accessible by current user
    */
   @Get('accessible-customers')
-  @RequirePermissions('users:list')
+  // Was default-open (§4g). Answers from the caller's own principal, so
+  // every role may ask — but only an authenticated, role-listed one.
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER, UserRole.CUSTOMER_USER)
+  @RequirePermissions('customer_users:list')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get customers accessible by current user' })
@@ -349,7 +357,9 @@ async getHierarchy(@CurrentUser() currentUser: User) {
    * Search users within a customer
    */
   @Get('customer/:customerId/search')
-  @RequirePermissions('users:read')
+  // Was default-open (§4g), with a customer id in the URL.
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  @RequirePermissions('customer_users:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Search users within a customer' })
@@ -382,7 +392,7 @@ async getHierarchy(@CurrentUser() currentUser: User) {
   }
 
   @Get(':id/details')
-  @RequirePermissions('users:read')
+  @RequirePermissions('customer_users:read')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
 @ApiBearerAuth()
@@ -399,7 +409,10 @@ async getCustomerUserDetails(
    * Check if current user has access to a customer
    */
   @Get('check-access/:customerId')
-  @RequirePermissions('users:read')
+  // Was default-open (§4g). It reports whether the CALLER may reach a
+  // customer, so it answers about the caller's own principal only.
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER, UserRole.CUSTOMER_USER)
+  @RequirePermissions('customer_users:read')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Check if user has access to a customer' })

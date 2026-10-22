@@ -154,11 +154,41 @@ export class DevicesService {
       }
     }
 
+    // ── Attributing the device to the creator's customer ───────────────────
+    //
+    // `userId` and `tenantId` were set from the caller and `customerId` was
+    // not, so a device created by a CUSTOMER or CUSTOMER_USER landed with
+    // `customerId: null`. Two things followed, and the second is the nasty
+    // one:
+    //
+    //   1. `DeviceCredentialsService.verifyAccess()` runs during credential
+    //      issuance and requires `device.customerId === user.customerId` for a
+    //      customer-scoped principal. `null` never matches, so the request
+    //      answered 403 "Access denied to this device" — about the device the
+    //      caller had just created, which reads as a scoping bug in the
+    //      guards.
+    //
+    //   2. The device row is SAVED before credentials are issued, so the 403
+    //      left an orphan behind: a device owned by nobody's customer, which
+    //      its creator cannot see (read scoping filters on `customerId`) and
+    //      cannot delete. Every retry left another.
+    //
+    // A customer-scoped creator can only ever create within its own customer —
+    // `CreateDeviceDto` has no `customerId` field, so there is nothing for a
+    // caller to forge here, and this is read from the authenticated principal
+    // rather than the body in any case. A tenant admin keeps creating
+    // unassigned devices and assigning them afterwards (§4i).
+    const creatorCustomerId =
+      user.role === UserRole.CUSTOMER || user.role === UserRole.CUSTOMER_USER
+        ? user.customerId
+        : undefined;
+
     const device = this.deviceRepository.create({
       ...dto,
       deviceKey,
       userId: user.id,
       tenantId: user.tenantId,
+      ...(creatorCustomerId ? { customerId: creatorCustomerId } : {}),
       status: DeviceStatus.INACTIVE,
       manufacturer: dto.manufacturer,
       model: dto.model,
