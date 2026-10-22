@@ -86,6 +86,9 @@ export interface ReportSchedule {
 @Entity('report_templates')
 @Index(['tenantId', 'type'])
 @Index(['tenantId', 'enabled'])
+// Every scoped read is (tenantId, customerId) — the list, the detail, the
+// statistics and the execution join all narrow on both.
+@Index(['tenantId', 'customerId'])
 // The scheduler's only query is "which templates are due?", which is this
 // index: a partial-free composite on (enabled, nextRunAt) ordered by due time.
 @Index(['enabled', 'nextRunAt'])
@@ -96,6 +99,26 @@ export class ReportTemplate extends BaseEntity {
   @ManyToOne('Tenant')
   @JoinColumn({ name: 'tenantId' })
   tenant: Relation<Tenant>;
+
+  /**
+   * Which customer the template belongs to, or NULL for a tenant-wide one.
+   *
+   * The module had no customer dimension at all, so every customer-scoped
+   * caller of `GET /reports` saw every template of its tenant — including
+   * templates written for a sibling customer, whose `definition.filters`
+   * carry that customer's device and asset ids.
+   *
+   * NULL is a real and common value, not a gap: a template saved by a tenant
+   * admin with no customer named is tenant-wide, and every customer of the
+   * tenant may run it. That is why the read path asks for
+   * `includeUnassigned: true` — the one place in the codebase that does.
+   *
+   * No FK. The column is nullable and set by hand on a write; a hard-deleted
+   * customer must not take the tenant's templates with it, and the read is a
+   * plain predicate either way.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  customerId?: string | null;
 
   /**
    * Who saved it. No relation and no foreign key: a report template is a

@@ -6,12 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Not, Repository } from 'typeorm';
+import { DataSource, Not, Repository, SelectQueryBuilder } from 'typeorm';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as cronParser from 'cron-parser';
 import { PaginatedResponseDto } from '@common/dto/pagination.dto';
+import { applyAccessScope } from '@common/scoping/apply-access-scope';
 import { XLSX_MIME_TYPE } from '@common/utils/xlsx.util';
 import { User } from '@modules/users/entities/user.entity';
 import {
@@ -101,9 +102,12 @@ export class ReportsService {
       dto.definition as unknown as ReportDefinition,
     );
     const schedule = this.validateSchedule(dto.schedule as ReportSchedule | undefined);
+    await this.assertCustomerInTenant(tenantId, dto.customerId);
 
     const template = this.templateRepo.create({
       tenantId,
+      // NULL means tenant-wide: every customer of this tenant may run it.
+      customerId: dto.customerId ?? null,
       userId,
       createdBy: userId,
       name,
@@ -128,15 +132,20 @@ export class ReportsService {
   }
 
   async findAll(
-    tenantId: string,
+    user: User,
     query: ReportTemplateQueryDto,
   ): Promise<PaginatedResponseDto<ReportTemplate>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
 
-    const qb = this.templateRepo
-      .createQueryBuilder('r')
-      .where('r.tenantId = :tenantId', { tenantId });
+    const qb = this.templateRepo.createQueryBuilder('r');
+
+    // This module had no customer dimension at all: every read was
+    // tenant-only, so a customer admin listed every template of its tenant,
+    // sibling customers' included. A template is tenant-owned, so the rule is
+    // "mine, or nobody's" — `includeUnassigned` adds the tenant-wide
+    // templates (customerId IS NULL) that every customer may run.
+    ReportsService.applyTemplateScope(qb, 'r', user);
 
     if (query.type) qb.andWhere('r.type = :type', { type: query.type });
     if (query.entity) {
@@ -176,7 +185,54 @@ export class ReportsService {
     return PaginatedResponseDto.create(rows, page, limit, total);
   }
 
-  async findOne(tenantId: string, id: string): Promise<ReportTemplate> {
+  /**
+   * The scope every template read shares.
+   *
+   * `includeUnassigned` is the decision this module needed and the reason the
+   * option exists on the helper at all: for a device or an asset, a row with
+   * no customer is tenant-level inventory a customer must not see, but for a
+   * report TEMPLATE it is a tenant-wide definition every customer of the
+   * tenant is meant to be able to run. Nothing else about the rule differs,
+   * so nothing else is re-implemented.
+   */
+  private static applyTemplateScope(
+    qb: SelectQueryBuilder<ReportTemplate> | SelectQueryBuilder<ReportExecution>,
+    alias: string,
+    user: User,
+  ): void {
+    applyAccessScope(qb as SelectQueryBuilder<any>, alias, user, {
+      includeUnassigned: true,
+    });
+  }
+
+  /** One template, scoped to the caller. 404 — never 403 — outside the scope. */
+  async findOne(user: User, id: string): Promise<ReportTemplate> {
+    const qb = this.templateRepo
+      .createQueryBuilder('r')
+      .where('r.id = :id', { id });
+
+    ReportsService.applyTemplateScope(qb, 'r', user);
+
+    const template = await qb.getOne();
+    if (!template) throw new NotFoundException(`Report template ${id} not found`);
+    return template;
+  }
+
+  /**
+   * The tenant-only lookup the write paths use.
+   *
+   * Every caller (`update`, `remove`, `generate`) is TENANT_ADMIN-and-above by
+   * decorator, and for those roles this is exactly what `findOne` resolves to
+   * anyway — the customer predicate only ever applies to CUSTOMER and
+   * CUSTOMER_USER. Kept separate and named for the tenant so that it cannot
+   * be mistaken for the scoped read.
+   */
+  private async findOneWithinTenant(
+    tenantId: string,
+    id: string,
+  ): Promise<ReportTemplate> {
+    if (!tenantId) throw new NotFoundException(`Report template ${id} not found`);
+
     const template = await this.templateRepo.findOne({
       where: { id, tenantId },
     });
@@ -190,7 +246,7 @@ export class ReportsService {
     userId: string,
     dto: UpdateReportTemplateDto,
   ): Promise<ReportTemplate> {
-    const template = await this.findOne(tenantId, id);
+    const template = await this.findOneWithinTenant(tenantId, id);
 
     if (dto.name !== undefined) {
       const name = dto.name.trim();
@@ -199,6 +255,13 @@ export class ReportsService {
     }
     if (dto.description !== undefined) template.description = dto.description;
     if (dto.type !== undefined) template.type = dto.type;
+    if (dto.customerId !== undefined) {
+      // An explicit null (or empty string) hands the template back to the
+      // whole tenant; anything else must be a customer OF this tenant, or
+      // reassignment becomes a way to push a template into another tenant.
+      await this.assertCustomerInTenant(tenantId, dto.customerId);
+      template.customerId = dto.customerId ?? null;
+    }
     if (dto.definition !== undefined) {
       template.definition = this.validateDefinition(
         dto.definition as unknown as ReportDefinition,
@@ -231,7 +294,7 @@ export class ReportsService {
     id: string,
     userId: string,
   ): Promise<{ message: string; artefactsDeleted: number }> {
-    const template = await this.findOne(tenantId, id);
+    const template = await this.findOneWithinTenant(tenantId, id);
     const executions = await this.executionRepo.find({
       where: { reportTemplateId: template.id, tenantId },
     });
@@ -396,7 +459,7 @@ export class ReportsService {
     user: User,
     dto: GenerateReportDto,
   ) {
-    const template = await this.findOne(tenantId, id);
+    const template = await this.findOneWithinTenant(tenantId, id);
     const result = await this.run(tenantId, template, {
       trigger: ReportTrigger.MANUAL,
       runAs: user,
@@ -443,35 +506,64 @@ export class ReportsService {
   // EXECUTIONS
   // ══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * An execution carries no customer of its own — it is scoped THROUGH its
+   * template, which is the only row that knows whose report this is.
+   *
+   * An inner join rather than a second column: a `report_executions`
+   * `customerId` would be a copy that can disagree with the template after a
+   * reassignment, and the template is already on the row's FK path. The join
+   * is also what makes a soft-deleted or foreign template's executions
+   * disappear from the list.
+   */
+  private scopedExecutions(user: User): SelectQueryBuilder<ReportExecution> {
+    const qb = this.executionRepo
+      .createQueryBuilder('e')
+      // The execution's own tenant is tied to the template's by the join
+      // condition, and the scope is then applied to the template — which is
+      // the row that has a customerId at all. `report_executions` has no
+      // customer column on purpose (see the migration), so the scope cannot
+      // be applied to `e` directly; asking the helper to skip a dimension
+      // would be the drift this whole change removes.
+      .innerJoin(
+        ReportTemplate,
+        't',
+        't.id = e.reportTemplateId AND t.tenantId = e.tenantId',
+      );
+
+    ReportsService.applyTemplateScope(qb, 't', user);
+
+    return qb;
+  }
+
   async findExecutions(
-    tenantId: string,
+    user: User,
     query: ReportExecutionQueryDto,
   ): Promise<PaginatedResponseDto<ReportExecution>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
 
-    const where: Record<string, unknown> = { tenantId };
+    const qb = this.scopedExecutions(user);
     if (query.reportTemplateId) {
-      where.reportTemplateId = query.reportTemplateId;
+      qb.andWhere('e.reportTemplateId = :reportTemplateId', {
+        reportTemplateId: query.reportTemplateId,
+      });
     }
 
-    const [rows, total] = await this.executionRepo.findAndCount({
-      where: where as any,
-      order: { createdAt: 'DESC' },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+    const [rows, total] = await qb
+      .orderBy('e.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
 
     return PaginatedResponseDto.create(rows, page, limit, total);
   }
 
-  async findExecution(
-    tenantId: string,
-    id: string,
-  ): Promise<ReportExecution> {
-    const execution = await this.executionRepo.findOne({
-      where: { id, tenantId },
-    });
+  async findExecution(user: User, id: string): Promise<ReportExecution> {
+    const execution = await this.scopedExecutions(user)
+      .andWhere('e.id = :id', { id })
+      .getOne();
+
     if (!execution) {
       throw new NotFoundException(`Report execution ${id} not found`);
     }
@@ -480,10 +572,12 @@ export class ReportsService {
 
   /** The stored artefact, for `GET /reports/executions/:id/download`. */
   async readArtefact(
-    tenantId: string,
+    user: User,
     id: string,
   ): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
-    const execution = await this.findExecution(tenantId, id);
+    // Goes through the scoped lookup: the download is the disclosure that
+    // matters most here — the file holds the rows themselves.
+    const execution = await this.findExecution(user, id);
     if (!execution.filePath) {
       throw new NotFoundException(
         execution.status === ReportExecutionStatus.FAILED
@@ -537,14 +631,16 @@ export class ReportsService {
     };
   }
 
-  async getStatistics(tenantId: string) {
+  async getStatistics(user: User) {
+    const templateQb = this.templateRepo.createQueryBuilder('r');
+    ReportsService.applyTemplateScope(templateQb, 'r', user);
+
     const [templates, executions] = await Promise.all([
-      this.templateRepo.find({ where: { tenantId } }),
-      this.executionRepo.find({
-        where: { tenantId },
-        order: { createdAt: 'DESC' },
-        take: 500,
-      }),
+      templateQb.getMany(),
+      this.scopedExecutions(user)
+        .orderBy('e.createdAt', 'DESC')
+        .take(500)
+        .getMany(),
     ]);
 
     return {
@@ -829,6 +925,35 @@ export class ReportsService {
     if (clash) {
       throw new ConflictException(
         `A report template named "${name}" already exists in this tenant`,
+      );
+    }
+  }
+
+  /**
+   * A template may only be assigned to a customer of its own tenant.
+   *
+   * Queried through the DataSource rather than by injecting
+   * `CustomersService`: this module imports no sibling feature module, and
+   * the check is one row. `customers` is soft-deletable, so a removed
+   * customer is not a valid target either.
+   */
+  private async assertCustomerInTenant(
+    tenantId: string,
+    customerId?: string | null,
+  ): Promise<void> {
+    if (!customerId) return;
+
+    const rows: Array<{ exists: number }> = await this.dataSource.query(
+      `SELECT 1 AS exists
+         FROM customers
+        WHERE id = $1 AND "tenantId" = $2 AND deleted_at IS NULL
+        LIMIT 1`,
+      [customerId, tenantId],
+    );
+
+    if (rows.length === 0) {
+      throw new BadRequestException(
+        `Customer ${customerId} is not a customer of this tenant`,
       );
     }
   }

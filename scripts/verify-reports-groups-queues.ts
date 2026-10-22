@@ -544,8 +544,11 @@ const TRICKY_DEVICE_NAME = 'Lobby, "North"';
     generated.execution?.rowCount === 9 && (generated.execution?.byteSize ?? 0) > 0,
     { rowCount: generated.execution?.rowCount, byteSize: generated.execution?.byteSize },
   );
+  // Takes the PRINCIPAL now, not a tenant id: a report template carries a
+  // customerId, and only a role can say whether a missing customer means
+  // "tenant-wide, by right" or "deny".
   const downloaded = await reportsService.readArtefact(
-    TENANT_A,
+    userA,
     generated.execution!.id,
   );
   check(
@@ -561,7 +564,7 @@ const TRICKY_DEVICE_NAME = 'Lobby, "North"';
   // ── Cross-tenant read of an execution ───────────────────────────────────
   let executionCrossTenant = false;
   try {
-    await reportsService.readArtefact(TENANT_B, generated.execution!.id);
+    await reportsService.readArtefact(userB, generated.execution!.id);
   } catch {
     executionCrossTenant = true;
   }
@@ -592,7 +595,7 @@ const TRICKY_DEVICE_NAME = 'Lobby, "North"';
     format: ReportFormat.PDF,
   });
   const pdfBytes = await reportsService.readArtefact(
-    TENANT_A,
+    userA,
     pdf.execution!.id,
   );
   check(

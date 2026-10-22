@@ -19,7 +19,7 @@ import {
   TenantAdminOnly,
   TenantOrCustomerAdmin,
 } from '@common/decorators/access-control.decorator';
-import type { User } from '@modules/users/entities/user.entity';
+import { User } from '@modules/users/entities/user.entity';
 import { ReportsService } from './reports.service';
 import {
   CreateReportTemplateDto,
@@ -62,10 +62,13 @@ export class ReportsController {
   @ApiOperation({ summary: 'List report templates' })
   @SwaggerAuth('List report templates', 'Paginated templates')
   findAll(
-    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser() user: User,
     @Query() query: ReportTemplateQueryDto,
   ) {
-    return this.reportsService.findAll(tenantId, query);
+    // The whole principal, not just its tenantId: a report template now has a
+    // customer dimension, and a scope decision that cannot see the caller's
+    // ROLE cannot tell "no customer, by right" from "no customer, so deny".
+    return this.reportsService.findAll(user, query);
   }
 
   // All of the literal paths must precede `:id`, or they are parsed as ids.
@@ -90,8 +93,8 @@ export class ReportsController {
   @TenantOrCustomerAdmin()
   @ApiOperation({ summary: 'Template counts, recent failures and the next scheduled run' })
   @SwaggerAuth('Report statistics', 'Counts')
-  getStatistics(@CurrentUser('tenantId') tenantId: string) {
-    return this.reportsService.getStatistics(tenantId);
+  getStatistics(@CurrentUser() user: User) {
+    return this.reportsService.getStatistics(user);
   }
 
   @Get('executions')
@@ -106,10 +109,10 @@ export class ReportsController {
   })
   @SwaggerAuth('List report executions', 'Paginated executions')
   findExecutions(
-    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser() user: User,
     @Query() query: ReportExecutionQueryDto,
   ) {
-    return this.reportsService.findExecutions(tenantId, query);
+    return this.reportsService.findExecutions(user, query);
   }
 
   @Get('executions/:executionId')
@@ -118,10 +121,10 @@ export class ReportsController {
   @ApiOperation({ summary: 'One generated report’s metadata' })
   @SwaggerAuth('Get a report execution', 'The execution')
   findExecution(
-    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser() user: User,
     @Param('executionId', ParseUUIDPipe) executionId: string,
   ) {
-    return this.reportsService.findExecution(tenantId, executionId);
+    return this.reportsService.findExecution(user, executionId);
   }
 
   /**
@@ -142,12 +145,12 @@ export class ReportsController {
   })
   @SwaggerAuth('Download a report', 'The file')
   async download(
-    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser() user: User,
     @Param('executionId', ParseUUIDPipe) executionId: string,
     @Res() res: Response,
   ): Promise<void> {
     const { content, fileName, mimeType } =
-      await this.reportsService.readArtefact(tenantId, executionId);
+      await this.reportsService.readArtefact(user, executionId);
 
     res.setHeader('Content-Type', mimeType);
     res.setHeader(
@@ -164,10 +167,10 @@ export class ReportsController {
   @ApiOperation({ summary: 'One report template' })
   @SwaggerAuth('Get a report template', 'The template')
   findOne(
-    @CurrentUser('tenantId') tenantId: string,
+    @CurrentUser() user: User,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.reportsService.findOne(tenantId, id);
+    return this.reportsService.findOne(user, id);
   }
 
   @Post()

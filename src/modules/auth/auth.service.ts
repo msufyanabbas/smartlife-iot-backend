@@ -509,8 +509,16 @@ export class AuthService {
     }
 
     user.emailVerified = true;
-    user.emailVerificationToken = undefined;
     await this.userRepository.save(user);
+
+    // `= undefined` on the entity would be dropped from the UPDATE (see
+    // setPasswordFromToken). Benign here only because an already-verified
+    // user is rejected above — written properly so that guard is not the only
+    // thing holding it.
+    await this.userRepository.update(
+      { id: user.id },
+      { emailVerificationToken: null as never },
+    );
 
     this.logger.log(`Email verified for user: ${user.email}`);
 
@@ -1030,11 +1038,46 @@ export class AuthService {
     user.password = newPassword;
     user.status = UserStatus.ACTIVE;
     user.emailVerified = true;
-    user.setPasswordToken = undefined;
-    user.setPasswordExpires = undefined;
 
+    // The @BeforeUpdate hash runs on save(), so the password must go through
+    // the entity; the token columns must NOT.
     await this.userRepository.save(user);
+
+    // ── Why this is a separate update() and not `= undefined` above ────────
+    //
+    // TypeORM reads `undefined` as "leave this column alone" and omits it from
+    // the UPDATE entirely. Assigning `undefined` to the token columns was
+    // therefore a no-op: the row kept its setPasswordToken after activation,
+    // verified against the database.
+    //
+    // That turned every invitation link into a REUSABLE, unauthenticated
+    // password reset, valid for the whole 7-day window and surviving the
+    // activation it was issued for. Anyone who saw the URL — in a forwarded
+    // email, a browser history, a proxy log — could set the account's password
+    // again at any point in that week.
+    //
+    // `update()` with explicit nulls writes the columns. Doing it as a second
+    // statement rather than on the entity keeps the typing honest: the fields
+    // are `string | undefined` in TypeScript and nullable in Postgres, and
+    // `null as any` on the entity is how this was silently wrong in the first
+    // place.
+    await this.userRepository.update(
+      { id: user.id },
+      { setPasswordToken: null as never, setPasswordExpires: null as never },
+    );
+
     this.logger.log(`Password set and account activated for: ${user.email}`);
+
+    // The customers row tracks its own status, and nothing moved it when the
+    // user it belongs to activated — so an invited customer stayed INACTIVE
+    // forever and every admin screen showed it as such. The listener for this
+    // event flips it.
+    this.eventEmitter.emit('user.status.changed', {
+      user,
+      previousStatus: UserStatus.INACTIVE,
+      newStatus: UserStatus.ACTIVE,
+      reason: 'invitation-accepted',
+    });
 
     return { message: 'Password set successfully. You can now log in.' };
   }
@@ -1351,9 +1394,15 @@ export class AuthService {
     }
 
     user.password = dto.newPassword; // @BeforeUpdate hook hashes it
-    user.passwordResetToken = undefined;
-    user.passwordResetExpires = undefined;
     await this.userRepository.save(user);
+
+    // Same defect as the invitation path: `= undefined` is omitted from the
+    // UPDATE by TypeORM, so a reset link stayed usable for its full one-hour
+    // window AFTER being redeemed. Written explicitly.
+    await this.userRepository.update(
+      { id: user.id },
+      { passwordResetToken: null as never, passwordResetExpires: null as never },
+    );
 
     // Revoke all refresh tokens — forces re-login on all devices
     await this.refreshTokenRepository.update(

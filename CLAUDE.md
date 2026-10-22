@@ -1118,6 +1118,48 @@ the id exists, which turns any detail route into an enumeration oracle.
 | `DevicesService.applyAccessFilter` | Skipped the tenant predicate entirely when `user.tenantId` was falsy. |
 | `SubscriptionsController` / `PaymentsController` | No `@Roles` anywhere: cancellation and plan changes open to `CUSTOMER_USER`, invoice history readable by anyone, and the two routes commented "TODO: Add AdminGuard" open across all tenants. |
 
+### The scope predicate now lives in ONE function
+
+**`applyAccessScope()` in `src/common/scoping/apply-access-scope.ts` is the only
+place a read's tenant/customer predicate should be written.** It is
+`DevicesService.applyAccessFilter()` lifted out, behaviour unchanged: falsy
+`tenantId` → `1 = 0`, falsy `customerId` on a customer-scoped role → `1 = 0`,
+`SUPER_ADMIN` unscoped, everything else a predicate so the answer is a 404.
+
+The same twelve lines had been hand-written five times, and four of the copies
+had drifted into leaks that a later audit found:
+
+| Where | What it meant |
+|---|---|
+| `AssetsService.findOne` (and `getRootAssets`, `getChildren`, `getDevices`, `searchByLocation`, `getStatistics`, `findByCustomer`) | A CUSTOMER_USER got a customer predicate and **no tenant predicate**; `CUSTOMER` and plain `USER` got **no predicate at all** — either role read any asset on the platform by uuid. `findByCustomer` was `find({ where: { customerId } })`, with no tenant anywhere. |
+| `DashboardsService.findAll` (and `getDefault`, `getShared`, `getStatistics`, `findByCustomer`, `checkAccess`) | The CUSTOMER_USER branch was `userId OR customerId OR visibility = PUBLIC` with **no tenant predicate**, so every tenant's PUBLIC dashboards were listed to every customer user. Separately `UserRole.CUSTOMER` fell through to `userId = me` and could not see its own customer's dashboards at all. |
+| `AlarmsService.findOne` / `findAll` / `getActive` / `getCritical` / `getCounts` / `getStatistics` / `getDeviceAlarms` / `getDeviceHistory` | `findOne` was tenant-only, so `alerts:read` reached a **sibling customer's** alarms; the list applied the customer predicate only `if (customerId)`, so a falsy `customerId` widened to tenant-wide. The read paths take the `User` now, because a scope decision that cannot see the ROLE cannot tell "no customer, by right" from "no customer, so deny". |
+| `ReportsService` | **No customer dimension at all.** `report_templates.customerId` is new (nullable — NULL means a tenant-wide template every customer may run, which is what `{ includeUnassigned: true }` expresses; it is the only call site that asks for it). Executions are scoped **through** their template, not by a copied column. Apply with `npm run migration:report-template-customer <db> [up\|down]`. |
+| `DevicesService.findAll` | A sixth copy, in the file the correct version came from: `if (effectiveTenantId)` skipped the tenant predicate for a non-SUPER_ADMIN with no tenantId. |
+
+`npm run verify:access-scoping [db]` proves all of it against a real Postgres —
+two tenants, two customers in one of them, every role, and the negative
+controls (cross-tenant by uuid, sibling customer, falsy customerId). It fails
+if any of the fixes is reverted.
+
+**`request.tenantFilter` / `request.customerFilter` are gone.**
+`TenantIsolationGuard` and `CustomerAccessGuard` wrote them and **nothing in
+the repository ever read them**, while their comments ("Services use that
+filter") read like a scoping mechanism. Both guards keep the one check they can
+make — a tenant or customer named in the URL that is not the caller's — and
+nothing else. `CustomerAccessGuard` also threw `Access denied: insufficient
+role` for the plain `USER` role; it is an `APP_GUARD`, so that refused a
+tenant-level user the **entire API**, including the routes whose `@Roles` list
+`UserRole.USER`. A tenant user with no customer is tenant-scoped, not
+unauthorised.
+
+Still open, deliberately: the alarm **write** paths (`acknowledge`, `clear`,
+`resolve`, `assign`, `enable`, `disable`, `remove`, `update`, `testAlarm`) reach
+`AlarmsService` with a `tenantId` and no role, so they remain tenant-scoped and
+customer-blind. Closing that means passing the principal down through nine
+signatures. `findOneWithinTenant()` is named so that it cannot be mistaken for
+the scoped read.
+
 ### Related: three remote code execution holes
 
 User-authored JavaScript was being run through bare **`new Function()`**, which

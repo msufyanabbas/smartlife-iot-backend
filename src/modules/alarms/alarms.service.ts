@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Alarm, Asset, Device, User as UserEntity } from '@modules/index.entities';
 import {
   AlarmCondition,
@@ -34,6 +34,7 @@ import {
   resolveEscalationRules,
   EscalationRule,
 } from './alarm-escalation.policy';
+import { applyAccessScope } from '@common/scoping/apply-access-scope';
 
 @Injectable()
 export class AlarmsService {
@@ -427,11 +428,16 @@ export class AlarmsService {
   /**
    * Find all alarms with filters
    */
-  async findAll(
-    tenantId: string | undefined,
-    query: AlarmQueryDto,
-    customerId?: string,
-  ) {
+  /**
+   * Takes the whole principal, not a `tenantId` + optional `customerId`.
+   *
+   * That signature was the bug: the customer predicate was applied
+   * `if (customerId)`, so a CUSTOMER_USER whose `customerId` was missing read
+   * the entire tenant's alarms, and the service had no way to tell that case
+   * apart from a tenant admin who legitimately has no customer. A role has to
+   * reach the scope decision for a falsy value to be deniable.
+   */
+  async findAll(user: User, query: AlarmQueryDto) {
     const {
       page = 1,
       limit = 20,
@@ -446,13 +452,12 @@ export class AlarmsService {
 
     const queryBuilder = this.alarmRepository
       .createQueryBuilder('alarm')
-      .leftJoinAndSelect('alarm.device', 'device')
-      .where('alarm.tenantId = :tenantId', { tenantId });
+      .leftJoinAndSelect('alarm.device', 'device');
 
-    // Filter by customer if provided
-    if (customerId) {
-      queryBuilder.andWhere('alarm.customerId = :customerId', { customerId });
-    }
+    // Tenant and customer in one place, with a falsy value denying rather
+    // than widening. `.where('alarm.tenantId = :tenantId', { tenantId })` with
+    // an undefined tenantId was the other half of the same problem.
+    applyAccessScope(queryBuilder, 'alarm', user);
 
     // Filter by device
     if (deviceId) {
@@ -525,9 +530,59 @@ export class AlarmsService {
   }
 
   /**
-   * Get alarm by ID
+   * Get alarm by ID, scoped to the caller.
+   *
+   * THE LEAK THIS CLOSES: this was tenant-only, so a customer user holding
+   * `alerts:read` could read any alarm in its tenant — including alarms
+   * belonging to a sibling customer, whose name, rule and metadata are in the
+   * response. The customer dimension is applied through the same helper every
+   * other read uses.
+   *
+   * A mismatch is a 404, not a 403, matching how `TelemetryService`
+   * (`resolveDeviceForUser`) answers: a 403 confirms the id exists and turns
+   * this route into an enumeration oracle (§4g).
    */
-  async findOne(id: string, tenantId: string | undefined): Promise<Alarm> {
+  async findOne(id: string, user: User): Promise<Alarm> {
+    const queryBuilder = this.alarmRepository
+      .createQueryBuilder('alarm')
+      .leftJoinAndSelect('alarm.device', 'device')
+      .where('alarm.id = :id', { id });
+
+    applyAccessScope(queryBuilder, 'alarm', user);
+
+    const alarm = await queryBuilder.getOne();
+
+    if (!alarm) {
+      throw new NotFoundException(`Alarm with ID ${id} not found`);
+    }
+
+    return alarm;
+  }
+
+  /**
+   * The tenant-only lookup the write paths in this file use.
+   *
+   * It is deliberately NOT the controller-facing read: every caller is an
+   * operator action (`update`, `acknowledge`, `clear`, `resolve`, `assign`,
+   * `enable`, `disable`, `remove`, `testAlarm`) that reaches this service with
+   * a tenantId and no role, so it can carry the tenant dimension and no more.
+   * Those routes are therefore still customer-blind — a pre-existing gap on
+   * the WRITE side, recorded here rather than silently widened into the read
+   * path. Closing it means passing the principal down from the controller,
+   * which is a change to nine signatures and belongs in its own pass.
+   *
+   * The name says tenant so that nobody reads it as "the scoped one".
+   */
+  private async findOneWithinTenant(
+    id: string,
+    tenantId: string | undefined,
+  ): Promise<Alarm> {
+    // A falsy tenantId would be dropped from the `where` by TypeORM, leaving a
+    // lookup by id alone. Deny instead.
+    if (!tenantId) {
+      throw new NotFoundException(`Alarm with ID ${id} not found`);
+    }
+
     const alarm = await this.alarmRepository.findOne({
       where: { id, tenantId },
       relations: ['device'],
@@ -548,7 +603,7 @@ export class AlarmsService {
     tenantId: string | undefined,
     updateDto: UpdateAlarmDto,
   ): Promise<Alarm> {
-    const alarm = await this.findOne(id, tenantId);
+    const alarm = await this.findOneWithinTenant(id, tenantId);
 
     // Routed through the same mapping as create() so a client can PATCH with
     // the payload it posted — flat notification fields included.
@@ -566,7 +621,7 @@ export class AlarmsService {
    * Delete alarm
    */
   async remove(id: string, tenantId: string | undefined): Promise<void> {
-    const alarm = await this.findOne(id, tenantId);
+    const alarm = await this.findOneWithinTenant(id, tenantId);
     await this.alarmRepository.softRemove(alarm);
     
     // Emit event
@@ -582,7 +637,7 @@ export class AlarmsService {
     userId: string,
     acknowledgeDto?: AcknowledgeAlarmDto,
   ): Promise<Alarm> {
-    const alarm = await this.findOne(id, tenantId);
+    const alarm = await this.findOneWithinTenant(id, tenantId);
 
     // ThingsBoard allows acknowledging a cleared alarm (CLEARED_UNACK →
     // CLEARED_ACK): an operator still needs to confirm they saw an alarm that
@@ -629,7 +684,7 @@ export class AlarmsService {
     tenantId: string | undefined,
     userId?: string,
   ): Promise<Alarm> {
-    const alarm = await this.findOne(id, tenantId);
+    const alarm = await this.findOneWithinTenant(id, tenantId);
 
     if (
       alarm.status !== AlarmStatus.ACTIVE &&
@@ -663,7 +718,7 @@ export class AlarmsService {
     tenantId: string | undefined,
     userId: string | null,
   ): Promise<Alarm> {
-    const alarm = await this.findOne(id, tenantId);
+    const alarm = await this.findOneWithinTenant(id, tenantId);
 
     if (userId) {
       const assignee = await this.userRepository.findOne({
@@ -690,14 +745,10 @@ export class AlarmsService {
    * the stored status plus acknowledgedAt. One grouped query per axis rather
    * than the 13 sequential counts getStatistics() issues.
    */
-  async getCounts(tenantId: string | undefined, customerId?: string) {
+  async getCounts(user: User) {
     const base = () => {
-      const qb = this.alarmRepository
-        .createQueryBuilder('alarm')
-        .where('alarm.tenantId = :tenantId', { tenantId });
-      if (customerId) {
-        qb.andWhere('alarm.customerId = :customerId', { customerId });
-      }
+      const qb = this.alarmRepository.createQueryBuilder('alarm');
+      applyAccessScope(qb, 'alarm', user);
       return qb;
     };
 
@@ -770,7 +821,7 @@ export class AlarmsService {
     userId: string,
     resolveDto: ResolveAlarmDto,
   ): Promise<Alarm> {
-    const alarm = await this.findOne(id, tenantId);
+    const alarm = await this.findOneWithinTenant(id, tenantId);
 
     alarm.resolve(userId, resolveDto.note);
     const saved = await this.alarmRepository.save(alarm);
@@ -790,7 +841,7 @@ export class AlarmsService {
    * override when set, otherwise the severity default from the shared policy.
    */
   async getEscalationHistory(id: string, tenantId: string | undefined) {
-    const alarm = await this.findOne(id, tenantId);
+    const alarm = await this.findOneWithinTenant(id, tenantId);
 
     return {
       alarmId: alarm.id,
@@ -815,7 +866,7 @@ export class AlarmsService {
    * Enable alarm
    */
   async enable(id: string, tenantId: string | undefined): Promise<Alarm> {
-    const alarm = await this.findOne(id, tenantId);
+    const alarm = await this.findOneWithinTenant(id, tenantId);
     alarm.isEnabled = true;
     return await this.alarmRepository.save(alarm);
   }
@@ -824,7 +875,7 @@ export class AlarmsService {
    * Disable alarm
    */
   async disable(id: string, tenantId: string | undefined): Promise<Alarm> {
-    const alarm = await this.findOne(id, tenantId);
+    const alarm = await this.findOneWithinTenant(id, tenantId);
     alarm.isEnabled = false;
     return await this.alarmRepository.save(alarm);
   }
@@ -931,144 +982,130 @@ private evaluateCondition(rule: any, value: any): boolean {
   /**
    * Get active alarms
    */
-  async getActive(tenantId: string | undefined, customerId?: string): Promise<Alarm[]> {
-    const whereCondition: any = {
-      tenantId,
-      status: AlarmStatus.ACTIVE,
-    };
+  async getActive(user: User): Promise<Alarm[]> {
+    const qb = this.alarmRepository
+      .createQueryBuilder('alarm')
+      .leftJoinAndSelect('alarm.device', 'device')
+      .where('alarm.status = :status', { status: AlarmStatus.ACTIVE });
 
-    if (customerId) {
-      whereCondition.customerId = customerId;
-    }
+    // Was `if (customerId)` over a `find({ where })` object: a customer-scoped
+    // caller with no customerId got the tenant's whole active-alarm list.
+    applyAccessScope(qb, 'alarm', user);
 
-    return await this.alarmRepository.find({
-      where: whereCondition,
-      relations: ['device'],
-      order: {
-        // Postgres orders an enum by its declared position, and
-        // alarms_severity_enum is declared info(1) → warning → error →
-        // critical(4). ASC therefore returned INFO first, the opposite of what
-        // the comment claimed. DESC is what puts CRITICAL at the top.
-        severity: 'DESC',
-        triggeredAt: 'DESC',
-      },
-    });
+    return await qb
+      // Postgres orders an enum by its declared position, and
+      // alarms_severity_enum is declared info(1) → warning → error →
+      // critical(4). DESC is what puts CRITICAL at the top.
+      .orderBy('alarm.severity', 'DESC')
+      .addOrderBy('alarm.triggeredAt', 'DESC')
+      .getMany();
   }
 
   /**
    * Get critical unacknowledged alarms
    */
-  async getCritical(tenantId: string | undefined, customerId?: string): Promise<Alarm[]> {
-    const whereCondition: any = {
-      tenantId,
-      status: AlarmStatus.ACTIVE,
-      severity: AlarmSeverity.CRITICAL,
-    };
+  async getCritical(user: User): Promise<Alarm[]> {
+    const qb = this.alarmRepository
+      .createQueryBuilder('alarm')
+      .leftJoinAndSelect('alarm.device', 'device')
+      .where('alarm.status = :status', { status: AlarmStatus.ACTIVE })
+      .andWhere('alarm.severity = :severity', {
+        severity: AlarmSeverity.CRITICAL,
+      });
 
-    if (customerId) {
-      whereCondition.customerId = customerId;
-    }
+    applyAccessScope(qb, 'alarm', user);
 
-    return await this.alarmRepository.find({
-      where: whereCondition,
-      relations: ['device'],
-      order: { triggeredAt: 'DESC' },
-    });
+    return await qb.orderBy('alarm.triggeredAt', 'DESC').getMany();
   }
 
   /**
    * Get alarms for a specific device
    */
-  async getDeviceAlarms(tenantId: string | undefined, deviceId: string): Promise<Alarm[]> {
-    return await this.alarmRepository.find({
-      where: { tenantId, deviceId },
-      order: {
-        // alarms_status_enum is declared active(1) first, so ASC is correct
-        // here; alarms_severity_enum is declared critical LAST, so severity
-        // needs DESC to surface critical first.
-        status: 'ASC',
-        severity: 'DESC',
-        triggeredAt: 'DESC',
-      },
-    });
+  async getDeviceAlarms(user: User, deviceId: string): Promise<Alarm[]> {
+    const qb = this.alarmRepository
+      .createQueryBuilder('alarm')
+      .where('alarm.deviceId = :deviceId', { deviceId });
+
+    // The device id comes from the URL, so this route was a way for a customer
+    // user to read a sibling customer's alarms by naming their device.
+    applyAccessScope(qb, 'alarm', user);
+
+    return await qb
+      // alarms_status_enum is declared active(1) first, so ASC is correct
+      // here; alarms_severity_enum is declared critical LAST, so severity
+      // needs DESC to surface critical first.
+      .orderBy('alarm.status', 'ASC')
+      .addOrderBy('alarm.severity', 'DESC')
+      .addOrderBy('alarm.triggeredAt', 'DESC')
+      .getMany();
   }
 
   /**
    * Get alarm statistics
    */
-  async getStatistics(tenantId: string | undefined, customerId?: string) {
-    const whereCondition: any = { tenantId };
-    
-    if (customerId) {
-      whereCondition.customerId = customerId;
-    }
+  async getStatistics(user: User) {
+    // One scoped base query, cloned per count, instead of thirteen `where`
+    // objects that each had to remember the customer dimension — and one of
+    // which would eventually forget it.
+    const base = () => {
+      const qb = this.alarmRepository.createQueryBuilder('alarm');
+      applyAccessScope(qb, 'alarm', user);
+      return qb;
+    };
 
-    const total = await this.alarmRepository.count({ where: whereCondition });
+    const countWith = (predicate?: [string, Record<string, unknown>]) => {
+      const qb = base();
+      if (predicate) qb.andWhere(predicate[0], predicate[1]);
+      return qb.getCount();
+    };
 
-    const active = await this.alarmRepository.count({
-      where: { ...whereCondition, status: AlarmStatus.ACTIVE },
-    });
+    const activeOf = (severity: AlarmSeverity) =>
+      base()
+        .andWhere('alarm.status = :status', { status: AlarmStatus.ACTIVE })
+        .andWhere('alarm.severity = :severity', { severity })
+        .getCount();
 
-    const acknowledged = await this.alarmRepository.count({
-      where: { ...whereCondition, status: AlarmStatus.ACKNOWLEDGED },
-    });
+    const total = await countWith();
 
-    const cleared = await this.alarmRepository.count({
-      where: { ...whereCondition, status: AlarmStatus.CLEARED },
-    });
+    const active = await countWith([
+      'alarm.status = :status',
+      { status: AlarmStatus.ACTIVE },
+    ]);
 
-    const resolved = await this.alarmRepository.count({
-      where: { ...whereCondition, status: AlarmStatus.RESOLVED },
-    });
+    const acknowledged = await countWith([
+      'alarm.status = :status',
+      { status: AlarmStatus.ACKNOWLEDGED },
+    ]);
+
+    const cleared = await countWith([
+      'alarm.status = :status',
+      { status: AlarmStatus.CLEARED },
+    ]);
+
+    const resolved = await countWith([
+      'alarm.status = :status',
+      { status: AlarmStatus.RESOLVED },
+    ]);
 
     // Count by severity (active only)
-    const critical = await this.alarmRepository.count({
-      where: {
-        ...whereCondition,
-        severity: AlarmSeverity.CRITICAL,
-        status: AlarmStatus.ACTIVE,
-      },
-    });
-
-    const error = await this.alarmRepository.count({
-      where: {
-        ...whereCondition,
-        severity: AlarmSeverity.ERROR,
-        status: AlarmStatus.ACTIVE,
-      },
-    });
-
-    const warning = await this.alarmRepository.count({
-      where: {
-        ...whereCondition,
-        severity: AlarmSeverity.WARNING,
-        status: AlarmStatus.ACTIVE,
-      },
-    });
-
-    const info = await this.alarmRepository.count({
-      where: {
-        ...whereCondition,
-        severity: AlarmSeverity.INFO,
-        status: AlarmStatus.ACTIVE,
-      },
-    });
+    const critical = await activeOf(AlarmSeverity.CRITICAL);
+    const error = await activeOf(AlarmSeverity.ERROR);
+    const warning = await activeOf(AlarmSeverity.WARNING);
+    const info = await activeOf(AlarmSeverity.INFO);
 
     // Get most triggered alarms
-    const mostTriggered = await this.alarmRepository.find({
-      where: whereCondition,
-      relations: ['device'],
-      order: { triggerCount: 'DESC' },
-      take: 5,
-    });
+    const mostTriggered = await base()
+      .leftJoinAndSelect('alarm.device', 'device')
+      .orderBy('alarm.triggerCount', 'DESC')
+      .take(5)
+      .getMany();
 
     // Get recent alarms
-    const recent = await this.alarmRepository.find({
-      where: whereCondition,
-      relations: ['device'],
-      order: { triggeredAt: 'DESC' },
-      take: 10,
-    });
+    const recent = await base()
+      .leftJoinAndSelect('alarm.device', 'device')
+      .orderBy('alarm.triggeredAt', 'DESC')
+      .take(10)
+      .getMany();
 
     return {
       total,
@@ -1093,22 +1130,24 @@ private evaluateCondition(rule: any, value: any): boolean {
    * Get alarm history for a device
    */
   async getDeviceHistory(
-    tenantId: string | undefined,
+    user: User,
     deviceId: string,
     days: number = 7,
   ): Promise<Alarm[]> {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    return await this.alarmRepository.find({
-      where: {
-        tenantId,
-        deviceId,
-        triggeredAt: Between(startDate, new Date()),
-      },
-      order: { triggeredAt: 'DESC' },
-      take: 100,
-    });
+    const qb = this.alarmRepository
+      .createQueryBuilder('alarm')
+      .where('alarm.deviceId = :deviceId', { deviceId })
+      .andWhere('alarm.triggeredAt BETWEEN :startDate AND :endDate', {
+        startDate,
+        endDate: new Date(),
+      });
+
+    applyAccessScope(qb, 'alarm', user);
+
+    return await qb.orderBy('alarm.triggeredAt', 'DESC').take(100).getMany();
   }
 
   /**
@@ -1225,7 +1264,7 @@ private evaluateCondition(rule: any, value: any): boolean {
     tenantId: string | undefined,
     testValue: number,
   ): Promise<any> {
-    const alarm = await this.findOne(id, tenantId);
+    const alarm = await this.findOneWithinTenant(id, tenantId);
 
     const conditionMet = this.evaluateCondition(alarm.rule, testValue);
 

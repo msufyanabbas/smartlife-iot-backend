@@ -46,6 +46,10 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as crypto from 'crypto';
 import { CodecRegistryService } from './codecs/codec-registry.service';
 import { ProfileAlarmService } from '@modules/profiles/profile-alarm.service';
+import {
+  applyAccessScope,
+  isCustomerScopedRole,
+} from '@common/scoping/apply-access-scope';
 
 @Injectable()
 export class DevicesService {
@@ -221,14 +225,15 @@ export class DevicesService {
   }
 
   // ── Find all ──────────────────────────────────────────────────────────────
-  // Filtering logic is applied once, in priority order:
-  //   1. Guard-resolved tenantId (from JwtAuthGuard / TenantIsolationGuard)
-  //   2. Guard-resolved customerId (from CustomerAccessGuard)
-  //   3. Role-based fallback for CUSTOMER_USER
-  // We do NOT double-apply filters.
+  // Scoping is applied ONCE, by applyAccessScope(). `tenantId` is retained on
+  // the signature for the existing callers and is deliberately no longer
+  // read: the only caller passes `user.tenantId`, and taking a tenant from
+  // anywhere but the principal is how a scope becomes forgeable. `customerId`
+  // is honoured only as a narrowing filter for roles that are not already
+  // confined to one customer.
 
   async findAll(
-    tenantId: string | undefined,
+    _tenantId: string | undefined,
     customerId: string | undefined,
     user: User,
     paginationDto: PaginationDto,
@@ -237,29 +242,22 @@ export class DevicesService {
 
     const qb = this.deviceRepository.createQueryBuilder('device');
 
-    // SUPER_ADMIN sees everything; all other roles are tenant-scoped
-    if (user.role !== UserRole.SUPER_ADMIN) {
-      const effectiveTenantId = tenantId ?? user.tenantId;
-      if (effectiveTenantId) {
-        qb.andWhere('device.tenantId = :tenantId', { tenantId: effectiveTenantId });
-      }
-    }
+    // The caller's own scope, from the one shared helper. This block used to
+    // be hand-rolled here — a fifth copy of applyAccessFilter() — and it had
+    // drifted: `if (effectiveTenantId)` skipped the tenant predicate for a
+    // non-SUPER_ADMIN with no tenantId, which is the unscoped read §4g names.
+    // The helper denies instead, and denies again for a customer-scoped role
+    // with no customerId.
+    applyAccessScope(qb, 'device', user);
 
-    // CUSTOMER_USER / CUSTOMER are additionally scoped to their customer
-    if (
-      user.role === UserRole.CUSTOMER_USER ||
-      user.role === UserRole.CUSTOMER
-    ) {
-      const effectiveCustomerId = customerId ?? user.customerId;
-      if (!effectiveCustomerId) {
-        return PaginatedResponseDto.create([], page, limit, 0);
-      }
-      qb.andWhere('device.customerId = :customerId', {
-        customerId: effectiveCustomerId,
+    // A tenant admin may additionally narrow to one customer (the customer
+    // detail page). For a customer-scoped caller this is not a filter but
+    // their own scope, which the helper has already pinned — so it is only
+    // honoured for the roles that are not confined to a single customer.
+    if (customerId && !isCustomerScopedRole(user.role)) {
+      qb.andWhere('device.customerId = :filterCustomerId', {
+        filterCustomerId: customerId,
       });
-    } else if (customerId) {
-      // Admin explicitly filtering by customer (e.g. customer detail page)
-      qb.andWhere('device.customerId = :customerId', { customerId });
     }
 
     if (search) {
@@ -1139,37 +1137,18 @@ export class DevicesService {
    * Apply tenant / customer filters to any QueryBuilder based on the
    * requesting user's role. Call this once per query — do not add manual
    * andWhere clauses on top of it.
+   *
+   * The logic used to live here and was copied, with drift, into four other
+   * services. It is now `applyAccessScope()` in `@common/scoping`, and this
+   * is a one-line forwarder kept so the call sites in this file read the same
+   * as before. Behaviour is unchanged: falsy tenantId denies, falsy
+   * customerId on a customer-scoped role denies, SUPER_ADMIN is unscoped.
    */
   private applyAccessFilter(
     qb: ReturnType<Repository<Device>['createQueryBuilder']>,
     user: User,
   ): void {
-    if (user.role === UserRole.SUPER_ADMIN) return;
-
-    // A non-SUPER_ADMIN with no tenantId used to fall straight through this
-    // block, leaving the query UNSCOPED — every device of every tenant. The
-    // falsy case has to deny, not skip: only SUPER_ADMIN is legitimately
-    // tenant-less, and that case already returned above.
-    if (!user.tenantId) {
-      qb.andWhere('1 = 0');
-      return;
-    }
-
-    qb.andWhere('device.tenantId = :tenantId', { tenantId: user.tenantId });
-
-    if (
-      user.role === UserRole.CUSTOMER_USER ||
-      user.role === UserRole.CUSTOMER
-    ) {
-      if (!user.customerId) {
-        // Force zero results — user has no customer assignment
-        qb.andWhere('1 = 0');
-        return;
-      }
-      qb.andWhere('device.customerId = :customerId', {
-        customerId: user.customerId,
-      });
-    }
+    applyAccessScope(qb, 'device', user);
   }
 
   private assertAdmin(user: User): void {

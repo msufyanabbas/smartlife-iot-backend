@@ -8,10 +8,10 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, In, DataSource } from 'typeorm';
+import { Repository, Like, In, IsNull, DataSource } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CustomerStatus, UserRole, UserStatus } from '@/common/enums/index.enum';
-import { Customer, Subscription, User } from '@modules/index.entities';
+import { Customer, Permission, Subscription, User } from '@modules/index.entities';
 import * as crypto from 'crypto';
 import {
   CreateCustomerDto,
@@ -45,6 +45,8 @@ export class CustomersService {
     private customerRepository: Repository<Customer>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    @InjectRepository(Permission)
+    private permissionRepository: Repository<Permission>,
     private tenantService: TenantsService,
     private eventEmitter: EventEmitter2,
     private mailService: MailService,
@@ -105,11 +107,19 @@ export class CustomersService {
   // ── All writes inside a single transaction ─────────────────────────────
   const savedCustomer = await this.dataSource.transaction(async (manager) => {
     // 1. Persist customer row
+    // Seed the baseline grant set. Without this a new customer holds no
+    // permissions, and since the guard INTERSECTS with this set, every
+    // permission-gated route 403s for every user under it — with no endpoint
+    // and no screen to fix it. Read-only across the customer-facing
+    // resources is the smallest set that leaves the account usable.
+    const defaultGrants = await this.defaultGrantedPermissions(user.tenantId ?? null);
+
     const customer = manager.create(Customer, {
       ...createCustomerDto,
       tenantId: user.tenantId,
       status: CustomerStatus.INACTIVE,
     });
+    customer.grantedPermissions = defaultGrants;
     const savedCustomer = await manager.save(customer);
 
     // 2. Create linked User
@@ -178,10 +188,17 @@ export class CustomersService {
     user.password = newPassword;
     user.status = UserStatus.ACTIVE;
     user.emailVerified = true;         // email was confirmed by clicking the link
-    user.setPasswordToken = undefined;
-    user.setPasswordExpires = undefined;
-
     await this.userRepository.save(user);
+
+    // `= undefined` is omitted from the UPDATE by TypeORM, so assigning it to
+    // the token columns left the invitation link live. See the same fix in
+    // AuthService.setPasswordFromToken, which is the path actually routed —
+    // this copy is currently unreachable, and is corrected so that reviving it
+    // does not revive the hole.
+    await this.userRepository.update(
+      { id: user.id },
+      { setPasswordToken: null as never, setPasswordExpires: null as never },
+    );
     this.logger.log(`Password set and account activated for: ${user.email}`);
 
     return { message: 'Password set successfully. You can now log in.' };
@@ -291,7 +308,20 @@ export class CustomersService {
       .orderBy('customer.createdAt', 'DESC')
       .getMany();
 
-    return PaginatedResponseDto.create(customers, page, limit, total);
+    // ── Login state for the row badge ────────────────────────────────────
+    //
+    // A customer's `status` alone cannot distinguish "invited, has not set a
+    // password yet" from "deliberately deactivated" — both are INACTIVE — so
+    // the table rendered a red badge for a customer who had done nothing
+    // wrong, and an admin had no way to tell whether to press Resend.
+    //
+    // That state lives on the linked CUSTOMER user, not on the customer row.
+    // Fetched as ONE extra query for the page rather than a join, because the
+    // join would multiply rows against a customer that has several users and
+    // the pagination above counts customers.
+    const decorated = await this.attachLoginState(customers);
+
+    return PaginatedResponseDto.create(decorated, page, limit, total);
   }
 
   /**
@@ -829,4 +859,239 @@ private validateAllocatedLimits(
     });
   }
 }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PERMISSION GRANTS
+  //
+  // What a customer is allowed AT ALL, as decided by the tenant. This is the
+  // outer of the two levers a tenant admin has; the inner one is each user's
+  // roles and direct grants.
+  //
+  // `PermissionGuard` resolves a customer-scoped user to
+  //
+  //     (role permissions ∪ direct permissions) ∩ customer.grantedPermissions
+  //
+  // so an empty grant set is not "unrestricted" — it is **deny everything**.
+  // That is the right default for security and was the wrong default in
+  // practice: `grantedPermissions` had no endpoint to populate it (the DTO
+  // existed, referenced by no controller) and no UI, so every customer created
+  // through the product was permanently unable to call any permission-gated
+  // route, whatever roles were assigned. `create()` now seeds a baseline and
+  // these two methods let the tenant widen or narrow it.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * The resources a customer may be granted at all.
+   *
+   * Tenant administration is deliberately absent: a customer must never be
+   * grantable `users`, `roles`, `permissions`, `tenants`, `billing`, `audit`
+   * or `settings`, because those govern the tenant that owns them. Keeping
+   * this as an allow-list rather than a deny-list means a newly seeded
+   * resource is excluded until someone decides otherwise.
+   */
+  private static readonly CUSTOMER_GRANTABLE_RESOURCES = [
+    'devices',
+    'assets',
+    'dashboards',
+    'telemetry',
+    'alerts',
+    'floor_plans',
+    'analytics',
+    'reports',
+    'automations',
+    'groups',
+    'notifications',
+    'profiles',
+    'firmware',
+    'edge',
+    'integrations',
+  ];
+
+  /**
+   * What a brand-new customer starts with: read-only across the resources a
+   * customer is allowed to see.
+   *
+   * Read-only rather than nothing, because a customer with no grants cannot
+   * use the product at all and the failure is a 403 with no explanation.
+   * Read-only rather than full, because granting write access to someone
+   * else's estate should be a decision, not a default.
+   */
+  private static readonly DEFAULT_CUSTOMER_ACTIONS = ['read', 'list'];
+
+  /** Permissions a customer MAY hold, for the tenant's picker. */
+  async getGrantablePermissions(tenantId: string | null): Promise<Permission[]> {
+    const all = await this.permissionRepository.find({
+      where: [{ tenantId: tenantId ?? undefined }, { tenantId: IsNull() }],
+      order: { resource: 'ASC', action: 'ASC' },
+    });
+    return all.filter((p) =>
+      CustomersService.CUSTOMER_GRANTABLE_RESOURCES.includes(p.resource),
+    );
+  }
+
+  /** The customer's current grants. Tenant-checked. */
+  async getGrantedPermissions(user: User, customerId: string): Promise<Permission[]> {
+    const customer = await this.findOneScoped(user, customerId);
+    return customer.grantedPermissions ?? [];
+  }
+
+  /**
+   * Replace the customer's grants wholesale.
+   *
+   * A full replacement rather than add/remove: the UI shows a matrix and the
+   * user's mental model is "this is what they may do", so a partial update
+   * would silently keep a permission the admin had just unticked.
+   */
+  async setGrantedPermissions(
+    user: User,
+    customerId: string,
+    permissionIds: string[],
+  ): Promise<Customer> {
+    const customer = await this.findOneScoped(user, customerId);
+
+    const unique = [...new Set(permissionIds ?? [])];
+    let permissions: Permission[] = [];
+
+    if (unique.length > 0) {
+      permissions = await this.permissionRepository.find({
+        where: { id: In(unique) },
+      });
+
+      // An id that does not resolve is a bug in the caller, not something to
+      // skip quietly — silently dropping it would show the admin a saved
+      // matrix that does not match what was stored.
+      if (permissions.length !== unique.length) {
+        const found = new Set(permissions.map((p) => p.id));
+        throw new BadRequestException(
+          `Unknown permission id(s): ${unique.filter((id) => !found.has(id)).join(', ')}`,
+        );
+      }
+
+      // Enforce the allow-list server-side. The picker already hides these,
+      // but a crafted request must not be able to grant a customer authority
+      // over the tenant that owns it.
+      const forbidden = permissions.filter(
+        (p) => !CustomersService.CUSTOMER_GRANTABLE_RESOURCES.includes(p.resource),
+      );
+      if (forbidden.length > 0) {
+        throw new BadRequestException(
+          'A customer cannot be granted tenant-administration permissions: ' +
+            forbidden.map((p) => p.permissionString).join(', '),
+        );
+      }
+
+      // A tenant must not grant another tenant's custom permission.
+      const foreign = permissions.filter(
+        (p) => p.tenantId && p.tenantId !== customer.tenantId,
+      );
+      if (foreign.length > 0) {
+        throw new BadRequestException(
+          'Those permissions belong to another tenant: ' +
+            foreign.map((p) => p.permissionString).join(', '),
+        );
+      }
+    }
+
+    customer.grantedPermissions = permissions;
+    const saved = await this.customerRepository.save(customer);
+
+    this.logger.log(
+      `Customer ${customerId} grants set to ${permissions.length} permission(s) by ${user.id}`,
+    );
+
+    // Every user under this customer has a different effective permission set
+    // from this moment, so any cached resolution for them is stale.
+    this.eventEmitter.emit('customer.permissions.changed', {
+      customer: saved,
+      tenantId: customer.tenantId,
+      permissionCount: permissions.length,
+      changedBy: user,
+    });
+
+    return saved;
+  }
+
+  /**
+   * Load a customer with its grants, refusing one outside the caller's tenant.
+   *
+   * Separate from `findOne()` because this needs the `grantedPermissions`
+   * relation and a hard tenant check on every path — a permission editor that
+   * can be pointed at another tenant's customer is worse than no editor.
+   */
+  private async findOneScoped(user: User, customerId: string): Promise<Customer> {
+    const customer = await this.customerRepository.findOne({
+      where: { id: customerId },
+      relations: ['grantedPermissions'],
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    if (
+      user.role !== UserRole.SUPER_ADMIN &&
+      customer.tenantId !== user.tenantId
+    ) {
+      // Same answer as a missing customer: confirming existence is a leak.
+      throw new NotFoundException('Customer not found');
+    }
+
+    return customer;
+  }
+
+  /** The baseline grant set applied to a new customer. */
+  private async defaultGrantedPermissions(
+    tenantId: string | null,
+  ): Promise<Permission[]> {
+    const grantable = await this.getGrantablePermissions(tenantId);
+    return grantable.filter((p) =>
+      CustomersService.DEFAULT_CUSTOMER_ACTIONS.includes(p.action),
+    );
+  }
+
+  /**
+   * Annotate customers with the activation state of their primary login.
+   *
+   * `invitationPending` is the field the UI needs: true means an invitation
+   * was issued and not yet accepted, which is the one case where "Resend"
+   * is the right action. It is computed, not stored — adding a column would
+   * mean keeping it in step with the user row forever, and this is a read.
+   */
+  private async attachLoginState(customers: Customer[]): Promise<Customer[]> {
+    if (customers.length === 0) return customers;
+
+    const rows = await this.userRepository.find({
+      where: {
+        customerId: In(customers.map((c) => c.id)),
+        role: UserRole.CUSTOMER,
+      },
+      select: [
+        'id',
+        'customerId',
+        'email',
+        'status',
+        'emailVerified',
+        'lastLoginAt',
+        'setPasswordExpires',
+      ],
+    });
+
+    const byCustomer = new Map(rows.map((u) => [u.customerId, u]));
+
+    return customers.map((customer) => {
+      const login = byCustomer.get(customer.id);
+      return Object.assign(customer, {
+        loginEmail: login?.email ?? null,
+        loginStatus: login?.status ?? null,
+        loginEmailVerified: login?.emailVerified ?? null,
+        lastLoginAt: login?.lastLoginAt ?? null,
+        // An account that exists, has never verified, and still holds an
+        // unexpired invitation window.
+        invitationPending: login
+          ? !login.emailVerified && login.status !== UserStatus.SUSPENDED
+          : false,
+        invitationExpiresAt: login?.setPasswordExpires ?? null,
+      });
+    });
+  }
 }

@@ -58,7 +58,7 @@ export class AlarmsController {
   @ApiOperation({ summary: 'Get all alarm rules' })
   @ApiResponse({ status: 200, description: 'List of alarm rules' })
   findAll(@CurrentUser() user: User, @Query() query: AlarmQueryDto) {
-    return this.alarmsService.findAll(user.tenantId, query, user.customerId);
+    return this.alarmsService.findAll(user, query);
   }
 
   @Get('active')
@@ -66,7 +66,7 @@ export class AlarmsController {
   @ApiOperation({ summary: 'Get active alarms' })
   @ApiResponse({ status: 200, description: 'List of active alarms' })
   getActive(@CurrentUser() user: User) {
-    return this.alarmsService.getActive(user.tenantId, user.customerId);
+    return this.alarmsService.getActive(user);
   }
 
   @Get('statistics')
@@ -74,7 +74,7 @@ export class AlarmsController {
   @ApiOperation({ summary: 'Get alarm statistics' })
   @ApiResponse({ status: 200, description: 'Alarm statistics' })
   getStatistics(@CurrentUser() user: User) {
-    return this.alarmsService.getStatistics(user.tenantId, user.customerId);
+    return this.alarmsService.getStatistics(user);
   }
 
   @Get('critical')
@@ -82,7 +82,7 @@ export class AlarmsController {
   @ApiOperation({ summary: 'Get critical unacknowledged alarms' })
   @ApiResponse({ status: 200, description: 'Critical alarms' })
   getCritical(@CurrentUser() user: User) {
-    return this.alarmsService.getCritical(user.tenantId, user.customerId);
+    return this.alarmsService.getCritical(user);
   }
 
   // Declared before @Get(':id') — a literal segment must be registered ahead
@@ -101,7 +101,7 @@ export class AlarmsController {
   })
   @ApiResponse({ status: 200, description: 'Alarm counts' })
   getCounts(@CurrentUser() user: User) {
-    return this.alarmsService.getCounts(user.tenantId, user.customerId);
+    return this.alarmsService.getCounts(user);
   }
 
   @Get('device/:deviceId')
@@ -112,7 +112,7 @@ export class AlarmsController {
     @CurrentUser() user: User,
     @Param('deviceId', ParseIdPipe) deviceId: string,
   ) {
-    return this.alarmsService.getDeviceAlarms(user.tenantId, deviceId);
+    return this.alarmsService.getDeviceAlarms(user, deviceId);
   }
 
   @Get('device/:deviceId/history')
@@ -125,7 +125,7 @@ export class AlarmsController {
     @Query('days') days?: number,
   ) {
     return this.alarmsService.getDeviceHistory(
-      user.tenantId,
+      user,
       deviceId,
       days ? parseInt(days.toString()) : 7,
     );
@@ -137,7 +137,7 @@ export class AlarmsController {
   @ApiResponse({ status: 200, description: 'Alarm found' })
   @ApiResponse({ status: 404, description: 'Alarm not found' })
   findOne(@Param('id', ParseIdPipe) id: string, @CurrentUser() user: User) {
-    return this.alarmsService.findOne(id, user.tenantId);
+    return this.alarmsService.findOne(id, user);
   }
 
   // ':id/escalation-history' is a distinct path from ':id', so ordering

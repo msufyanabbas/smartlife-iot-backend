@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   UnauthorizedException,
   Logger,
   Inject,
@@ -101,11 +102,354 @@ export class UsersService {
     }
   }
 
+  // ── Actor scoping: who may create or re-privilege whom ────────────────────
+  //
+  // Everything in this block exists because three WRITE routes in this module
+  // took their target and their privilege level straight from the request body
+  // with no actor at all. It is the §4g shape one level up: not "whose row is
+  // this" but "whose authority is this".
+
   /**
-   * Create a new user
+   * Rank ladder for "may this actor hand out this role".
+   *
+   * USER and CUSTOMER_USER share a rank: neither administers anyone, they
+   * differ only in which scope they read. A role missing from this map ranks
+   * as unreachable (see `assertRoleCreatable`), so adding a new UserRole
+   * member fails closed rather than silently becoming grantable by everyone.
    */
-  async create(createUserDto: CreateUserDto): Promise<User> {
-    // Check if user already exists
+  private static readonly ROLE_RANK: Readonly<Record<UserRole, number>> = {
+    [UserRole.SUPER_ADMIN]: 100,
+    [UserRole.TENANT_ADMIN]: 50,
+    [UserRole.CUSTOMER]: 20,
+    [UserRole.CUSTOMER_USER]: 10,
+    [UserRole.USER]: 10,
+  };
+
+  /**
+   * Resources no tenant administers — the platform does.
+   *
+   * This is not a guess: the role seeder's own "Tenant Administrator" role is
+   * built as `allPermissions.filter(p => !['tenants','billing'].includes(p.resource))`,
+   * so these two are already the documented ceiling of tenant authority. A
+   * tenant admin who could *assign* a role carrying `tenants:delete` would
+   * hold it transitively — grant it to a throwaway USER account, log in as
+   * that account, delete every organisation on the platform. The seeded
+   * system roles "Super Administrator" and "Platform Administrator" both
+   * carry exactly that, and both are `tenantId IS NULL`, which is why a plain
+   * "system roles are shared" predicate is not sufficient on its own.
+   */
+  private static readonly PLATFORM_ONLY_RESOURCES: readonly string[] = [
+    'tenants',
+    'billing',
+  ];
+
+  /** Postgres raises `invalid input syntax for type uuid` on a malformed id
+   * inside `In(...)`, which turns a bad request body into a 500. Ids are
+   * screened here so a malformed one is reported as out of scope instead. */
+  private static readonly UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  /**
+   * The tenant a newly created user actually lands in.
+   *
+   * SUPER_ADMIN is the only role legitimately tenant-less and the only one
+   * that may name a tenant; for everyone else the actor's own tenant is
+   * forced over whatever the body said.
+   */
+  private resolveTenantForCreate(
+    createUserDto: CreateUserDto,
+    actor: User,
+  ): string | undefined {
+    if (actor.role === UserRole.SUPER_ADMIN) {
+      return createUserDto.tenantId;
+    }
+
+    if (!actor.tenantId) {
+      // §4g: a falsy tenantId on a non-super-admin denies. Falling through
+      // here would create the user with `tenantId: undefined` — a row outside
+      // every tenant's scope, which no tenant-scoped read can ever see or
+      // clean up.
+      this.logger.warn(
+        `User create from ${actor.id} with role ${actor.role} and no tenantId — denied`,
+      );
+      throw new ForbiddenException(
+        'Your account is not attached to a tenant and cannot create users',
+      );
+    }
+
+    if (createUserDto.tenantId && createUserDto.tenantId !== actor.tenantId) {
+      // Forced, not rejected: the caller gets the user they asked for, in the
+      // only tenant they are entitled to. Logged because a body naming
+      // another tenant is an attempted cross-tenant write, not a typo.
+      this.logger.warn(
+        `User create from ${actor.id} named tenant ${createUserDto.tenantId}; ` +
+          `forced to the actor's own tenant ${actor.tenantId}`,
+      );
+    }
+
+    return actor.tenantId;
+  }
+
+  /**
+   * The role a newly created user may actually be given.
+   *
+   * `undefined` is returned unchanged so the column default
+   * (`CUSTOMER_USER`) still applies — the weakest role there is, so there is
+   * nothing to check.
+   *
+   * STRICTLY above the actor is refused. EQUAL is allowed, which means a
+   * TENANT_ADMIN may create another TENANT_ADMIN **inside its own tenant**,
+   * and that is deliberate: this module already refuses to delete or
+   * deactivate a tenant's last remaining admin precisely because a tenant
+   * with no administrator is unrecoverable through the API. A tenant that
+   * cannot appoint a second admin has a bus factor of one and has to open a
+   * support ticket to fix it. The dangerous direction — a tenant admin
+   * minting a SUPER_ADMIN, which is tenant-less and therefore outside its own
+   * tenant — is strictly above and refused.
+   */
+  private assertRoleCreatable(
+    requested: UserRole | undefined,
+    actor: User,
+  ): UserRole | undefined {
+    if (requested === undefined) return undefined;
+    if (actor.role === UserRole.SUPER_ADMIN) return requested;
+
+    // Unknown role on either side ranks as unreachable / powerless.
+    const requestedRank = UsersService.ROLE_RANK[requested] ?? Number.MAX_SAFE_INTEGER;
+    const actorRank = UsersService.ROLE_RANK[actor.role] ?? -1;
+
+    if (requestedRank > actorRank) {
+      throw new ForbiddenException(
+        `You cannot create a user with the role "${requested}" — it is at or ` +
+          `above your own authority (${actor.role}).`,
+      );
+    }
+
+    return requested;
+  }
+
+  /**
+   * Resolve the role named by an assign/remove request inside the actor's
+   * authority.
+   *
+   * `bulkAssignRole` used to be `roleRepository.findOne({ where: { id } })`
+   * with no tenant predicate, so a tenant admin of A could attach tenant B's
+   * custom role — or the platform's "Super Administrator" — to any user whose
+   * uuid they knew.
+   *
+   * `intent` matters: 'assign' widens what a user can do and is held to the
+   * platform-resource ceiling, 'remove' only narrows. A de-escalation must
+   * never be refusable, or an admin who made a mistake (or inherited a bad
+   * grant from before this fix) has no way to undo it.
+   */
+  private async resolveRoleForActor(
+    roleId: string,
+    actor: User,
+    intent: 'assign' | 'remove',
+  ): Promise<Role> {
+    const notFound = () => new NotFoundException(`Role ${roleId} not found`);
+
+    if (!UsersService.UUID_RE.test(roleId)) throw notFound();
+
+    const role = await this.roleRepository.findOne({
+      where: { id: roleId },
+      relations: ['permissions'],
+    });
+
+    if (!role) throw notFound();
+    if (actor.role === UserRole.SUPER_ADMIN) return role;
+
+    if (!actor.tenantId) {
+      this.logger.warn(
+        `Role ${intent} from ${actor.id} with role ${actor.role} and no tenantId — denied`,
+      );
+      throw notFound();
+    }
+
+    // A role with no tenantId is a system role: the shared platform
+    // vocabulary every tenant draws on (RolesService reads it the same way).
+    // A role WITH a tenantId belongs to exactly that tenant.
+    //
+    // 404, not 403: a 403 would confirm that the uuid names a real role in
+    // someone else's tenant.
+    if (role.tenantId && role.tenantId !== actor.tenantId) throw notFound();
+
+    if (intent === 'assign') {
+      const reserved = (role.permissions ?? [])
+        .filter((p) =>
+          UsersService.PLATFORM_ONLY_RESOURCES.includes(p.resource),
+        )
+        .map((p) => `${p.resource}:${p.action}`);
+
+      if (reserved.length > 0) {
+        // Forbidden rather than not-found here, and that is safe: a system
+        // role is already readable by every tenant through GET /roles, so
+        // naming it leaks nothing the caller could not already list. An
+        // opaque 404 would instead look like a bug in the picker.
+        throw new ForbiddenException(
+          `"${role.name}" grants platform-level permissions ` +
+            `(${[...new Set(reserved)].sort().join(', ')}) and can only be ` +
+            'assigned by a platform administrator.',
+        );
+      }
+    }
+
+    return role;
+  }
+
+  /**
+   * Resolve the direct permissions named by a grant inside the actor's
+   * authority. Same reasoning as `resolveRoleForActor`, applied to the
+   * permission rows `bulkUpdatePermissions` attaches.
+   */
+  private async resolvePermissionsForActor(
+    permissionIds: string[],
+    actor: User,
+    intent: 'grant' | 'revoke',
+  ): Promise<Permission[]> {
+    const unique = [...new Set(permissionIds)];
+    if (unique.length === 0) return [];
+
+    const wellFormed = unique.filter((id) => UsersService.UUID_RE.test(id));
+
+    const rows = await this.permissionRepository.find({
+      where: { id: In(wellFormed) },
+    });
+
+    const isSuperAdmin = actor.role === UserRole.SUPER_ADMIN;
+
+    if (!isSuperAdmin && !actor.tenantId) {
+      this.logger.warn(
+        `Permission ${intent} from ${actor.id} with role ${actor.role} and no tenantId — denied`,
+      );
+      throw new BadRequestException(
+        'Your account is not attached to a tenant and cannot change permissions',
+      );
+    }
+
+    // A revoke only narrows: the ids are used as a filter over what the user
+    // ALREADY holds, so they cannot grant anything and must stay usable even
+    // for a row that predates this scoping (otherwise a bad legacy grant is
+    // permanent). Existence is still required so a typo is not reported as a
+    // successful revocation.
+    const inScope = isSuperAdmin || intent === 'revoke'
+      ? rows
+      : rows.filter((p) => !p.tenantId || p.tenantId === actor.tenantId);
+
+    const found = new Set(inScope.map((p) => p.id));
+    const rejected = unique.filter((id) => !found.has(id));
+
+    if (rejected.length > 0) {
+      // One message for "does not exist" and "not yours" together: splitting
+      // them would turn this route into a probe for another tenant's custom
+      // permission ids.
+      throw new BadRequestException({
+        message: `${rejected.length} of ${unique.length} permission IDs are unknown or not available to your tenant`,
+        errors: rejected,
+      });
+    }
+
+    if (intent === 'grant' && !isSuperAdmin) {
+      const reserved = inScope
+        .filter((p) =>
+          UsersService.PLATFORM_ONLY_RESOURCES.includes(p.resource),
+        )
+        .map((p) => `${p.resource}:${p.action}`);
+
+      if (reserved.length > 0) {
+        throw new ForbiddenException(
+          `Platform-level permissions (${[...new Set(reserved)].sort().join(', ')}) ` +
+            'can only be granted by a platform administrator.',
+        );
+      }
+    }
+
+    return inScope;
+  }
+
+  /**
+   * Re-resolve every user id a privilege write names, inside the actor's
+   * tenant, and REFUSE the request if any id falls outside.
+   *
+   * The bulk role/permission routes used to run `find({ where: { id: In(ids) } })`
+   * with no tenant predicate at all, so a tenant admin of A could re-role any
+   * account on the platform by uuid.
+   *
+   * Refusing beats skipping: `bulkAssignRole` returned `{ updated: n }`, so a
+   * silently dropped id showed the administrator a success for a change that
+   * never happened — and a role assignment that is believed to have been made
+   * and was not is exactly as dangerous as one made by mistake.
+   */
+  private async resolveUsersForPrivilegeWrite(
+    userIds: string[],
+    actor: User,
+    relations: string[],
+  ): Promise<User[]> {
+    const unique = [...new Set(userIds)];
+    if (unique.length === 0) return [];
+
+    if (actor.role !== UserRole.SUPER_ADMIN && !actor.tenantId) {
+      this.logger.warn(
+        `Privilege write from ${actor.id} with role ${actor.role} and no tenantId — denied`,
+      );
+      throw new NotFoundException(
+        `0 of ${unique.length} users are in your scope`,
+      );
+    }
+
+    const wellFormed = unique.filter((id) => UsersService.UUID_RE.test(id));
+
+    const where =
+      actor.role === UserRole.SUPER_ADMIN
+        ? { id: In(wellFormed) }
+        : { id: In(wellFormed), tenantId: actor.tenantId };
+
+    const rows = wellFormed.length
+      ? await this.userRepository.find({ where, relations })
+      : [];
+
+    const found = new Set(rows.map((u) => u.id));
+    const outside = unique.filter((id) => !found.has(id));
+
+    if (outside.length > 0) {
+      // 404 and no distinction between "no such user" and "another tenant's
+      // user" — §4g: a 403 here would confirm the uuid exists elsewhere. The
+      // ids echoed back are the caller's own input, so nothing is disclosed.
+      throw new NotFoundException({
+        message: `${outside.length} of ${unique.length} users are not in your scope`,
+        errors: outside,
+      });
+    }
+
+    return rows;
+  }
+
+  /**
+   * Create a new user.
+   *
+   * `actor` is REQUIRED, not optional. `POST /users` used to take no
+   * `@CurrentUser()` at all and this method trusted `role` and `tenantId`
+   * straight out of the body, so anyone holding `users:create` could mint a
+   * `super_admin` or plant an account inside another tenant by putting it in
+   * the JSON. An optional actor would be the same hole with a default
+   * argument in front of it — §4g's "a falsy tenantId must deny, not skip".
+   */
+  async create(createUserDto: CreateUserDto, actor: User): Promise<User> {
+    // Resolved BEFORE the uniqueness probe so a cross-tenant or escalating
+    // body is refused without also telling the caller whether the email is
+    // already taken somewhere on the platform.
+    const tenantId = this.resolveTenantForCreate(createUserDto, actor);
+    const role = this.assertRoleCreatable(createUserDto.role, actor);
+
+    // A customer belongs to exactly one tenant, so an id from another tenant
+    // would attach the new login to a foreign organisation.
+    if (createUserDto.customerId) {
+      await this.assertCustomerInTenantId(createUserDto.customerId, tenantId);
+    }
+
+    // Check if user already exists.
+    // Deliberately NOT tenant-scoped: `users.email` is the platform-wide
+    // unique login identifier and the password-reset destination.
     const existingUser = await this.userRepository.findOne({
       where: { email: createUserDto.email },
     });
@@ -119,6 +463,10 @@ export class UsersService {
 
     const user = this.userRepository.create({
       ...createUserDto,
+      // After the spread, never before: these two are the security boundary
+      // and the body must not be able to win.
+      tenantId,
+      ...(role !== undefined ? { role } : {}),
       emailVerificationToken,
       emailVerified: false,
     });
@@ -286,8 +634,28 @@ export class UsersService {
   /**
    * Update user
    */
-  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
-    const user = await this.findOne(id);
+  async update(
+    id: string,
+    updateUserDto: UpdateUserDto,
+    actor: User,
+  ): Promise<User> {
+    // ── Why this takes an actor ──────────────────────────────────────────
+    //
+    // `create()` forces the tenant and refuses a role above the caller's own,
+    // but that was only as strong as the next route along. This one resolved
+    // through `findOne()` — whose own docblock says it is "unscoped on
+    // purpose, and only safe for internal callers" — and `UpdateUserDto`
+    // carries BOTH `role` and `tenantId`.
+    //
+    // So the create fix was bypassable in two moves: create a user (correctly
+    // placed in your own tenant), then PATCH them to `super_admin`. Or skip
+    // that and PATCH any user in any tenant by uuid.
+    //
+    // Same resolver as the bulk privilege writes, so the scoping cannot drift
+    // between them.
+    const [user] = await this.resolveUsersForPrivilegeWrite([id], actor, [
+      'roles',
+    ]);
 
     // Check if email is being changed and if it's already taken
     if (updateUserDto.email && updateUserDto.email !== user.email) {
@@ -298,6 +666,28 @@ export class UsersService {
       // If email changed, mark as unverified
       user.emailVerified = false;
       user.emailVerificationToken = crypto.randomBytes(32).toString('hex');
+    }
+
+    // A role change is an escalation check, not a field assignment: without
+    // this, `{ role: 'super_admin' }` in the body is a free promotion.
+    if (updateUserDto.role && updateUserDto.role !== user.role) {
+      this.assertRoleCreatable(updateUserDto.role, actor);
+    }
+
+    // Moving a user between tenants is not an edit — it would detach them from
+    // their customer, their roles and their assignments in one PATCH. Only a
+    // super admin may do it; for anyone else the field is ignored rather than
+    // honoured, and the attempt is logged because it is a cross-tenant write.
+    if (
+      updateUserDto.tenantId &&
+      updateUserDto.tenantId !== user.tenantId &&
+      actor.role !== UserRole.SUPER_ADMIN
+    ) {
+      this.logger.warn(
+        `User ${actor.id} attempted to move user ${id} from tenant ` +
+          `${user.tenantId} to ${updateUserDto.tenantId} — ignored`,
+      );
+      delete (updateUserDto as Partial<UpdateUserDto>).tenantId;
     }
 
     const previousRole = user.role;
@@ -355,8 +745,11 @@ export class UsersService {
   /**
    * Delete user (soft delete)
    */
-  async remove(id: string): Promise<void> {
-    const user = await this.findOne(id);
+  async remove(id: string, actor: User): Promise<void> {
+    // Scoped for the same reason as update(): this resolved through the
+    // deliberately-unscoped findOne(), so any user in any tenant could be
+    // soft-deleted by uuid.
+    const [user] = await this.resolveUsersForPrivilegeWrite([id], actor, []);
 
     await this.userRepository.softRemove(user);
 
@@ -575,8 +968,14 @@ export class UsersService {
   /**
    * Update user status
    */
-  async updateStatus(userId: string, status: UserStatus): Promise<User> {
-    const user = await this.findOne(userId);
+  async updateStatus(
+    userId: string,
+    status: UserStatus,
+    actor: User,
+  ): Promise<User> {
+    // Scoped like update() and remove(): deactivating a user is a privilege
+    // write, and this resolved through the unscoped findOne().
+    const [user] = await this.resolveUsersForPrivilegeWrite([userId], actor, []);
     user.status = status;
 
     const updatedUser = await this.userRepository.save(user);
@@ -888,11 +1287,29 @@ export class UsersService {
     customerId: string,
     actor: User,
   ): Promise<void> {
+    await this.assertCustomerInTenantId(customerId, actor.tenantId);
+  }
+
+  /**
+   * Same check against an explicit tenant rather than the actor's own.
+   *
+   * `create()` needs this because a SUPER_ADMIN may place the new user in any
+   * tenant, and the customer then has to belong to THAT tenant — not to the
+   * (absent) tenant of the super admin.
+   */
+  private async assertCustomerInTenantId(
+    customerId: string,
+    tenantId: string | undefined | null,
+  ): Promise<void> {
+    if (!UsersService.UUID_RE.test(customerId)) {
+      throw new NotFoundException(`Customer ${customerId} not found`);
+    }
+
     const rows: Array<{ id: string }> = await this.dataSource.query(
-      actor.tenantId
+      tenantId
         ? `SELECT id FROM customers WHERE id = $1 AND "tenantId" = $2 AND deleted_at IS NULL`
         : `SELECT id FROM customers WHERE id = $1 AND deleted_at IS NULL`,
-      actor.tenantId ? [customerId, actor.tenantId] : [customerId],
+      tenantId ? [customerId, tenantId] : [customerId],
     );
 
     if (rows.length === 0) {
@@ -951,22 +1368,90 @@ export class UsersService {
     };
   }
 
+  // ── Role assignment: single and bulk ──────────────────────────────────────
+  //
+  // All four entry points below resolve the ROLE and the USERS through
+  // `resolveRoleForActor` / `resolveUsersForPrivilegeWrite` and then share one
+  // writer, so the scoping cannot drift between the single and the bulk path —
+  // which is exactly how the single path would otherwise end up being the next
+  // hole.
+
+  /**
+   * `POST /users/:id/roles` — attach one role to one user.
+   *
+   * Added because the bulk routes were the ONLY way to do this: the frontend's
+   * only path to "assign this role to this user" was tick-a-checkbox → Bulk
+   * edit → Role management, which nobody found.
+   */
+  async assignRole(
+    userId: string,
+    roleId: string,
+    actor: User,
+  ): Promise<{ updated: number }> {
+    const role = await this.resolveRoleForActor(roleId, actor, 'assign');
+    const users = await this.resolveUsersForPrivilegeWrite(
+      [userId],
+      actor,
+      ['roles'],
+    );
+    return { updated: await this.applyRoleAssignment(users, role) };
+  }
+
+  /** `DELETE /users/:id/roles/:roleId` — detach one role from one user. */
+  async removeRole(
+    userId: string,
+    roleId: string,
+    actor: User,
+  ): Promise<{ updated: number }> {
+    const role = await this.resolveRoleForActor(roleId, actor, 'remove');
+    const users = await this.resolveUsersForPrivilegeWrite(
+      [userId],
+      actor,
+      ['roles'],
+    );
+    return { updated: await this.applyRoleRemoval(users, role.id) };
+  }
+
   // ── Bulk Assign Role ──────────────────────────────────────────────────────────
 
-  async bulkAssignRole(dto: BulkAssignRoleDto): Promise<{ updated: number }> {
-    const role = await this.roleRepository.findOne({
-      where: { id: dto.roleId },
-      relations: ['permissions'],
-    });
+  async bulkAssignRole(
+    dto: BulkAssignRoleDto,
+    actor: User,
+  ): Promise<{ updated: number }> {
+    // Both lookups are scoped and both REFUSE rather than skip. Previously
+    // neither carried a tenant predicate: `roleRepository.findOne({ id })`
+    // plus `userRepository.find({ id: In(ids) })` meant a tenant admin of A
+    // could attach any role on the platform to any user on the platform.
+    const role = await this.resolveRoleForActor(dto.roleId, actor, 'assign');
+    const users = await this.resolveUsersForPrivilegeWrite(
+      dto.userIds,
+      actor,
+      ['roles'],
+    );
+    return { updated: await this.applyRoleAssignment(users, role) };
+  }
 
-    if (!role) throw new NotFoundException(`Role ${dto.roleId} not found`);
+  // ── Bulk Remove Role ──────────────────────────────────────────────────────────
 
-    const users = await this.userRepository.find({
-      where: { id: In(dto.userIds) },
-      relations: ['roles'],
-    });
+  async bulkRemoveRole(
+    dto: BulkRemoveRoleDto,
+    actor: User,
+  ): Promise<{ updated: number }> {
+    const role = await this.resolveRoleForActor(dto.roleId, actor, 'remove');
+    const users = await this.resolveUsersForPrivilegeWrite(
+      dto.userIds,
+      actor,
+      ['roles'],
+    );
+    return { updated: await this.applyRoleRemoval(users, role.id) };
+  }
 
-    if (users.length === 0) return { updated: 0 };
+  /** The single writer behind both assign paths. */
+  private async applyRoleAssignment(
+    users: User[],
+    role: Role,
+  ): Promise<number> {
+    if (users.length === 0) return 0;
 
     for (const user of users) {
       const alreadyAssigned = user.roles?.some((r) => r.id === role.id);
@@ -987,21 +1472,18 @@ export class UsersService {
       roleName: role.name,
     });
 
-    return { updated: users.length };
+    return users.length;
   }
 
-  // ── Bulk Remove Role ──────────────────────────────────────────────────────────
-
-  async bulkRemoveRole(dto: BulkRemoveRoleDto): Promise<{ updated: number }> {
-    const users = await this.userRepository.find({
-      where: { id: In(dto.userIds) },
-      relations: ['roles'],
-    });
-
-    if (users.length === 0) return { updated: 0 };
+  /** The single writer behind both remove paths. */
+  private async applyRoleRemoval(
+    users: User[],
+    roleId: string,
+  ): Promise<number> {
+    if (users.length === 0) return 0;
 
     for (const user of users) {
-      user.roles = (user.roles || []).filter((r) => r.id !== dto.roleId);
+      user.roles = (user.roles || []).filter((r) => r.id !== roleId);
     }
 
     await this.userRepository.save(users);
@@ -1012,18 +1494,21 @@ export class UsersService {
 
     this.eventEmitter.emit('users.role.bulk.removed', {
       userIds: users.map((u) => u.id),
-      roleId: dto.roleId,
+      roleId,
     });
 
-    return { updated: users.length };
+    return users.length;
   }
 
   // ── Bulk Send Email ───────────────────────────────────────────────────────────
 
   async bulkSendEmail(
     dto: BulkSendEmailDto,
+    actor?: User,
   ): Promise<{ sent: number; failed: number }> {
-    const users = await this.findByIds(dto.userIds);
+    // Recipients confined to the caller's tenant: unscoped, this would mail
+    // any user on the platform whose uuid you could paste.
+    const users = await this.findByIds(dto.userIds, actor);
 
     if (users.length === 0) return { sent: 0, failed: 0 };
 
@@ -1066,21 +1551,26 @@ export class UsersService {
 
   async bulkUpdatePermissions(
     dto: BulkUpdatePermissionsDto,
+    actor: User,
   ): Promise<{ updated: number }> {
-    const users = await this.userRepository.find({
-      where: { id: In(dto.userIds) },
-      relations: ['directPermissions'],
-    });
+    // Both sides scoped, both refusing rather than skipping — same hole as
+    // bulkAssignRole: `find({ id: In(dto.userIds) })` with no tenant predicate
+    // let a tenant admin of A rewrite the direct grants of any account on the
+    // platform, and an unscoped permission lookup let them attach another
+    // tenant's custom permission (or a platform one) while doing it.
+    const permissions = await this.resolvePermissionsForActor(
+      dto.permissionIds,
+      actor,
+      dto.operation === 'remove' ? 'revoke' : 'grant',
+    );
+
+    const users = await this.resolveUsersForPrivilegeWrite(
+      dto.userIds,
+      actor,
+      ['directPermissions'],
+    );
 
     if (users.length === 0) return { updated: 0 };
-
-    const permissions = await this.permissionRepository.find({
-      where: { id: In(dto.permissionIds) },
-    });
-
-    if (permissions.length !== dto.permissionIds.length) {
-      throw new BadRequestException('One or more permission IDs are invalid');
-    }
 
     for (const user of users) {
       const current = user.directPermissions || [];
@@ -1125,9 +1615,15 @@ export class UsersService {
   }
 
   /**
-   * Invite user
+   * Invite user.
+   *
+   * `InviteUserDto` carries `role` and `tenantId` just like `CreateUserDto`,
+   * and this goes through `create()`, so `POST /users/invite` was the SECOND
+   * way to mint a super_admin or plant an account in another tenant. Closing
+   * only `POST /users` would have left the same hole one route along, which is
+   * the §4g pattern that was found eight times in one pass.
    */
-  async inviteUser(inviteUserDto: InviteUserDto): Promise<User> {
+  async inviteUser(inviteUserDto: InviteUserDto, actor: User): Promise<User> {
     // Check if user already exists
     const existingUser = await this.findByEmail(inviteUserDto.email);
     if (existingUser) {
@@ -1137,10 +1633,13 @@ export class UsersService {
     // Generate temporary password
     const tempPassword = crypto.randomBytes(16).toString('hex');
 
-    const user = await this.create({
-      ...inviteUserDto,
-      password: tempPassword,
-    });
+    const user = await this.create(
+      {
+        ...inviteUserDto,
+        password: tempPassword,
+      },
+      actor,
+    );
 
     // Send invitation email
     await this.mailService.sendEmail({
@@ -1167,27 +1666,50 @@ export class UsersService {
   /**
    * Get user statistics
    */
-  async getStatistics(): Promise<{
+  /**
+   * User counts for the CALLER's scope.
+   *
+   * These were platform-wide: a tenant admin's dashboard reported how many
+   * users every other tenant had, and how they were distributed across roles.
+   * Not catastrophic, but it is competitor intelligence leaking out of a
+   * statistics tile, and the fix is a predicate.
+   */
+  async getStatistics(actor?: User): Promise<{
     total: number;
     active: number;
     inactive: number;
     suspended: number;
     byRole: Record<UserRole, number>;
   }> {
+    // `actor` is optional for internal callers; when supplied, a
+    // non-super-admin is confined to their own tenant, and a tenant-less one
+    // counts nothing rather than everything.
+    const scope: Record<string, unknown> =
+      actor && actor.role !== UserRole.SUPER_ADMIN
+        ? { tenantId: actor.tenantId ?? '00000000-0000-0000-0000-000000000000' }
+        : {};
+
     const [total, active, inactive, suspended] = await Promise.all([
-      this.userRepository.count(),
-      this.userRepository.count({ where: { status: UserStatus.ACTIVE } }),
-      this.userRepository.count({ where: { status: UserStatus.INACTIVE } }),
-      this.userRepository.count({ where: { status: UserStatus.SUSPENDED } }),
+      this.userRepository.count({ where: { ...scope } as any }),
+      this.userRepository.count({ where: { ...scope, status: UserStatus.ACTIVE } as any }),
+      this.userRepository.count({ where: { ...scope, status: UserStatus.INACTIVE } as any }),
+      this.userRepository.count({ where: { ...scope, status: UserStatus.SUSPENDED } as any }),
     ]);
 
     // Count by role
-    const roles = await this.userRepository
+    const rolesQb = this.userRepository
       .createQueryBuilder('user')
       .select('user.role', 'role')
       .addSelect('COUNT(*)', 'count')
-      .groupBy('user.role')
-      .getRawMany();
+      .groupBy('user.role');
+
+    if (actor && actor.role !== UserRole.SUPER_ADMIN) {
+      rolesQb.where('user.tenantId = :tenantId', {
+        tenantId: actor.tenantId ?? '00000000-0000-0000-0000-000000000000',
+      });
+    }
+
+    const roles = await rolesQb.getRawMany();
 
     const byRole: any = {
       [UserRole.SUPER_ADMIN]: 0,
@@ -1239,17 +1761,71 @@ export class UsersService {
   /**
    * Search users by term
    */
-  async search(term: string, limit: number = 10): Promise<User[]> {
-    return await this.userRepository.find({
-      where: [{ name: Like(`%${term}%`) }, { email: Like(`%${term}%`) }],
-      take: limit,
-    });
+  /**
+   * Search users the CALLER may see.
+   *
+   * This had no tenant predicate and no `@Roles` on its route, so any
+   * authenticated account — including a customer user — could enumerate every
+   * name and email address on the platform two characters at a time. A
+   * directory of every tenant's staff, from a route that looks like a
+   * typeahead.
+   *
+   * Scoped like every other read: super admin sees all, a tenant-scoped caller
+   * sees their own tenant, a customer-scoped caller sees their own customer,
+   * and a caller who resolves to no scope sees nothing rather than everything.
+   */
+  async search(term: string, actor: User, limit: number = 10): Promise<User[]> {
+    const qb = this.userRepository
+      .createQueryBuilder('user')
+      .where('(user.name ILIKE :term OR user.email ILIKE :term)', {
+        term: `%${term}%`,
+      })
+      .take(limit);
+
+    if (actor.role !== UserRole.SUPER_ADMIN) {
+      if (!actor.tenantId) {
+        // Falsy scope denies — §4g. An omitted predicate here would widen to
+        // the whole platform, which is exactly the bug being fixed.
+        qb.andWhere('1 = 0');
+        return qb.getMany();
+      }
+      qb.andWhere('user.tenantId = :tenantId', { tenantId: actor.tenantId });
+
+      if (
+        actor.role === UserRole.CUSTOMER ||
+        actor.role === UserRole.CUSTOMER_USER
+      ) {
+        if (!actor.customerId) {
+          qb.andWhere('1 = 0');
+          return qb.getMany();
+        }
+        qb.andWhere('user.customerId = :customerId', {
+          customerId: actor.customerId,
+        });
+      }
+    }
+
+    return qb.getMany();
   }
 
   /**
    * Get users by tenant
    */
-  async findByTenant(tenantId: string): Promise<User[]> {
+  async findByTenant(tenantId: string, actor?: User): Promise<User[]> {
+    // The route took the tenant from the URL unchecked, so a tenant admin
+    // could list another tenant's users by editing the path. `actor` is
+    // optional because internal callers pass none; when it IS supplied, a
+    // non-super-admin is pinned to their own tenant whatever the URL says.
+    if (actor && actor.role !== UserRole.SUPER_ADMIN) {
+      if (!actor.tenantId) return [];
+      if (tenantId !== actor.tenantId) {
+        this.logger.warn(
+          `User ${actor.id} requested users of tenant ${tenantId} — scoped to ${actor.tenantId}`,
+        );
+      }
+      tenantId = actor.tenantId;
+    }
+
     return await this.userRepository.find({
       where: { tenantId },
       order: { createdAt: 'DESC' },
@@ -1266,11 +1842,24 @@ export class UsersService {
   /**
    * ✅ NEW: Find users by array of IDs
    */
-  async findByIds(userIds: string[]): Promise<User[]> {
+  /**
+   * Hydrate users by id, within the caller's scope.
+   *
+   * Unscoped, this is the recipient list for `bulkSendEmail` — so a tenant
+   * admin could mail any user on the platform by pasting uuids. `actor` is
+   * optional for internal callers; supplied, it confines the result.
+   */
+  async findByIds(userIds: string[], actor?: User): Promise<User[]> {
+    const scoped =
+      actor && actor.role !== UserRole.SUPER_ADMIN
+        ? { tenantId: actor.tenantId ?? '00000000-0000-0000-0000-000000000000' }
+        : {};
+
     return await this.userRepository.find({
       where: {
         id: In(userIds),
-      },
+        ...scoped,
+      } as any,
       select: [
         'id',
         'email',

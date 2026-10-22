@@ -81,6 +81,20 @@ export class BulkAssignRoleDto {
   roleId: string;
 }
 
+/**
+ * Body of `POST /users/:id/roles` — the single-user counterpart of
+ * `BulkAssignRoleDto`. The user is the path parameter, so only the role is
+ * carried here; a `tenantId` or `userId` in the body would be a way to retarget
+ * the write and is deliberately absent (the global ValidationPipe runs with
+ * `forbidNonWhitelisted`, so sending one is a 400).
+ */
+export class AssignRoleDto {
+  @ApiProperty({ example: 'role-id-here' })
+  @IsString()
+  @IsNotEmpty()
+  roleId: string;
+}
+
 export class BulkRemoveRoleDto {
   @ApiProperty({ example: ['user-id-1', 'user-id-2'], type: [String] })
   @IsArray()

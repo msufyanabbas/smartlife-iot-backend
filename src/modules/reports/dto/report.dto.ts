@@ -256,6 +256,17 @@ export class CreateReportTemplateDto {
   @MaxLength(80)
   type?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Which customer the template belongs to. Omit for a tenant-wide ' +
+      'template, which every customer of the tenant may run. Only a tenant ' +
+      'admin reaches this route, and the customer is checked against the ' +
+      'tenant before it is stored.',
+  })
+  @IsOptional()
+  @IsUUID()
+  customerId?: string;
+
   @ApiProperty({ type: ReportDefinitionDto })
   @ValidateNested()
   @Type(() => ReportDefinitionDto)

@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Body,
   Patch,
   Param,
@@ -26,6 +27,7 @@ import {
   UpdateCustomerDto,
   BulkUpdateCustomerStatusDto,
   SetCustomerPasswordDto,
+  GrantCustomerPermissionsDto,
 } from './dto/customers.dto';
 import {
   BulkDeleteCustomersDto,
@@ -441,6 +443,107 @@ export class CustomersController {
       message: 'Status updated successfully',
       data: customer,
     };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PERMISSION GRANTS
+  //
+  // The outer lever a tenant admin has over a customer. PermissionGuard
+  // resolves a customer-scoped user to
+  //
+  //     (role permissions ∪ direct permissions) ∩ customer.grantedPermissions
+  //
+  // so this set is a ceiling, not a starting point: whatever roles a customer
+  // user is given, nothing outside this is ever effective.
+  //
+  // These routes did not exist. `GrantCustomerPermissionsDto` was declared and
+  // referenced by no controller, the customer detail page rendered the matrix
+  // as static text, and every customer therefore had an empty grant set — which
+  // the guard intersects to nothing. That is the whole reason "permissions
+  // don't work for customers".
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * The permissions a customer MAY be granted — the picker's catalogue.
+   *
+   * Declared before `:id/permissions` so the literal segment is not captured
+   * by the parameterised route (see §4o: a static segment must precede a
+   * parameterised one, or Nest routes `grantable` to `:id`).
+   */
+  @Get('permissions/grantable')
+  @RequirePermissions('customers:read')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'List the permissions a customer may be granted',
+    description:
+      'Excludes tenant-administration resources (users, roles, permissions, ' +
+      'tenants, billing, audit, settings), which a customer must never hold.',
+  })
+  @ApiResponse({ status: 200, description: 'Grantable permission catalogue' })
+  async getGrantablePermissions(@CurrentUser() user: User) {
+    const data = await this.customersService.getGrantablePermissions(
+      user.tenantId ?? null,
+    );
+    return { message: 'Grantable permissions retrieved', data };
+  }
+
+  /** What this customer is currently granted. */
+  @Get(':id/permissions')
+  @RequirePermissions('customers:read')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Get a customer's granted permissions" })
+  @ApiResponse({ status: 200, description: 'Granted permissions' })
+  async getCustomerPermissions(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+  ) {
+    const data = await this.customersService.getGrantedPermissions(user, id);
+    return { message: 'Customer permissions retrieved', data };
+  }
+
+  /**
+   * Replace a customer's grants.
+   *
+   * PUT rather than PATCH because it is a full replacement: the matrix shows
+   * the complete set, so an untick has to remove.
+   */
+  @Put(':id/permissions')
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.CUSTOMER,
+    description: 'Customer permission grants changed',
+  })
+  @RequirePermissions('customers:update')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Replace a customer's granted permissions",
+    description:
+      'The full set. Anything omitted is revoked. Every user under this ' +
+      'customer has their effective permissions recomputed on their next ' +
+      'request.',
+  })
+  @ApiResponse({ status: 200, description: 'Permissions updated' })
+  @ApiResponse({
+    status: 400,
+    description: 'Unknown permission id, or one a customer may not hold',
+  })
+  async setCustomerPermissions(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Body() dto: GrantCustomerPermissionsDto,
+  ) {
+    const data = await this.customersService.setGrantedPermissions(
+      user,
+      id,
+      dto.permissionIds,
+    );
+    return { message: 'Customer permissions updated', data };
   }
 
   /**

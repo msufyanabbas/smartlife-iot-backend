@@ -7,8 +7,11 @@ declare global {
   namespace Express {
     interface Request {
       user?: User;
-      tenantFilter?: { tenantId: string };
-      customerFilter?: { tenantId: string; customerId?: string };
+      // `tenantFilter` / `customerFilter` used to be declared here and written
+      // by TenantIsolationGuard / CustomerAccessGuard. No service ever read
+      // them; both writes and both declarations are gone, so that nothing can
+      // mistake a request property for an applied scope. The scope comes from
+      // `user` through `@common/scoping/apply-access-scope`.
       subscription?: import('@modules/subscriptions/entities/subscription.entity').Subscription;
       effectivePermissions?: Set<string>;
     }

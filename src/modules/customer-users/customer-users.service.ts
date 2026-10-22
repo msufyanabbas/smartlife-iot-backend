@@ -191,10 +191,17 @@ private usersService: UsersService,
     user.password = newPassword; // @BeforeUpdate hook hashes it
     user.status = UserStatus.ACTIVE;
     user.emailVerified = true;
-    user.setPasswordToken = undefined;
-    user.setPasswordExpires = undefined;
-
     await this.userRepository.save(user);
+
+    // `= undefined` is omitted from the UPDATE by TypeORM, so assigning it to
+    // the token columns left the invitation link live. See the same fix in
+    // AuthService.setPasswordFromToken, which is the path actually routed —
+    // this copy is currently unreachable, and is corrected so that reviving it
+    // does not revive the hole.
+    await this.userRepository.update(
+      { id: user.id },
+      { setPasswordToken: null as never, setPasswordExpires: null as never },
+    );
     this.logger.log(`Password set and account activated for: ${user.email}`);
 
     return { message: 'Password set successfully. You can now log in.' };
@@ -207,13 +214,41 @@ private usersService: UsersService,
     userId: string,
     user: User,
   ): Promise<{ message: string }> {
-    const newUser = await this.userRepository.findOne({ where: { id: userId, tenantId: user.tenantId, customerId: user.customerId } });
+    // ── Scope by what the CALLER actually has ────────────────────────────
+    //
+    // This ANDed on `customerId: user.customerId` unconditionally. A TENANT
+    // ADMIN has no customerId, so TypeORM emitted `customerId IS NULL`, no
+    // customer-user row ever matched, and the route answered 404 "User not
+    // found" — for the one role that is most likely to be pressing "resend".
+    // It happened to work only for a signed-in customer.
+    //
+    // The customer predicate therefore applies only when the caller IS
+    // customer-scoped, which is also what makes it a real restriction: it
+    // stops a customer resending invitations for a sibling customer's users.
+    const where: Record<string, unknown> = { id: userId };
+
+    if (user.role !== UserRole.SUPER_ADMIN) {
+      if (!user.tenantId) {
+        // Falsy scope denies rather than widening — §4g.
+        throw new NotFoundException('User not found');
+      }
+      where.tenantId = user.tenantId;
+
+      if (
+        user.role === UserRole.CUSTOMER ||
+        user.role === UserRole.CUSTOMER_USER
+      ) {
+        if (!user.customerId) {
+          throw new NotFoundException('User not found');
+        }
+        where.customerId = user.customerId;
+      }
+    }
+
+    const newUser = await this.userRepository.findOne({ where: where as any });
     const tenant = await this.tenantService.findOne(user.tenantId);
 
     if (!newUser) throw new NotFoundException('User not found');
-    if (newUser.tenantId !== user.tenantId) {
-      throw new ForbiddenException('User does not belong to your tenant');
-    }
     if (newUser.status === UserStatus.ACTIVE && newUser.emailVerified) {
       throw new BadRequestException('This user has already activated their account');
     }
@@ -226,16 +261,23 @@ private usersService: UsersService,
     newUser.setPasswordExpires = setPasswordExpires;
     await this.userRepository.save(newUser);
 
-    const customer = user.customerId
-      ? await this.customersService.findOne(user.tenantId, user.customerId)
-      : null;
-
+    // ── Recipient: the INVITEE, not the caller ───────────────────────────
+    //
+    // This sent `user.email` / `user.name` — `user` is the @CurrentUser()
+    // admin making the request, `newUser` is the person being invited. So
+    // pressing "resend" rotated the invitee's token (invalidating whatever
+    // they had) and mailed the new link to the administrator's own inbox. The
+    // invitee was left strictly worse off than before the click.
+    //
+    // The discarded `customer` lookup that used to sit here is gone with it:
+    // it also ANDed on `user.customerId`, which is undefined for a tenant
+    // admin, so it resolved to null on exactly the calls that matter.
     await this.mailService.sendInvitationEmail(
-      user.email,
-      user.name,
+      newUser.email,
+      newUser.name,
       tenant.name,
       setPasswordToken,
-      UserRole.CUSTOMER_USER
+      UserRole.CUSTOMER_USER,
     );
 
     return { message: 'Invitation email resent successfully' };

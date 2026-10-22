@@ -1,3 +1,4 @@
+import { Permission } from '@modules/index.entities';
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CustomersController } from './customers.controller';
@@ -11,7 +12,11 @@ import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Customer, User]),
+    // Permission is registered here rather than importing PermissionsModule:
+    // the customers service only READS the catalogue to validate and seed
+    // grants, and an import would add another edge to the Users/Customers
+    // forwardRef knot below.
+    TypeOrmModule.forFeature([Customer, User, Permission]),
     forwardRef(() => UsersModule),   // ← forwardRef here
     TenantsModule,
     MailModule,

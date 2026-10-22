@@ -438,6 +438,11 @@ const TENANT_B = randomUUID();
   const customersService = new CustomersService(
     repo(Customer),
     repo(User),
+    // The Permission repository, added when customers gained grantable
+    // permissions. Real rather than a stub: the grant methods validate ids
+    // against it, and a stub that answered undefined would let an invalid
+    // grant look like a successful one.
+    repo(Permission),
     stub, // TenantsService
     new EventEmitter2(),
     stub, // MailService

@@ -10,6 +10,17 @@ import { UserRole } from '@common/enums/index.enum';
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
+/**
+ * Refuses a caller that names another tenant in the URL, and requires every
+ * non-super-admin to belong to a tenant at all.
+ *
+ * It used to also set `request.tenantFilter = { tenantId }`, documented as
+ * "Services read this to scope their queries automatically". Nothing ever
+ * read it — not one service, in the whole repository. The write is gone,
+ * because a filter that looks like scoping but is applied nowhere is how a
+ * query ends up shipping with no tenant predicate at all. Services take their
+ * scope from `@CurrentUser()` through `@common/scoping/apply-access-scope`.
+ */
 @Injectable()
 export class TenantIsolationGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
@@ -41,12 +52,9 @@ export class TenantIsolationGuard implements CanActivate {
       request.params?.tenantId ||   // e.g. GET /tenants/:tenantId/devices
       request.query?.tenantId;      // e.g. GET /devices?tenantId=xxx (admin routes only)
 
-    if (!requestedTenantId) {
-      // No explicit tenant in URL — auto-inject user's tenant into the request
-      // Services read this to scope their queries automatically
-      request.tenantFilter = { tenantId: user.tenantId };
-      return true;
-    }
+    // No explicit tenant in the URL — nothing to check here. The per-row
+    // tenant predicate is the service's, via `applyAccessScope`.
+    if (!requestedTenantId) return true;
 
     // ── Explicit tenant in URL — verify it matches user's own tenant ──────────
     if (requestedTenantId !== user.tenantId) {
@@ -55,7 +63,6 @@ export class TenantIsolationGuard implements CanActivate {
       );
     }
 
-    request.tenantFilter = { tenantId: user.tenantId };
     return true;
   }
 }

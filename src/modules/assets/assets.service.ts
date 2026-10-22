@@ -34,6 +34,10 @@ import {
 import { UserRole } from '@common/enums/index.enum';
 import { PaginatedResponseDto, PaginationDto, SortOrder } from '@/common/dto/pagination.dto';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import {
+  applyAccessScope,
+  isCustomerScopedRole,
+} from '@common/scoping/apply-access-scope';
 
 @Injectable()
 export class AssetsService {
@@ -253,33 +257,21 @@ async findAll(
     this.assetRepository.createQueryBuilder('asset'),
   );
 
-  // ── Tenant scoping ────────────────────────────────────────────────────────
-  if (user.role === UserRole.SUPER_ADMIN) {
-    // SUPER_ADMIN: optionally filter by tenantId query param, otherwise sees all
-    if (user.tenantId) {
-      qb.andWhere('asset.tenantId = :tenantId', { tenantId: user.tenantId });
-    }
-  } else {
-    // All other roles are always scoped to their own tenant via JWT claim
-    qb.andWhere('asset.tenantId = :tenantId', { tenantId: user.tenantId });
-  }
+  // ── Tenant + customer scoping ─────────────────────────────────────────────
+  // One helper, shared with devices, dashboards and alarms. The hand-rolled
+  // version this replaces passed `user.tenantId` straight into the predicate
+  // even when it was undefined, and fell back to a caller-supplied
+  // `customerId` for a customer-scoped role — a scope must come from the
+  // principal, and a falsy one must deny (§4g).
+  applyAccessScope(qb, 'asset', user);
 
-  // ── Customer scoping ──────────────────────────────────────────────────────
-  if (
-    user.role === UserRole.CUSTOMER_USER ||
-    user.role === UserRole.CUSTOMER
-  ) {
-    // Trust JWT claim first, fall back to resolved decorator value
-    const effectiveCustomerId = user.customerId ?? customerId;
-    if (!effectiveCustomerId) {
-      return PaginatedResponseDto.create([], page, limit, 0);
-    }
-    qb.andWhere('asset.customerId = :customerId', {
-      customerId: effectiveCustomerId,
+  // A tenant admin may narrow the list to one customer (the customer detail
+  // page). For a customer-scoped caller their own customer is already pinned
+  // by the helper, so this filter is not theirs to set.
+  if (customerId && !isCustomerScopedRole(user.role)) {
+    qb.andWhere('asset.customerId = :filterCustomerId', {
+      filterCustomerId: customerId,
     });
-  } else if (customerId) {
-    // Tenant admin/user filtering by a specific customer (e.g. customer detail page)
-    qb.andWhere('asset.customerId = :customerId', { customerId });
   }
 
   // ── Optional filters ──────────────────────────────────────────────────────
@@ -354,19 +346,18 @@ async findAll(
       .leftJoinAndSelect('asset.assetProfile', 'assetProfile')
       .where('asset.id = :id', { id });
 
-    // Apply customer filtering
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (!user.customerId) {
-        throw new ForbiddenException('No customer assigned');
-      }
-      queryBuilder.andWhere('asset.customerId = :customerId', {
-        customerId: user.customerId,
-      });
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      queryBuilder.andWhere('asset.tenantId = :tenantId', {
-        tenantId: user.tenantId,
-      });
-    }
+    // THE LEAK THIS CLOSES: the block here used to give a CUSTOMER_USER a
+    // customer predicate and NO tenant predicate, a TENANT_ADMIN a tenant
+    // predicate and nothing else, and `CUSTOMER` and plain `USER` no
+    // predicate at all — so either of those two roles read any asset on the
+    // platform, in any tenant, given its uuid. One shared helper now applies
+    // the tenant predicate unconditionally and the customer predicate for
+    // every customer-scoped role.
+    //
+    // It is also a predicate rather than a thrown ForbiddenException, so an
+    // asset outside the caller's scope comes back as the 404 below instead of
+    // a 403 that confirms the uuid exists (§4g).
+    applyAccessScope(queryBuilder, 'asset', user);
 
     const asset = await queryBuilder.getOne();
 
@@ -765,19 +756,9 @@ async findAll(
       this.assetRepository.createQueryBuilder('asset'),
     ).where('asset.parentAssetId IS NULL');
 
-    // Apply customer filtering
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (!user.customerId) {
-        return [];
-      }
-      queryBuilder.andWhere('asset.customerId = :customerId', {
-        customerId: user.customerId,
-      });
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      queryBuilder.andWhere('asset.tenantId = :tenantId', {
-        tenantId: user.tenantId,
-      });
-    }
+    // Same leak as findOne(), same fix: CUSTOMER and plain USER used to get no
+    // predicate at all here, so the root-asset list was platform-wide.
+    applyAccessScope(queryBuilder, 'asset', user);
 
     return this.withAssetType(
       await queryBuilder.orderBy('asset.name', 'ASC').getMany(),
@@ -955,16 +936,10 @@ async findAll(
       this.assetRepository.createQueryBuilder('asset'),
     ).where('asset.parentAssetId = :id', { id });
 
-    // Apply customer filtering
-    if (user.role === UserRole.CUSTOMER_USER) {
-      queryBuilder.andWhere('asset.customerId = :customerId', {
-        customerId: user.customerId,
-      });
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      queryBuilder.andWhere('asset.tenantId = :tenantId', {
-        tenantId: user.tenantId,
-      });
-    }
+    // The parent was already resolved through findOne(), but the children are
+    // their own rows: a child may be assigned to a different customer than
+    // its parent, so they get the same scope rather than inheriting trust.
+    applyAccessScope(queryBuilder, 'asset', user);
 
     const children = await queryBuilder.orderBy('asset.name', 'ASC').getMany();
 
@@ -1254,12 +1229,10 @@ async findAll(
       .createQueryBuilder('device')
       .where('device.assetId = :assetId', { assetId });
 
-    // Apply customer filtering for devices too
-    if (user.role === UserRole.CUSTOMER_USER) {
-      queryBuilder.andWhere('device.customerId = :customerId', {
-        customerId: user.customerId,
-      });
-    }
+    // Same scope as DevicesService applies to its own reads — the devices on
+    // an asset are devices, and this route must not be a second, looser way
+    // to list them.
+    applyAccessScope(queryBuilder, 'device', user);
 
     return await queryBuilder.orderBy('device.name', 'ASC').getMany();
   }
@@ -1296,19 +1269,7 @@ async findAll(
       .where("asset.location->>'latitude' IS NOT NULL")
       .andWhere("asset.location->>'longitude' IS NOT NULL");
 
-    // Apply customer filtering
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (!user.customerId) {
-        return [];
-      }
-      queryBuilder.andWhere('asset.customerId = :customerId', {
-        customerId: user.customerId,
-      });
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      queryBuilder.andWhere('asset.tenantId = :tenantId', {
-        tenantId: user.tenantId,
-      });
-    }
+    applyAccessScope(queryBuilder, 'asset', user);
 
     const assets = await queryBuilder.getMany();
 
@@ -1352,19 +1313,10 @@ async findAll(
   }> {
     const queryBuilder = this.assetRepository.createQueryBuilder('asset');
 
-    // Apply customer filtering
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (!user.customerId) {
-        return this.getEmptyStatistics();
-      }
-      queryBuilder.where('asset.customerId = :customerId', {
-        customerId: user.customerId,
-      });
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      queryBuilder.where('asset.tenantId = :tenantId', {
-        tenantId: user.tenantId,
-      });
-    }
+    // Statistics are a read like any other: a count is a disclosure. A
+    // customer-scoped caller with no customer now counts nothing instead of
+    // counting the platform.
+    applyAccessScope(queryBuilder, 'asset', user);
 
     const [total, active, inactive] = await Promise.all([
       queryBuilder.getCount(),
@@ -1427,16 +1379,26 @@ async findAll(
    * Get assets by customer
    */
   async findByCustomer(customerId: string, user: User): Promise<Asset[]> {
-    // Validate access
-    if (user.role === UserRole.CUSTOMER_USER && user.customerId !== customerId) {
+    // A customer-scoped caller may only name its own customer. CUSTOMER was
+    // missing from this check, so a customer admin could ask for a sibling.
+    if (isCustomerScopedRole(user.role) && user.customerId !== customerId) {
       throw new ForbiddenException('Access denied to this customer');
     }
 
-    return await this.assetRepository.find({
-      where: { customerId },
-      relations: ['parentAsset'],
-      order: { name: 'ASC' },
-    });
+    // The lookup used to be `find({ where: { customerId } })` — no tenant
+    // predicate anywhere, so any authenticated tenant user could list the
+    // assets of any customer of any tenant by uuid. The scope is applied the
+    // same way as every other read now.
+    const queryBuilder = this.assetRepository
+      .createQueryBuilder('asset')
+      .leftJoinAndSelect('asset.parentAsset', 'parentAsset')
+      .where('asset.customerId = :targetCustomerId', {
+        targetCustomerId: customerId,
+      });
+
+    applyAccessScope(queryBuilder, 'asset', user);
+
+    return await queryBuilder.orderBy('asset.name', 'ASC').getMany();
   }
 
   /**
@@ -1584,16 +1546,4 @@ private async wouldCreateCircularReference(
     return byType;
   }
 
-  private getEmptyStatistics() {
-    const byType = this.emptyTypeCounts();
-
-    return {
-      total: 0,
-      active: 0,
-      inactive: 0,
-      byType,
-      withDevices: 0,
-      withoutDevices: 0,
-    };
-  }
 }

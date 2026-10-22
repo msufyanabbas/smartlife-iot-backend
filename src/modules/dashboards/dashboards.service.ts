@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, Repository } from 'typeorm';
+import { EntityManager, In, Repository, SelectQueryBuilder } from 'typeorm';
 import { randomUUID } from 'crypto';
 import { Dashboard } from './entities/dashboard.entity';
 import { DashboardVisibility, UserRole } from '@common/enums/index.enum';
@@ -32,6 +32,10 @@ import { WidgetType } from '@modules/widgets/entities/widget-type.entity';
 import { Device } from '@modules/devices/entities/device.entity';
 import { WebsocketGateway } from '@modules/websocket/websocket.gateway';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import {
+  applyAccessScope,
+  isCustomerScopedRole,
+} from '@common/scoping/apply-access-scope';
 
 @Injectable()
 export class DashboardsService {
@@ -93,6 +97,62 @@ export class DashboardsService {
     return saved;
   }
 
+  // ── Scoping ───────────────────────────────────────────────────────────────
+
+  /**
+   * The caller's tenant/customer scope, plus the dashboard sharing rule.
+   *
+   * One place, used by every read path in this service, so the list, the
+   * default lookup and the detail read cannot disagree about who sees what —
+   * which is exactly how `findAll` ended up tenant-less while `findOne` was
+   * tenant-scoped.
+   *
+   * · tenant: always, from `applyAccessScope` — a falsy tenantId denies.
+   * · customer-scoped roles (CUSTOMER and CUSTOMER_USER alike): their own
+   *   customer's dashboards, their own dashboards, and the tenant's PUBLIC
+   *   ones. A falsy customerId denies rather than widening.
+   * · a plain tenant USER / TENANT_ADMIN: the whole tenant, which for a
+   *   LISTING is then narrowed by `restrictListingToOwn()`.
+   * · SUPER_ADMIN: everything.
+   */
+  private static applyDashboardScope(
+    qb: SelectQueryBuilder<Dashboard>,
+    user: User,
+  ): void {
+    applyAccessScope(qb, 'dashboard', user, {
+      alsoVisible: {
+        sql:
+          '(dashboard.userId = :scopeOwnUserId ' +
+          'OR dashboard.visibility = :scopePublicVisibility)',
+        params: {
+          scopeOwnUserId: user.id,
+          scopePublicVisibility: DashboardVisibility.PUBLIC,
+        },
+      },
+    });
+  }
+
+  /**
+   * A plain tenant-level user LISTS its own dashboards, not every
+   * colleague's — which is what it did before this change, minus the missing
+   * tenant predicate.
+   *
+   * Applied to the list and the default lookup only, never to the read by id:
+   * `checkAccess()` has always let any tenant user open a PUBLIC or
+   * explicitly shared dashboard by id, and narrowing that here would take a
+   * working feature away rather than close a hole.
+   */
+  private static restrictListingToOwn(
+    qb: SelectQueryBuilder<Dashboard>,
+    user: User,
+  ): void {
+    if (user.role === UserRole.USER) {
+      qb.andWhere('dashboard.userId = :scopeOwnUserId', {
+        scopeOwnUserId: user.id,
+      });
+    }
+  }
+
   // ── Find all ──────────────────────────────────────────────────────────────
 
   async findAll(
@@ -103,23 +163,22 @@ export class DashboardsService {
 
     const qb = this.dashboardRepository.createQueryBuilder('dashboard');
 
-    // Role-based base filter — wrap OR conditions in parentheses so subsequent
-    // andWhere calls bind to the whole expression, not just the last OR clause.
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (!user.customerId) {
-        qb.where('dashboard.userId = :userId', { userId: user.id });
-      } else {
-        qb.where(
-          '(dashboard.userId = :userId OR dashboard.customerId = :customerId OR dashboard.visibility = :public)',
-          { userId: user.id, customerId: user.customerId, public: DashboardVisibility.PUBLIC },
-        );
-      }
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      qb.where('dashboard.tenantId = :tenantId', { tenantId: user.tenantId });
-    } else if (user.role !== UserRole.SUPER_ADMIN) {
-      qb.where('dashboard.userId = :userId', { userId: user.id });
-    }
-    // SUPER_ADMIN: no base filter — sees everything
+    // THE LEAK THIS CLOSES: the CUSTOMER_USER branch here was
+    // `userId OR customerId OR visibility = PUBLIC` with NO tenant predicate,
+    // so every PUBLIC dashboard of every tenant on the platform was listed to
+    // every customer user. And `UserRole.CUSTOMER` — a customer ADMIN — fell
+    // into the last branch and matched its own `userId` only, so it could not
+    // see the dashboards assigned to its own customer at all. Both come from
+    // the same shared helper now: the tenant predicate is unconditional, and
+    // CUSTOMER gets the same customer-scoped branch as CUSTOMER_USER.
+    //
+    // `alsoVisible` carries the part of the rule that is specific to
+    // dashboards — an owner always sees their own, and PUBLIC means
+    // tenant-wide — which is why it is expressed here and not in the helper.
+    // It can only widen WITHIN the tenant, and a customer-scoped caller with
+    // no customerId is still denied everything before it is reached.
+    DashboardsService.applyDashboardScope(qb, user);
+    DashboardsService.restrictListingToOwn(qb, user);
 
     if (visibility) {
       qb.andWhere('dashboard.visibility = :visibility', { visibility });
@@ -153,7 +212,17 @@ export class DashboardsService {
   // ── Find one ──────────────────────────────────────────────────────────────
 
   async findOne(id: string, user: User): Promise<Dashboard> {
-    const dashboard = await this.dashboardRepository.findOne({ where: { id, tenantId: user.tenantId } });
+    // `findOne({ where: { id, tenantId: user.tenantId } })` looks scoped and
+    // is not: TypeORM DROPS a `where` property whose value is undefined, so a
+    // caller with no tenantId was reading by id alone across every tenant.
+    // The shared helper denies that case explicitly.
+    const qb = this.dashboardRepository
+      .createQueryBuilder('dashboard')
+      .where('dashboard.id = :id', { id });
+
+    DashboardsService.applyDashboardScope(qb, user);
+
+    const dashboard = await qb.getOne();
 
     if (!dashboard) {
       throw new NotFoundException(`Dashboard ${id} not found`);
@@ -179,20 +248,10 @@ export class DashboardsService {
       .createQueryBuilder('dashboard')
       .where('dashboard.isDefault = true');
 
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (!user.customerId) {
-        qb.andWhere('dashboard.userId = :userId', { userId: user.id });
-      } else {
-        qb.andWhere(
-          '(dashboard.userId = :userId OR dashboard.customerId = :customerId)',
-          { userId: user.id, customerId: user.customerId },
-        );
-      }
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      qb.andWhere('dashboard.tenantId = :tenantId', { tenantId: user.tenantId });
-    } else if (user.role !== UserRole.SUPER_ADMIN) {
-      qb.andWhere('dashboard.userId = :userId', { userId: user.id });
-    }
+    // Same scope as the list — this was a fourth copy of the same branching,
+    // and it had the same missing tenant predicate for a customer user.
+    DashboardsService.applyDashboardScope(qb, user);
+    DashboardsService.restrictListingToOwn(qb, user);
 
     return qb.getOne();
   }
@@ -304,8 +363,19 @@ export class DashboardsService {
     id: string,
     user: User,
   ): Promise<Dashboard> {
+    // A falsy tenantId would be dropped from this `where` by TypeORM, leaving
+    // a lookup by id alone, so it is refused before the query runs. (The
+    // query itself cannot go through applyAccessScope: a locking read needs
+    // the entity manager's findOne, not a query builder.)
+    if (user.role !== UserRole.SUPER_ADMIN && !user.tenantId) {
+      throw new NotFoundException(`Dashboard ${id} not found`);
+    }
+
     const dashboard = await manager.findOne(Dashboard, {
-      where: { id, tenantId: user.tenantId },
+      where:
+        user.role === UserRole.SUPER_ADMIN
+          ? { id }
+          : { id, tenantId: user.tenantId },
       lock: { mode: 'pessimistic_write' },
     });
 
@@ -738,17 +808,24 @@ export class DashboardsService {
     const qb = this.dashboardRepository
       .createQueryBuilder('dashboard')
       .where(
-        '(:userId = ANY(dashboard.sharedWith) OR dashboard.visibility = :visibility)',
+        // `sharedWith` is a `simple-array`, which Postgres stores as a comma
+        // separated VARCHAR — not an array. `:id = ANY(<varchar>)` is not a
+        // scoping bug but a hard error (`op ANY/ALL (array) requires array on
+        // right side`, SQLSTATE 42809), so this route answered 500 for every
+        // caller and returned no rows to anybody. Found by running the
+        // verifier, not by reading it. `string_to_array` is what makes the
+        // membership test mean what it says; a NULL column yields NULL and so
+        // matches nobody, which is correct.
+        '(:userId = ANY(string_to_array(dashboard.sharedWith, \',\')) ' +
+          'OR dashboard.visibility = :visibility)',
         { userId: user.id, visibility: DashboardVisibility.PUBLIC },
       )
       .orderBy('dashboard.updatedAt', 'DESC');
 
-    if (user.role === UserRole.CUSTOMER_USER && user.customerId) {
-      qb.andWhere(
-        '(dashboard.customerId = :customerId OR dashboard.visibility = :public)',
-        { customerId: user.customerId, public: DashboardVisibility.PUBLIC },
-      );
-    }
+    // This had no tenant predicate at all, so "shared with me" listed every
+    // PUBLIC dashboard on the platform to every authenticated user — the same
+    // leak as findAll, one method down.
+    DashboardsService.applyDashboardScope(qb, user);
 
     return qb.getMany();
   }
@@ -758,20 +835,10 @@ export class DashboardsService {
   async getStatistics(user: User) {
     const qb = this.dashboardRepository.createQueryBuilder('dashboard');
 
-    if (user.role === UserRole.CUSTOMER_USER) {
-      if (!user.customerId) {
-        qb.where('dashboard.userId = :userId', { userId: user.id });
-      } else {
-        qb.where(
-          '(dashboard.userId = :userId OR dashboard.customerId = :customerId)',
-          { userId: user.id, customerId: user.customerId },
-        );
-      }
-    } else if (user.role === UserRole.TENANT_ADMIN) {
-      qb.where('dashboard.tenantId = :tenantId', { tenantId: user.tenantId });
-    } else if (user.role !== UserRole.SUPER_ADMIN) {
-      qb.where('dashboard.userId = :userId', { userId: user.id });
-    }
+    // A count is a disclosure too, and this was the fifth copy of the same
+    // branching in this one file.
+    DashboardsService.applyDashboardScope(qb, user);
+    DashboardsService.restrictListingToOwn(qb, user);
 
     const [total, favorites, shared] = await Promise.all([
       qb.getCount(),
@@ -799,14 +866,24 @@ export class DashboardsService {
   // ── Customer assignment ───────────────────────────────────────────────────
 
   async findByCustomer(customerId: string, user: User): Promise<Dashboard[]> {
-    if (user.role === UserRole.CUSTOMER_USER && user.customerId !== customerId) {
+    // CUSTOMER was missing from this check, so a customer admin could name a
+    // sibling customer.
+    if (isCustomerScopedRole(user.role) && user.customerId !== customerId) {
       throw new ForbiddenException('Access denied to this customer');
     }
 
-    return this.dashboardRepository.find({
-      where: { customerId },
-      order: { updatedAt: 'DESC' },
-    });
+    // And the lookup itself had no tenant predicate: any authenticated user
+    // could list the dashboards of any customer of any tenant by uuid.
+    const qb = this.dashboardRepository
+      .createQueryBuilder('dashboard')
+      .where('dashboard.customerId = :targetCustomerId', {
+        targetCustomerId: customerId,
+      })
+      .orderBy('dashboard.updatedAt', 'DESC');
+
+    applyAccessScope(qb, 'dashboard', user);
+
+    return qb.getMany();
   }
 
   async assignToCustomer(
@@ -845,15 +922,33 @@ export class DashboardsService {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
+  /**
+   * The row-level half of the decision, for a dashboard already loaded.
+   *
+   * The query predicate (`applyDashboardScope`) is what confines the caller to
+   * its tenant and customer; this adds the dashboard's own sharing rules. Two
+   * things were wrong here:
+   *
+   *   · PUBLIC and `sharedWith` were honoured with no tenant check, so this
+   *     function said "yes" to another tenant's public dashboard. Nothing
+   *     reached it that way while every caller also applied a tenant
+   *     predicate — but `findAll` proved how long that holds.
+   *   · the customer branch tested CUSTOMER_USER only, so a CUSTOMER (a
+   *     customer admin) was refused its own customer's dashboard.
+   */
   private checkAccess(dashboard: Dashboard, user: User): boolean {
-    if (dashboard.userId === user.id) return true;
     if (user.role === UserRole.SUPER_ADMIN) return true;
-    if (user.role === UserRole.TENANT_ADMIN && dashboard.tenantId === user.tenantId) return true;
+
+    // Everything below is tenant-local. No tenant, no access.
+    if (!user.tenantId || dashboard.tenantId !== user.tenantId) return false;
+
+    if (dashboard.userId === user.id) return true;
+    if (user.role === UserRole.TENANT_ADMIN) return true;
     if (dashboard.visibility === DashboardVisibility.PUBLIC) return true;
     if (dashboard.sharedWith?.includes(user.id)) return true;
     if (
-      user.role === UserRole.CUSTOMER_USER &&
-      dashboard.customerId &&
+      isCustomerScopedRole(user.role) &&
+      !!user.customerId &&
       dashboard.customerId === user.customerId
     ) return true;
     return false;

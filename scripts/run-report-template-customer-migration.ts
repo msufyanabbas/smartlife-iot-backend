@@ -1,0 +1,49 @@
+/**
+ * Applies ReportTemplateCustomer1788900000000 on its own, against a database
+ * given on the command line.
+ *
+ *   npm run migration:report-template-customer <database> [up|down]
+ *
+ * Needed for the same reason as the other standalone runners: `migration:run`
+ * is blocked by two never-applied drift migrations that sort ahead of
+ * everything later and abort the transaction (CLAUDE.md §11).
+ *
+ * `up` adds `report_templates.customerId` (nullable — NULL means a tenant-wide
+ * template) plus the `(tenantId, customerId)` index every scoped read uses. It
+ * rewrites no rows: existing templates become tenant-wide, which is what they
+ * already were. `down` drops both again.
+ */
+import { DataSource } from 'typeorm';
+import { ReportTemplateCustomer1788900000000 } from '../src/database/migrations/1788900000000-ReportTemplateCustomer';
+
+const database = process.argv[2] ?? 'migcheck';
+const direction = process.argv[3] ?? 'up';
+
+const dataSource = new DataSource({
+  type: 'postgres',
+  host: process.env.DB_HOST ?? 'localhost',
+  port: Number(process.env.DB_PORT ?? 5432),
+  username: process.env.DB_USERNAME ?? 'postgres',
+  password: process.env.DB_PASSWORD ?? '123456',
+  database,
+  entities: [],
+  migrations: [],
+  synchronize: false,
+});
+
+(async () => {
+  await dataSource.initialize();
+  const runner = dataSource.createQueryRunner();
+  await runner.connect();
+  const migration = new ReportTemplateCustomer1788900000000();
+
+  if (direction === 'down') await migration.down(runner);
+  else await migration.up(runner);
+
+  console.log(`${direction}() completed on "${database}"`);
+  await runner.release();
+  await dataSource.destroy();
+})().catch((error) => {
+  console.error('FAILED:', error.message);
+  process.exit(1);
+});
