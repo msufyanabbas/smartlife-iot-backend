@@ -37,6 +37,21 @@ export class DisplayGeometryQueryDto {
 
   @ApiPropertyOptional({
     description:
+      'Build geometry on layers the standard does not recognise, while still ' +
+      'excluding the ones it recognises as annotation, hatch or grid. This is ' +
+      'the setting for a drawing that does not follow NCS layer naming — ' +
+      '`WALLS`, `Mur`, `Layer1`, an Arabic name — where the strict reading is ' +
+      'an empty model. Much narrower than `enforceStandard=false`, which also ' +
+      'readmits the title block and the text of the general notes.',
+    default: false,
+  })
+  @IsOptional()
+  @Transform(toQueryBoolean)
+  @IsBoolean()
+  keepUnrecognised?: boolean;
+
+  @ApiPropertyOptional({
+    description:
       'Pair the two drawn faces of each wall into one wall of the measured thickness. ' +
       'False leaves every drawn line as its own wall at the default thickness.',
     default: true,

@@ -386,10 +386,33 @@ export function buildDisplayGeometry(
   // Two filters, one flag, and only one of them was wired to it. Worth
   // remembering as the shape: a disable switch is only as good as the LAST
   // thing that filters.
+  //
+  // ── And it has to honour `keepUnrecognised` too ────────────────────────
+  //
+  // It did not, and the consequence was that the standard's own documented
+  // escape hatch for a non-conformant drawing did nothing at all.
+  // `applyCadStandard` keeps an unknown-layer wall when the option is set,
+  // and then this filter removed it again, because an unrecognised layer
+  // classifies as `ignore` and `ignore !== 'build'`.
+  //
+  // So a drawing on `WALLS`, `Mur`, `Layer1` or an Arabic layer name built
+  // ZERO walls with the option on and zero with it off, while the 2D plan
+  // and the old 3D viewer — which read `parsedGeometry` and apply no
+  // standard — showed the building perfectly. The viewer looked broken and
+  // the only working remedy, `enforceStandard=false`, is a much blunter
+  // instrument: it also readmits the title block and the general notes.
+  //
+  // The SAME shape as the paragraph above, with a different flag. Two
+  // filters, two flags, and the second filter knew about only one of them.
+  const keepUnrecognised = Boolean(
+    (opts.standard as Partial<StandardFilterOptions>)?.keepUnrecognised,
+  );
   const buildableWalls = opts.enforceStandard
-    ? filtered.geometry.walls.filter(
-        (w: any) => standards.classify(String(w?.layer ?? ''), w?.linetype).solid === 'build',
-      )
+    ? filtered.geometry.walls.filter((w: any) => {
+        const c = standards.classify(String(w?.layer ?? ''), w?.linetype);
+        if (c.solid === 'build') return true;
+        return keepUnrecognised && c.basis === 'unknown';
+      })
     : filtered.geometry.walls;
 
   // ── 3. Pair the faces ───────────────────────────────────────────────────

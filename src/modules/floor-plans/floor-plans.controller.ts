@@ -41,6 +41,7 @@ import { GenerateModelDto } from './dto/generate-model.dto';
 import { UpdateFloorPlanDto } from './dto/update-floor-plan.dto';
 import { UpdateFloorPlanSettingsDto } from './dto/floor-plan-settings.dto';
 import { FloorPlanQueryDto } from './dto/floor-plan-query.dto';
+import { DEFAULT_STANDARD_FILTER } from './mesh/cad-standard.filter';
 import { DisplayGeometryQueryDto } from './dto/display-geometry-query.dto';
 import {
   CreateFloorPlanWidgetDto,
@@ -249,6 +250,13 @@ export class FloorPlansController {
   ) {
     return this.floorPlansService.getDisplayGeometry(id, tenantId, {
       enforceStandard: query.enforceStandard ?? true,
+      // Merged into the standard options rather than replacing them: a bare
+      // `{ keepUnrecognised }` would drop `enforce` and silently turn the
+      // whole filter off, which is the opposite of a narrower setting.
+      standard: {
+        ...DEFAULT_STANDARD_FILTER,
+        keepUnrecognised: query.keepUnrecognised ?? false,
+      },
       pairWalls: query.pairWalls ?? true,
       cutOpenings: query.cutOpenings ?? true,
       detectXVoids: query.detectXVoids ?? true,

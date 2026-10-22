@@ -3139,8 +3139,69 @@ Two things recorded there rather than quietly fixed:
   genuinely land a hair under an exact limit, but the comment says plainly
   that nothing exercises it and it must not be counted as verified.
 
+### A drawing that follows no standard built NOTHING, and said "upload a DXF"
+
+Reported as a screenshot of the walkthrough reading *"No model to walk through
+yet — upload a DXF for this floor"*, on a plan that already had one.
+
+The standard excludes any layer it does not recognise, deliberately (§4m: a
+wrong solid is harder to notice than a missing one). Most drawings in the wild
+are not on NCS layer names. Measured:
+
+```
+layer "A-WALL"   parser 8 walls → display 8      (conformant)
+layer "0"        parser 8 walls → display 0      AutoCAD's own default layer
+layer "WALLS"    parser 8 walls → display 0
+layer "Mur"      parser 8 walls → display 0
+layer "جدار"     parser 8 walls → display 0
+```
+
+So the 2D plan and the pixel-space 3D viewer — which read `parsedGeometry` and
+apply no standard — showed the building perfectly, while the walkthrough, the
+one view that reads display geometry, was empty. **Two defects, and the second
+is the one worth remembering.**
+
+**1. The escape hatch was inert.** §4m says "an unknown layer is excluded, not
+guessed. `keepUnrecognised` overrides it." It did not. `applyCadStandard` kept
+the wall, and then the SECOND, independent buildable filter removed it again,
+because an unrecognised layer classifies as `ignore` and `ignore !== 'build'`.
+
+That is the §4v defect verbatim, one flag along:
+
+> Two filters, one flag, and only one of them wired to it. **A disable switch
+> is only as good as the LAST thing that filters.**
+
+The lesson did not generalise the first time because the fix was written for
+`enforceStandard` specifically. Both flags now pass through both filters, and
+§9 of `verify:display-geometry` asserts the hatch BUILDS (0 → 8 walls) and
+that it stays **narrower** than `enforceStandard: false`, which also readmits
+the title block and the grid — 8 walls versus 9. Reverting the fix fails
+*"keepUnrecognised BUILDS the drawing — the escape hatch is not inert"* with 0.
+
+`?keepUnrecognised=true` is now on the endpoint; it had no query parameter at
+all, so even a working implementation was unreachable from a browser.
+
+**2. The empty state blamed the wrong thing.** One message covered two causes
+that need opposite responses, and it named the wrong one: it sent someone to
+upload a drawing they had already uploaded. `stats.wallCandidates` is what
+tells them apart — it counts what the PARSER offered, before the standard had
+an opinion:
+
+| | means | the viewer now says |
+|---|---|---|
+| no `display` at all | not parsed, or no file | upload a DXF |
+| `walls = 0`, `wallCandidates > 0` | the standard excluded all of it | names the layers and their reasons, and offers **Build on unrecognised layers** |
+
+`excluded` already carried `{layer, reason, count}` ordered biggest-first and
+nothing rendered it. An empty state that can explain itself is the difference
+between a bug report and a decision.
+
+> **The rule:** when a filter can legitimately remove EVERYTHING, the empty
+> result has to carry what was removed and why. "Nothing here" and "I threw it
+> all away" look identical on screen and are opposite problems.
+
 ```bash
-npm run verify:display-geometry      # 82 checks — §8 is the staircase
+npm run verify:display-geometry      # 90 checks — §8 staircase, §9 non-conformant
 npm run verify:walkthrough           # frontend: 39, no WebGL needed
 ```
 

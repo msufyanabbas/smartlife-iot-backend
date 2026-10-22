@@ -44,6 +44,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 import { DxfFloorPlanParser } from '../src/modules/floor-plans/parsers/dxf-floor-plan.parser';
+import { DEFAULT_STANDARD_FILTER } from '../src/modules/floor-plans/mesh/cad-standard.filter';
 import { buildStairFlightsDetailed } from '../src/modules/floor-plans/display/stair-flight';
 import { CadStandardsService } from '../src/modules/cad-standards/cad-standards.service';
 import { buildDisplayGeometry } from '../src/modules/floor-plans/display/display-geometry';
@@ -633,6 +634,86 @@ try {
         t.centre.y <= display.bounds.maxY + 1,
     ),
     display.bounds,
+  );
+
+  // ── 9. A drawing that follows no standard ───────────────────────────────
+  section('9. a non-conformant drawing is reachable, not silently empty');
+
+  // Most drawings in the wild are not on NCS layer names. The standard
+  // excludes an unrecognised layer on purpose, so the strict reading of such a
+  // drawing is an EMPTY model while the 2D plan shows the building — which
+  // reads as the 3D viewer being broken.
+  //
+  // `keepUnrecognised` is the documented escape hatch, and it did nothing:
+  // `applyCadStandard` kept the walls and a SECOND, independent filter removed
+  // them again because an unknown layer classifies as `ignore`. The same shape
+  // as the `enforceStandard` defect this file already documents, one flag
+  // along — which is why it is asserted here rather than trusted.
+  const plain = (() => {
+    const e: string[] = [];
+    const L = (layer: string, a: number[], b: number[]) =>
+      e.push('0','LINE','8',layer,'10',String(a[0]),'20',String(a[1]),'30','0',
+             '11',String(b[0]),'21',String(b[1]),'31','0');
+    for (const [a, b] of [
+      [[0, 0], [8000, 0]], [[8000, 0], [8000, 6000]],
+      [[8000, 6000], [0, 6000]], [[0, 6000], [0, 0]],
+      [[200, 200], [7800, 200]], [[7800, 200], [7800, 5800]],
+      [[7800, 5800], [200, 5800]], [[200, 5800], [200, 200]],
+    ] as number[][][]) L('WALLS', a, b);
+    // Noise the standard DOES recognise. It must stay out even with the
+    // escape hatch on, or the hatch is just `enforceStandard: false` wearing
+    // a narrower name.
+    L('G-ANNO-TTLB', [0, -900], [8000, -900]);
+    L('G-GRID', [-2000, 3000], [10000, 3000]);
+    return DxfFloorPlanParser.parse(
+      ['0','SECTION','2','ENTITIES',...e,'0','ENDSEC','0','EOF'].join('\n'),
+    );
+  })();
+
+  const strictPlain = buildDisplayGeometry(plain as any, {});
+  ok(
+    'strictly, a drawing on non-standard layers builds NOTHING',
+    strictPlain.walls.length === 0,
+    strictPlain.walls.length,
+  );
+  ok(
+    'but the parser did offer the lines — so the model is empty by DECISION, not for lack of a drawing',
+    strictPlain.stats.wallCandidates >= 8,
+    strictPlain.stats.wallCandidates,
+  );
+  ok(
+    'and the exclusion is reported with a layer and a reason, so a viewer can say why',
+    strictPlain.excluded.some((e: any) => e.layer === 'WALLS' && !!e.reason),
+    strictPlain.excluded.map((e: any) => e.layer),
+  );
+
+  const kept = buildDisplayGeometry(plain as any, {
+    standard: { ...DEFAULT_STANDARD_FILTER, keepUnrecognised: true },
+  });
+  ok(
+    'keepUnrecognised BUILDS the drawing — the escape hatch is not inert',
+    kept.walls.length > 0,
+    kept.walls.length,
+  );
+  ok(
+    'and it is narrower than enforceStandard:false — the title block and grid stay out',
+    kept.walls.every(
+      (w: any) => w.layer !== 'G-ANNO-TTLB' && w.layer !== 'G-GRID',
+    ),
+    kept.walls.map((w: any) => w.layer),
+  );
+
+  const blunt = buildDisplayGeometry(plain as any, { enforceStandard: false });
+  ok(
+    'whereas enforceStandard:false really does readmit them, which is why it is the blunter tool',
+    blunt.walls.length > kept.walls.length,
+    `keep ${kept.walls.length} vs off ${blunt.walls.length}`,
+  );
+  ok(
+    'a CONFORMANT drawing is unaffected by the hatch',
+    buildDisplayGeometry(parsed as any, {
+      standard: { ...DEFAULT_STANDARD_FILTER, keepUnrecognised: true },
+    }).walls.length === display.walls.length,
   );
 
   // Negative control for the whole module.
