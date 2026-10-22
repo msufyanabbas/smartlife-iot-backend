@@ -207,7 +207,51 @@ async function seed(ds: DataSource, dxf: string): Promise<Fixture> {
   // The plan carries the REAL parsed geometry of the test drawing, so the
   // import-from-drawing path is exercised against actual markers on actual
   // standard layers rather than a hand-written stub.
-  const geometry = DxfFloorPlanParser.parse(readFileSync(dxf, 'latin1'));
+  const parsedDrawing = DxfFloorPlanParser.parse(readFileSync(dxf, 'latin1'));
+
+  // ── The plan is stored as a LEGACY row, on purpose ────────────────────────
+  //
+  // The parser strips the X-mark strokes now, so storing its output verbatim
+  // would make the read-path assertion in §1b vacuous: the strokes would
+  // already be absent whether `FloorPlansService.withoutXStrokes` ran or not.
+  // That is exactly the shape §4r warns about — a check that passes because
+  // there was nothing to catch, counted as evidence that the fix works.
+  //
+  // So the strokes are put back and `voids` removed, reproducing a drawing
+  // imported before the parser learned the convention. That is also the row
+  // the client actually has, which is the whole reason the read path exists:
+  // his plans are already uploaded, and "re-import everything" is not a fix.
+  const xStroke = (n: number, a: [number, number], b: [number, number]) => ({
+    start: { x: a[0], y: a[1], z: 0 },
+    end: { x: b[0], y: b[1], z: 0 },
+    layer: 'A-AREA-IDEN',
+  });
+  const legacyStrokes: Array<[number, [number, number], [number, number]]> = [
+    [9001, [4, 4], [7, 7]],
+    [9003, [7, 4], [4, 7]],
+  ];
+  const geometry = {
+    ...parsedDrawing,
+    walls: [
+      ...parsedDrawing.walls,
+      ...legacyStrokes.map(([n, a, b]) => ({
+        id: `wall-${n}`,
+        ...xStroke(n, a, b),
+        points: [
+          { x: a[0], y: a[1], z: 0 },
+          { x: b[0], y: b[1], z: 0 },
+        ],
+        thickness: 0.1,
+        height: 3,
+        material: 'A-AREA-IDEN',
+      })),
+    ],
+    lines: [
+      ...(parsedDrawing.lines ?? []),
+      ...legacyStrokes.map(([n, a, b]) => ({ id: `line-${n}`, ...xStroke(n, a, b) })),
+    ],
+    voids: undefined,
+  };
 
   // One zone covering the left-hand room, so the zone-containment test has a
   // real polygon to resolve against. Coordinates are metres, matching the
@@ -349,9 +393,44 @@ async function seed(ds: DataSource, dxf: string): Promise<Fixture> {
     const display = payload(dg.body)?.display;
     ok('with draw-ready geometry', !!display, Object.keys(payload(dg.body) ?? {}));
     ok(
-      'the standard has been applied — 21 candidates down to 10 built',
-      display?.stats?.wallCandidates === 21 && display?.stats?.wallsAfterStandard === 10,
+      'the standard has been applied — 19 candidates down to 10 built',
+      display?.stats?.wallCandidates === 19 && display?.stats?.wallsAfterStandard === 10,
       display?.stats,
+    );
+    // 19, not the 21 lines the fixture draws: the two X strokes are removed
+    // before this, so the crossed-out box renders as a box with nothing in
+    // it. That is the client's standard, and suppressing the region's
+    // CONTENTS while leaving the cross standing was the complaint.
+    //
+    // The two assertions below are the ones that matter, because they are the
+    // only place the READ path is proven. A plan imported before the parser
+    // learned this has the strokes in its stored `parsedGeometry` jsonb, and
+    // re-importing every drawing is not a reasonable migration — so
+    // `FloorPlansService.withoutXStrokes` strips them on the way out instead.
+    // Asserting it here, over HTTP, is what distinguishes that from a fix that
+    // only ever helps the next upload.
+    const diagonalSpansRegion = (seg: any) => {
+      const pts = [seg?.start, seg?.end].map((pt: any) => [pt?.x, pt?.y]);
+      const at = (x: number, y: number) =>
+        pts.some(([px, py]) => Math.abs(px - x) < 0.02 && Math.abs(py - y) < 0.02);
+      return (at(4, 4) && at(7, 7)) || (at(7, 4) && at(4, 7));
+    };
+    ok(
+      'no X stroke survives into the drawn walls',
+      Array.isArray(display?.walls) && !display.walls.some(diagonalSpansRegion),
+      (display?.walls ?? []).filter(diagonalSpansRegion).length,
+    );
+
+    const geom = await app.request('GET', `/floor-plans/${fx.planId}/geometry`, { token });
+    const rawGeometry = payload(geom.body)?.geometry;
+    ok(
+      'and none survives on the raw geometry route either — the strip is on the READ path, not only the importer',
+      geom.status === 200 &&
+        !(rawGeometry?.walls ?? []).some(diagonalSpansRegion) &&
+        !(rawGeometry?.lines ?? []).some(diagonalSpansRegion),
+      `status ${geom.status}, walls ` +
+        `${(rawGeometry?.walls ?? []).filter(diagonalSpansRegion).length}, lines ` +
+        `${(rawGeometry?.lines ?? []).filter(diagonalSpansRegion).length}`,
     );
     ok('wall faces are paired into five walls', display?.stats?.wallsPaired === 5, display?.stats);
     ok('the X-marked space is reported', display?.stats?.voids === 1, display?.stats);

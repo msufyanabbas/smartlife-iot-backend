@@ -194,15 +194,41 @@ export function detectXVoids(
   });
 
   const minCos = Math.cos((opts.minAngleDeg * Math.PI) / 180);
-  const claimed = new Set<string>();
-  const voids: DetectedVoid[] = [];
+
+  /**
+   * Every pair that qualifies, scored, BEST FIRST — not the first pair found.
+   *
+   * This used to be a nested loop that claimed the first qualifying partner
+   * and moved on, which made the answer depend on the order the draughtsman
+   * happened to draw in. §4v states the rule ("entity order must not change
+   * the answer") and this was breaking it.
+   *
+   * It is not theoretical. In the test drawing the demolished partition runs
+   * (5, 0.2)-(5, 7.8) and crosses the X's first stroke at (5, 5) — within the
+   * midpoint tolerance of both, at 45 degrees, with a length ratio of 1.8. It
+   * qualifies. Whichever of the two candidates sits earlier in the array wins,
+   * so with the X drawn first the detector found the real 9 m-square void, and
+   * with the partition first it claimed half the X, invented a 22.8 m-square
+   * "empty space" over a wall that was merely being torn out, and left the
+   * other half of the cross standing in the model.
+   *
+   * Scoring both and taking the better one is what makes that impossible: a
+   * real X crosses at both midpoints, at a right angle, with equal arms, so it
+   * beats an incidental crossing on all three terms at once.
+   */
+  type Candidate = {
+    p: Stroke;
+    q: Stroke;
+    score: number;
+    crossing: { t: number; u: number; point: { x: number; y: number } };
+    bounds: { minX: number; minY: number; maxX: number; maxY: number };
+    area: number;
+  };
+
+  const candidates: Candidate[] = [];
 
   for (let i = 0; i < strokes.length; i++) {
-    if (claimed.has(strokes[i].id)) continue;
-
     for (let j = i + 1; j < strokes.length; j++) {
-      if (claimed.has(strokes[j].id)) continue;
-
       const p = strokes[i];
       const q = strokes[j];
 
@@ -216,15 +242,18 @@ export function detectXVoids(
 
       // 2. Near both midpoints. `t` and `u` are already normalised to [0,1],
       // so the test is the same fraction on each regardless of length.
-      if (Math.abs(crossing.t - 0.5) > opts.midpointTolerance) continue;
-      if (Math.abs(crossing.u - 0.5) > opts.midpointTolerance) continue;
+      const dt = Math.abs(crossing.t - 0.5);
+      const du = Math.abs(crossing.u - 0.5);
+      if (dt > opts.midpointTolerance) continue;
+      if (du > opts.midpointTolerance) continue;
 
       // 3. Crossing at a healthy angle.
       const ux = (p.b.x - p.a.x) / p.length;
       const uy = (p.b.y - p.a.y) / p.length;
       const vx = (q.b.x - q.a.x) / q.length;
       const vy = (q.b.y - q.a.y) / q.length;
-      if (Math.abs(ux * vx + uy * vy) > minCos) continue;
+      const cos = Math.abs(ux * vx + uy * vy);
+      if (cos > minCos) continue;
 
       const xs = [p.a.x, p.b.x, q.a.x, q.b.x];
       const ys = [p.a.y, p.b.y, q.a.y, q.b.y];
@@ -237,30 +266,49 @@ export function detectXVoids(
       const area = (bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY);
       if (area < opts.minArea) continue;
 
-      claimed.add(p.id);
-      claimed.add(q.id);
-
-      voids.push({
-        id: `void-${p.id}-${q.id}`,
-        kind: 'not_fitted_out',
-        bounds,
-        vertices: [
-          { x: bounds.minX, y: bounds.minY },
-          { x: bounds.maxX, y: bounds.minY },
-          { x: bounds.maxX, y: bounds.maxY },
-          { x: bounds.minX, y: bounds.maxY },
-        ],
-        center: {
-          x: (bounds.minX + bounds.maxX) / 2,
-          y: (bounds.minY + bounds.maxY) / 2,
-        },
-        area,
-        crossing: crossing.point,
-        layer: p.layer || q.layer,
-        strokeIds: [p.id, q.id],
-      });
-      break; // this stroke is spent
+      // Lower is better, and 0 is a geometrically perfect cross. The midpoint
+      // term is doubled because that is the signal that separates a symbol
+      // someone drew on purpose from two lines that happen to meet.
+      const score = (Math.max(dt, du) * 2) + (ratio - 1) + cos;
+      candidates.push({ p, q, score, crossing, bounds, area });
     }
+  }
+
+  // Ties break on the stroke ids so the result is stable, not merely
+  // order-independent — two runs over the same drawing must agree.
+  candidates.sort(
+    (a, b) =>
+      a.score - b.score ||
+      `${a.p.id}/${a.q.id}`.localeCompare(`${b.p.id}/${b.q.id}`),
+  );
+
+  const claimed = new Set<string>();
+  const voids: DetectedVoid[] = [];
+
+  for (const c of candidates) {
+    if (claimed.has(c.p.id) || claimed.has(c.q.id)) continue;
+    claimed.add(c.p.id);
+    claimed.add(c.q.id);
+
+    voids.push({
+      id: `void-${c.p.id}-${c.q.id}`,
+      kind: 'not_fitted_out',
+      bounds: c.bounds,
+      vertices: [
+        { x: c.bounds.minX, y: c.bounds.minY },
+        { x: c.bounds.maxX, y: c.bounds.minY },
+        { x: c.bounds.maxX, y: c.bounds.maxY },
+        { x: c.bounds.minX, y: c.bounds.maxY },
+      ],
+      center: {
+        x: (c.bounds.minX + c.bounds.maxX) / 2,
+        y: (c.bounds.minY + c.bounds.maxY) / 2,
+      },
+      area: c.area,
+      crossing: c.crossing.point,
+      layer: c.p.layer || c.q.layer,
+      strokeIds: [c.p.id, c.q.id],
+    });
   }
 
   return voids;
@@ -310,4 +358,122 @@ export function suppressInsideVoids<T extends { position?: Vec2; x?: number; y?:
   }
 
   return { kept, dropped };
+}
+
+
+/**
+ * Roles where a crossing pair of lines is something other than the "this
+ * space is empty" mark.
+ *
+ *  · `section` — a structural X-brace in an elevation IS an X.
+ *  · `hatch`   — crossed hatching is a field of X shapes by construction.
+ *  · `grid`    — two setting-out lines cross at every intersection, at their
+ *                midpoints, at a healthy angle, with comparable lengths. A
+ *                plan's grid would otherwise blank the whole building.
+ */
+export const X_IGNORED_ROLES = new Set(['section', 'hatch', 'grid']);
+
+/**
+ * Layer STATUSES that cannot be half of an X.
+ *
+ * `A-WALL-DEMO` is a partition being torn out and `-FUTR` is one not built
+ * yet; §4m already excludes both from the fabric because each models a
+ * building that is never real at any one moment. They have to be excluded
+ * here too, and for a separate reason: a long demolition line crossing a
+ * genuine X stroke near its midpoint satisfies every geometric test for a
+ * cross, so leaving it in means competing against the real pair. Status is
+ * not a role, which is why this is a second set rather than more entries in
+ * the one above.
+ */
+export const X_IGNORED_STATUSES = new Set(['DEMO', 'FUTR']);
+
+/** Whether a layer's geometry may be read as part of an X symbol. */
+export function isXStrokeLayer(classification: {
+  role?: string;
+  status?: string;
+}): boolean {
+  if (X_IGNORED_ROLES.has(String(classification?.role ?? ''))) return false;
+  return !X_IGNORED_STATUSES.has(String(classification?.status ?? ''));
+}
+
+/**
+ * Remove the strokes of every X from a parsed drawing, and report the regions.
+ *
+ * ── Why this is applied in TWO places ──────────────────────────────────────
+ *
+ * The client's standard says a crossed-out box is an empty space, and what he
+ * wants to see is the box with **no X in it** — identical to a box that never
+ * carried one. So the strokes are an annotation and must not reach any
+ * renderer.
+ *
+ * `DxfFloorPlanParser.parse()` calls this, which cleans every NEW upload. But
+ * a drawing imported before this existed has its X strokes baked into the
+ * stored `parsedGeometry` jsonb, and re-uploading every plan is not a
+ * reasonable thing to ask. So the READ path calls it too, which fixes the
+ * existing data in place without a migration and without touching the stored
+ * row.
+ *
+ * Idempotent: running it on already-clean geometry finds no X and returns the
+ * input unchanged, so applying it twice costs one pass and changes nothing.
+ *
+ * @param classifyRole resolves a layer name to the drawing standard's role.
+ *        Injected rather than imported so this module stays free of the
+ *        standards service — `x-void.ts` is pure geometry and is unit-tested
+ *        as such.
+ */
+export function stripXStrokes<
+  T extends {
+    walls?: any[];
+    lines?: any[];
+    voids?: DetectedVoid[];
+  },
+>(
+  geometry: T,
+  classify: (layer: string) => { role?: string; status?: string },
+  options: Partial<XVoidOptions> = {},
+): { geometry: T; voids: DetectedVoid[]; removed: number } {
+  const walls = Array.isArray(geometry?.walls) ? geometry.walls : [];
+  if (walls.length === 0) {
+    return { geometry, voids: geometry?.voids ?? [], removed: 0 };
+  }
+
+  const eligible = walls.filter((w: any) =>
+    isXStrokeLayer(classify(String(w?.layer ?? ''))),
+  );
+  const voids = detectXVoids(eligible, options);
+  if (voids.length === 0) {
+    return { geometry, voids: geometry?.voids ?? [], removed: 0 };
+  }
+
+  const strokeIds = new Set(voids.flatMap((v) => v.strokeIds));
+  const strokes = walls.filter((w: any) => strokeIds.has(String(w?.id)));
+
+  // Matched by GEOMETRY, not by id. `lines` and `walls` are minted from one
+  // counter but with different prefixes, so an id match would depend on that
+  // numbering staying in step — and `lines` is what `FloorPlanCanvas` falls
+  // back to when it finds no usable walls, so leaving the stroke there would
+  // simply move which renderer draws it.
+  const isStroke = (item: any) =>
+    strokes.some(
+      (s: any) =>
+        Math.abs(s.start.x - item?.start?.x) < 1e-9 &&
+        Math.abs(s.start.y - item?.start?.y) < 1e-9 &&
+        Math.abs(s.end.x - item?.end?.x) < 1e-9 &&
+        Math.abs(s.end.y - item?.end?.y) < 1e-9,
+    );
+
+  const keptLines = Array.isArray(geometry.lines)
+    ? geometry.lines.filter((l: any) => !(l?.start && l?.end && isStroke(l)))
+    : geometry.lines;
+
+  return {
+    geometry: {
+      ...geometry,
+      walls: walls.filter((w: any) => !strokeIds.has(String(w?.id))),
+      ...(keptLines ? { lines: keptLines } : {}),
+      voids,
+    },
+    voids,
+    removed: strokeIds.size,
+  };
 }

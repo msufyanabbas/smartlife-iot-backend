@@ -72,6 +72,7 @@ import {
 } from './wall-pairing';
 import {
   detectXVoids,
+  isXStrokeLayer,
   suppressInsideVoids,
   DEFAULT_X_VOID,
   type DetectedVoid,
@@ -215,8 +216,12 @@ const OPENING_SNAP_MARGIN = 0.35;
  *  · `grid` — two setting-out lines cross at every grid intersection, at their
  *    midpoints, at a healthy angle, with comparable lengths. A plan's grid
  *    would otherwise blank the entire building.
+ *  · and separately, the DEMO/FUTR statuses — see `isXStrokeLayer`, which is
+ *    the one implementation of this rule. There used to be a second copy of
+ *    the role set here; it drifted the moment the status exclusion was added
+ *    to the other one, which is how `A-WALL-DEMO` went on competing with a
+ *    real X for a stroke on this path after being excluded on the parser's.
  */
-const X_DETECTION_EXCLUDED_ROLES = new Set(['section', 'hatch', 'grid']);
 
 function num(value: any, fallback = 0): number {
   const n = Number(value);
@@ -310,13 +315,29 @@ export function buildDisplayGeometry(
   // ── 1. X voids, from the RAW candidates ─────────────────────────────────
   //
   // Before the filter, because the X is usually on a layer the filter drops.
+  //
+  // `parsed.voids` wins when it is populated. The X STROKES are removed
+  // upstream now — by the parser on import, and by
+  // `FloorPlansService.withoutXStrokes` on read for drawings imported before
+  // that existed — because the client's standard is that a crossed-out box
+  // renders as a box with no X in it, and suppressing only the region's
+  // contents left the cross itself standing in the model.
+  //
+  // So by the time geometry reaches here the strokes are usually gone, and
+  // re-running detection on it would find nothing and silently stop
+  // suppressing the furniture and devices inside the region. Whoever removed
+  // the strokes reports what it found; this trusts that over looking again.
   let voids: DetectedVoid[] = [];
   if (opts.detectXVoids) {
-    const eligible = rawWalls.filter((w) => {
-      const role = standards.classify(String(w?.layer ?? '')).role;
-      return !X_DETECTION_EXCLUDED_ROLES.has(role);
-    });
-    voids = detectXVoids(eligible, opts.xVoid);
+    const handedDown = Array.isArray(parsed.voids) ? (parsed.voids as DetectedVoid[]) : [];
+    if (handedDown.length > 0) {
+      voids = handedDown;
+    } else {
+      const eligible = rawWalls.filter((w) =>
+        isXStrokeLayer(standards.classify(String(w?.layer ?? ''))),
+      );
+      voids = detectXVoids(eligible, opts.xVoid);
+    }
   }
 
   // ── 2. The standard ─────────────────────────────────────────────────────

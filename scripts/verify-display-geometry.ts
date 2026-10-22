@@ -87,10 +87,46 @@ try {
   // ── 1. The standard reaches the viewer's geometry ────────────────────────
   section('1. the drawing standard is applied');
 
+  // 21 lines are drawn; the parser hands on 19. It is still deliberately
+  // permissive about every OTHER kind of noise — the grid line, the dimension
+  // string, the hatch and the demolished partition all arrive as candidates
+  // and are cut by the standard below. The two it does remove are the X
+  // strokes, because the client's standard is that a crossed-out box renders
+  // as a box with NO cross in it: suppressing the region's contents while
+  // leaving the cross itself standing is the complaint this answers, and the
+  // strokes usually sit on a layer the standard would keep.
   ok(
-    'the parser offers every line as a wall candidate',
-    display.stats.wallCandidates === 21,
+    'the parser offers every line as a wall candidate, less the X strokes',
+    display.stats.wallCandidates === 19,
     display.stats.wallCandidates,
+  );
+  // Named by the two corner-to-corner spans of the fixture's 3 × 3 m marked
+  // region, not by "any diagonal" — the fixture also draws a deliberate 100 mm
+  // diagonal on `Defpoints`, which the parser SHOULD still offer and the
+  // standard is what drops. An assertion that caught that one too would be
+  // asserting the parser had stopped being permissive.
+  const spansRegion = (w: any) => {
+    const pts = [w?.start, w?.end].map((p) => [p?.x, p?.y]);
+    const corner = (x: number, y: number) =>
+      pts.some(([px, py]) => Math.abs(px - x) < 1e-6 && Math.abs(py - y) < 1e-6);
+    return (corner(4, 4) && corner(7, 7)) || (corner(7, 4) && corner(4, 7));
+  };
+  ok(
+    'and the two it removed are the X strokes — nothing else went with them',
+    !parsed.walls.some(spansRegion) &&
+      !((parsed as any).lines ?? []).some(spansRegion) &&
+      parsed.walls.some(
+        (w: any) =>
+          Math.abs(Math.abs(w.start.x - w.end.x) - Math.abs(w.start.y - w.end.y)) < 1e-6 &&
+          Math.abs(w.start.x - w.end.x) > 1e-6,
+      ),
+    `X strokes left: ${parsed.walls.filter(spansRegion).length} in walls, ` +
+      `${((parsed as any).lines ?? []).filter(spansRegion).length} in lines`,
+  );
+  ok(
+    'the void survives the strokes being removed — it is reported, not re-detected',
+    display.voids.length === 1 && (parsed as any).voids?.length === 1,
+    `display ${display.voids.length}, parsed ${(parsed as any).voids?.length}`,
   );
   ok(
     'and the standard cuts that to the ten that are actually built',

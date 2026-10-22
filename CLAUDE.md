@@ -2854,6 +2854,87 @@ comparable lengths — a plan's grid would blank the whole building).
 A device inside a crossed-out region is dropped **and reported**: losing a
 floor's sensors silently is worse than the model being wrong.
 
+#### Suppressing the contents was not enough — the cross itself was still drawn
+
+Reported as: *"can you see the boxes where 'X' is mentioned, I want according
+to standard to be empty spaces like in the other, having no 'X' but empty
+floor."*
+
+The first implementation suppressed what was INSIDE a crossed-out region and
+relied on the standard filter to drop the two strokes themselves, which works
+only while the X sits on a layer the filter drops. On a drawing where it sits
+on a layer that builds, the box came back empty with a cross standing up in
+the middle of it. The standard says the space is empty, so the strokes are
+geometry that does not exist either.
+
+They are now removed at source, in **two** places:
+
+| Where | Covers |
+|---|---|
+| `DxfFloorPlanParser.parse()` | every new upload — the strokes never enter `parsedGeometry` |
+| `FloorPlansService.withoutXStrokes()` | every READ of a plan imported before that existed |
+
+The second one is the one that matters to a live deployment, and it is the
+reason this is not a parser-only change: the client's plans are already
+uploaded, with the strokes baked into their `parsedGeometry` jsonb, and
+"re-import every drawing" is not a migration. `stripXStrokes` is idempotent, so
+a plan that went through the parser costs one pass that finds nothing.
+
+**It cleans on the way OUT, and deliberately does not write back.** It would be
+easy to strip in `findOne` and let the next `save()` persist it — but `findOne`
+also feeds `update()`, so a false positive in the detector would silently
+delete real walls from the stored drawing the next time anyone renamed the
+plan. Cleaning at the point of return keeps the imported drawing intact.
+
+`parsed.voids` is therefore preferred over re-detecting. Once the strokes are
+gone, looking again finds nothing, and the furniture and devices inside the
+region would quietly stop being suppressed — so whoever removed the strokes
+reports what it found and the display builder trusts that. `?detectXVoids=false`
+skips the strip as well, or the negative control would be asserting against
+geometry that is neither the drawing nor the building.
+
+#### Two real defects the above uncovered
+
+**1. Pairing was order-dependent, which §4v's own rule forbids.** The detector
+was a nested loop that claimed the first qualifying partner and moved on, so
+the answer depended on the order the draughtsman drew in. In the test drawing
+the demolished partition runs (5, 0.2)-(5, 7.8) and crosses the X's first
+stroke at (5, 5): inside the midpoint tolerance of both, at 45°, length ratio
+1.8. It qualifies. With the X drawn first the detector found the real 9 m²
+void; with the partition first it claimed half the cross, invented a 22.8 m²
+"empty space" over a wall that was merely being torn out, and left the other
+arm of the X standing. Every pair is now scored and the BEST taken —
+`max(|t-½|,|u-½|)·2 + (ratio-1) + |cos|`, lower better, ties broken on stroke
+id so the result is stable and not merely order-independent. A real X crosses
+at both midpoints, at a right angle, with equal arms, so it wins on all three
+terms at once.
+
+**2. `A-WALL-DEMO` and `-FUTR` were eligible to be X strokes.** Status is not a
+role, so `X_IGNORED_ROLES` could not express it; `X_IGNORED_STATUSES` and
+`isXStrokeLayer()` do. There had been two copies of the role set — one in
+`x-void.ts` and one in `display-geometry.ts` — and they drifted the moment the
+status rule was added to one of them, which is the §4m warning about
+re-implementing the matching arriving on schedule. `isXStrokeLayer` is now the
+single implementation and both paths call it.
+
+#### The fixture was storing the parser's output, so the read-path check passed vacuously
+
+Worth recording because it is §4r again and it nearly shipped. The widget
+suite's fixture seeded `parsedGeometry` from `DxfFloorPlanParser.parse()` — and
+the parser now strips the strokes, so the stored row was already clean and the
+assertion "no X stroke survives on the read path" passed whether
+`withoutXStrokes` ran or not. Disabling the read path changed nothing, which is
+how it was caught.
+
+The fixture now puts the two strokes back and removes `voids`, reproducing a
+pre-feature row — which is also the row the client actually has. With that,
+disabling the strip fails the check with `walls 2, lines 2`.
+
+> **The rule for any fix that exists to repair EXISTING data: the fixture must
+> be built the way the old data was, not by running the new code.** A fixture
+> produced by the fixed importer cannot tell a working migration from a missing
+> one.
+
 ### Verifying it
 
 ```bash
@@ -3095,6 +3176,80 @@ the §4p trap again.
 It found two more live instances on its first run: `?enabled=false` on
 `/converters` returned the enabled ones, and `?isSystem=false` on `/roles`
 listed the SYSTEM roles — the exact opposite of what was asked.
+
+---
+
+## 4z. The response envelope is not one shape, and a `select` must be checked against the real one
+
+Reported as a crash that took down the whole floor-plan detail route:
+
+```
+(availableDevices ?? []) is not iterable
+```
+
+`??` guards `null` and `undefined` and **nothing else**. The hook had unwrapped
+one `.data` level and received the summary OBJECT
+`{floorPlanId, assetId, total, availableCount, devices}` rather than the array
+inside it. A non-null object passed straight through the `??`, hit a `for…of`,
+and threw — taking the route's error boundary with it.
+
+Three bugs stacked, and only the first one crashed:
+
+1. The hook's `select` stopped one level short of the array.
+2. The consumer trusted `?? []` to guarantee something iterable.
+3. The consumer read `device.deviceId` where the picker rows carry `id` — so
+   even once it iterated, the guard would have skipped every row and the
+   binding list would have come back silently short. **That one is worse**: an
+   empty list looks like "no devices", not like a bug.
+
+### The envelope depth genuinely varies, and here is the measurement
+
+`TransformInterceptor` wraps every success as `{success, data, timestamp}`,
+and several handlers ALSO return their own `{message, data}`. So the payload
+sits at depth 1 on some routes and depth 2 on others, and is sometimes an
+array and sometimes an object with the array inside it:
+
+| Route | Payload at | Shape |
+|---|---|---|
+| `GET /floor-plans` | **2** | `{data, meta}` → array |
+| `GET /floor-plans/:id` | 1 | object |
+| `GET /floor-plans/:id/devices` | 1 | **array** |
+| `GET /floor-plans/:id/available-devices` | 1 | object → `.devices` ← the crash |
+| `GET /floor-plans/:id/settings` | 1 | object |
+| `GET /floor-plans/:id/zones` | 1 | array |
+| `GET /floor-plans/:id/widgets` | 1 | array |
+| `GET /floor-plans/:id/widgets/devices` | 1 | array |
+| `GET /floor-plans/asset/:id` | 1 | object → `.floorPlans` |
+| `GET /assets/:id/floors` | **2** | object → `.floors` |
+| `GET /assets/:id/devices` | **2** | **array** |
+| `GET /assets/:id/hierarchy` | **2** | object |
+| `GET /assets` | **2** | `{data, meta}` → array |
+
+This is why the same mistake has now been made three times — the
+`[1,2,3,4].map` in `useAssetDetails` (§4x) was the same shape of error, and so
+was the two-deep unwrap in `verify-customer-login`.
+
+> **The rule for a `select`:** if any consumer will iterate it, the select must
+> return an array on EVERY path, including the failure path. Not "usually an
+> array"; an array. `?? []` at the call site is not a substitute, because it
+> only fires for null and undefined.
+
+### Checking it instead of guessing
+
+```bash
+npx ts-node -T -r tsconfig-paths/register scripts/probe-response-shapes.ts [db] [port]
+```
+
+Boots the real application and prints, per route, the envelope depth and
+whether the payload is an array or an object. It asserts nothing — it is there
+so a frontend `select` can be checked against the truth. The table above was
+produced by it, and the audit it enabled found that every OTHER floor-plan
+hook was already correct, which is worth knowing too: the answer was one hook,
+not a systemic rewrite.
+
+Normalising the envelope so every handler returns its payload at one depth is
+the real fix, and it is deliberately not done here: it would change every
+route at once, in the middle of the client testing the features above.
 
 ---
 
@@ -3660,6 +3815,11 @@ npx ts-node -T -r tsconfig-paths/register scripts/probe-geometry.ts <file.dxf>
                                   #   per layer, the mesh stats and the
                                   #   display geometry for a real drawing.
                                   #   Every number in §4v was measured with it.
+npx ts-node -T -r tsconfig-paths/register scripts/probe-response-shapes.ts [db] [port]
+                                  # per route: the envelope DEPTH and whether
+                                  #   the payload is an array or an object.
+                                  #   What a frontend `select` must unwrap —
+                                  #   see §4z, and the crash that prompted it
 npx ts-node -T -r tsconfig-paths/register scripts/support/make-test-plan.ts out.dxf
                                   # a small architectural DXF with KNOWN
                                   #   answers: paired wall faces, a door, a

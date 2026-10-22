@@ -26,6 +26,7 @@
 
 import DxfParser from 'dxf-parser';
 import { CAD_STANDARD, registerPatternSets } from './cad-standard.bridge';
+import { stripXStrokes, type DetectedVoid } from '../display/x-void';
 import { SYMBOL_INDEX } from '@modules/cad-standards/cad-standard.catalogue';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -147,6 +148,15 @@ export interface ParsedRoute {
 
 export interface Parsed3DGeometry {
   walls: ParsedWall[];
+  /**
+   * Regions a crossed-out X marks as empty, per the client's standard.
+   *
+   * The two strokes of each X have been REMOVED from `walls` and `lines`, so
+   * the box renders as an empty floor exactly like a box that never carried
+   * one. This is what is left of them — enough to shade the area, to report
+   * what the import found, and to keep contents out of the space.
+   */
+  voids: DetectedVoid[];
   rooms: ParsedRoom[];
   doors: ParsedDoor[];
   windows: ParsedWindow[];
@@ -941,8 +951,44 @@ export class DxfFloorPlanParser {
       return { name, color: info.color, entityCount: info.count, linetype };
     });
 
+    // ── The X convention: a crossed-out space is EMPTY ────────────────────
+    //
+    // The client's standard, in his words: *"if there is an 'X' symbol in the
+    // drawing, it means that space is empty"* — and what he wants to SEE is
+    // the box with no X in it and an empty floor inside, exactly like the
+    // boxes that carry no X.
+    //
+    // So the two strokes of the X are an ANNOTATION. They say something about
+    // the space; they are not geometry in it. Drawing them is as wrong as
+    // extruding a dimension string, and it is wrong in EVERY renderer — the
+    // 2D canvas, the 3D viewer and the exported mesh all read this output.
+    //
+    // An earlier version suppressed only the CONTENTS of a crossed region and
+    // left the strokes to be removed by the layer filter — which works only
+    // when the X happens to sit on a layer the standard already ignores. On a
+    // drawing that puts it on a building layer, the X itself rendered. That is
+    // the defect the client reported against the picture.
+    //
+    // `stripXStrokes` is shared with the READ path, so a drawing imported
+    // before this existed is cleaned too, without re-uploading it.
+    const stripped = stripXStrokes(
+      { walls, lines },
+      (layer) => CAD_STANDARD.service.classify(layer),
+    );
+    const keptWalls = stripped.geometry.walls as typeof walls;
+    const keptLines = stripped.geometry.lines as typeof lines;
+    const xVoids = stripped.voids;
+
     return {
-      walls, rooms, doors, windows, columns, stairs, devices, routes, furniture,
+      walls: keptWalls,
+      rooms, doors, windows, columns, stairs, devices, routes, furniture,
+      /**
+       * Regions a crossed-out X marks as empty. The strokes themselves are
+       * gone from `walls` and `lines`; this is what is left of them, so a
+       * renderer can shade the area and the import report can say what it
+       * found instead of the geometry silently shrinking.
+       */
+      voids: xVoids,
       layers,
       layerNames: layers.map((l) => l.name),
       blocks: Array.from(usedBlocks).sort(),
@@ -959,7 +1005,7 @@ export class DxfFloorPlanParser {
       units,
       scale,
       metrics: { entityCount: metrics },
-      lines, arcs, circles, texts,
+      lines: keptLines, arcs, circles, texts,
       entityCounts,
       totalEntities: metrics.total,
     };

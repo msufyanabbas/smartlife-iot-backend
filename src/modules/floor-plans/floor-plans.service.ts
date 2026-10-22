@@ -42,6 +42,8 @@ import {
   buildDisplayGeometry,
   type DisplayGeometryOptions,
 } from './display/display-geometry';
+import { stripXStrokes } from './display/x-void';
+import { CAD_STANDARD } from './parsers/cad-standard.bridge';
 import { ObjExporter } from './mesh/obj.exporter';
 import { UpdateFloorPlanDto } from './dto/update-floor-plan.dto';
 import { UpdateFloorPlanSettingsDto } from './dto/floor-plan-settings.dto';
@@ -515,13 +517,63 @@ export class FloorPlansService {
     return floorPlan;
   }
 
+
+  /**
+   * The plan's geometry with the X-mark strokes removed.
+   *
+   * The client's standard: a crossed-out box is an empty space, and it must
+   * RENDER as a box with no X in it. `DxfFloorPlanParser` strips the strokes
+   * on import, which cleans every new upload — but a drawing imported before
+   * that existed has them baked into its stored `parsedGeometry` jsonb, and
+   * re-uploading every plan is not a reasonable thing to ask.
+   *
+   * ── Why this does NOT write back ─────────────────────────────────────────
+   *
+   * It would be easy to clean the row in `findOne` and let the next `save()`
+   * persist it. That is a data-loss path: `findOne` also feeds `update()`, so
+   * a false positive in the detector would silently delete real walls from
+   * the stored drawing, permanently, the next time anyone renamed the plan.
+   *
+   * Cleaning at the point of RETURN keeps the stored drawing exactly as it was
+   * imported. The cost is one pass per read, which is a filter over a few
+   * hundred segments and is idempotent — already-clean geometry finds no X and
+   * returns the same object.
+   */
+  private withoutXStrokes(
+    geometry: unknown,
+  ): { geometry: unknown; voids: unknown[]; removed: number } {
+    if (!geometry || typeof geometry !== 'object') {
+      return { geometry, voids: [], removed: 0 };
+    }
+
+    const result = stripXStrokes(
+      geometry as Record<string, any>,
+      (layer) => CAD_STANDARD.service.classify(layer),
+    );
+
+    if (result.removed > 0) {
+      this.logger.log(
+        `Removed ${result.removed} X-mark stroke(s) from a stored drawing on read — ` +
+          `${result.voids.length} space(s) marked empty. The stored row is unchanged; ` +
+          're-import the drawing to clean it at source.',
+      );
+    }
+
+    return result;
+  }
+
   /** FIX 3: enriched single floor plan (asset + placed devices + telemetry). */
   async findOneEnriched(id: string, tenantId: string) {
     const floorPlan = await this.findOne(id, tenantId);
     const placedDevices = await this.getPlacedDevices(id, tenantId);
 
+    const cleaned = this.withoutXStrokes(floorPlan.parsedGeometry);
+
     return {
       ...floorPlan,
+      // The X strokes come out here rather than in `findOne`, so the stored
+      // drawing is never rewritten — see `withoutXStrokes`.
+      parsedGeometry: cleaned.geometry as typeof floorPlan.parsedGeometry,
       // `type` is gone from this projection on purpose. It was `Asset.type`,
       // and a consumer reading it was reading the duplicate: the same screen
       // could get `building` here and `warehouse` from the asset's profile.
@@ -1213,11 +1265,17 @@ export class FloorPlansService {
       throw new NotFoundException('Floor plan has not been parsed yet');
     }
 
+    const cleaned = this.withoutXStrokes(floorPlan.parsedGeometry);
+
     return {
       floorPlanId: floorPlan.id,
       name: floorPlan.name,
       floor: floorPlan.floor,
-      geometry: floorPlan.parsedGeometry,
+      geometry: cleaned.geometry,
+      // Also exposed under its own key: a 2D renderer can shade the region,
+      // and the import report can say what was found instead of the geometry
+      // just being smaller than the file.
+      voids: cleaned.voids,
       dimensions: floorPlan.dimensions,
       scale: floorPlan.scale,
     };
@@ -1253,10 +1311,16 @@ export class FloorPlansService {
       throw new NotFoundException('Floor plan has not been parsed yet');
     }
 
-    const display = buildDisplayGeometry(
-      floorPlan.parsedGeometry as Record<string, any>,
-      options,
-    );
+    // `?detectXVoids=false` asks to see the drawing as it was imported, so it
+    // skips the strip as well. Stripping and then declining to detect would
+    // answer with geometry that is neither the drawing nor the building, and
+    // the negative control would be asserting nothing.
+    const source =
+      options.detectXVoids === false
+        ? (floorPlan.parsedGeometry as Record<string, any>)
+        : (this.withoutXStrokes(floorPlan.parsedGeometry).geometry as Record<string, any>);
+
+    const display = buildDisplayGeometry(source, options);
 
     return {
       floorPlanId: floorPlan.id,
@@ -1346,7 +1410,7 @@ export class FloorPlansService {
     const format = dto.format ?? ModelFormat.GLB;
     const upAxis = dto.upAxis === ModelUpAxis.Z_UP ? 'z-up' : 'y-up';
 
-    const built = FloorPlanMeshFactory.build(floorPlan.parsedGeometry as any, {
+    const built = FloorPlanMeshFactory.build(this.withoutXStrokes(floorPlan.parsedGeometry).geometry as any, {
       wallHeight: dto.wallHeight ?? 3,
       defaultWallThickness: dto.defaultWallThickness ?? 0.2,
       slabThickness: dto.slabThickness ?? 0.15,
@@ -1475,7 +1539,7 @@ export class FloorPlansService {
       );
     }
 
-    const built = FloorPlanMeshFactory.build(floorPlan.parsedGeometry as any, {
+    const built = FloorPlanMeshFactory.build(this.withoutXStrokes(floorPlan.parsedGeometry).geometry as any, {
       wallHeight: dto.wallHeight ?? 3,
       defaultWallThickness: dto.defaultWallThickness ?? 0.2,
       slabThickness: dto.slabThickness ?? 0.15,
