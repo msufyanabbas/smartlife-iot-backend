@@ -9,6 +9,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type, plainToInstance } from 'class-transformer';
+import { toQueryBoolean } from '@common/transformers/query-boolean.transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -23,12 +24,10 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 
 type TransformArgs = { obj: Record<string, unknown>; key: string };
 
-const toBoolean = ({ obj, key }: TransformArgs) => {
-  const raw = obj?.[key];
-  if (raw === undefined || raw === null || raw === '') return undefined;
-  if (typeof raw === 'boolean') return raw;
-  return raw === 'true' || raw === '1' || raw === 1;
-};
+// This file held the CORRECT implementation, and another DTO cited it as the
+// house pattern and then copied the broken shape anyway. Folded into one
+// exported function so there is nothing left to imitate incorrectly.
+const toBoolean = toQueryBoolean;
 
 const toStringArray = ({ obj, key }: TransformArgs) => {
   const raw = obj?.[key];

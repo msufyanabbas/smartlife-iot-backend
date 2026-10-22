@@ -313,7 +313,25 @@ async findAll(
   }
 
   if (queryDto.tags?.length) {
-    qb.andWhere('asset.tags && :tags', { tags: queryDto.tags });
+    // ── `&&` has no operator against a simple-array column ────────────────
+    //
+    // This was `asset.tags && :tags`, the Postgres array-OVERLAP operator —
+    // but `Asset.tags` is `@Column({ type: 'simple-array' })`, which TypeORM
+    // stores as a comma-joined **TEXT** column. So the statement failed with
+    // `operator does not exist: text && unknown`, which `HttpExceptionFilter`
+    // reports as a 400 "Database Error". Nothing about it was a client error
+    // and no value of `?tags=` could ever work.
+    //
+    // `string_to_array` parses the stored text into a real array at query
+    // time, and then overlap means what it says. No migration needed, which
+    // matters while `migration:run` is blocked (§11) — converting the column
+    // to `text[]` would be the tidier fix and is a separate, reviewed change.
+    //
+    // A NULL `tags` yields NULL from `string_to_array`, and `NULL && array` is
+    // NULL, so an untagged asset correctly does not match a tag filter.
+    qb.andWhere('string_to_array(asset.tags, \',\') && :tags::text[]', {
+      tags: queryDto.tags,
+    });
   }
 
   // ── Sorting & pagination ──────────────────────────────────────────────────
@@ -821,10 +839,29 @@ async findAll(
       }
     }
 
-    const totalFloors: number =
+    // ── A building always has at least one floor ───────────────────────────
+    //
+    // This fell back to `configuredFloors.length || planByFloorNumber.size`,
+    // which is 0 for an asset that declares no floors and has no plan yet —
+    // so `baseFloors` came out EMPTY and `GET /assets/:id/floors` answered
+    // `{totalFloors: 0, floors: []}`.
+    //
+    // That is every shop, farm, warehouse and factory: those profiles
+    // deliberately declare no `floors_array` (§4a), because they are
+    // single-storey. The floor-plan wizard reads this list to offer somewhere
+    // to put a drawing, so it had nothing to offer — the list was empty
+    // exactly at the moment the user needed the "add a floor plan"
+    // affordance, and it only healed itself after a plan existed, which is
+    // the thing it was blocking.
+    //
+    // §4a already states the intended rule: "single-floor assets default to
+    // 1". This is that sentence, enforced.
+    const totalFloors: number = Math.max(
+      1,
       typeof configuration.totalFloors === 'number'
         ? configuration.totalFloors
-        : configuredFloors.length || planByFloorNumber.size;
+        : configuredFloors.length || planByFloorNumber.size,
+    );
 
     // Build the configured floor list.
     let baseFloors: FloorConfig[];
@@ -1110,15 +1147,37 @@ async findAll(
   ): Promise<void> {
     const asset = await this.findOne(assetId, user);
 
-    const device = await this.deviceRepository.findOne({
-      where: { id: deviceId },
-    });
+    // ── The device is resolved WITHIN the caller's scope ──────────────────
+    //
+    // This was `findOne({ where: { id: deviceId } })` — by id alone, with no
+    // tenant predicate. A tenant admin could therefore post another tenant's
+    // device uuid and have it adopted into their own asset tree: verified,
+    // 201 with the foreign device's `assetId` rewritten. The row was silently
+    // moved out of the other tenant's hierarchy.
+    //
+    // The `CUSTOMER_USER` check below was the only guard here, so the one
+    // role with a check was the LEAST privileged one, and TENANT_ADMIN — who
+    // can reach this route — had none at all. That is the §4g shape in a
+    // module whose read side §4g already fixed.
+    //
+    // `applyAccessScope` is the single place that predicate is written
+    // (§4g). `includeUnassigned` is true because a tenant-owned device with
+    // no customer yet is a legitimate assignment target.
+    const deviceQuery = this.deviceRepository
+      .createQueryBuilder('device')
+      .where('device.id = :deviceId', { deviceId });
+    applyAccessScope(deviceQuery, 'device', user, { includeUnassigned: true });
+    const device = await deviceQuery.getOne();
 
+    // 404, not 403: a 403 would confirm that a device with that uuid exists
+    // in another tenant, which turns this route into an enumeration oracle
+    // (§4g).
     if (!device) {
       throw new NotFoundException('Device not found');
     }
 
-    // Validate customer match
+    // Kept as well as the scope predicate: a customer user must not assign a
+    // sibling customer's device, which tenant scoping alone permits.
     if (user.role === UserRole.CUSTOMER_USER) {
       if (device.customerId !== user.customerId) {
         throw new ForbiddenException(
@@ -1186,9 +1245,23 @@ async findAll(
   ): Promise<void> {
     const asset = await this.findOne(assetId, user);
 
-    const devices = await this.deviceRepository.find({
-      where: { id: In(deviceIds) },
-    });
+    // Same hole as `assignDevice` above, same fix. `find({ id: In(...) })`
+    // with no tenant predicate let a batch pull in another tenant's devices.
+    const devicesQuery = this.deviceRepository
+      .createQueryBuilder('device')
+      .where('device.id IN (:...deviceIds)', { deviceIds });
+    applyAccessScope(devicesQuery, 'device', user, { includeUnassigned: true });
+    const devices = await devicesQuery.getMany();
+
+    // An id outside the caller's scope REFUSES the whole batch rather than
+    // being skipped. A skip would report "assigned 9 of 10" with no way to
+    // learn which one was dropped or why — and the same reasoning is already
+    // written down for the bulk role-assignment route.
+    if (devices.length !== new Set(deviceIds).size) {
+      throw new NotFoundException(
+        'One or more devices were not found in your scope, so nothing was assigned.',
+      );
+    }
 
     // Validate all devices belong to the same customer (for customer users)
     if (user.role === UserRole.CUSTOMER_USER) {
@@ -1392,13 +1465,22 @@ async findAll(
     const queryBuilder = this.assetRepository
       .createQueryBuilder('asset')
       .leftJoinAndSelect('asset.parentAsset', 'parentAsset')
+      // ── The profile has to be joined for the type to resolve ───────────
+      //
+      // `assetType` is not a column: §4a makes the PROFILE's type the single
+      // source, and `withAssetType()` materialises it onto the non-column
+      // `Asset.assetType` on every read path. This path did neither, so every
+      // asset on the customer detail page rendered as having no type while
+      // `GET /assets/:id` reported one correctly for the very same row.
+      .leftJoinAndSelect('asset.assetProfile', 'assetProfile')
       .where('asset.customerId = :targetCustomerId', {
         targetCustomerId: customerId,
       });
 
     applyAccessScope(queryBuilder, 'asset', user);
 
-    return await queryBuilder.orderBy('asset.name', 'ASC').getMany();
+    const assets = await queryBuilder.orderBy('asset.name', 'ASC').getMany();
+    return this.withAssetType(assets);
   }
 
   /**
@@ -1435,8 +1517,27 @@ async findAll(
     }
 
     const asset = await this.findOne(assetId, user);
+
+    // ── `undefined` is "leave this column alone", not "clear it" ──────────
+    //
+    // This assigned `undefined`. TypeORM reads that as "not changed" and omits
+    // the column from the UPDATE entirely, so the statement ran, the response
+    // said "Asset unassigned from customer successfully", and the row kept its
+    // customerId. Verified against the database: the uuid was still there
+    // after a 200.
+    //
+    // `unassignDevice()` in this same file gets it right and documents why.
+    // The cast is needed because the property is `string | undefined` in
+    // TypeScript while the column is nullable in Postgres — and `null as any`
+    // on the entity is exactly how this was silently wrong in the first
+    // place, so it goes through `update()` with an explicit null instead.
+    await this.assetRepository.update(
+      { id: asset.id },
+      { customerId: null as never },
+    );
+
     asset.customerId = undefined;
-    return await this.assetRepository.save(asset);
+    return asset;
   }
 
   /**

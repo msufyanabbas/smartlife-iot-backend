@@ -1,5 +1,6 @@
 import { IsOptional, IsString, IsBoolean, IsUUID, IsInt, Min } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type , Transform } from 'class-transformer';
+import { toQueryBoolean } from '@common/transformers/query-boolean.transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class QueryRoleDto {
@@ -14,8 +15,11 @@ export class QueryRoleDto {
   tenantId?: string;
 
   @ApiPropertyOptional({ example: true })
+  // `@Type(() => Boolean)` is `Boolean(value)`, and `Boolean('false')` is TRUE
+  // — so `?isSystem=false` listed the SYSTEM roles, the exact opposite of what
+  // was asked. A query string is text; `toQueryBoolean` reads the raw value.
+  @Transform(toQueryBoolean)
   @IsBoolean()
-  @Type(() => Boolean)
   @IsOptional()
   isSystem?: boolean;
 

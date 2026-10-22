@@ -4,6 +4,8 @@ import { FloorPlansService } from './floor-plans.service';
 import { FloorPlansController } from './floor-plans.controller';
 import { FloorPlan } from './entities/floor-plan.entity';
 import { FloorPlanDevice } from './entities/floor-plan-device.entity';
+import { FloorPlanWidget } from './entities/floor-plan-widget.entity';
+import { FloorPlanWidgetsService } from './widgets/floor-plan-widgets.service';
 import { Asset } from '../assets/entities/asset.entity';
 import { Device } from '../devices/entities/device.entity';
 import { Telemetry } from '../telemetry/entities/telemetry.entity';
@@ -36,6 +38,7 @@ import { CadStandardsModule } from '@modules/cad-standards/cad-standards.module'
     TypeOrmModule.forFeature([
       FloorPlan,
       FloorPlanDevice,
+      FloorPlanWidget,
       Asset,
       Device,
       Telemetry,
@@ -44,7 +47,7 @@ import { CadStandardsModule } from '@modules/cad-standards/cad-standards.module'
     ]),
   ],
   controllers: [FloorPlansController],
-  providers: [FloorPlansService, DWGParserService],
-  exports: [FloorPlansService],
+  providers: [FloorPlansService, DWGParserService, FloorPlanWidgetsService],
+  exports: [FloorPlansService, FloorPlanWidgetsService],
 })
 export class FloorPlansModule {}

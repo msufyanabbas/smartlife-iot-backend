@@ -9,6 +9,7 @@ import {
   Max,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
+import { toQueryBoolean } from '@common/transformers/query-boolean.transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { PaginationDto } from '@common/dto/pagination.dto';
 
@@ -32,12 +33,14 @@ export function resolveTimeRangeHours(range?: string): number {
   return TIME_RANGE_HOURS[(range as ApiLogTimeRange)] ?? TIME_RANGE_HOURS['24h'];
 }
 
-/** `?isError=false` arrives as the string "false", which is truthy. */
-const toBoolean = ({ value }: { value: unknown }) => {
-  if (value === undefined || value === null || value === '') return undefined;
-  if (typeof value === 'boolean') return value;
-  return String(value).toLowerCase() === 'true';
-};
+// `?isError=false` arrives as the string "false", which is truthy.
+//
+// This had its own copy of the helper, and that copy read `value` rather than
+// `obj[key]` — so the implicit conversion had already turned "false" into true
+// before it ran, and `?isError=false` resolved to TRUE. One shared
+// implementation now; see the file it lives in for why `obj[key]` is the only
+// reliable source.
+const toBoolean = toQueryBoolean;
 
 /**
  * Filters for GET /api-monitoring/logs, /errors, /slow-requests and /export.

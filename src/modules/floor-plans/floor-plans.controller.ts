@@ -41,10 +41,26 @@ import { GenerateModelDto } from './dto/generate-model.dto';
 import { UpdateFloorPlanDto } from './dto/update-floor-plan.dto';
 import { UpdateFloorPlanSettingsDto } from './dto/floor-plan-settings.dto';
 import { FloorPlanQueryDto } from './dto/floor-plan-query.dto';
+import { DisplayGeometryQueryDto } from './dto/display-geometry-query.dto';
+import {
+  CreateFloorPlanWidgetDto,
+  ExecuteWidgetActionDto,
+  ImportWidgetsFromDrawingDto,
+  UpdateFloorPlanWidgetDto,
+} from './dto/floor-plan-widget.dto';
+import { FloorPlanWidgetsService } from './widgets/floor-plan-widgets.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ParseIdPipe } from '../../common/pipes/parse-id.pipe';
-import { UserRole } from '@common/enums/index.enum';
+import {
+  AuditAction,
+  AuditEntityType,
+  AuditSeverity,
+  UserRole,
+} from '@common/enums/index.enum';
+import { Roles } from '@common/decorators/roles.decorator';
+import { Audit } from '@common/decorators/audit.decorator';
+import { User } from '@modules/users/entities/user.entity';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
 
 /** 50 MB cap on uploads — previously there was no limit at all. */
@@ -55,7 +71,10 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class FloorPlansController {
-  constructor(private readonly floorPlansService: FloorPlansService) {}
+  constructor(
+    private readonly floorPlansService: FloorPlansService,
+    private readonly widgetsService: FloorPlanWidgetsService,
+  ) {}
 
   private actor(userId: string, tenantId: string, role?: UserRole): Actor {
     return { userId, tenantId, role };
@@ -187,6 +206,257 @@ export class FloorPlansController {
     @Param('id', ParseIdPipe) id: string,
   ) {
     return this.floorPlansService.getParsedGeometry(id, tenantId);
+  }
+
+  /**
+   * Geometry ready to DRAW — the standard applied, walls paired, openings cut.
+   *
+   * `:id/geometry` above returns the parser's RAW output, which is every line
+   * in the drawing offered as a wall candidate. That is the right answer for
+   * the import wizard, which reports what is in the file, and the wrong one
+   * for a 3D viewer, which was extruding the title block and the text.
+   *
+   * On declaration order: this does NOT need to precede the single-segment
+   * id route, because `display-geometry` is a second path segment and a
+   * one-segment pattern cannot match two. The ordering trap (§4o) applies to a
+   * parameterised segment declared ABOVE a literal one at the same depth,
+   * which is not the case here.
+   *
+   * (Deliberately phrased without quoting a route decorator: a grep for
+   * declared routes picks up a decorator quoted in a comment and reports a
+   * duplicate that does not exist — the §4p trap, which cost a few minutes
+   * when this very file was audited.)
+   */
+  @Get(':id/display-geometry')
+  @RequirePermissions('floor_plans:read')
+  @ApiOperation({
+    summary: 'Get draw-ready geometry: standard applied, walls paired, openings cut',
+    description:
+      'Every length is in METRES. Walls arrive already split into the solid pieces around ' +
+      'their doors and windows, so a renderer draws plain boxes and the opening is real. ' +
+      'Query flags turn individual transformations off for comparison: ' +
+      'enforceStandard=false returns unfiltered geometry (the old viewer behaviour), ' +
+      'pairWalls=false leaves each drawn face as its own wall, ' +
+      'cutOpenings=false leaves walls whole, ' +
+      'detectXVoids=false ignores the X convention.',
+  })
+  @ApiResponse({ status: 200, description: 'Draw-ready geometry plus what the standard excluded' })
+  @ApiResponse({ status: 404, description: 'The plan has no parsed drawing yet' })
+  getDisplayGeometry(
+    @CurrentUser('tenantId') tenantId: string,
+    @Param('id', ParseIdPipe) id: string,
+    @Query() query: DisplayGeometryQueryDto,
+  ) {
+    return this.floorPlansService.getDisplayGeometry(id, tenantId, {
+      enforceStandard: query.enforceStandard ?? true,
+      pairWalls: query.pairWalls ?? true,
+      cutOpenings: query.cutOpenings ?? true,
+      detectXVoids: query.detectXVoids ?? true,
+      ...(query.wallHeight !== undefined ? { wallHeight: query.wallHeight } : {}),
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CONTROL WIDGETS
+  //
+  // Lights, air conditioners, switches, sensors and scenes placed on the plan.
+  // See `widgets/floor-plan-widgets.service.ts` for the three decisions behind
+  // the design; the one that matters on this controller is that the ACTION
+  // route names a widget and a stored action id, and carries no method, no
+  // params and no device. Those come from the stored row, so this cannot be
+  // used to send an arbitrary command to an arbitrary device (§4n).
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  @Get(':id/widgets')
+  @RequirePermissions('floor_plans:read')
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.TENANT_ADMIN,
+    UserRole.USER,
+    UserRole.CUSTOMER,
+    UserRole.CUSTOMER_USER,
+  )
+  @ApiOperation({
+    summary: 'The control widgets on this floor plan',
+    description:
+      'Positions are in METRES in the drawing\'s own coordinates — the same space as ' +
+      '`display-geometry`, so a widget lands where the drawing puts the fitting.',
+  })
+  listWidgets(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.widgetsService.list(id, user);
+  }
+
+  @Get(':id/widgets/devices')
+  @RequirePermissions('floor_plans:read')
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.TENANT_ADMIN,
+    UserRole.USER,
+    UserRole.CUSTOMER,
+    UserRole.CUSTOMER_USER,
+  )
+  @ApiOperation({
+    summary: 'Every device the widgets on this plan read or command',
+    description:
+      'One call so a viewer can subscribe to the whole plan\'s telemetry at once, rather than ' +
+      'a request per widget. Includes the devices named inside scene actions.',
+  })
+  widgetDeviceIds(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+  ) {
+    return this.widgetsService.deviceIdsForPlan(id, user);
+  }
+
+  @Get('widgets/by-device/:deviceId')
+  @RequirePermissions('floor_plans:read')
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.TENANT_ADMIN,
+    UserRole.USER,
+    UserRole.CUSTOMER,
+    UserRole.CUSTOMER_USER,
+  )
+  @ApiOperation({
+    summary: 'Which floor-plan widgets read or command this device',
+    description:
+      'Answers "what breaks if I delete this device?". Deleting a device sets a widget\'s ' +
+      'deviceId to NULL rather than removing the control, so a plan would otherwise ' +
+      'accumulate dead switches with nothing pointing at them.\n\n' +
+      'Includes widgets that reach the device only through a SCENE action, which a plain ' +
+      'column match would miss.',
+  })
+  widgetsByDevice(
+    @CurrentUser() user: User,
+    @Param('deviceId', ParseIdPipe) deviceId: string,
+  ) {
+    return this.widgetsService.findByDevice(deviceId, user);
+  }
+
+  @Post(':id/widgets')
+  @RequirePermissions('floor_plans:update')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'Floor-plan control widget created',
+  })
+  @ApiOperation({ summary: 'Place a control widget on the plan' })
+  createWidget(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+    @Body() dto: CreateFloorPlanWidgetDto,
+  ) {
+    return this.widgetsService.create(id, user, dto as any);
+  }
+
+  @Post(':id/widgets/import-from-drawing')
+  @RequirePermissions('floor_plans:update')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  @HttpCode(HttpStatus.OK)
+  @Audit({
+    action: AuditAction.CREATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'Floor-plan widgets imported from the drawing',
+  })
+  @ApiOperation({
+    summary: 'Create widgets from the drawing\'s own equipment symbols',
+    description:
+      'The CAD standard already says where the equipment is: light fittings on E-LITE, HVAC ' +
+      'on M-HVAC-EQPM, and the rest of the master template\'s section 9 legend. This places one ' +
+      'widget per symbol, at the mounting height the standard gives for that layer, inside ' +
+      'whichever zone contains it.\n\n' +
+      'Widgets land UNBOUND and DISABLED: a drawing says where a light is, not which device ' +
+      'controls it, and guessing that would wire a switch to the wrong lamp. Idempotent — ' +
+      're-importing after the drawing changes adds what is new and leaves the rest alone.',
+  })
+  importWidgets(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+    @Body() dto: ImportWidgetsFromDrawingDto,
+  ) {
+    return this.widgetsService.importFromDrawing(id, user, { kinds: dto.kinds });
+  }
+
+  @Patch(':id/widgets/:widgetId')
+  @RequirePermissions('floor_plans:update')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'Floor-plan control widget updated',
+  })
+  @ApiOperation({ summary: 'Update a control widget' })
+  updateWidget(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+    @Param('widgetId', ParseIdPipe) widgetId: string,
+    @Body() dto: UpdateFloorPlanWidgetDto,
+  ) {
+    return this.widgetsService.update(id, widgetId, user, dto as any);
+  }
+
+  @Delete(':id/widgets/:widgetId')
+  @RequirePermissions('floor_plans:update')
+  @Roles(UserRole.SUPER_ADMIN, UserRole.TENANT_ADMIN, UserRole.CUSTOMER)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Audit({
+    action: AuditAction.DELETE,
+    entityType: AuditEntityType.SETTINGS,
+    description: 'Floor-plan control widget removed',
+  })
+  @ApiOperation({ summary: 'Remove a control widget' })
+  async removeWidget(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+    @Param('widgetId', ParseIdPipe) widgetId: string,
+  ) {
+    await this.widgetsService.remove(id, widgetId, user);
+  }
+
+  @Post(':id/widgets/:widgetId/action')
+  // `devices:control` — the same permission the gateway's own command route
+  // demands. A widget must not be a way around it.
+  @RequirePermissions('devices:control')
+  // CUSTOMER_USER is admitted deliberately: an operator is the person who
+  // presses the switch, and refusing them their own HMI would make the
+  // feature pointless. What protects the plant is that the command is fixed
+  // by the stored widget, not that operators are locked out (§4n).
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.TENANT_ADMIN,
+    UserRole.CUSTOMER,
+    UserRole.CUSTOMER_USER,
+  )
+  @HttpCode(HttpStatus.OK)
+  @Audit({
+    action: AuditAction.UPDATE,
+    entityType: AuditEntityType.DEVICE,
+    severity: AuditSeverity.WARNING,
+    description: 'Floor-plan widget action executed',
+  })
+  @ApiOperation({
+    summary: 'Press a widget\'s control',
+    description:
+      'Names the WIDGET and one of its STORED actions. The method, the parameters and the ' +
+      'target device are read from the stored widget — this route accepts none of them, so it ' +
+      'cannot be used to send an arbitrary command to an arbitrary device.',
+  })
+  @ApiResponse({ status: 200, description: 'Command dispatched' })
+  @ApiResponse({ status: 400, description: 'Unknown action, disabled widget, or no gateway' })
+  @ApiResponse({ status: 404, description: 'Plan, widget or device not in your scope' })
+  executeWidgetAction(
+    @CurrentUser() user: User,
+    @Param('id', ParseIdPipe) id: string,
+    @Param('widgetId', ParseIdPipe) widgetId: string,
+    @Body() dto: ExecuteWidgetActionDto,
+  ) {
+    return this.widgetsService.executeAction(id, widgetId, dto.actionId, user, {
+      waitForResponse: dto.waitForResponse,
+    });
   }
 
   @Patch(':id')

@@ -2701,6 +2701,403 @@ would let the fallback be removed.
 
 ---
 
+## 4v. The 3D viewer was shown the DRAWING, not the BUILDING
+
+Reported as: *"there is an issue in creating the lines as walls again plus the
+structure itself ... there is no doors"*, *"the thickness feature has no
+benefit"*, and *"double check on the filters and standards again"*.
+
+The standard and the filters were correct. **They were not on the path that
+draws the picture.**
+
+### The architectural defect
+
+There were two consumers of a parsed drawing, and only one applied the standard:
+
+```
+DxfFloorPlanParser.parse()
+       │
+       ├──▶ FloorPlanMeshFactory.build()   standard applied, openings cut,
+       │      (the EXPORT path)            triangles → .glb / .obj
+       │
+       └──▶ GET /floor-plans/:id → parsedGeometry
+              (the VIEWER path)            NO FILTERING AT ALL
+```
+
+The parser is **deliberately permissive**: it offers every line in the file as
+a wall CANDIDATE and lets the consumer decide. `FloorPlan3DViewer` consumed it
+directly. Measured on the client's own drawing library:
+
+```
+parser emitted 1211 walls:
+  A-WALL            270   wall/build
+  G-ANNO-TTLB       149   annotation/ignore   ← sheet title block
+  A-WALL-PATT       140   hatch/ignore        ← the hatch inside a wall
+  A-SECT-MCUT        98   section/ignore      ← a section view, in plan coords
+  G-ANNO-TEXT        87   annotation/ignore   ← letter outlines of the notes
+  …
+  >>> 790 of 1211 are on layers the standard says are NOT built.
+```
+
+All 1211 were extruded. The model contained the title block, the wall
+hatching, the section views, the dimension strings, the grid lines running the
+full width of the plan, and the words of the general notes standing up as
+solid objects.
+
+Nothing was wrong with the standard, and "double check the filters and
+standards again" deserves a measurement rather than a reassurance: **every
+layer in both reference drawings matches the catalogue EXACTLY** — 6 of 6 in
+the master template, 31 of 31 in the drawing library, none falling back to
+major-group, discipline or status matching, and none unrecognised. The
+classification had nothing to do with the defect. The standard was simply not
+on the path that draws the picture.
+
+> **The rule:** `parsedGeometry` is the drawing. Display geometry is the
+> building. A renderer must never read the former. `getParsedGeometry` is kept
+> unchanged because the IMPORT WIZARD reads it — that screen's job is to
+> report the file as it is, including the parts that are not built.
+
+### Wall faces were never paired — one cause, two symptoms
+
+An architect does not draw a wall. They draw its two faces, and a DXF LINE has
+no width, so `makeWall()` stamped `thickness: 0.1` on every line:
+
+```
+   ────────────────────────────  ← outer face   (one LINE, thickness 0.1)
+   ────────────────────────────  ← inner face   (another LINE, thickness 0.1)
+                                    200 mm apart
+```
+
+A 12 × 8 m room with 200 mm walls imported as **eight** 100 mm walls standing
+in four pairs with a 100 mm slot of empty space between them. That slot is what
+"an issue in creating the lines as walls" looks like in 3D.
+
+And it is the whole of the thickness complaint. The parser always sent 0.1, so
+the viewer's `extrudeWalls` always took this branch:
+
+```ts
+let t = wallThickness;                                   // the user's choice
+if (typeof w.thickness === 'number' && w.thickness > 0) {
+  t = Math.min(Math.max(w.thickness * scaleX, 0.035), 0.08);   // discarded it
+}
+```
+
+Three bugs in four lines: it overrode the user whenever the server sent
+anything positive (always); it multiplied a value already in METRES by a canvas
+pixel scale (`0.1 × 0.0275 = 0.00275`); and it clamped to exactly the
+switcher's own min and max — so **every wall landed on a clamp limit regardless
+of the drawing and regardless of which button was pressed.** The control was
+never inert; it was being overridden by a number the parser invented.
+
+`display/wall-pairing.ts` pairs two segments as the faces of one wall when all
+four hold: parallel within 2°, separated by 50–600 mm, overlapping by at least
+half the shorter one, and neither already claimed. Greedy nearest-first, so a
+100 mm partition pairs with its own other face rather than its neighbour's.
+The result is the CENTRELINE carrying the measured separation. On the client's
+library that is 105 real walls with a believable spread — 66 at 200 mm, then
+300, 280, 320, 250, 100 — instead of 421 identical 100 mm ones.
+
+**`thicknessSource` is the field that makes the viewer's control meaningful.**
+`paired` means measured from the drawing and must be used as-is; `default`
+means nobody knows and the viewer may legitimately override it. An unpaired
+line still becomes a wall — a missing wall is harder to notice than a slightly
+wrong one — so the flag is the only way to tell the two apart.
+
+### Openings, and why no CSG is needed
+
+`buildDisplayGeometry` returns walls **already split** into the solid pieces
+around their doors and windows: a door leaves solid only above it, a window
+leaves a spandrel below the sill and a lintel above the head. The renderer
+draws plain boxes and the hole is real because the box is absent. Exact for the
+axis-aligned rectangular openings doors and windows actually are.
+
+Three details that each cost a bug:
+
+- **One physical opening is drawn as several entities.** A door is a leaf line
+  AND a swing arc; a window is two sill lines. The parser emits one opening per
+  entity, so a single door arrived twice. Deduplicated by (kind, wall,
+  position within three quarters of a leaf width) — wide, because a door drawn
+  open at 90° per the library's section F puts its leaf half a leaf away from
+  the opening, along the wall AND across it.
+- **Which entity measures the opening?** The one drawn ALONG the wall. A leaf
+  at 90° measures the leaf, not the hole; taking its position offsets the door
+  by half a leaf, which in 3D reads as a door floating beside the wall.
+  `alignment()` prefers the more-parallel entity.
+- **Rotation comes from the HOST WALL**, never from the parser's `angle`
+  field, which is frequently the swing arc rather than the leaf.
+
+### The X convention — and what it is not
+
+*"if there is an 'X' symbol in the drawing, it means that space is empty."*
+
+**This is not in either reference DXF.** The master template's section 9 legend
+lists twenty-two blocks (`SYM-LIGHT`, `SYM-CCTV-DOME`, `SYM-SMOKE-DET`, …) and
+none is a cross; the drawing library defines none either. It is implemented
+from the client's description, and the two decisions were confirmed with him
+directly:
+
+| Decision | Answer |
+|---|---|
+| What happens to the space? | **The slab STAYS.** The floor, ceiling and bounding walls are built as normal; only the CONTENTS are suppressed. It marks "not fitted out", not a shaft. |
+| Which layer? | **Any** — detected by SHAPE, so a third party's drawing works without first teaching the importer their layer names. |
+
+Two strokes are an X when they genuinely intersect strictly inside both, cross
+near BOTH midpoints, meet at 25° or more, and are within 2.5× of each other in
+length, over a region of at least 1 m². Detection runs on the RAW candidates,
+before the standard filter, because the X is usually on an annotation or area
+layer (`A-AREA-IDEN` is its natural home) which the filter drops — so the
+exclusions are specific: `section` (a structural X-brace IS an X), `hatch`
+(crossed hatching is a field of X shapes), and `grid` (two setting-out lines
+cross at every intersection, at their midpoints, at a healthy angle, with
+comparable lengths — a plan's grid would blank the whole building).
+
+A device inside a crossed-out region is dropped **and reported**: losing a
+floor's sensors silently is worse than the model being wrong.
+
+### Verifying it
+
+```bash
+npm run verify:display-geometry      # 62 checks, NO DATABASE
+```
+
+It generates its own drawing (`scripts/support/make-test-plan.ts`) rather than
+committing a binary, so the expected answers and the file that produces them
+cannot drift: a 12 × 8 m building, 200 mm external walls, a 100 mm partition,
+one 900 mm door, one 1500 mm window, an X-marked 3 × 3 m region, plus a grid
+line, a dimension string, wall hatching, a demolished partition and a
+`Defpoints` line that must all come out as nothing.
+
+Both reference drawings are standards DOCUMENTS — a sheet template and a
+179 m-wide detail library with 99 unrelated regions on it. They define the
+conventions; neither is a floor plan, so neither can answer "does a wall come
+out as one wall?". `scripts/probe-geometry.ts` prints the parser's output, the
+standard's verdict per layer, and the mesh stats for any drawing, which is how
+every number in this section was measured.
+
+**Entity order must not change the answer** (§3b). A DXF lists its entities in
+whatever order the draughtsman drew them, and the dedupe above PICKS between
+several entities describing one opening — so the forward order in the fixture
+happening to be the good one hid two bugs in a row. Reversing it caught both:
+the opening was emitted as each candidate arrived, so a later replacement
+corrected the hole and left the leaf behind; and `alignment()` read only
+`start`/`end`, which **`ParsedDoor` does not carry** — it has `position`,
+`width` and `angle` — so every door scored 0.5, `0.5 > 0.5` is false, and no
+door could ever be replaced by a better-aligned one. With the swing leaf first,
+the door rendered 450 mm from its own hole.
+
+**Every assertion is paired with a negative control** (`enforceStandard=false`,
+`pairWalls=false`, `cutOpenings=false`, `detectXVoids=false` on the endpoint).
+That is not ceremony: the control caught a real bug in the first version of
+this module — `enforceStandard: false` still filtered everything, because
+`applyCadStandard` was bypassed and then a SECOND, independent `solid ===
+'build'` filter ran unconditionally. Two filters, one flag, and only one of
+them wired to it. **A disable switch is only as good as the last thing that
+filters.**
+
+---
+
+## 4w. Floor-plan control widgets
+
+*"Add the widgets to the floor plan so I can turn on and off the lights, Air
+conditioner, even the scenes and scenarios from the 3D model. Add visualization
+to the widgets so when I turn on the light it reflecting this action to the
+area."*
+
+A widget is a control placed at a point on a plan, bound to a device's
+telemetry for its STATE and to stored commands for its ACTIONS, optionally
+attached to a ZONE whose polygon is what gets lit when it turns on.
+
+```
+floor_plans.zones[]  (jsonb, already existed: id, name, colour, boundaries[])
+       ▲
+       │ zoneId — validated against the plan on write; no FK exists to check it
+       │
+FloorPlanWidget ── deviceId ──▶ devices        state: telemetry[stateKey]
+       │                                        through stateTransform
+       └─ actions[] ─▶ { id, method, params, deviceId?, optimisticState? }
+                         └── read by the action route. NEVER from the request.
+```
+
+| Route | Notes |
+|---|---|
+| `GET /floor-plans/:id/widgets` | Positions in METRES, same space as `display-geometry`. Readable by `CUSTOMER_USER` — the runtime needs it. |
+| `GET /floor-plans/:id/widgets/devices` | Every device the plan's widgets touch, including scene targets, so a viewer subscribes once instead of per widget. |
+| `POST` · `PATCH` · `DELETE` | Tenant admin / customer admin. |
+| `POST /floor-plans/:id/widgets/import-from-drawing` | Creates widgets from the drawing's own symbols. |
+| `POST /floor-plans/:id/widgets/:widgetId/action` | **Presses a control.** |
+
+### The command lives in the database, never in the request
+
+The action route names a WIDGET and one of its STORED action ids. `method`,
+`params` and `deviceId` are read from the row; the DTO deliberately declares
+none of them, so `forbidNonWhitelisted: true` refuses a request that tries.
+
+`CUSTOMER_USER` is admitted deliberately — an operator is the person who
+presses the switch, and refusing them their own HMI makes the feature
+pointless. What protects the plant is that the command is fixed by the widget.
+Identical rule, identical reasoning, to the SCADA write-back route (§4n).
+
+A scene is the one shape that can reach past a single device, so every one of
+its actions is scope-checked on write AND the device is re-resolved at action
+time: a device moved to another customer must stop being commandable through a
+widget that still remembers it.
+
+### Importing from the drawing
+
+The client's CAD standard already says where the equipment is — `SYM-LIGHT` on
+`E-LITE`, equipment on `M-HVAC-EQPM`, nineteen more in the legend — so a plan
+arrives with its luminaires placed instead of an operator dragging forty icons
+onto it. Idempotent on `sourceMarkerId`.
+
+Widgets land **unbound and disabled**. A drawing says where a light is, not
+which device on this platform controls it, and guessing that binding would wire
+a switch to the wrong lamp — worse than an unbound widget the operator can see.
+
+**`mountMm` is an OFFSET FROM A PLANE, not a height.** The catalogue states the
+formula per `MountPlane`:
+
+```
+'floor' / 'wall' → z = mountMm                 (above FFL)
+'ceiling'        → z = ceilingHeight - mountMm (hangs below)
+'soffit'         → z = ceilingHeight + mountMm (in the void above)
+```
+
+`E-LITE` is `ceiling, 60`. Reading that as the height put every luminaire 60 mm
+off the floor instead of just under a 3 m ceiling. The verification caught it
+as `z: 0.06` — a light at ankle height is not cosmetic, it is what the model
+shows and what the operator clicks.
+
+### Two things worth knowing
+
+- **`GatewayService` is resolved by STRING TOKEN through `ModuleRef`**, because
+  `FloorPlansModule` importing `GatewayModule` would close a loop through
+  `ProtocolsModule`, and a module load cycle crashes `bootstrap()`. Providers
+  register under the CLASS by default, so the lookup typechecks and throws at
+  `onModuleInit` — the §4l trap. It is caught and logged so a floor plan cannot
+  stop the application booting, which makes a broken lookup SILENT; §1 of
+  `verify:floor-plan-widgets` asserts the warning is absent.
+- **A transport failure reports what it RESOLVED.** A disconnected broker
+  surfaced as a bare 500 "MQTT client is not connected", which cannot be told
+  apart from a misconfigured widget — and those need completely different
+  responses. `DISPATCH_FAILED` carries the resolved method, device and
+  `resolved: true, dispatched: false`.
+
+```bash
+npm run migration:floor-plan-widgets <db> [up|down]   # migration:run is blocked (§11)
+npm run verify:floor-plan-widgets <db> [port]         # 53 checks, boots the real app
+```
+
+§1b of that script is also the only place the **`display-geometry` ROUTE** is
+exercised over HTTP. `verify:display-geometry` calls `buildDisplayGeometry` as
+a function, so a shadowed path, a bad query DTO or a 500 in the controller
+would have gone unnoticed while 62 checks passed. It asserts the known fixture
+numbers through the endpoint, and that `?enforceStandard=false` really returns
+the unfiltered drawing — which incidentally proves `toQueryBoolean` (§4y)
+works through a real request rather than only in a unit check.
+
+---
+
+## 4x. Assets — ten defects found by running it
+
+Reported only as *"there is an issue in the Assets need to be fixed"*, with no
+detail. Found by exercising the module over HTTP rather than reading it.
+
+**The one he almost certainly saw was in the frontend, and it was one line.**
+`useAssetDetails.ts` iterated the literal array `[1,2,3,4]` instead of the
+devices it had just fetched. Every element was a NUMBER, so `device.id` was
+undefined, `device.name` fell through to `'Unknown Device'`, and
+`device.status || device.active` was falsy → `'offline'`. **Every asset in the
+product reported exactly four connected devices, all "Unknown Device", all
+offline** — including assets with none and assets with two. The envelope level
+was wrong independently (the array is two `.data` deep), and the hardcoded
+array is what stopped that surfacing as a TypeError. The same missing level
+left the Asset Hierarchy card permanently empty.
+
+Nine more on the backend:
+
+| # | Defect | Cause |
+|---|---|---|
+| 1 | `GET /assets/search/location` answered **400 to every possible request** | Three `number` fields decorated `@IsString()`. The pipe's `enableImplicitConversion` converts `"24.7136"` to a number first, so `@IsString()` always fails — unsatisfiable in both directions. The frontend also sent `lat`/`lng` against a DTO declaring `latitude`/`longitude`. |
+| 2 | `?active=false` returned the ACTIVE assets | `Boolean('false')` is **true**. Same on `?untyped` and `includeDevices`. **The obvious fix does not work — see §4y, which this defect is the reason for.** |
+| 3 | `?tags=` could never work | `asset.tags && :tags` is the PG array-overlap operator, but `Asset.tags` is `simple-array` — comma-joined **TEXT** — so it raised `operator does not exist: text && unknown`, reported as a 400 "Database Error". Now `string_to_array(asset.tags, ',') && :tags::text[]`, which needs no migration. A single `?tags=x` also 400'd as "must be an array". |
+| 4 | `PATCH /assets/:id/attributes` 400'd on every call | The property carried only `@ApiProperty()`, which class-validator cannot see, so `whitelist` stripped it and `forbidNonWhitelisted` rejected the request. |
+| 5 | `POST /assets/:id/unassign-customer` **lied** | `asset.customerId = undefined` — TypeORM reads that as "not changed" and omits the column. 200 "unassigned successfully", row unchanged. `unassignDevice()` in the same file gets this right and says why. |
+| 6 | A single-floor asset offered **no floor** to put a plan on | `totalFloors` fell back to `0` for an asset declaring no `floors_array` — every shop, farm, warehouse and factory. The floor-plan wizard had nowhere to put a drawing, and it only healed once a plan existed, which is the thing it was blocking. §4a already stated the rule ("single-floor assets default to 1"); now enforced. |
+| 7 | `GET /assets/customer/:customerId` lost `assetType` | Neither joined `assetProfile` nor called `withAssetType()`, so every asset on the customer page rendered as untyped while `GET /assets/:id` typed the same row correctly. |
+| 8 | **Cross-tenant: any asset could adopt another tenant's device** | `assignDevice` resolved the device by id alone — no tenant predicate. A tenant admin could post a foreign uuid and silently move the row out of the other tenant's asset tree. The only check present was for `CUSTOMER_USER`, so the one role that HAD a check was the least privileged. §4g, a ninth time. `bulkAssignDevices` was identical, and now refuses the whole batch rather than skipping. |
+| 9 | A malformed id leaked a DB error | Every `@Param` in the controller took a bare string, so `not-a-uuid` reached Postgres and raised `invalid input syntax for type uuid` → 400 "Database Error". All 18 now go through `ParseIdPipe`. |
+| 10 | `AssetQuery.parentId` vs the DTO's `parentAssetId` | Latent: `forbidNonWhitelisted` would 400 the first time anything filtered the tree by parent. |
+
+```bash
+npm run verify:assets <db> [port]     # 146 checks, each with a negative control
+```
+
+Three more found while pinning them, outside the listed ten:
+`api-monitoring`'s own `toBoolean` had the §4y bug (`?isError=false` → true);
+`SearchAssetQueryDto` marked all three coordinates `@IsOptional()` while
+`@ApiProperty` declared them required, so `?radius=50` alone answered **200
+with an empty list** rather than naming the missing parameter; and
+`UpdateAttributesDto` documented "replaces wholesale" while the service merges
+— the documentation was what was wrong, since a PATCH that discarded unsent
+keys would lose data.
+
+---
+
+## 4y. A boolean query parameter, and why the obvious fix is inert
+
+This bug has been written **four times, in three modules**, and every instance
+looked like a fix and changed nothing. It is worth its own section because the
+second form is invisible on review.
+
+A query string is text, so `?active=false` arrives as the STRING `"false"`,
+which is truthy.
+
+**Form 1 — no transform.** `enableImplicitConversion: true` (main.ts) converts
+`"false"` to `Boolean("false")` → `true`, `@IsBoolean()` passes, and the
+handler sees `true`. Passing `false` does what passing `true` does.
+
+**Form 2 — the apparent fix, and the real trap:**
+
+```ts
+@Transform(({ value }) => value === 'true')      // ← USELESS
+@IsBoolean()
+active?: boolean;
+```
+
+class-transformer applies the implicit conversion **before** `@Transform`
+runs. So `value` is already `true` and the original string is gone; every
+input yields `true`. This is worse than form 1, because the code reads as
+though the problem had been handled — and it is what the first fix for the
+assets DTOs did, in three places. The verification caught it only because it
+asserted the ROWS RETURNED rather than the request succeeding.
+
+> **The rule:** only `obj[key]` holds what the client sent. `obj` is the
+> untransformed source object.
+
+`src/common/transformers/query-boolean.transformer.ts` is the one
+implementation; there is nothing left to imitate incorrectly. There had been
+two copies — `images/dto/create-image.dto.ts` (correct) and
+`api-monitoring/dto/api-log-filter.dto.ts` (reading `value`, so inert) — and a
+third DTO cited the correct one as "the house pattern" while copying the
+broken shape.
+
+```bash
+npm run check:query-booleans    # 11 checks, no database
+```
+
+The guard reads source text, because a decorator that typechecks perfectly and
+does nothing is invisible to `tsc`. It flags both forms, pins the shared
+transformer's implementation **by behaviour** (so rewriting it to read `value`
+fails even though every call site still compiles), and strips comments before
+scanning — without that it reported its own explanatory prose as the defect,
+the §4p trap again.
+
+It found two more live instances on its first run: `?enabled=false` on
+`/converters` returned the enabled ones, and `?isSystem=false` on `/roles`
+listed the SYSTEM roles — the exact opposite of what was asked.
+
+---
+
 ## 5. Database & ORM Patterns
 
 ### BaseEntity
@@ -3229,6 +3626,10 @@ npm run check:boot      [db]      # starts the REAL `node dist/main.js` against 
                                   #   missing from an import graph, and a boot
                                   #   that Kafka or MQTT being down would block
                                   #   (§11a). Needs Postgres.
+npm run check:query-booleans      # a boolean query param means what it says.
+                                  #   Catches `@Transform(({ value }) => …)`,
+                                  #   which runs AFTER the implicit conversion
+                                  #   and is therefore inert (§4y)
 npm run check:permissions         # every @RequirePermissions string is seeded,
                                   #   and reports decorator coverage (§4k)
 npm run check:ai-wiring           # the AI DI graph resolves; catches the
@@ -3253,6 +3654,18 @@ npm run check:ws-authorization    # no @SubscribeMessage handler joins a
                                   #   are actually populated (§4q)
 node scripts/check-exception-filter.js   # field-level errors reach the client
 
+# ── Diagnostics: assert nothing, print what actually happened ──────────────
+npx ts-node -T -r tsconfig-paths/register scripts/probe-geometry.ts <file.dxf>
+                                  # the parser's output, the standard's verdict
+                                  #   per layer, the mesh stats and the
+                                  #   display geometry for a real drawing.
+                                  #   Every number in §4v was measured with it.
+npx ts-node -T -r tsconfig-paths/register scripts/support/make-test-plan.ts out.dxf
+                                  # a small architectural DXF with KNOWN
+                                  #   answers: paired wall faces, a door, a
+                                  #   window, an X-marked void, and noise that
+                                  #   must not become fabric (§4v)
+
 # ── Typechecking: three configs, and all three must be clean ───────────────
 # tsconfig.json is the BUILD config and no longer includes tests, so
 # `tsc --noEmit` is meaningful again. It previously reported ~98 permanent
@@ -3271,6 +3684,13 @@ npm run typecheck:scripts         # scripts/ + src — must be 0
 # with `database "..." does not exist`, which reads as a broken guard rather
 # than a missing database), runs every check:* and verify:*, and reports
 # pass/fail/skip. An unavailable dependency is a SKIP, never a pass.
+# ── One at a time, in one working tree ─────────────────────────────────────
+# Several scripts boot the real `node dist/main.js`, and `npm run build` writes
+# the SAME dist/. Running another build — or another verify — in the same tree
+# while the suite is going makes the booting process read a half-written dist
+# and exit a few seconds in. It surfaces as
+# `FAIL — cannot verify an API that is not running`, which reads like a broken
+# application and is not one. Let the suite finish, or use a second checkout.
 npm run verify:all                # everything
 npm run verify:all -- --checks    # static guards only, no database needed
 npm run verify:all -- --filter ws # only scripts matching "ws"
@@ -3294,6 +3714,23 @@ npm run verify:rpc                 <db>
 npm run verify:resource-assignments <db>  # assignment reads — scoping + the
                                           #   two-tier customer→user bound (§4i)
 npm run verify:permissions         <db>   # grants/revocations decide access (§4k)
+npm run verify:display-geometry           # 62 checks, NO DATABASE. The
+                                          #   drawing standard reaches the
+                                          #   viewer's geometry, wall faces
+                                          #   pair into real walls, openings
+                                          #   are cut, the X convention is
+                                          #   honoured (§4v). Generates its own
+                                          #   test drawing.
+npm run verify:floor-plan-widgets  <db> [port]
+                                          # 53 checks. Boots the REAL app:
+                                          #   widgets import from the drawing's
+                                          #   own symbols, control their
+                                          #   devices, and CANNOT be made to
+                                          #   send an arbitrary command (§4w)
+npm run verify:assets              <db> [port]
+                                          # the ten Assets defects in §4x,
+                                          #   including the cross-tenant device
+                                          #   adoption
 npm run verify:customer-login      <db> [port]
                                           # 73 checks. Boots the REAL
                                           #   `node dist/main.js` and drives the
@@ -3433,6 +3870,7 @@ import { DevicesService } from '@modules/index.service';
 | ~~`src/modules/api-monitoring/api-monitoring.service.ts`~~ | **RESOLVED** — real health probes. |
 | ~~`src/modules/images/images.service.ts`~~ | **RESOLVED** — local-disk storage and delete are implemented. |
 | `src/modules/images/images.controller.ts` line 46 | File upload to persistent storage (S3/local) is TODO |
+| `floor_plan_devices.x/y` are PIXELS, not metres | **The one residual from the §4v round.** A device placement is persisted in the coordinate space of `FloorPlanCanvas`'s own transform, which is derived from the NOISY `parsedGeometry` points with outlier filtering — not from `display.bounds`. The 3D viewer now inverts the same formula against `display.bounds`, which is uniform and aspect-correct and therefore strictly better than the old two-factor scale, but if the noise shifted the 2D framing a marker can sit slightly off where it was dropped. Converting the stored values is equally approximate, because the backend cannot reproduce the filtered transform either. **The fix is to store placements in drawing METRES** — a schema change plus a discriminator so existing rows are still read as pixels. Deliberately NOT started as a column with no reader: that is the shape of `GrantCustomerPermissionsDto` with no controller and `request.customerFilter` with no consumer, both of which looked like features and were not. |
 | ~~Six `@Cron` jobs fired on every replica~~ | **RESOLVED** — `RedisService.acquireLock()` existed with **zero callers** while the report scheduler, scheduled notifications, the scheduled-automation tick, the Tuya poll and two subscription sweeps all ran on every instance. `@DistributedCron` (`src/lib/cluster/`) now claims a Redis lock per tick; `DevicesService.checkOfflineDevices()` was locked too, because its bulk UPDATE is idempotent but the `device.offline` events it emits are not. See §12. |
 | ~~MQTT had no shared subscription~~ | **RESOLVED** — `$share/<group>/` on every uplink filter, in both `MQTTService` and `IntegrationMqttInboundService`. This was the worst of the set: it duplicated the primary ingestion path. See §12. |
 | ~~No Socket.IO Redis adapter~~ | **RESOLVED** — `@socket.io/redis-adapter` was a dependency and was never wired, so `server.to(room).emit()` reached only the emitting replica. `RedisIoAdapter` is registered in `main.ts`. See §12. |

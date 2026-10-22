@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsEnum, IsOptional } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { toQueryBoolean } from '@common/transformers/query-boolean.transformer';
 import { PaginationDto } from '@common/dto/pagination.dto';
 import { ConverterDirection, ConverterType } from '../converter.enums';
 
@@ -28,11 +29,10 @@ export class QueryConvertersDto extends PaginationDto {
 
   @ApiPropertyOptional({ description: 'Filter by enabled flag.' })
   @IsOptional()
-  @Transform(({ value }) =>
-    value === undefined || value === null || value === ''
-      ? undefined
-      : value === true || value === 'true' || value === '1',
-  )
+  // Reading `value` here was inert: the pipe's implicit conversion runs first,
+  // so `?enabled=false` had already become `true` before the transform saw it.
+  // `toQueryBoolean` reads the untransformed `obj[key]`.
+  @Transform(toQueryBoolean)
   @IsBoolean()
   enabled?: boolean;
 }

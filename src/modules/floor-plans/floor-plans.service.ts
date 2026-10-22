@@ -38,6 +38,10 @@ import {
 } from './dto/generate-model.dto';
 import { FloorPlanMeshFactory } from './mesh/floor-plan-mesh.factory';
 import { GltfExporter } from './mesh/gltf.exporter';
+import {
+  buildDisplayGeometry,
+  type DisplayGeometryOptions,
+} from './display/display-geometry';
 import { ObjExporter } from './mesh/obj.exporter';
 import { UpdateFloorPlanDto } from './dto/update-floor-plan.dto';
 import { UpdateFloorPlanSettingsDto } from './dto/floor-plan-settings.dto';
@@ -1216,6 +1220,51 @@ export class FloorPlansService {
       geometry: floorPlan.parsedGeometry,
       dimensions: floorPlan.dimensions,
       scale: floorPlan.scale,
+    };
+  }
+
+  /**
+   * Geometry ready to DRAW: the drawing standard applied, wall faces paired
+   * into real walls, openings cut, X-marked spaces reported.
+   *
+   * Distinct from `getParsedGeometry` above, which returns the parser's raw
+   * output. That output is deliberately permissive — it hands over every line
+   * in the drawing as a wall CANDIDATE and lets the consumer decide — and the
+   * 3D viewer was consuming it directly. On the client's own drawing library
+   * that is 1211 "walls" of which 790 are the sheet title block, the wall
+   * hatching, the section views, the dimension strings, the grid lines and the
+   * letter outlines of the general notes. All of them were being extruded.
+   *
+   * `getParsedGeometry` is kept unchanged because the import wizard reads it
+   * to show what was found in the file, including the things that are not
+   * built — that screen's whole job is to report the drawing as it is.
+   *
+   * See `display/display-geometry.ts` for the four transformations and why
+   * each one is there.
+   */
+  async getDisplayGeometry(
+    id: string,
+    tenantId: string,
+    options: Partial<DisplayGeometryOptions> = {},
+  ) {
+    const floorPlan = await this.findOne(id, tenantId);
+
+    if (!floorPlan.parsedGeometry) {
+      throw new NotFoundException('Floor plan has not been parsed yet');
+    }
+
+    const display = buildDisplayGeometry(
+      floorPlan.parsedGeometry as Record<string, any>,
+      options,
+    );
+
+    return {
+      floorPlanId: floorPlan.id,
+      name: floorPlan.name,
+      floor: floorPlan.floor,
+      floorNumber: floorPlan.floorNumber,
+      assetId: floorPlan.assetId,
+      display,
     };
   }
 

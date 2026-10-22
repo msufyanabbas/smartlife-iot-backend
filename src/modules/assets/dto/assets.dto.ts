@@ -12,7 +12,8 @@ import {
   Max,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+import { toQueryBoolean } from '@common/transformers/query-boolean.transformer';
 import {
   AlarmSeverity,
   AlarmStatus,
@@ -208,20 +209,52 @@ export class CreateAssetDto {
 
 export class UpdateAssetDto extends PartialType(CreateAssetDto) { }
 
+/**
+ * `GET /assets/search/location`.
+ *
+ * ── Why this route answered 400 to EVERY possible request ────────────────
+ *
+ * All three fields are declared `number` and were decorated `@IsString()`.
+ * The global pipe runs `enableImplicitConversion: true` (main.ts), so
+ * class-transformer reads `design:type = Number` and converts "24.7136" to the
+ * number 24.7136 BEFORE validation — at which point `@IsString()` fails. Send
+ * a string and it is converted and rejected; send a number and it is rejected.
+ * The route was unsatisfiable in both directions:
+ *
+ *   ?latitude=24.7136  → 400 ["latitude must be a string", …]
+ *
+ * `@Type(() => Number)` is still declared explicitly rather than relying on
+ * the implicit conversion, so this keeps working if that pipe option is ever
+ * turned off.
+ */
 export class SearchAssetQueryDto {
-  @ApiProperty()
-  @IsOptional()
-  @IsString()
+  // ── Required, and not @IsOptional() ────────────────────────────────────
+  //
+  // All three were optional while `@ApiProperty` declared them required, and
+  // the controller coerces with `+`. So `?radius=50` with no coordinates gave
+  // `+undefined` → NaN, every distance comparison was false, and the route
+  // answered **200 with an empty list** — indistinguishable from "there is
+  // nothing within 50 km", which is the worst possible way to report a
+  // missing parameter. A 400 naming the field it wants is the whole point of
+  // having a DTO.
+  @ApiProperty({ example: 24.7136, description: 'Decimal degrees.' })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
   latitude: number;
 
-  @ApiProperty()
-  @IsOptional()
-  @IsString()
+  @ApiProperty({ example: 46.6753, description: 'Decimal degrees.' })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
   longitude: number;
 
-  @ApiProperty()
-  @IsOptional()
-  @IsString()
+  @ApiProperty({ example: 50, description: 'Kilometres.' })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
   radius: number;
 }
 
@@ -265,6 +298,18 @@ export class QueryAssetsDto {
     description: 'Only assets with no asset profile (and so no type).',
   })
   @IsOptional()
+  // ── Why @Transform and not @IsBoolean alone ────────────────────────────
+  //
+  // A query string is text, and class-transformer 0.5's implicit boolean
+  // conversion is literally `Boolean(value)` — so `Boolean('false')` is TRUE.
+  // `?active=false` therefore returned the ACTIVE assets, and
+  // `?untyped=false` returned only the untyped one. Passing false did the
+  // same thing as passing true.
+  //
+  // The house pattern is an explicit transform: see
+  // `api-monitoring/dto/api-log-filter.dto.ts` and
+  // `images/dto/create-image.dto.ts`.
+  @Transform(toQueryBoolean)
   @IsBoolean()
   untyped?: boolean;
 
@@ -290,12 +335,27 @@ export class QueryAssetsDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @Transform(toQueryBoolean)
   @IsBoolean()
   active?: boolean;
 
-  @ApiPropertyOptional({ type: [String] })
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Match assets carrying ANY of these tags. Repeat the param for several.',
+  })
   @IsOptional()
+  // A single `?tags=critical` arrives as a STRING, not an array, so `@IsArray`
+  // answered 400 ["tags must be an array"] for the most natural way to call
+  // the route. Wrapping one value is what every query-string array needs.
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === ''
+      ? undefined
+      : Array.isArray(value)
+        ? value
+        : [value],
+  )
   @IsArray()
+  @IsString({ each: true })
   tags?: string[];
 
   @ApiPropertyOptional({ default: 1 })
@@ -338,8 +398,30 @@ export class BulkAssignDevicesDto {
   deviceIds: string[];
 }
 
+/**
+ * `PATCH /assets/:id/attributes`.
+ *
+ * ── Why this route answered 400 to every call ────────────────────────────
+ *
+ * `attributes` carried only `@ApiProperty()` — a Swagger decorator, which
+ * class-validator does not see. With no validation metadata the property is
+ * not on the whitelist, `whitelist: true` strips it, and
+ * `forbidNonWhitelisted: true` turns that into
+ * `["property attributes should not exist"]`. The route could never succeed.
+ *
+ * `@IsObject()` is the minimum that registers the property. The VALUES stay
+ * free-form on purpose: this is a key-value bag for operator-defined
+ * attributes, and the asset's typed, schema-validated fields live in
+ * `configuration` (§4c), not here.
+ */
 export class UpdateAttributesDto {
-  @ApiProperty()
+  @ApiProperty({
+    description:
+      'Free-form attribute bag. MERGED into the asset\'s existing attributes — keys you do not ' +
+      'send are left alone. Send null as a value to clear one.',
+    example: { hvacZone: 'Zone-A', assetTag: 'HQ-1042' },
+  })
+  @IsObject()
   attributes: Record<string, any>;
 }
 
@@ -378,6 +460,8 @@ export class AssetHierarchyDto {
 
   @ApiPropertyOptional({ default: false })
   @IsOptional()
+  // Boolean("false") === true — see the note on `untyped` above.
+  @Transform(toQueryBoolean)
   @IsBoolean()
   includeDevices?: boolean;
 }

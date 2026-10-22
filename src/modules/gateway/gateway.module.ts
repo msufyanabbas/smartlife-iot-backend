@@ -48,7 +48,24 @@ import mqttConfig from '../../config/mqtt.config';
     WebsocketModule,
   ],
   controllers: [GatewayController],
-  providers: [GatewayService, RpcResponseListener],
-  exports: [GatewayService, RpcResponseListener],
+  providers: [
+    GatewayService,
+    RpcResponseListener,
+    // ── Also registered under a STRING token ──────────────────────────────
+    //
+    // `FloorPlanWidgetsService` has to issue a device command when a widget's
+    // action is pressed, and it resolves this with `ModuleRef.get` rather than
+    // injecting it: importing GatewayModule into FloorPlansModule would close
+    // a loop through ProtocolsModule, and a module load cycle crashes
+    // `bootstrap()` rather than failing a test.
+    //
+    // Providers are registered under the CLASS by default, so a string lookup
+    // typechecks perfectly and throws at `onModuleInit`. That exact trap cost
+    // a debugging session on `'TelemetryService'` (§4l), which is why this
+    // alias exists next to the class and `check:ai-wiring`-style boot
+    // verification is the thing that catches it.
+    { provide: 'GatewayService', useExisting: GatewayService },
+  ],
+  exports: [GatewayService, RpcResponseListener, 'GatewayService'],
 })
 export class GatewayModule {}

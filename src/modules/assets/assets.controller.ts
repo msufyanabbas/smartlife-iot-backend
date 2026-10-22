@@ -35,6 +35,7 @@ import { RolesGuard } from '@common/guards/roles.guard';
 import { Roles } from '@common/decorators/roles.decorator';
 import { User } from '@modules/index.entities';
 import { UserRole } from '@common/enums/index.enum';
+import { ParseIdPipe } from '@common/pipes/parse-id.pipe';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { CustomerAccessGuard } from '@/common/guards/customer-access.guard';
 import { RequirePermissions } from '@common/decorators/permission.decorator';
@@ -144,7 +145,7 @@ findAll(
   @ApiResponse({ status: 403, description: 'Access denied to this customer' })
   async getAssetsByCustomer(
     @CurrentUser() user: User,
-    @Param('customerId') customerId: string,
+    @Param('customerId', ParseIdPipe) customerId: string,
   ) {
     const assets = await this.assetsService.findByCustomer(customerId, user);
     return {
@@ -169,7 +170,7 @@ findAll(
   @ApiResponse({ status: 403, description: 'Permission denied' })
   async assignToCustomer(
     @CurrentUser() user: User,
-    @Param('id') assetId: string,
+    @Param('id', ParseIdPipe) assetId: string,
     @Body('customerId') customerId: string,
   ) {
     const asset = await this.assetsService.assignToCustomer(
@@ -195,7 +196,7 @@ findAll(
   @ApiResponse({ status: 200, description: 'Asset unassigned from customer' })
   async unassignFromCustomer(
     @CurrentUser() user: User,
-    @Param('id') assetId: string,
+    @Param('id', ParseIdPipe) assetId: string,
   ) {
     const asset = await this.assetsService.unassignFromCustomer(assetId, user);
     return {
@@ -210,7 +211,7 @@ findAll(
   @ApiOperation({ summary: 'Get asset by ID' })
   @ApiResponse({ status: 200, description: 'Asset retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Asset not found' })
-  async findOne(@CurrentUser() user: User, @Param('id') id: string) {
+  async findOne(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
     const asset = await this.assetsService.findOne(id, user);
     return {
       message: 'Asset retrieved successfully',
@@ -225,7 +226,7 @@ findAll(
   @ApiQuery({ name: 'maxDepth', required: false, type: Number })
   @ApiQuery({ name: 'includeDevices', required: false, type: Boolean })
   @ApiResponse({ status: 200, description: 'Hierarchy retrieved' })
-  async getHierarchy(@CurrentUser() user: User, @Param('id') id: string, @Query() dto: AssetHierarchyDto) {
+  async getHierarchy(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string, @Query() dto: AssetHierarchyDto) {
     const hierarchy = await this.assetsService.getHierarchy(
       id,
       user,
@@ -251,7 +252,7 @@ findAll(
   })
   @ApiResponse({ status: 200, description: 'Floors retrieved' })
   @ApiResponse({ status: 404, description: 'Asset not found' })
-  async getFloors(@CurrentUser() user: User, @Param('id') id: string) {
+  async getFloors(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
     const floors = await this.assetsService.getFloors(id, user);
     return {
       message: 'Floors retrieved successfully',
@@ -264,7 +265,7 @@ findAll(
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({ summary: 'Get asset path (from root to asset)' })
   @ApiResponse({ status: 200, description: 'Path retrieved' })
-  async getPath(@CurrentUser() user: User, @Param('id') id: string) {
+  async getPath(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
     const path = await this.assetsService.getAssetPath(id, user);
     return {
       message: 'Asset path retrieved successfully',
@@ -277,7 +278,7 @@ findAll(
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({ summary: 'Get direct child assets' })
   @ApiResponse({ status: 200, description: 'Children retrieved' })
-  async getChildren(@CurrentUser() user: User, @Param('id') id: string) {
+  async getChildren(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
     const children = await this.assetsService.getChildren(id, user);
     return {
       message: 'Child assets retrieved successfully',
@@ -297,7 +298,7 @@ findAll(
   })
   @ApiResponse({ status: 200, description: 'Asset telemetry roll-up retrieved' })
   @ApiResponse({ status: 404, description: 'Asset not found' })
-  async getAssetTelemetry(@CurrentUser() user: User, @Param('id') id: string) {
+  async getAssetTelemetry(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
     const telemetry = await this.assetsService.getAssetTelemetry(id, user);
     return {
       message: 'Asset telemetry retrieved successfully',
@@ -319,7 +320,7 @@ findAll(
   @ApiResponse({ status: 404, description: 'Asset not found' })
   async getAssetAlarms(
     @CurrentUser() user: User,
-    @Param('id') id: string,
+    @Param('id', ParseIdPipe) id: string,
     @Query() queryDto: AssetAlarmsQueryDto,
   ) {
     return this.assetsService.getAssetAlarms(id, user, queryDto);
@@ -330,7 +331,7 @@ findAll(
   @UseGuards(CustomerAccessGuard)
   @ApiOperation({ summary: 'Get devices assigned to asset' })
   @ApiResponse({ status: 200, description: 'Devices retrieved' })
-  async getDevices(@CurrentUser() user: User, @Param('id') id: string) {
+  async getDevices(@CurrentUser() user: User, @Param('id', ParseIdPipe) id: string) {
     const devices = await this.assetsService.getDevices(id, user);
     return {
       message: 'Devices retrieved successfully',
@@ -346,7 +347,7 @@ findAll(
   @ApiResponse({ status: 200, description: 'Device assigned successfully' })
   async assignDevice(
     @CurrentUser() user: User,
-    @Param('id') id: string,
+    @Param('id', ParseIdPipe) id: string,
     @Body() assignDeviceDto: AssignDeviceDto,
   ) {
     await this.assetsService.assignDevice(id, assignDeviceDto.deviceId, user);
@@ -363,7 +364,7 @@ findAll(
   @ApiResponse({ status: 200, description: 'Devices assigned successfully' })
   async bulkAssignDevices(
     @CurrentUser() user: User,
-    @Param('id') id: string,
+    @Param('id', ParseIdPipe) id: string,
     @Body() bulkAssignDto: BulkAssignDevicesDto,
   ) {
     await this.assetsService.bulkAssignDevices(id, bulkAssignDto.deviceIds, user);
@@ -381,8 +382,8 @@ findAll(
   @ApiResponse({ status: 200, description: 'Device unassigned successfully' })
   async unassignDevice(
     @CurrentUser() user: User,
-    @Param('id') id: string,
-    @Param('deviceId') deviceId: string,
+    @Param('id', ParseIdPipe) id: string,
+    @Param('deviceId', ParseIdPipe) deviceId: string,
   ) {
     await this.assetsService.unassignDevice(id, deviceId, user);
     return {
@@ -398,7 +399,7 @@ findAll(
   @ApiResponse({ status: 200, description: 'Asset updated successfully' })
   async update(
     @CurrentUser() user: User,
-    @Param('id') id: string,
+    @Param('id', ParseIdPipe) id: string,
     @Body() updateAssetDto: UpdateAssetDto,
   ) {
     const asset = await this.assetsService.update(id, updateAssetDto, user);
@@ -416,7 +417,7 @@ findAll(
   @ApiResponse({ status: 200, description: 'Attributes updated successfully' })
   async updateAttributes(
     @CurrentUser() user: User,
-    @Param('id') id: string,
+    @Param('id', ParseIdPipe) id: string,
     @Body() updateAttributesDto: UpdateAttributesDto,
   ) {
     const asset = await this.assetsService.updateAttributes(
@@ -437,7 +438,7 @@ findAll(
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete asset' })
   @ApiResponse({ status: 204, description: 'Asset deleted successfully' })
-  async remove(@Param('id') id: string, @CurrentUser() user: User) {
+  async remove(@Param('id', ParseIdPipe) id: string, @CurrentUser() user: User) {
     await this.assetsService.remove(id, user);
   }
 }

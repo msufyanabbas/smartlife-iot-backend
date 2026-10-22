@@ -39,6 +39,7 @@ export { WidgetBundle } from './widgets/entities/widget-bundle.entity';
 export { WidgetType } from './widgets/entities/widget-type.entity';
 export { FloorPlan } from './floor-plans/entities/floor-plan.entity';
 export { FloorPlanDevice } from './floor-plans/entities/floor-plan-device.entity';
+export { FloorPlanWidget } from './floor-plans/entities/floor-plan-widget.entity';
 
 // Notification & Communication entities
 export { Alarm } from './alarms/entities/alarm.entity';
